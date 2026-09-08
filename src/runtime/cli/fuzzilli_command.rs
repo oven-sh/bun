@@ -134,186 +134,164 @@ mod reprl {
         vm.test_isolation_state.synthetic_allocation_limit =
             Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
 
-        let mut session = Session {
-            vm: vm_ptr,
-            program: Vec::new(),
+        let _api_lock = vm.global().vm().get_api_lock();
+        serve(vm)
+    }
+
+    /// The REPRL session: handshake, then one program per `exec` until the
+    /// fuzzer closes the control pipe.
+    fn serve(vm: &mut VirtualMachine) -> ! {
+        prepare_global(vm);
+
+        let control_in = File::borrow(&CONTROL_READ_FD);
+        let control_out = File::borrow(&CONTROL_WRITE_FD);
+        let data_in = File::borrow(&DATA_READ_FD);
+
+        if control_out.write_all(b"HELO").is_err() {
+            protocol_error(format_args!("could not write HELO"));
+        }
+        let mut helo = [0u8; 4];
+        if !matches!(control_in.read_all(&mut helo), Ok(4)) || helo != *b"HELO" {
+            protocol_error(format_args!(
+                "expected HELO, got {:?}",
+                bstr::BStr::new(&helo)
+            ));
+        }
+
+        let mut program: Vec<u8> = Vec::new();
+        loop {
+            let mut command = [0u8; 4];
+            match control_in.read_all(&mut command) {
+                // The fuzzer closed the control pipe: this child is done.
+                Ok(0) => break,
+                Ok(4) if command == *b"exec" => {}
+                _ => protocol_error(format_args!(
+                    "expected exec, got {:?}",
+                    bstr::BStr::new(&command)
+                )),
+            }
+            let mut size = [0u8; 8];
+            if !matches!(control_in.read_all(&mut size), Ok(8)) {
+                protocol_error(format_args!("could not read the program size"));
+            }
+            let size = u64::from_le_bytes(size);
+            if size > MAX_PROGRAM_SIZE {
+                protocol_error(format_args!("program size {} is too large", size));
+            }
+            let size = size as usize;
+            program.resize(size, 0);
+            if !matches!(data_in.read_all(&mut program[..size]), Ok(n) if n == size) {
+                protocol_error(format_args!("could not read {} program bytes", size));
+            }
+
+            let ok = execute(vm, &program);
+
+            // stdout and stderr are regular files under Fuzzilli; everything the
+            // program printed has to land before the fuzzer reads the status.
+            Output::flush();
+            let status: u32 = if ok { 0 } else { 1 << 8 };
+            if control_out.write_all(&status.to_le_bytes()).is_err() {
+                protocol_error(format_args!("could not write the status"));
+            }
+            bun_jsc::cpp::Bun__REPRL__resetCoverage();
+        }
+
+        vm.exit_handler.exit_code = 0;
+        vm.on_exit();
+        vm.global_exit();
+    }
+
+    /// Runs one program, gives its asynchronous work a bounded amount of
+    /// time, then resets the VM for the next program. Returns whether the
+    /// program succeeded.
+    fn execute(vm: &mut VirtualMachine, source: &[u8]) -> bool {
+        let mut exception = JSValue::ZERO;
+        // SAFETY: `vm.global` is the live global; `source` outlives the call.
+        let mut ok = unsafe {
+            bun_jsc::cpp::Bun__REPRL__evaluate(
+                vm.global,
+                source.as_ptr(),
+                source.len(),
+                &raw mut exception,
+            )
         };
-        // SAFETY: `vm_ptr` is the process-lifetime VM; `session` is the sole
-        // mutator inside the lock and `run` never returns.
-        unsafe { (*vm_ptr).run_with_api_lock::<_, ()>(|| session.run()) };
-        unreachable!();
-    }
-
-    struct Session {
-        vm: *mut VirtualMachine,
-        program: Vec<u8>,
-    }
-
-    impl Session {
-        fn vm(&self) -> &'static mut VirtualMachine {
-            // SAFETY: the boxed main-thread VM lives for the rest of the process
-            // and is only touched from this thread.
-            unsafe { &mut *self.vm }
+        if !ok {
+            vm.run_error_handler(exception, None);
         }
 
-        fn run(&mut self) -> ! {
-            self.prepare_global();
-
-            let control_in = File::borrow(&CONTROL_READ_FD);
-            let control_out = File::borrow(&CONTROL_WRITE_FD);
-            let data_in = File::borrow(&DATA_READ_FD);
-
-            if control_out.write_all(b"HELO").is_err() {
-                protocol_error(format_args!("could not write HELO"));
-            }
-            let mut helo = [0u8; 4];
-            if !matches!(control_in.read_all(&mut helo), Ok(4)) || helo != *b"HELO" {
-                protocol_error(format_args!(
-                    "expected HELO, got {:?}",
-                    bstr::BStr::new(&helo)
-                ));
-            }
-
-            loop {
-                let mut command = [0u8; 4];
-                match control_in.read_all(&mut command) {
-                    // The fuzzer closed the control pipe: this child is done.
-                    Ok(0) => break,
-                    Ok(4) if command == *b"exec" => {}
-                    _ => protocol_error(format_args!(
-                        "expected exec, got {:?}",
-                        bstr::BStr::new(&command)
-                    )),
-                }
-                let mut size = [0u8; 8];
-                if !matches!(control_in.read_all(&mut size), Ok(8)) {
-                    protocol_error(format_args!("could not read the program size"));
-                }
-                let size = u64::from_le_bytes(size);
-                if size > MAX_PROGRAM_SIZE {
-                    protocol_error(format_args!("program size {} is too large", size));
-                }
-                let size = size as usize;
-                self.program.resize(size, 0);
-                if !matches!(data_in.read_all(&mut self.program[..size]), Ok(n) if n == size) {
-                    protocol_error(format_args!("could not read {} program bytes", size));
-                }
-
-                let program = core::mem::take(&mut self.program);
-                let ok = self.execute(&program);
-                self.program = program;
-
-                // stdout and stderr are regular files under Fuzzilli; everything the
-                // program printed has to land before the fuzzer reads the status.
-                Output::flush();
-                let status: u32 = if ok { 0 } else { 1 << 8 };
-                if control_out.write_all(&status.to_le_bytes()).is_err() {
-                    protocol_error(format_args!("could not write the status"));
-                }
-                bun_jsc::cpp::Bun__REPRL__resetCoverage();
-            }
-
-            let vm = self.vm();
-            vm.exit_handler.exit_code = 0;
-            vm.on_exit();
-            vm.global_exit();
+        run_event_loop(vm);
+        let _ = vm.global().handle_rejected_promises();
+        crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+        // An uncaught exception or unhandled rejection outside the
+        // synchronous part fails the program too, as it would fail `bun <file>`.
+        if vm.unhandled_error_counter > 0 {
+            ok = false;
         }
+        vm.exit_handler.exit_code = 0;
 
-        /// Runs one program, gives its asynchronous work a bounded amount of
-        /// time, then resets the VM for the next program. Returns whether the
-        /// program succeeded.
-        fn execute(&mut self, source: &[u8]) -> bool {
-            let vm = self.vm();
+        vm.swap_global_for_test_isolation();
+        prepare_global(vm);
 
-            let mut exception = JSValue::ZERO;
-            // SAFETY: `vm.global` is the live global; `source` outlives the call.
-            let mut ok = unsafe {
-                bun_jsc::cpp::Bun__REPRL__evaluate(
-                    vm.global,
-                    source.as_ptr(),
-                    source.len(),
-                    &raw mut exception,
+        ok
+    }
+
+    /// Runs the program's microtasks, timers and I/O, for at most
+    /// `EVENT_LOOP_BUDGET_MS`.
+    ///
+    /// The budget exists because the loop of a fuzzed program need not
+    /// ever end: a program that leaves a server, a listener or an interval
+    /// behind keeps it alive, and `bun <file>` would not exit either. The
+    /// fuzzer's own timeout would then kill the child, which costs its
+    /// whole timeout and a respawn. So give the program's asynchronous
+    /// work a fixed slice instead, then report the status and reset. The
+    /// reset stops whatever is still running.
+    fn run_event_loop(vm: &mut VirtualMachine) {
+        let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+            .add_ms(EVENT_LOOP_BUDGET_MS);
+
+        vm.tick();
+        while vm.is_event_loop_alive() {
+            let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+            if !deadline.greater(&now) {
+                return;
+            }
+            let remaining = deadline.duration(&now);
+            // SAFETY: `vm` is the live main-thread VM; `remaining` is a stack
+            // local that outlives the call.
+            unsafe {
+                crate::jsc_hooks::auto_tick_active_with_max_wait(
+                    core::ptr::from_mut(vm),
+                    Some(&remaining),
                 )
             };
-            if !ok {
-                vm.run_error_handler(exception, None);
-            }
-
-            self.run_event_loop();
-            let _ = vm.global().handle_rejected_promises();
-            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-            // An uncaught exception or unhandled rejection outside the
-            // synchronous part fails the program too, as it would fail `bun <file>`.
-            if vm.unhandled_error_counter > 0 {
-                ok = false;
-            }
-            vm.exit_handler.exit_code = 0;
-
-            vm.swap_global_for_test_isolation();
-            self.prepare_global();
-
-            ok
-        }
-
-        /// Runs the program's microtasks, timers and I/O, for at most
-        /// `EVENT_LOOP_BUDGET_MS`.
-        ///
-        /// The budget exists because the loop of a fuzzed program need not
-        /// ever end: a program that leaves a server, a listener or an interval
-        /// behind keeps it alive, and `bun <file>` would not exit either. The
-        /// fuzzer's own timeout would then kill the child, which costs its
-        /// whole timeout and a respawn. So give the program's asynchronous
-        /// work a fixed slice instead, then report the status and reset. The
-        /// reset stops whatever is still running.
-        fn run_event_loop(&mut self) {
-            let vm = self.vm();
-            let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
-                .add_ms(EVENT_LOOP_BUDGET_MS);
-
             vm.tick();
-            while vm.is_event_loop_alive() {
-                let now = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
-                if !deadline.greater(&now) {
-                    return;
-                }
-                let remaining = deadline.duration(&now);
-                // SAFETY: `self.vm` is the live main-thread VM; `remaining` is
-                // a stack local that outlives the call.
-                unsafe {
-                    crate::jsc_hooks::auto_tick_active_with_max_wait(self.vm, Some(&remaining))
-                };
-                vm.tick();
-            }
         }
+    }
 
-        /// `require`, `module`, `__filename`, `__dirname` and the prelude, on
-        /// the global the next program will run on.
-        fn prepare_global(&mut self) {
-            let vm = self.vm();
-            let global = vm.global();
-            let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
-            // SAFETY: `cwd` is valid for the call; the wrapper opens its own exception scope.
-            if unsafe {
-                bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len())
-            }
+    /// `require`, `module`, `__filename`, `__dirname` and the prelude, on
+    /// the global the next program will run on.
+    fn prepare_global(vm: &mut VirtualMachine) {
+        let global = vm.global();
+        let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
+        // SAFETY: `cwd` is valid for the call; the wrapper opens its own exception scope.
+        if unsafe { bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len()) }
             .is_err()
-            {
-                if let Some(exception) = global.try_take_exception() {
-                    vm.run_error_handler(exception, None);
-                }
-            }
-            let mut exception = JSValue::ZERO;
-            // SAFETY: as in `execute`.
-            if !unsafe {
-                bun_jsc::cpp::Bun__REPRL__evaluate(
-                    vm.global,
-                    PRELUDE.as_ptr(),
-                    PRELUDE.len(),
-                    &raw mut exception,
-                )
-            } {
+        {
+            if let Some(exception) = global.try_take_exception() {
                 vm.run_error_handler(exception, None);
             }
+        }
+        let mut exception = JSValue::ZERO;
+        // SAFETY: as in `execute`.
+        if !unsafe {
+            bun_jsc::cpp::Bun__REPRL__evaluate(
+                vm.global,
+                PRELUDE.as_ptr(),
+                PRELUDE.len(),
+                &raw mut exception,
+            )
+        } {
+            vm.run_error_handler(exception, None);
         }
     }
 

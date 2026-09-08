@@ -958,6 +958,24 @@ impl<'a> Resolver<'a> {
         false
     }
 
+    /// True iff the absolute specifier `import_path` names a file passed to
+    /// `--external`. Those went through `validate_path`, so the specifier gets
+    /// the same join (on Windows it gives "/api/config" the drive of the cwd).
+    fn is_external_abs_path(&self, import_path: &[u8]) -> bool {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        if self.opts.external.abs_paths.count() == 0 {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let key = join_abs_string_buf_checked::<platform::Auto>(
+            self.fs_ref().top_level_dir,
+            &mut buf,
+            &[import_path],
+        )
+        .unwrap_or(import_path);
+        self.opts.external.abs_paths.contains(key)
+    }
+
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
     /// the `MatchResult` iff a key matches AND the mapped target exists on
     /// disk. Used to let path-aliased local files win over `packages=external`
@@ -1768,10 +1786,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if !kind.is_entry_point()
-                && self.opts.external.abs_paths.count() > 0
-                && self.opts.external.abs_paths.contains(import_path)
-            {
+            if !kind.is_entry_point() && self.is_external_abs_path(import_path) {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
                 // That way we preserve the literal text in the output and don't generate
@@ -2033,10 +2048,6 @@ impl<'a> Resolver<'a> {
             && self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
         {
-            // If the string literal in the source text is an absolute path and has
-            // been marked as an external module, mark it as *not* an absolute path.
-            // That way we preserve the literal text in the output and don't generate
-            // a relative path from the output directory to that path.
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" is marked as external by the user",
@@ -2044,6 +2055,10 @@ impl<'a> Resolver<'a> {
                 ));
             }
 
+            // The specifier was relative to the importer, so it cannot be kept
+            // as written (an absolute specifier is, see `resolve_without_symlinks`).
+            let mut flags = ResultFlags::default();
+            flags.set_external_kind(ExternalKind::ExternalRelativeToOutputDir);
             return ResultUnion::Success(Result {
                 path_pair: PathPair {
                     primary: Path::init(
@@ -2054,7 +2069,7 @@ impl<'a> Resolver<'a> {
                     ),
                     secondary: None,
                 },
-                flags: ResultFlags::IS_EXTERNAL,
+                flags,
                 ..Default::default()
             });
         }

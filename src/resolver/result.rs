@@ -127,12 +127,13 @@ impl Default for Result {
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
     pub struct ResultFlags: u8 {
-        // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
+        // Bits 0, 1 and 4 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
         const REWRITE_IMPORT_PATH = 1 << 1;
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        const IMPORT_PATH_RELATIVE_TO_OUTPUT_DIR = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
@@ -144,9 +145,14 @@ bitflags::bitflags! {
 pub enum ExternalKind {
     #[default]
     NotExternal,
+    /// External, and the import specifier is kept as written.
     External,
     /// External, and the import specifier should be rewritten to the resolved path.
     ExternalRewritePath,
+    /// External, and the resolved path is the absolute path of a file. The
+    /// bundler rewrites the import specifier to that path, relative to its
+    /// output directory (esbuild does the same).
+    ExternalRelativeToOutputDir,
 }
 
 impl ResultFlags {
@@ -157,12 +163,20 @@ impl ResultFlags {
     #[inline]
     pub fn external_kind(self) -> ExternalKind {
         debug_assert!(
-            !self.contains(Self::REWRITE_IMPORT_PATH) || self.contains(Self::IS_EXTERNAL)
+            self.contains(Self::IS_EXTERNAL)
+                || !self.intersects(
+                    Self::REWRITE_IMPORT_PATH | Self::IMPORT_PATH_RELATIVE_TO_OUTPUT_DIR
+                )
+        );
+        debug_assert!(
+            !self.contains(Self::REWRITE_IMPORT_PATH | Self::IMPORT_PATH_RELATIVE_TO_OUTPUT_DIR)
         );
         if !self.contains(Self::IS_EXTERNAL) {
             ExternalKind::NotExternal
         } else if self.contains(Self::REWRITE_IMPORT_PATH) {
             ExternalKind::ExternalRewritePath
+        } else if self.contains(Self::IMPORT_PATH_RELATIVE_TO_OUTPUT_DIR) {
+            ExternalKind::ExternalRelativeToOutputDir
         } else {
             ExternalKind::External
         }
@@ -176,6 +190,10 @@ impl ResultFlags {
         self.set(
             Self::REWRITE_IMPORT_PATH,
             matches!(kind, ExternalKind::ExternalRewritePath),
+        );
+        self.set(
+            Self::IMPORT_PATH_RELATIVE_TO_OUTPUT_DIR,
+            matches!(kind, ExternalKind::ExternalRelativeToOutputDir),
         );
     }
     #[inline]

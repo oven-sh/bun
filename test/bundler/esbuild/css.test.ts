@@ -841,15 +841,16 @@ describe("esbuild-bundler", () => {
     },
     outfile: "/out/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `@import "./external1.css";
-@import "./external2.css";
-@import "./external4.css";
-@import "./external5.css";
+      // The external files are in the parent of the output directory.
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `@import "../external1.css";
+@import "../external2.css";
+@import "../external4.css";
+@import "../external5.css";
 @import "https://www.example.com/style2.css";
-@import "./external3.css";
+@import "../external3.css";
 @import "https://www.example.com/style1.css";
 @import "https://www.example.com/style3.css";
-@import "./external5.css" screen;
+@import "../external5.css" screen;
 
 /* internal.css */
 .before {

@@ -488,6 +488,26 @@ describe("bundler", () => {
       expect(contents).not.toContain(`require("react")`);
     },
   });
+  // onResolve ran and returned nothing, so the file resolves natively: it is external through the
+  // `external` option and still gets written relative to the output directory.
+  itBundled("plugin/ResolveNoMatchExternalFileRelativeToOutdir", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { a } from "./lib/a.js";
+        console.log(a);
+      `,
+      "/src/lib/a.js": `export const a = "a";`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /lib\/a\.js$/ }, () => undefined);
+    },
+    external: ["./src/lib/a.js"],
+    outdir: "/out/deep",
+    onAfterBundle(api) {
+      api.expectFile("/out/deep/entry.js").toContain(`from "../../src/lib/a.js"`);
+    },
+    run: { file: "/out/deep/entry.js", stdout: "a" },
+  });
   for (const format of ["esm", "cjs"] as const) {
     itBundled(`plugin/ResolveExternalRewritesRelativeImport_${format}`, {
       files: {

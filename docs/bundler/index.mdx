@@ -893,6 +893,27 @@ To mark all imports as external, use the wildcard `*`:
   </Tab>
 </Tabs>
 
+An entry that starts with `./`, `../` or `/` names a single file instead of a package. It is resolved from the current working directory. A relative import of that file is rewritten to be relative to `outdir` (to the current working directory when there is no `outdir`), so that it still reaches the file from where the bundle is written. An import that spells out the absolute path is left as written.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './out',
+      external: ['./src/config.js'],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./out --external ./src/config.js
+    ```
+  </Tab>
+</Tabs>
+
+Here `src/index.ts` imports `./config.js`, and `out/index.js` contains `import { config } from "../src/config.js"`.
+
 ### packages
 
 Controls whether package dependencies are included in the bundle. Possible values: `bundle` (default), `external`. Bun treats any import whose path does not start with `.`, `..`, or `/` as a package.

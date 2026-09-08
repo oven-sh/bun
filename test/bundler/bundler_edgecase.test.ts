@@ -1780,6 +1780,50 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
+  // A file marked external is written relative to the output directory, as esbuild does. The specifier
+  // in the source was relative to the importer and does not reach the file from the output directory.
+  itBundled("edgecase/ExternalFileRelativeToOutdir", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { a } from "./lib/a.js";
+        const { b } = await import("../src/lib/b.js");
+        console.log(a, b);
+      `,
+      "/src/lib/a.js": `export const a = "a";`,
+      "/src/lib/b.js": `export const b = "b";`,
+    },
+    external: ["./src/lib/a.js", "{{root}}/src/lib/b.js"],
+    outdir: "/out/deep",
+    onAfterBundle(api) {
+      const file = api.readFile("/out/deep/entry.js");
+      expect([...file.matchAll(/"([^"]*\/[ab]\.js)"/g)].map(m => m[1])).toEqual([
+        "../../src/lib/a.js",
+        "../../src/lib/b.js",
+      ]);
+    },
+    run: { file: "/out/deep/entry.js", stdout: "a b" },
+  });
+  test("Bun.build with no outdir writes an external file relative to the cwd", async () => {
+    using dir = tempDir("external-file-no-outdir", {
+      "src/entry.js": `import { a } from "./lib/a.js";\nconsole.log(a);`,
+      "src/lib/a.js": `export const a = "a";`,
+      "build.js": /* js */ `
+        const build = await Bun.build({ entrypoints: ["./src/entry.js"], external: ["./src/lib/a.js"] });
+        console.log(await build.outputs[0].text());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`from "./src/lib/a.js"`);
+    expect(exitCode).toBe(0);
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

@@ -721,9 +721,7 @@ function expectBundled(
     const entryPaths = entryPoints.map(file => path.join(root, file));
 
     if (external) {
-      external = external.map(x =>
-        typeof x !== "string" ? x : x.replaceAll("{{root}}", root.replaceAll("\\", "\\\\")),
-      );
+      external = external.map(x => (typeof x !== "string" ? x : x.replaceAll("{{root}}", root)));
     }
 
     if (generateOutput === false) outputPaths = [];

@@ -1918,7 +1918,9 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toContain('from "."');
+    // External, and written relative to the output directory (the cwd when the bundle goes to stdout).
+    expect(stdout).toContain('from "./lib"');
+    expect(stdout).not.toContain('"index"');
     expect(exitCode).toBe(0);
   });
 

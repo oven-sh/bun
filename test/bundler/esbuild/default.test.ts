@@ -2243,7 +2243,6 @@ describe.concurrent("bundler", () => {
     external: ["@scope/foo"],
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
-    todo: true,
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `

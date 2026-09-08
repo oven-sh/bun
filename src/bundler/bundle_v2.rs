@@ -2588,6 +2588,14 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                if let Some(new_path) =
+                    self.external_import_record_path(&resolve_result, &import_record.specifier)
+                {
+                    self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize]
+                        .path = new_path;
+                }
                 return;
             }
 
@@ -6008,6 +6016,52 @@ pub mod bv2_impl {
             Ok(out)
         }
 
+        /// The path to print for an import record whose resolution is external,
+        /// or `None` to keep the specifier as written.
+        fn external_import_record_path(
+            &self,
+            resolve_result: &_resolver::Result,
+            specifier: &[u8],
+        ) -> Option<Fs::Path<'static>> {
+            let resolved = &resolve_result.path_pair.primary;
+            match resolve_result.flags.external_kind() {
+                _resolver::ExternalKind::NotExternal | _resolver::ExternalKind::External => None,
+                _resolver::ExternalKind::ExternalRewritePath => {
+                    if strings::eql_long(resolved.text, specifier, true) {
+                        None
+                    } else {
+                        Some(path_as_static(resolved))
+                    }
+                }
+                _resolver::ExternalKind::ExternalRelativeToOutputDir => Some(Fs::Path::init(
+                    self.specifier_relative_to_output_dir(resolved.text),
+                )),
+            }
+        }
+
+        /// `abs_path` relative to the output directory (the cwd when there is
+        /// none), with forward slashes and a leading `./` or `../`. This is how
+        /// esbuild prints an external module that is a file.
+        fn specifier_relative_to_output_dir(&self, abs_path: &[u8]) -> &'static [u8] {
+            use bun_paths::resolve_path::{join_abs_string_buf, platform, relative_platform};
+            let mut output_dir_buf = bun_paths::path_buffer_pool::get();
+            let output_dir = join_abs_string_buf::<platform::Auto>(
+                self.transpiler.fs().top_level_dir,
+                &mut **output_dir_buf,
+                &[&self.transpiler.options.output_dir],
+            );
+            let rel = relative_platform::<platform::Auto, false>(output_dir, abs_path);
+            let prefix: &[u8] = if is_package_path(rel) { b"./" } else { b"" };
+            let out = self
+                .arena()
+                .alloc_slice_fill_copy(prefix.len() + rel.len(), 0u8);
+            out[..prefix.len()].copy_from_slice(prefix);
+            out[prefix.len()..].copy_from_slice(rel);
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(out);
+            // SAFETY: allocated in the bundle arena, which outlives every `ImportRecord`.
+            unsafe { interned_slice(out) }
+        }
+
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6669,15 +6723,10 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
-                    if resolve_result.flags.external_kind()
-                        == bun_resolver::ExternalKind::ExternalRewritePath
-                        && !strings::eql_long(
-                            resolve_result.path_pair.primary.text,
-                            import_record.path.text,
-                            true,
-                        )
+                    if let Some(path) =
+                        self.external_import_record_path(&resolve_result, import_record.path.text)
                     {
-                        import_record.path = path_as_static(&resolve_result.path_pair.primary);
+                        import_record.path = path;
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,

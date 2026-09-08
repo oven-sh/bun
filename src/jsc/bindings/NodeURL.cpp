@@ -3,6 +3,7 @@
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
+#include <wtf/text/StringCommon.h>
 #include <unicode/uidna.h>
 
 namespace Bun {
@@ -113,6 +114,51 @@ bool hasValidPunycodeHost(WTF::StringView host)
             return verdict == ASCIIHostPunycodeVerdict::Valid;
     }
     return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
+}
+
+template<typename CharacterType>
+static bool containsXNDashDash(std::span<const CharacterType> host)
+{
+    // "--" is rare in hosts; look for it and check the two characters before it. Special-scheme hosts are lowercase here.
+    for (size_t i = WTF::find(host, '-'); i != notFound && i + 1 < host.size(); i = WTF::find(host, '-', i + 1)) {
+        if (host[i + 1] == '-' && i >= 2 && host[i - 2] == 'x' && host[i - 1] == 'n')
+            return true;
+    }
+    return false;
+}
+
+bool hasValidParsedHost(const WTF::URL& url, const WTF::String& input)
+{
+    auto host = url.host();
+    if (host.length() < 4 || !(host.is8Bit() ? containsXNDashDash(host.span8()) : containsXNDashDash(host.span16())))
+        return true;
+    // Non-special schemes have opaque hosts and skip IDNA entirely.
+    if (!url.hasSpecialScheme())
+        return true;
+    // An xn-- label that ICU produced from a Unicode host is valid by construction; only one that was literally in the
+    // input needs checking. If this input supplied the host, it did so from its authority: after the scheme and any
+    // slashes, up to the next slash, '?' or '#'. Tabs and newlines are removed anywhere and percent-encoding is decoded
+    // in hosts, so either could hide a literal label.
+    StringView view(input);
+    if (view.find([](char16_t character) { return character == '\t' || character == '\n' || character == '\r'; }) != notFound)
+        return hasValidPunycodeHost(host);
+    unsigned start = 0;
+    while (start < view.length() && view[start] <= ' ')
+        ++start;
+    if (start < view.length() && isASCIIAlpha(view[start])) {
+        unsigned schemeEnd = start + 1;
+        while (schemeEnd < view.length() && (isASCIIAlphanumeric(view[schemeEnd]) || view[schemeEnd] == '+' || view[schemeEnd] == '-' || view[schemeEnd] == '.'))
+            ++schemeEnd;
+        if (schemeEnd < view.length() && view[schemeEnd] == ':')
+            start = schemeEnd + 1;
+    }
+    while (start < view.length() && (view[start] == '/' || view[start] == '\\'))
+        ++start;
+    auto authority = view.substring(start);
+    authority = authority.left(std::min<size_t>(authority.find([](char16_t character) { return character == '/' || character == '\\' || character == '?' || character == '#'; }), authority.length()));
+    if (authority.find('%') == notFound && !authority.containsIgnoringASCIICase("xn--"_s))
+        return true;
+    return hasValidPunycodeHost(host);
 }
 
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input

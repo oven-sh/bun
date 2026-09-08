@@ -12,6 +12,7 @@
 #include "wtf/SIMDUTF.h"
 #include "JSDOMURL.h"
 #include "DOMURL.h"
+#include "NodeURLHelpers.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
 #include "MimallocWTFMalloc.h"
@@ -600,7 +601,7 @@ extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObjec
     }
 
     auto url = WTF::URL(str);
-    if (!url.isValid() || url.isNull())
+    if (!url.isValid() || url.isNull() || !Bun::hasValidParsedHost(url, str))
         return nullptr;
 
     return new WTF::URL(WTF::move(url));
@@ -617,7 +618,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
     }
 
     auto url = WTF::URL(str);
-    if (!url.isValid() || url.isEmpty())
+    if (!url.isValid() || url.isEmpty() || !Bun::hasValidParsedHost(url, str))
         return { BunStringTag::Dead };
 
     return Bun::toStringRef(url.string());
@@ -627,7 +628,7 @@ extern "C" BunString URL__getHref(const BunString* input)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
-    if (!url.isValid() || url.isEmpty())
+    if (!url.isValid() || url.isEmpty() || !Bun::hasValidParsedHost(url, str))
         return { BunStringTag::Dead };
 
     return Bun::toStringRef(url.string());
@@ -647,8 +648,11 @@ extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString*
 {
     auto base = baseStr->toWTFString();
     auto relative = relativeStr->toWTFString();
-    auto url = WTF::URL(WTF::URL(base), relative);
-    if (!url.isValid() || url.isEmpty())
+    auto baseURL = WTF::URL(base);
+    if (!baseURL.isValid() || !Bun::hasValidParsedHost(baseURL, base))
+        return { BunStringTag::Dead };
+    auto url = WTF::URL(baseURL, relative);
+    if (!url.isValid() || url.isEmpty() || !Bun::hasValidParsedHost(url, relative))
         return { BunStringTag::Dead };
 
     return Bun::toStringRef(url.string());
@@ -666,7 +670,7 @@ extern "C" WTF::URL* URL__fromString(const BunString* input)
 {
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
-    if (!url.isValid())
+    if (!url.isValid() || !Bun::hasValidParsedHost(url, str))
         return nullptr;
 
     return new WTF::URL(WTF::move(url));

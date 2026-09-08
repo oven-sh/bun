@@ -9,6 +9,14 @@ const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman
 const COMMON_CERT = { ...tls };
 
 describe.concurrent("WebSocket", () => {
+  it("rejects a host with an invalid punycode label, like new URL", () => {
+    for (const host of ["xn--a.localhost", "xn--.localhost", "a.xn--0ug.localhost"]) {
+      const href = `ws://${host}/`;
+      expect(URL.canParse(href)).toBe(false);
+      expect(() => new WebSocket(href)).toThrow(SyntaxError);
+    }
+  });
+
   it("should connect", async () => {
     using server = Bun.serve({
       port: 0,

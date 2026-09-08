@@ -67,6 +67,26 @@ it("new Request(invalid url) throws", () => {
   expect(() => new Request("!")).toThrow();
 });
 
+it("fetch and Request reject a host with an invalid punycode label, like new URL", async () => {
+  // `URL.canParse` is the validity gate apps use before fetch. A host whose
+  // xn-- label is not valid punycode fails that gate, so fetch and Request
+  // must not resolve and connect to it.
+  for (const host of ["xn--a.localhost", "xn--.localhost", "a.xn--0ug.localhost"]) {
+    const href = `http://${host}/x`;
+    expect(URL.canParse(href)).toBe(false);
+    expect(() => new Request(href)).toThrow(TypeError);
+    const rejection = await fetch(href).then(
+      () => "resolved",
+      e => e,
+    );
+    expect(rejection).toBeInstanceOf(TypeError);
+    expect(rejection.code).toBe("ERR_INVALID_URL");
+  }
+  // A valid punycode label still parses and is accepted.
+  expect(URL.canParse("http://xn--bcher-kva.localhost/")).toBe(true);
+  expect(new Request("http://xn--bcher-kva.localhost/").url).toBe("http://xn--bcher-kva.localhost/");
+});
+
 describe("fetch data urls", () => {
   it("basic", async () => {
     var url =

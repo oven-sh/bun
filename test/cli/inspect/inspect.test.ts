@@ -295,6 +295,49 @@ describe("websocket", () => {
   // FIXME: Depends on https://github.com/oven-sh/bun/pull/4649
   test.todo("bun --inspect=ws+unix:///tmp/inspect.sock");
 
+  test("the --inspect banner also lists the endpoint opened for BUN_INSPECT", async () => {
+    // The editor extension exports BUN_INSPECT and relies on that endpoint even
+    // when a flag is passed too (its test debugger adds --inspect-brk), so both
+    // stay open; the flag's banner names the second one instead of hiding it.
+    const envPath = "/" + Math.random().toString(36).slice(2);
+    const flagPath = "/" + Math.random().toString(36).slice(2);
+    inspectee = spawn({
+      cwd: import.meta.dir,
+      cmd: [bunExe(), "--inspect=ws://127.0.0.1:0" + flagPath, "inspectee.js"],
+      env: { ...bunEnv, BUN_INSPECT: "ws://127.0.0.1:0" + envPath },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let stderr = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of inspectee.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      // The banner is framed by two "Bun Inspector" rules.
+      if (stderr.split("Bun Inspector").length > 2) break;
+    }
+    const urls = stripAnsi(stderr)
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("ws://"))
+      .map(line => new URL(line));
+    expect(urls.map(url => url.pathname)).toEqual([flagPath, envPath]);
+    expect(stripAnsi(stderr)).toContain("BUN_INSPECT:\n  ws://127.0.0.1:");
+
+    for (const url of urls) {
+      const webSocket = new WebSocket(url);
+      const { promise: opened, resolve, reject } = Promise.withResolvers<void>();
+      webSocket.addEventListener("open", () => resolve());
+      webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      await opened;
+      const { promise: reply, resolve: onMessage } = Promise.withResolvers<unknown>();
+      webSocket.addEventListener("message", ({ data }) => onMessage(JSON.parse(data.toString())));
+      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+      expect(await reply).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
+      webSocket.close();
+    }
+  });
+
   afterEach(() => {
     inspectee?.kill();
   });
@@ -453,72 +496,6 @@ describe("unix domain socket without websocket", () => {
     test("BUN_INSPECT='unix:' bun --inspect", async () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
-    });
-
-    test("an explicit --inspect flag replaces BUN_INSPECT instead of opening both", async () => {
-      // An editor's debug terminal exports BUN_INSPECT (often with ?wait=1) to
-      // every child. A stale value must not add a second, unannounced listener
-      // next to the one the flag asked for, nor make the flag run block.
-      const envSocket = randomSocketPath();
-      // The extension pairs BUN_INSPECT with BUN_INSPECT_NOTIFY and attaches to
-      // the BUN_INSPECT endpoint when pinged; a flag run must not ping it.
-      let notified = false;
-      using notifyListener = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: {
-          open: () => void (notified = true),
-          data: () => void (notified = true),
-        },
-      });
-      await using inspectee = spawn({
-        cwd: import.meta.dir,
-        cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/" + Math.random().toString(36).slice(2), "inspectee.js"],
-        env: {
-          ...bunEnv,
-          BUN_INSPECT: "ws+unix://" + join(process.cwd(), envSocket) + "?wait=1",
-          BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${notifyListener.port}`,
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      let url: URL | undefined;
-      let stderr = "";
-      const decoder = new TextDecoder();
-      for await (const chunk of inspectee.stderr as ReadableStream) {
-        stderr += decoder.decode(chunk);
-        for (const line of stderr.split("\n")) {
-          try {
-            url = new URL(line.trim());
-          } catch {}
-          if (url?.protocol === "ws:") break;
-        }
-        if (url?.protocol === "ws:") break;
-      }
-      if (!url) {
-        process.stderr.write(stderr);
-        throw new Error("Unable to find listening URL");
-      }
-      expect(url.hostname).toBe("127.0.0.1");
-
-      // The env listener is started before the flag listener on the debugger
-      // thread, so by the time the flag's banner is printed it would exist.
-      expect(fs.existsSync(envSocket)).toBe(false);
-
-      // BUN_INSPECT's ?wait=1 must not leak into the flag run: the script
-      // starts without a debugger attached.
-      let stdout = "";
-      for await (const chunk of inspectee.stdout as ReadableStream) {
-        stdout += decoder.decode(chunk);
-        if (stdout.includes("\n")) break;
-      }
-      expect(stdout.split("\n")[0]).toBe("Hello");
-
-      // The notify ping is sent right after the banner, before the script runs.
-      inspectee.kill();
-      await inspectee.exited;
-      expect(notified).toBe(false);
     });
   }
 });

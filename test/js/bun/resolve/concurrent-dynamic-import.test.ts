@@ -43,12 +43,15 @@ describe.concurrent("concurrent dynamic imports of disjoint graphs evaluate in a
   const rounds = 5;
   // Padded modules take longer to transpile, so completion order alone would
   // put the padded graph last regardless of its shape.
-  const padding = Array.from({ length: 50 }, (_, i) => `export function pad${i}(x) { return x * ${i} + 1; }`).join("\n");
+  const padding = Array.from({ length: 50 }, (_, i) => `export function pad${i}(x) { return x * ${i} + 1; }`).join(
+    "\n",
+  );
 
   function chain(files: Record<string, string>, name: string, round: number, depth: number, pad: string) {
     for (let i = 1; i <= depth; i++) {
       const next = i < depth ? `import "./${name}${i + 1}_${round}.mjs";\n` : "";
-      files[`${name}${i}_${round}.mjs`] = `${next}globalThis.order.push("${name}${i}");\n${pad}\nexport const v = ${i};\n`;
+      files[`${name}${i}_${round}.mjs`] =
+        `${next}globalThis.order.push("${name}${i}");\n${pad}\nexport const v = ${i};\n`;
     }
   }
 

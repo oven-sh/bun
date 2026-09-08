@@ -5804,8 +5804,7 @@ impl VirtualMachine {
             return;
         }
 
-        // Pick the top-most non-builtin frame for source preview. If there is
-        // none, `top_frame_is_builtin` stays set and no source is excerpted.
+        // Pick the top-most non-builtin frame for source preview.
         let mut top: usize = 0;
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
@@ -6896,8 +6895,7 @@ impl VirtualMachine {
     }
 }
 
-/// Whether a frame's source URL names one of bun's bundled `src/js` modules
-/// (named in `src/codegen/bundle-modules.ts`), whose source is not user code.
+/// Whether `url` names one of bun's bundled `src/js` modules (see `bundle-modules.ts`).
 fn is_bun_module_url(url: &bun_core::String) -> bool {
     url.starts_with_ascii(b"bun:")
         || url.starts_with_ascii(b"node:")

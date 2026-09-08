@@ -1402,8 +1402,7 @@ impl<'a> Options<'a> {
     }
 }
 
-/// Globals the printer spells by name for a synthesized value (`ENumber` NaN,
-/// `EUndefined`) that some binding in the file declares too.
+/// Globals the printer spells by name for synthesized values that the file also binds.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ShadowedGlobalNames {
     pub nan: bool,
@@ -1711,11 +1710,9 @@ pub(crate) mod __gated_printer {
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
-        /// The file declares its own `NaN` / `undefined` binding and no bundler
-        /// renamer moved it aside, so the bare global name could resolve to it.
+        /// Set by `print_ast`, where no bundler renamer moved such a binding aside.
         pub(crate) shadowed_globals: ShadowedGlobalNames,
-        /// Depth of `with` statement bodies around the current print position;
-        /// inside one, any bare global name may resolve to a property instead.
+        /// Depth of enclosing `with` bodies, where a bare global name may hit a property.
         pub(crate) with_nesting: u32,
 
         /// Arena for transient allocations during printing (rope flattening,
@@ -2178,8 +2175,7 @@ pub(crate) mod __gated_printer {
             self.with_nesting == 0 && !self.shadowed_globals.nan
         }
 
-        /// Without a bundler renamer nothing reserves `Infinity`, so only trust
-        /// the bare name when one ran (the value prints as `1 / 0` otherwise).
+        /// Only a bundler renamer reserves `Infinity`. Without one the value prints as `1 / 0`.
         fn infinity_is_global_here(&self) -> bool {
             self.with_nesting == 0 && self.options.has_run_symbol_renamer
         }
@@ -6978,8 +6974,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.print(b"NaN");
                 } else {
-                    // Only where `NaN` could be captured: `0 / 0` need not evaluate
-                    // to the same NaN bit pattern as the global.
+                    // Not used everywhere: `0 / 0` need not have the global's NaN bit pattern.
                     let wrap = level.gte(Level::Multiply);
                     if wrap {
                         self.print(b"(");

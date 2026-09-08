@@ -297,7 +297,10 @@ test("yaml", async () => {
 test("ill-formed UTF-8", async () => {
   // {"key":"A E9 B C3 Z 80 FF [é€😀]"}: E9 and C3 start a sequence that the
   // next byte does not continue, 80 is a continuation byte on its own, FF is
-  // never valid, and the bracket holds valid 2, 3 and 4 byte sequences.
+  // never valid, and the bracket holds valid 2, 3 and 4 byte sequences. Every
+  // bad sequence breaks at its second byte, so one U+FFFD per bad byte (the
+  // printer) and one per maximal subpart (TextDecoder, the runtime JSON
+  // loader) give the same string and all import paths agree.
   const code = Buffer.concat([
     Buffer.from('{"key":"'),
     Buffer.from("41e942c35a80ff5bc3a9e282acf09f98805d", "hex"),

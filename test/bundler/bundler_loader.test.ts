@@ -441,7 +441,9 @@ describe("bundler", async () => {
     // E9 and C3 start a sequence that the next byte does not continue, 80 is a
     // continuation byte on its own, FF is never valid, the bracket holds valid
     // 2, 3 and 4 byte sequences, and the E2 at the end is cut off by the end
-    // of the file.
+    // of the file. Every bad sequence here breaks at its second byte, so one
+    // U+FFFD per bad byte (the printer) and one per maximal subpart
+    // (TextDecoder) give the same string.
     const body = Buffer.from("41e942c35a80ff5bc3a9e282acf09f98805d", "hex");
     const text = Buffer.concat([body, Buffer.from([0xe2])]);
     const json = Buffer.concat([Buffer.from('{"key":"'), body, Buffer.from('"}')]);

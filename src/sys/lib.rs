@@ -8973,11 +8973,8 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
-    /// If the destination already exists (a concurrent process published an
-    /// equivalent tree first, e.g. a shared package cache entry), keep it and
-    /// delete the source instead of atomically replacing it. Replacing would
-    /// yank entries out from under processes still reading the existing tree,
-    /// and swapping it into the source leaks the temp directory (#33977).
+    /// If the destination already exists, keep it and delete the source
+    /// instead of replacing it (first writer wins).
     pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
@@ -9060,8 +9057,6 @@ pub(crate) fn renameat_concurrently_without_fallback(
 
             if opts.keep_existing_destination && matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
             {
-                // Another process won the race; its tree is equivalent to
-                // ours and may already have readers, so drop our copy.
                 delete_source();
                 break 'attempt;
             }
@@ -9095,10 +9090,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
 
         //  sad path: let's try to delete the folder and then rename it
         if opts.keep_existing_destination {
-            // The errno didn't tell us whether the destination exists (e.g.
-            // EOPNOTSUPP when the filesystem lacks RENAME_NOREPLACE); check
-            // before deleting a tree another process may be reading. Windows
-            // `exists_at` is file-only, so ask for the directory explicitly.
+            // EOPNOTSUPP etc. don't say whether the destination exists; check.
             let dir_fd = if to_dir_fd.is_valid() {
                 to_dir_fd
             } else {
@@ -9476,9 +9468,7 @@ mod owned_handle_tests {
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
     }
 
-    /// With `keep_existing_destination`, losing the publish race keeps the
-    /// destination untouched and deletes the source instead of swapping the
-    /// two (which stranded the swapped-out tree in the temp dir, #33977).
+    /// `keep_existing_destination` keeps the destination and deletes the source.
     #[test]
     fn renameat_concurrently_keep_existing_destination() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
@@ -9504,13 +9494,11 @@ mod owned_handle_tests {
         )
         .expect("rename");
 
-        // The existing destination survives with its contents...
         assert!(
             exists_at(to_dir, ZStr::from_static(b"sub/winner\0")),
             "existing destination was replaced"
         );
-        // ...and the source was cleaned up rather than left (or swapped)
-        // behind. Windows `exists_at` is file-only, so check the directory.
+        // Windows `exists_at` is file-only, so check the directory.
         assert!(
             !directory_exists_at(root, ZStr::from_static(b"from/sub\0")).unwrap_or(false),
             "source left behind"

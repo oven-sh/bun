@@ -259,8 +259,6 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
-        // Delete the temp dir if extraction fails before it's renamed into the
-        // cache; defused on success.
         let tmpdir_cleanup = scopeguard::guard((), |()| {
             let _ = Dir::borrow(&self.temp_dir).delete_tree(tmpname.as_bytes());
         });
@@ -535,10 +533,8 @@ impl ExtractTarball {
             }
             let cache_dir = Dir::borrow(&self.cache_dir);
 
-            // An existing npm cache entry without package.json is invalid (the
-            // same check `package_missing_from_cache` uses), so no concurrent
-            // install reads from it. Delete it so the fresh copy below replaces
-            // it instead of being kept as an equivalent existing destination.
+            // An entry without package.json is invalid (see `package_missing_from_cache`);
+            // remove it so the rename below replaces it instead of keeping it.
             if self.resolution.tag == ResolutionTag::Npm {
                 let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
                 folder_name_z_buf[..folder_name.len()].copy_from_slice(folder_name);
@@ -622,10 +618,8 @@ impl ExtractTarball {
                                     | sys::Errno::EXIST => {
                                         let _ = sys::close(dir_to_move);
 
-                                        // A concurrent install sharing the cache published
-                                        // this entry first. Keep it (it may already have
-                                        // readers) and drop our equivalent copy instead of
-                                        // renaming it out from under them.
+                                        // A concurrent install published this entry first:
+                                        // keep it and drop our copy.
                                         if sys::directory_exists_at_w(
                                             Fd::from_std_dir(cache_dir),
                                             path_to_use,
@@ -673,15 +667,8 @@ impl ExtractTarball {
             }
             #[cfg(not(windows))]
             {
-                // Attempt to gracefully handle duplicate concurrent `bun install` calls
-                //
-                // By:
-                // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2. If the rename fails because the destination exists, a concurrent install
-                //    published an equivalent copy first: keep it and delete the temporary
-                //    directory version (`keep_existing_destination`).
-                //
-
+                // Concurrent `bun install` calls publish the same entry:
+                // first writer wins (`keep_existing_destination`).
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
                         let _ = bun_sys::make_path::make_path(cache_dir, folder);

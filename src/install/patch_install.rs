@@ -431,8 +431,7 @@ impl PatchTask {
 
         let system_tmpdir = self.tempdir;
 
-        // Delete the temp dir on failure; after a successful rename into the
-        // cache this is a no-op.
+        // No-op once the temp dir has been renamed into the cache.
         scopeguard::defer! {
             let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(tempdir_name.as_bytes());
         }

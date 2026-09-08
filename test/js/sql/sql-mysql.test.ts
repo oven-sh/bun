@@ -219,11 +219,12 @@ if (isDockerEnabled()) {
           expect(await sql`SELECT f, d FROM ${sql(t)} WHERE id > ${0} ORDER BY id`).toEqual(expected);
           expect(await sql`SELECT f, d FROM ${sql(t)} ORDER BY id`.simple()).toEqual(expected);
           // More digits than a FLOAT holds: the binary path returns the
-          // nearest f32, printed at its shortest (the text protocol rounds
-          // these to 6 significant digits instead).
-          await sql`INSERT INTO ${sql(t)} VALUES (7, 123456.789, 0), (8, 16777217, 0)`;
+          // nearest f32 at its shortest, never a decimal halfway to the next
+          // f32 (61885352 is exact in a FLOAT and stays 61885352, not
+          // 6.188535e7). The text protocol rounds these to 6 digits instead.
+          await sql`INSERT INTO ${sql(t)} VALUES (7, 123456.789, 0), (8, 16777217, 0), (9, 61885352, 0)`;
           expect((await sql`SELECT f FROM ${sql(t)} WHERE id >= ${7} ORDER BY id`).map(row => row.f)).toEqual([
-            123456.79, 16777216,
+            123456.79, 16777216, 61885352,
           ]);
         });
         test("YEAR not in the last column reads following columns correctly", async () => {

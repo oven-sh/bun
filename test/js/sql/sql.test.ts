@@ -1034,14 +1034,24 @@ if (isDockerEnabled()) {
       // real is the raw 4-byte float; a parameterless query gets text, where
       // the server prints the shortest decimal that round-trips. Widening the
       // binary f32 with `as f64` gave 0.10000000149011612 for a stored 0.1.
+      // 61885352 and 45860248 are exactly representable as real; the shortest
+      // digits that parse back to them (6.188535e7, 4.586025e7) sit exactly
+      // halfway to a neighbour, and float4out never prints those.
       const values =
-        "unnest(array[0.1, -0.1, 0.3, 1.5, -2.5, 1.0/3, 3.14159, 1e20, 3.4e38, 1e-40, 16777217, 123456.789, 0, 'NaN', 'Infinity', '-Infinity']::real[])";
-      const finite = [0.1, -0.1, 0.3, 1.5, -2.5, 0.33333334, 3.14159, 1e20, 3.4e38, 1e-40, 16777216, 123456.79, 0];
+        "unnest(array[0.1, -0.1, 0.3, 1.5, -2.5, 1.0/3, 3.14159, 1e20, 3.4e38, 1e-40, 16777217, 123456.789, 61885352, 45860248, 0, 'NaN', 'Infinity', '-Infinity']::real[])";
+      const finite = [
+        0.1, -0.1, 0.3, 1.5, -2.5, 0.33333334, 3.14159, 1e20, 3.4e38, 1e-40, 16777216, 123456.79, 61885352, 45860248, 0,
+      ];
       const expected = [...finite, NaN, Infinity, -Infinity];
       const binary = await sql.unsafe(`select x from ${values} as x where $1 = 1`, [1]);
       const text = await sql.unsafe(`select x from ${values} as x`);
       expect(binary.map(row => row.x)).toEqual(expected);
       expect(text.map(row => row.x)).toEqual(expected);
+      // A parameterless tagged template is prepared on first use and re-bound
+      // with known result fields after that, which used to flip it to binary.
+      for (let i = 0; i < 3; i++) {
+        expect((await sql`select 0.1::real as x, 61885352::real as y`)[0]).toEqual({ x: 0.1, y: 61885352 });
+      }
       // real[] is unchanged: a Float32Array of the stored values on the binary
       // path, a plain Array of the printed decimals on the text path.
       const array = "select array[0.1, 0.3333333, 1.5]::real[] as x";

@@ -385,13 +385,7 @@ impl<R> StyleRule<R> {
     /// otherwise a few hundred bytes of deeply nested multi-selector rules
     /// expand into gigabytes of cloned rules and output. See
     /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
-    ///
-    /// The expansion is charged twice, in this order: by selector count
-    /// (bounds how many rules/selectors materialize) and by estimated
-    /// serialized bytes (bounds their size; per-selector size is
-    /// input-controlled, so a few fat selectors could otherwise expand into
-    /// hundreds of megabytes while staying under the count cap). See
-    /// [`css_rules::MAX_SELECTOR_EXPANSION_BYTES`](super::MAX_SELECTOR_EXPANSION_BYTES).
+    /// Charged by count first, then by estimated bytes ([`super::MAX_SELECTOR_EXPANSION_BYTES`]).
     pub(crate) fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
@@ -409,8 +403,7 @@ impl<R> StyleRule<R> {
                 return Err(MinifyErr::minify_err);
             }
 
-            // Every expanded copy of one of this rule's selectors also repeats
-            // its ancestor chain, so charge chain bytes once per copy.
+            // Each expanded copy also repeats its ancestor chain: charge chain bytes once per copy.
             let own_bytes = selector::selector_list_weight(self.selectors.v.slice());
             let chain_bytes = context
                 .selector_expansion_chain_bytes
@@ -469,9 +462,7 @@ impl<R> StyleRule<R> {
             let len = self.selectors.v.len().max(1);
             context.selector_expansion_multiplier =
                 context.selector_expansion_multiplier.saturating_mul(len);
-            // Each expanded descendant selector is prefixed with one selector
-            // from this level; track the level's average selector weight as
-            // the chain-bytes contribution.
+            // Every expanded descendant is prefixed with one selector from this level.
             let avg_weight =
                 (selector::selector_list_weight(self.selectors.v.slice()) / len as u64).max(1);
             context.selector_expansion_chain_bytes = context

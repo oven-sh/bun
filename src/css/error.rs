@@ -494,9 +494,7 @@ pub enum MinifyErrorKind {
     /// Compiling nested rules for the configured browser targets would expand to
     /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
     selector_expansion_limit_exceeded,
-    /// Compiling nested rules for the configured browser targets would expand
-    /// selectors into more than
-    /// [`crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES`] estimated bytes.
+    /// Same expansion, bounded by [`crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES`] estimated bytes.
     selector_expansion_bytes_limit_exceeded,
     /// Rule minification failed without recording a more specific diagnostic on
     /// `MinifyContext::err`. Defensive fallback — every failing path is expected

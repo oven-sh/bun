@@ -222,16 +222,7 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
     selectors.into_boxed_slice()
 }
 
-/// Estimated serialized byte size of every selector in `selectors`, for
-/// weighting the selector-expansion budget
-/// ([`MAX_SELECTOR_EXPANSION_BYTES`](crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES)).
-///
-/// Counting expanded *selectors* alone does not bound the expansion's size:
-/// a selector's serialized form is input-controlled (long identifiers,
-/// multi-argument `:lang()`, raw custom pseudo-class arguments), so a few fat
-/// selectors multiplied through compiled nesting can reach hundreds of
-/// megabytes while staying under the count cap. This estimate only needs to
-/// be proportional to the serialized size, not exact.
+/// Rough serialized byte size of `selectors` (proportional, not exact), for [`crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES`].
 pub(crate) fn selector_list_weight(selectors: &[Selector]) -> u64 {
     let mut weight: u64 = 0;
     for selector in selectors {
@@ -303,13 +294,11 @@ fn ident_or_ref_weight(ident: css::css_values::ident::IdentOrRef) -> u64 {
 }
 
 fn pseudo_class_weight(pseudo: &PseudoClass) -> u64 {
-    // Longest built-in pseudo-class names are ~24 bytes (vendor prefixes
-    // included); variants carrying input-controlled payloads are measured.
+    // ~Longest built-in name with vendor prefix; input-controlled payloads are measured instead.
     const NAME: u64 = 24;
     match pseudo {
         PseudoClass::Lang { languages } => {
-            // Downleveling multiplies each language into its own `:lang()`
-            // inside `:is()`, so charge per-language overhead too.
+            // Downleveling wraps each language in its own `:lang()`, hence the per-language overhead.
             let mut w: u64 = 0;
             for lang in languages {
                 w = w.saturating_add(lang.len() as u64).saturating_add(8);
@@ -332,6 +321,17 @@ fn pseudo_element_weight(pseudo: &PseudoElement) -> u64 {
     match pseudo {
         PseudoElement::CueFunction { selector } | PseudoElement::CueRegionFunction { selector } => {
             NAME.saturating_add(selector_weight(selector))
+        }
+        PseudoElement::ViewTransitionGroup { part_name }
+        | PseudoElement::ViewTransitionImagePair { part_name }
+        | PseudoElement::ViewTransitionOld { part_name }
+        | PseudoElement::ViewTransitionNew { part_name } => NAME.saturating_add(match part_name {
+            parser::ViewTransitionPartName::All => 1,
+            parser::ViewTransitionPartName::Name(ident)
+            | parser::ViewTransitionPartName::Class(ident) => ident.v.len() as u64,
+        }),
+        PseudoElement::PickerFunction { identifier } => {
+            NAME.saturating_add(identifier.v.len() as u64)
         }
         PseudoElement::Custom { name } => NAME.saturating_add(name.len() as u64),
         PseudoElement::CustomFunction { name, arguments } => NAME
@@ -382,8 +382,7 @@ fn token_weight(token: &css::Token) -> u64 {
         | Token::BadUrl(v)
         | Token::Whitespace(v)
         | Token::Comment(v) => v.len() as u64,
-        // Numeric tokens serialize through dtoa's shortest round-trip
-        // form, which is bounded (<= ~17 bytes), so a constant covers them.
+        // Numerics print via dtoa's shortest round-trip form, which is at most ~17 bytes.
         Token::Number(_) => NUMERIC,
         Token::Percentage { .. } => NUMERIC.saturating_add(1),
         Token::Dimension(dim) => (dim.unit.len() as u64).saturating_add(NUMERIC),
@@ -1461,18 +1460,7 @@ pub(crate) mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
-    /// Maximum number of bytes parent-selector substitutions may emit across
-    /// a whole stylesheet.
-    ///
-    /// [`MAX_NESTING_EXPANSIONS`] bounds how many times `&` is substituted,
-    /// but each substitution writes the parent selector list, whose size is
-    /// input-controlled (long identifiers, long pseudo-class argument lists).
-    /// Substitution count × parent size lets a few KB of input print hundreds
-    /// of megabytes while staying under the count limit, so the bytes emitted
-    /// by substitutions are budgeted as well. Same judgment as
-    /// `MAX_PREFIX_EXPANSION_BYTES` (`rules/style.rs`): real stylesheets
-    /// substitute a tiny fraction of this; anything past it is a runaway
-    /// expansion.
+    /// Byte companion of [`MAX_NESTING_EXPANSIONS`], stylesheet-wide: the substituted parent list's size is input-controlled.
     const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
 
     fn serialize_nesting(
@@ -1498,25 +1486,33 @@ pub(crate) mod serialize {
                 None,
             );
         }
-        // Meter the bytes this substitution emits. Only the outermost
-        // substitution measures: recursive substitutions (the parent's own
-        // `&` referring to the grandparent) are contained in the outer span,
-        // so measuring them too would double-count.
-        let outermost = dest.nesting_expansion_meter_depth == 0;
-        let bytes_before = if outermost { dest.bytes_written() } else { 0 };
-        dest.nesting_expansion_meter_depth += 1;
-        let result = serialize_nesting_substitution(dest, ctx, first);
-        dest.nesting_expansion_meter_depth -= 1;
-        result?;
+        // The outermost substitution opens the metered span; every nested return re-checks it so the cap trips mid-expansion.
+        let outermost = dest.nesting_expansion_span_start.is_none();
         if outermost {
-            let emitted = dest.bytes_written().saturating_sub(bytes_before);
-            dest.nesting_expansion_bytes = dest.nesting_expansion_bytes.saturating_add(emitted);
-            if dest.nesting_expansion_bytes > MAX_NESTING_EXPANSION_BYTES {
-                return dest.new_error(
-                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
-                    None,
-                );
-            }
+            dest.nesting_expansion_span_start = Some(dest.bytes_written());
+        }
+        let result = serialize_nesting_substitution(dest, ctx, first)
+            .and_then(|()| charge_nesting_expansion_bytes(dest, outermost));
+        if outermost {
+            dest.nesting_expansion_span_start = None;
+        }
+        result
+    }
+
+    fn charge_nesting_expansion_bytes(dest: &mut Printer, commit: bool) -> Result<(), PrintErr> {
+        let written = dest.bytes_written();
+        let span_start = dest.nesting_expansion_span_start.unwrap_or(written);
+        let total = dest
+            .nesting_expansion_bytes
+            .saturating_add(written.saturating_sub(span_start));
+        if total > MAX_NESTING_EXPANSION_BYTES {
+            return dest.new_error(
+                crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                None,
+            );
+        }
+        if commit {
+            dest.nesting_expansion_bytes = total;
         }
         Ok(())
     }
@@ -1526,10 +1522,7 @@ pub(crate) mod serialize {
         ctx: &StyleContext,
         first: bool,
     ) -> Result<(), PrintErr> {
-        // If there's only one simple selector, just serialize it directly.
-        // Otherwise, use an :is() pseudo class.
-        // Type selectors are only allowed at the start of a compound selector,
-        // so use :is() if that is not the case.
+        // A lone simple selector serializes directly; otherwise wrap in :is() (type selectors must lead a compound).
         if ctx.selectors.v.len() == 1
             && (first
                 || (!has_type_selector(ctx.selectors.v.at(0)) && is_simple(ctx.selectors.v.at(0))))

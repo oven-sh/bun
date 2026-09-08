@@ -147,17 +147,10 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
-    /// Running total of bytes emitted by `&` parent-selector substitutions
-    /// (accumulated across the whole stylesheet, never reset). Complements
-    /// `nesting_expansions`: the count bounds how many substitutions happen,
-    /// this bounds what they emit: each substitution writes the parent
-    /// selector list, whose size is input-controlled. Bounded in
-    /// `serialize::serialize_nesting`.
+    /// Stylesheet-wide bytes written by completed `&` substitutions; bounded in `serialize::serialize_nesting`.
     pub(crate) nesting_expansion_bytes: usize,
-    /// Recursion depth of in-progress `serialize_nesting` substitutions; only
-    /// the outermost one measures its byte span into
-    /// `nesting_expansion_bytes` (inner substitutions are contained in it).
-    pub(crate) nesting_expansion_meter_depth: u32,
+    /// `bytes_written()` when the outermost in-progress `&` substitution began, if any.
+    pub(crate) nesting_expansion_span_start: Option<usize>,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -322,7 +315,7 @@ impl<'a> Printer<'a> {
             ctx: None,
             nesting_expansions: 0,
             nesting_expansion_bytes: 0,
-            nesting_expansion_meter_depth: 0,
+            nesting_expansion_span_start: None,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }

@@ -18,12 +18,14 @@ import { expect, test } from "bun:test";
 // instead of materializing the blowup.
 
 const CHROME_80 = { chrome: 80 << 16 };
+// Supports :is() (no vendor-prefix passes) but not CSS nesting, so nesting is compiled away.
+const CHROME_100 = { chrome: 100 << 16 };
 
 /** Runs minifyTest and folds the outcome into a short string so a failing
  * assertion reports the output's size instead of printing 100+ MB of CSS. */
-function minifyOutcome(css: string): string {
+function minifyOutcome(css: string, targets: object = CHROME_80): string {
   try {
-    return `output:${cssInternals.minifyTest(css, "", CHROME_80).length} bytes`;
+    return `output:${cssInternals.minifyTest(css, "", targets).length} bytes`;
   } catch (e) {
     return `error:${(e as Error).message}`;
   }
@@ -76,6 +78,14 @@ test("fat multi-argument :lang() selectors under the expansion count cap error i
   expect(minifyOutcome(css)).toMatch(/^error:.*bytes of selectors/);
 });
 
+test("fat functional pseudo-element arguments are weighed like ::part() names", () => {
+  // ~31 KB inputs; each expanded to ~500 MB of output before these payloads were measured.
+  for (const pseudo of ["view-transition-group", "view-transition-old", "picker"]) {
+    const css = fatNestedList(15, 1000, (ident, i) => `.a${i}::${pseudo}(${ident})`);
+    expect(minifyOutcome(css)).toMatch(/^error:.*bytes of selectors/);
+  }
+});
+
 test("fat `&` parent-selector substitution errors instead of printing hundreds of MB", () => {
   // 13 KB input; 2^16 substitutions of an 800-byte parent printed ~107 MB
   // before the byte budget existed.
@@ -87,6 +97,19 @@ test("fat `&` parent-selector substitution errors instead of printing hundreds o
   css += "color: red;\n";
   css += "}\n".repeat(16);
   expect(minifyOutcome(css)).toMatch(/^error:Maximum nesting expansion exceeded/);
+});
+
+test("a single `&` substitution that expands a fat ancestor chain is bounded mid-expansion", () => {
+  // The ancestors have no declarations, so only the innermost `&` prelude is
+  // printed: one outermost substitution performing 2^16 - 1 nested ones.
+  // 33 KB input; printed ~135 MB before the byte budget existed.
+  const ident = Buffer.alloc(2048, "k").toString();
+  let css = "";
+  for (let i = 0; i < 16; i++) {
+    css += `&:is(.${ident}${i}, &.z${i}) {\n`;
+  }
+  css += "& { color: red; }\n" + "}\n".repeat(16);
+  expect(minifyOutcome(css, CHROME_100)).toMatch(/^error:Maximum nesting expansion exceeded/);
 });
 
 test("mid-size expansions below the byte budget still compile", () => {

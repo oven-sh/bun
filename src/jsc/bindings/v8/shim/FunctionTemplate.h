@@ -61,9 +61,6 @@ public:
     // Lazily create the prototype ObjectTemplate if unset.
     ObjectTemplate* ensurePrototypeTemplate(JSC::JSGlobalObject* globalObject);
 
-    WTF::Vector<TemplateProperty>& properties() { return m_properties; }
-    WTF::Vector<TemplateAccessor>& accessors() { return m_accessors; }
-
     void addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue value, unsigned attributes);
     void addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameGetterCallback getter, AccessorNameSetterCallback setter, JSC::JSValue data, unsigned attributes);
 

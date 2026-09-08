@@ -148,7 +148,6 @@ pub mod options {
     }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
-pub use crate::renamer;
 pub use crate::scan::scan_side_effects::SideEffects;
 
 pub(crate) use bun_ast::base::Ref;
@@ -419,8 +418,6 @@ pub mod Runtime {
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub(crate) type RuntimeImports = Runtime::Imports;
-
-pub use crate::p::P;
 
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.

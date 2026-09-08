@@ -342,7 +342,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     }
 }
 
-pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
@@ -1174,7 +1173,6 @@ pub use self::js_string::{JSString, JSStringView};
 
 #[path = "RefString.rs"]
 pub mod ref_string;
-pub use self::ref_string as RefString;
 
 pub mod jsc_abi;
 
@@ -1183,7 +1181,6 @@ pub mod debugger;
 pub use self::debugger as Debugger;
 #[path = "SavedSourceMap.rs"]
 pub mod saved_source_map;
-pub use self::saved_source_map as SavedSourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine / ModuleLoader / event_loop. Downstream-compat re-exports
@@ -1333,7 +1330,6 @@ pub mod codegen {
         }
     }
 }
-pub use self::codegen as Codegen;
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
 pub trait SysErrorJsc {

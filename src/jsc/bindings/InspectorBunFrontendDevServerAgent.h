@@ -13,7 +13,6 @@
 namespace Inspector {
 
 class FrontendRouter;
-class BackendDispatcher;
 class BunFrontendDevServerFrontendDispatcher;
 
 class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase, public Inspector::BunFrontendDevServerBackendDispatcherHandler {

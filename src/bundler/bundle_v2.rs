@@ -1372,8 +1372,6 @@ pub mod bv2_impl {
     bun_core::declare_scope!(ReachableFiles, visible);
     bun_core::declare_scope!(watcher, visible);
 
-    pub use bun_js_printer::MangledProps;
-
     // ══════════════════════════════════════════════════════════════════════════
     // CYCLEBREAK §Dispatch — vtables/hooks for T6 GENUINE deps (jsc/bake/runtime).
     // Low tier (bundler) names no high-tier types. High tier (runtime) provides
@@ -8023,9 +8021,6 @@ pub mod bv2_impl {
     // Re-export the canonical defs so `bundle_v2::` and `BundleThread::` paths
     // resolve to the same nominal type.
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
-
-    // re-exports
-    pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
     // Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention

@@ -53,13 +53,4 @@ inline void addWebCoreOpaqueRoot(Visitor&, ImplType*);
 template<typename Visitor, typename ImplType>
 inline void addWebCoreOpaqueRoot(Visitor&, ImplType&);
 
-template<typename Visitor>
-inline bool containsWebCoreOpaqueRoot(Visitor&, WebCoreOpaqueRoot);
-
-template<typename Visitor, typename ImplType>
-inline bool containsWebCoreOpaqueRoot(Visitor&, ImplType&);
-
-template<typename Visitor, typename ImplType>
-inline bool containsWebCoreOpaqueRoot(Visitor&, ImplType*);
-
 } // namespace WebCore

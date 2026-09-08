@@ -128,7 +128,7 @@ pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 // reflection helpers in `generics`; alias both spellings so value/property
 // modules can use `crate::generic::partial_cmp_f32` etc.
 pub use generics as generic;
-pub use generics::{implement_deep_clone, implement_hash};
+pub use generics::implement_deep_clone;
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
 pub use generics::{CssEql, DeepClone};
@@ -136,9 +136,7 @@ pub use generics::{CssEql, DeepClone};
 // re-exported above from `css_parser`; the *derive* of the same name lives in
 // the proc-macro crate.
 pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
-// Serializer + dtoa helpers live in the parser hub but are referenced as
-// `css::serializer` / `css::f32_length_with_5_digits` from value modules.
-pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
+pub use css_parser::to_css;
 
 #[path = "generics.rs"]
 pub mod generics;

@@ -47,7 +47,6 @@ pub mod visitors;
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 pub use crate::diagnostics::CompilerDiagnostic;
-pub use crate::diagnostics::ErrorCategory;
 pub use crate::diagnostics::GENERATED_SOURCE;
 pub use crate::diagnostics::Position;
 pub use crate::diagnostics::SourceLocation;

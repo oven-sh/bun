@@ -1093,6 +1093,86 @@ describe("bundler", () => {
         `);
       },
     });
+
+    // `--jsx-side-effects` on its own, with no other `--jsx-*` flag. The bunfig
+    // rows go through the arm of Arguments.rs that merges CLI flags into the
+    // `jsx` options bunfig.toml already created.
+    describe.each([
+      ["no bunfig", undefined, "react/jsx-dev-runtime"],
+      ["bunfig (no jsx keys)", 'logLevel = "error"\n', "react/jsx-dev-runtime"],
+      ['bunfig jsx = "react-jsx"', 'jsx = "react-jsx"\n', "react/jsx-runtime"],
+    ] as const)("cli: --jsx-side-effects alone [%s]", (_label, bunfig, expectedRuntime) => {
+      test.concurrent("drops the pure annotation without changing the runtime", async () => {
+        const files: Record<string, string> = {
+          "a.jsx": "export const a = <div />;\n",
+          "tsconfig.json": "{}",
+        };
+        if (bunfig !== undefined) files["bunfig.toml"] = bunfig;
+        using dir = tempDir("jsx-cli-side-effects", files);
+        const build = async (args: readonly string[]) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--no-bundle", ...args, "a.jsx"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+          return stdout;
+        };
+
+        const baseline = await build([]);
+        expect(baseline).toContain("/* @__PURE__ */");
+        expect(baseline).toContain(expectedRuntime);
+
+        const withFlag = await build(["--jsx-side-effects"]);
+        expect(withFlag).not.toContain("@__PURE__");
+        expect(withFlag).toContain(expectedRuntime);
+      });
+    });
+
+    test.concurrent("cli: --jsx-side-effects alone keeps an unused JSX element under --minify-syntax", async () => {
+      using dir = tempDir("jsx-cli-side-effects-bundle", {
+        "sx.jsx": `
+          function Boom() { globalThis.__hit = (globalThis.__hit || 0) + 1; return null; }
+          const h = (t, p, ...c) => { if (typeof t === "function") t(p); return { t, p, c }; };
+          const unused = <Boom />;
+          console.log("hit=" + (globalThis.__hit || 0));
+        `,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+      });
+      const buildAndRun = async (args: readonly string[], outfile: string) => {
+        {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "sx.jsx", "--minify-syntax", ...args, "--outfile", outfile],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+        }
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        return stdout.trim();
+      };
+
+      // JSX calls are pure by default, so the unused element is removed.
+      expect(await buildAndRun([], "a.js")).toBe("hit=0");
+      expect(await buildAndRun(["--jsx-side-effects"], "b.js")).toBe("hit=1");
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/6858

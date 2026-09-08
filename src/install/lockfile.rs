@@ -1928,8 +1928,7 @@ impl Lockfile {
             ZStr::from_buf(&tmpname_buf, written - 1)
         };
 
-        // The binary lockfile starts with a `#!/usr/bin/env bun` line, so it is
-        // executable. The process umask applies to both.
+        // bun.lockb starts with a `#!/usr/bin/env bun` line, so it is executable. umask applies.
         let mode: sys::Mode = if save_format == LockfileFormat::Text {
             0o666
         } else {

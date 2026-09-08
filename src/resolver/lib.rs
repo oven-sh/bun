@@ -792,8 +792,7 @@ pub mod fs {
             }
         }
 
-        /// POSIX path opens at cwd with `mode` (the process umask applies);
-        /// Windows opens under the process temp dir and ignores `mode`.
+        /// POSIX opens at cwd with `mode` (umask applies). Windows opens in the temp dir, no `mode`.
         pub fn create(&mut self, name: &ZStr, mode: bun_sys::Mode) -> crate::CrateResult<()> {
             #[cfg(not(windows))]
             {

@@ -969,7 +969,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
                 Locker locker { reader->cellLock() };
                 if (!reader->m_readRequests.isEmpty() && reader->m_readRequests.first().get()->kind() == ReadRequestKind::Promise) {
                     auto* readRequest = reader->m_readRequests.takeFirst().get();
-                    m_pendingRead.set(vm, this, uncheckedDowncast<JSPromise>(readRequest->m_context.get()));
+                    m_pendingRead.set(vm, this, uncheckedDowncast<JSPromise>(readRequest->context()));
                 }
             }
             // The spec's enqueue → CallPullIfNeeded equivalent: re-arm when this delivery

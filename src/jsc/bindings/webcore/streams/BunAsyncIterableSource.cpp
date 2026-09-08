@@ -68,9 +68,6 @@ void JSAsyncIteratorSourceOperation::visitChildrenImpl(JSCell* cell, Visitor& vi
     auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_iterator);
-    visitor.appendHidden(thisObject->m_controller);
-    visitor.appendHidden(thisObject->m_pullPromise);
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncIteratorSourceOperation);
@@ -80,9 +77,9 @@ void JSAsyncIteratorSourceOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pullPromise, "pullPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Iterator), "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Controller), "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::PullPromise), "pullPromise"_s);
 }
 
 static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
@@ -103,8 +100,8 @@ static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncItera
     auto& vm = getVM(globalObject);
     op->m_done = true;
     op->m_running = false;
-    if (auto* pullPromise = op->m_pullPromise.get()) {
-        op->m_pullPromise.clear();
+    if (auto* pullPromise = op->pullPromise()) {
+        op->clearPullPromise();
         pullPromise->fulfill(vm, jsUndefined());
     }
 }
@@ -114,8 +111,8 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     auto& vm = getVM(globalObject);
     op->m_done = true;
     op->m_running = false;
-    if (auto* pullPromise = op->m_pullPromise.get()) {
-        op->m_pullPromise.clear();
+    if (auto* pullPromise = op->pullPromise()) {
+        op->clearPullPromise();
         pullPromise->reject(vm, error);
     }
 }
@@ -124,7 +121,7 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
 // threw as well; drop the iterator and reject the pull with that. Runs no user JS.
 static void asyncIterAbandon(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
-    op->m_iterator.clear();
+    op->clearIterator();
     settlePullPromiseRejected(globalObject, op, error);
 }
 
@@ -136,7 +133,7 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
     JSValue endResult;
-    if (JSObject* controller = op->m_controller.get()) {
+    if (JSObject* controller = op->controller()) {
         MarkedArgumentBuffer noArgs;
         endResult = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).endPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, );
@@ -155,8 +152,8 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    JSObject* iterator = op->m_iterator.get();
-    op->m_iterator.clear();
+    JSObject* iterator = op->iterator();
+    op->clearIterator();
     if (!iterator) {
         settlePullPromiseResolved(globalObject, op);
         return;
@@ -184,8 +181,8 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
         RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
     bool swallowByCode = errorCodeIs(vm, error, "ERR_INVALID_STATE"_s);
 
-    JSObject* iterator = op->m_iterator.get();
-    op->m_iterator.clear();
+    JSObject* iterator = op->iterator();
+    op->clearIterator();
     JSValue thrown;
     if (iterator) {
         MarkedArgumentBuffer args;
@@ -244,7 +241,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
     }
 
     if (!value.isUndefinedOrNull()) {
-        JSObject* controller = op->m_controller.get();
+        JSObject* controller = op->controller();
         if (!controller) {
             asyncIterFinishSuccess(globalObject, op);
             RELEASE_AND_RETURN(scope, NextStep::Finished);
@@ -294,13 +291,13 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
         }
         if (op->m_cancelled)
             RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
-        JSObject* iterator = op->m_iterator.get();
+        JSObject* iterator = op->iterator();
         if (!iterator) {
             settlePullPromiseResolved(globalObject, op);
             return;
         }
         MarkedArgumentBuffer nextArgs;
-        nextArgs.append(op->m_controller ? JSValue(op->m_controller.get()) : jsUndefined());
+        nextArgs.append(op->controller() ? JSValue(op->controller()) : jsUndefined());
         JSValue nextFunction = iterator->get(globalObject, vm.propertyNames->next);
         RETURN_IF_EXCEPTION(scope, );
         if (op->m_cancelled) {
@@ -439,14 +436,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
     if (op->m_done || op->m_cancelled)
         return JSValue::encode(jsUndefined());
     if (JSObject* controller = callFrame->argument(1).getObject())
-        op->m_controller.set(vm, op, controller);
+        op->setController(vm, controller);
     if (op->m_running) {
-        if (auto* pullPromise = op->m_pullPromise.get())
+        if (auto* pullPromise = op->pullPromise())
             return JSValue::encode(pullPromise);
         return JSValue::encode(jsUndefined());
     }
     auto* pullPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    op->m_pullPromise.set(vm, op, pullPromise);
+    op->setPullPromise(vm, pullPromise);
     op->m_running = true;
     enterStreams(globalObject, [&] { driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
     RETURN_IF_EXCEPTION(scope, {});
@@ -461,8 +458,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
     op->m_cancelled = true;
-    JSObject* iterator = op->m_iterator.get();
-    op->m_iterator.clear();
+    JSObject* iterator = op->iterator();
+    op->clearIterator();
     // The pump is abandoned: whatever awaited pull() resolves, like the old converter.
     settlePullPromiseResolved(globalObject, op);
     if (!iterator)
@@ -554,7 +551,7 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     }
 
     auto* op = JSAsyncIteratorSourceOperation::create(vm, runtime->asyncIteratorSourceOperationStructure(zigGlobalObject));
-    op->m_iterator.set(vm, op, iterator);
+    op->setIterator(vm, iterator);
 
     auto* pullFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourcePull(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);

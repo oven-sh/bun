@@ -103,7 +103,7 @@ namespace WebCore {
     V(onAsyncIteratorRejectMicrotask)
 
 // owner: JSStreamPipeToOperation.cpp. context = the JSStreamPipeToOperation, EXCEPT
-// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, m_currentWrite
+// onPipeChunkDeferredWrite, whose context is an InternalFieldTuple{op, currentWrite
 // promise} and whose argument is the chunk (the pipe's deferred sink write job).
 // onPipeWriteSettled is registered as BOTH the fulfillment and the rejection handler of
 // every write-request promise (the pipe must react to every one).

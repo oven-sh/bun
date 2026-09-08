@@ -56,10 +56,6 @@ void JSCrossRealmTransformState::visitChildrenImpl(JSCell* cell, Visitor& visito
     auto* thisObject = uncheckedDowncast<JSCrossRealmTransformState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_port);
-    visitor.appendHidden(thisObject->m_backpressurePromise);
-    visitor.appendHidden(thisObject->m_readableController);
-    visitor.appendHidden(thisObject->m_writableController);
 }
 
 void JSCrossRealmTransformState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -67,10 +63,10 @@ void JSCrossRealmTransformState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyze
     auto* thisObject = uncheckedDowncast<JSCrossRealmTransformState>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_port, "port"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressurePromise, "backpressurePromise"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readableController, "readableController"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writableController, "writableController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Port), "port"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::BackpressurePromise), "backpressurePromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ReadableController), "readableController"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::WritableController), "writableController"_s);
 }
 
 } // namespace WebCore

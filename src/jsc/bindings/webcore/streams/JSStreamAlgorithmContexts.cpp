@@ -54,8 +54,6 @@ void JSStreamFromIterableContext::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_iterator);
-    visitor.appendHidden(thisObject->m_nextMethod);
 }
 
 void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -63,8 +61,8 @@ void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nextMethod, "nextMethod"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Iterator), "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::NextMethod), "nextMethod"_s);
 }
 
 } // namespace WebCore

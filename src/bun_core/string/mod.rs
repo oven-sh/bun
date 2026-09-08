@@ -1744,10 +1744,9 @@ pub mod lexer_tables {
     }
 
     crate::comptime_string_map! {
-        /// Identifier-shaped names that a generated top-level binding must not
-        /// use, mapped to an underscore-prefixed replacement: reserved words
-        /// (a syntax error) and the global value properties (`var NaN` would
-        /// shadow the `NaN` the printer emits for NaN literals).
+        /// Names a generated top-level binding must not use, each mapped to a
+        /// `_`-prefixed replacement: reserved words (a syntax error) and the
+        /// globals that printed literals read (`var NaN` shadows `NaN`).
         static UNSAFE_BINDING_NAME_REMAP: &'static [u8] = {
             // ES keywords (ES2015 §11.6.2.1)
             b"break" => b"_break",
@@ -1808,8 +1807,7 @@ pub mod lexer_tables {
         };
     }
 
-    /// Underscore-prefixed replacement for an unsafe binding name
-    /// (`b"if"` → `b"_if"`); `None` for any other input.
+    /// `b"if"` → `Some(b"_if")`; `None` when `s` is not in the table.
     #[inline]
     pub fn unsafe_binding_name_remap(s: &[u8]) -> Option<&'static [u8]> {
         UNSAFE_BINDING_NAME_REMAP.get(s).copied()

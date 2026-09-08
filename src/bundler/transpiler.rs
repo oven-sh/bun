@@ -2021,8 +2021,7 @@ fn parse_data_loader<'a>(
                     // actually-populated entries.
                     *visited.value_ptr = count as u32;
 
-                    // Two keys can mangle to one identifier (`{"if":1,"_if":2}`);
-                    // suffix the later one so each key gets its own binding.
+                    // `{"if":1,"_if":2}`: both keys mangle to `_if`; suffix the second.
                     let ident = match bun_core::MutableString::ensure_valid_identifier(name) {
                         Ok(boxed) => boxed,
                         Err(_) => return None,
@@ -2035,9 +2034,7 @@ fn parse_data_loader<'a>(
                         Ok(e) => Some(*e.value_ptr),
                         Err(_) => return None,
                     };
-                    // SAFETY: ARENA — `arena` outlives the returned
-                    // `ParseResult.ast`, so the copied name lives as long as
-                    // the symbol that points at it.
+                    // SAFETY: ARENA — `arena` outlives the returned `ParseResult.ast`.
                     let arena_ident: &[u8] = if let Some(mut tries) = start_tries {
                         let mut buf: Vec<u8> = Vec::with_capacity(ident.len() + 4);
                         buf.extend_from_slice(&ident);

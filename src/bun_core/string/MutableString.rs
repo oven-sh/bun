@@ -113,11 +113,9 @@ impl MutableString {
         Ok(mutable)
     }
 
-    /// Convert `str` to an ES identifier that is safe to declare at the top
-    /// level of a module: any run of non `ID_Continue` code points becomes a
-    /// single `_`, and reserved words / global value properties (`if`,
-    /// `NaN`) get a `_` prefix. Valid Unicode identifier code points
-    /// (including non-BMP) are preserved.
+    /// Convert `str` to an identifier that is safe to declare at module top
+    /// level: each run of non `ID_Continue` code points becomes one `_`, and
+    /// names in `UNSAFE_BINDING_NAME_REMAP` (`if`, `NaN`) get a `_` prefix.
     pub fn ensure_valid_identifier(str: &[u8]) -> Result<Box<[u8]>, AllocError> {
         // The result could be either the input borrow or a fresh allocation;
         // rather than a lifetime + Cow we always return owned `Box<[u8]>` and

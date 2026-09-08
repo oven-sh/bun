@@ -254,6 +254,9 @@ impl JSPromise {
         JSPromise::opaque_ref(p).status()
     }
 
+    /// The settled value, or an empty `JSValue` while pending. Reading a
+    /// rejection does not mark it handled: native code that consumes one
+    /// calls [`set_handled`](Self::set_handled) itself.
     pub fn result(&mut self, vm: &VM) -> JSValue {
         JSC__JSPromise__result(self, vm)
     }

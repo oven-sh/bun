@@ -841,6 +841,9 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
+                // A rejection is reported below through `unhandled_rejection`; keep the
+                // tracker from also reporting it while the loop spins.
+                promise.set_handled(vm.jsc_vm());
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.as_mut()
                     .wait_for_promise(promise)

@@ -3993,20 +3993,9 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 {
     UNUSED_PARAM(arg1);
 
-    // if the promise is rejected we automatically mark it as handled so it
-    // doesn't end up in the promise rejection tracker
-    switch (promise->status()) {
-    case JSC::JSPromise::Status::Rejected: {
-        if (!(promise->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag))
-            promise->markAsHandled();
-    }
-    // fallthrough intended
-    case JSC::JSPromise::Status::Fulfilled: {
-        return JSValue::encode(promise->result());
-    }
-    default:
+    if (promise->status() == JSC::JSPromise::Status::Pending)
         return JSValue::encode(JSValue {});
-    }
+    return JSValue::encode(promise->result());
 }
 
 [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0)

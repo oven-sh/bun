@@ -1079,6 +1079,8 @@ impl ServePlugins {
                         return Ok(());
                     }
                     jsc::js_promise::Status::Rejected => {
+                        // `handle_on_reject` reports it; keep it off the unhandled list.
+                        promise.set_handled(global.vm());
                         let value = promise.result(global.vm());
                         self.handle_on_reject(global, value);
                         return Ok(());

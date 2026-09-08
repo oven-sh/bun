@@ -410,7 +410,7 @@ For browsers that don't fully support logical properties, Bun's CSS bundler comp
 
 If the `:dir()` selector isn't supported, Bun generates additional fallbacks.
 
-Block-axis properties (`inset-block`, `margin-block`, `padding-block`, `border-block-*`) compile to the physical `top` and `bottom` properties. That is only equivalent in a horizontal writing mode, so content set in `writing-mode: vertical-rl` or `vertical-lr` needs targets that support logical properties natively.
+Block-axis properties (`inset-block`, `margin-block`, `padding-block`, `border-block-*`) compile to their physical top and bottom counterparts (`top`/`bottom`, `margin-top`/`margin-bottom`, and so on) with no per-direction rule. That is only equivalent in a horizontal writing mode, so content set in `writing-mode: vertical-rl` or `vertical-lr` needs targets that support logical properties natively.
 
 ### :dir() selector
 
@@ -465,7 +465,8 @@ The fallback infers direction from the element's language alone: the value `:lan
 nearest `lang` attribute on the element or an ancestor (or from the document). A `dir` attribute is invisible to
 `:lang()`, so `<div dir="rtl">` inside a page with `lang="en"` does not match the fallback for `:dir(rtl)`, and an
 Arabic page that sets `dir="ltr"` on an element still matches it. If your markup sets direction with `dir`, select on
-the attribute instead (`[dir="rtl"]`) or target browsers that support `:dir()`.
+the attribute instead (`.nav-arrow[dir="rtl"]` when the element carries it, `[dir="rtl"] .nav-arrow` when an ancestor
+does) or target browsers that support `:dir()`.
 
 </Warning>
 

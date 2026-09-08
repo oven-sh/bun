@@ -2495,7 +2495,7 @@ impl PathTemplate {
             Some(
                 self.placeholder
                     .hash
-                    .unwrap_or(bun_core::fmt::ContentHash::new(0, self.hash_len())),
+                    .unwrap_or_else(|| bun_core::fmt::ContentHash::new(0, self.hash_len())),
             ),
             &self.placeholder.target,
             sanitize_parent_dirs,

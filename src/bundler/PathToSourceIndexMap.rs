@@ -21,13 +21,18 @@ impl PathToSourceIndexMap {
     /// Source index by `record`'s path. An external file record never has one,
     /// even when its file is also bundled (e.g. as an entry point).
     pub(crate) fn get_record(&self, record: &ImportRecord) -> Option<IndexInt> {
+        self.get_record_as(record, record.path.text)
+    }
+
+    /// `get_record`, looked up under `text` (e.g. a dedup sibling's resolved path).
+    pub(crate) fn get_record_as(&self, record: &ImportRecord, text: &[u8]) -> Option<IndexInt> {
         if record
             .flags
             .contains(ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT)
         {
             return None;
         }
-        self.get(record.path.text)
+        self.get(text)
     }
 
     pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {

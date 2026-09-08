@@ -563,6 +563,28 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // BuildArtifact's readers delegate to Blob's, so a wrong `this` rejects like Blob's do.
+  test("BuildArtifact text/json/arrayBuffer reject instead of throwing on a wrong `this`", async () => {
+    const build = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+    });
+    const proto = Object.getPrototypeOf(build.outputs[0]);
+    for (const method of ["text", "json", "arrayBuffer"]) {
+      const result: unknown = proto[method].call(new Blob(["{}"]));
+      expect(result).toBeInstanceOf(Promise);
+      const reason = await (result as Promise<unknown>).then(
+        value => ({ resolved: value }),
+        error => error,
+      );
+      expect(reason).toBeInstanceOf(TypeError);
+      expect(reason.code).toBe("ERR_INVALID_THIS");
+      expect(reason.message).toStartWith("Expected this to be instanceof BuildArtifact");
+    }
+    expect(() => proto.slice.call(new Blob(["{}"]))).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+    );
+  });
+
   test("BuildArtifact properties", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties", {

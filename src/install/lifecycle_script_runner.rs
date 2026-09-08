@@ -650,6 +650,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 },
 
                 stream: false,
+                // The kernel kills the script when bun dies without a chance to
+                // forward a signal (SIGKILL, a crash), so no script outlives
+                // the install.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
                 ..Default::default()
             };
 
@@ -661,6 +666,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
+            // Before the spawn, so that no signal can end `bun install` between
+            // the child's start and the handler's installation.
+            #[cfg(unix)]
+            crate::lifecycle_signals::on_script_started(manager);
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
                 // argv is `[*const c_char; 4]` with trailing null — exactly the
@@ -670,6 +679,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ) {
                 Ok(Ok(s)) => s,
                 res => {
+                    #[cfg(unix)]
+                    crate::lifecycle_signals::on_script_exited();
                     #[cfg(windows)]
                     {
                         // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
@@ -842,6 +853,24 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
+        #[cfg(unix)]
+        if crate::lifecycle_signals::pending().is_some() {
+            // `bun install` received a signal and forwarded it to this script.
+            // Whatever the script's status, do not chain into its next
+            // script. `on_script_exited` dies by the signal after the last
+            // running script is gone.
+            if let Status::Signaled(signal) = status {
+                self.print_terminated_by(signal);
+            }
+            crate::lifecycle_signals::on_script_exited();
+            self.decrement_pending_script_tasks();
+            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+            return;
+        }
+        #[cfg(unix)]
+        crate::lifecycle_signals::on_script_exited();
+
         match status {
             Status::Exited(exit) => {
                 if exit.code > 0 {
@@ -960,15 +989,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
-                self.print_output();
-                let signal_code = bun_sys::SignalCode::from(signal);
-
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
-                    bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(&self.package_name),
-                    signal_code.fmt(Output::enable_ansi_colors_stderr()),
-                );
+                self.print_terminated_by(signal);
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
@@ -1012,6 +1033,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 ));
             }
         }
+    }
+
+    fn print_terminated_by(&mut self, signal: u8) {
+        self.print_output();
+        let signal_code = bun_sys::SignalCode::from(signal);
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
+            bstr::BStr::new(self.script_name()),
+            bstr::BStr::new(&self.package_name),
+            signal_code.fmt(Output::enable_ansi_colors_stderr()),
+        );
     }
 
     /// This function may free the *LifecycleScriptSubprocess
@@ -1086,6 +1118,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
+        // `bun install` is about to die by a forwarded signal. Start nothing new.
+        #[cfg(unix)]
+        if crate::lifecycle_signals::pending().is_some() {
+            return Ok(());
+        }
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),

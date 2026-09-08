@@ -586,6 +586,8 @@ button:not(:is(.primary, .secondary)) {
 }
 ```
 
+The prefixed `:-webkit-any()` and `:-moz-any()` forms accept only compound selectors. When an argument has a combinator, as in `h2:not(.sidebar *, footer *)`, Bun emits only the `:not(:is())` form.
+
 The converted selectors keep the specificity and behavior of the original.
 
 ### Math functions

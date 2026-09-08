@@ -13,6 +13,11 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
+            (
+                "endStartupJITDeferral",
+                __jsc_host_end_startup_jit_deferral,
+                0,
+            ),
         ],
     )
 }
@@ -74,6 +79,16 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     }
     Ok(JSValue::js_number(bytes as f64))
+}
+
+/// The program says it is now interactive: end the `bun build --compile` startup JIT deferral window
+/// (docs/bundler/executables.mdx "Startup optimizations"). No-op if it already ended or was never enabled.
+#[bun_jsc::host_fn]
+fn end_startup_jit_deferral(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    global
+        .vm()
+        .end_startup_jit_deferral_because(c"Bun.unsafe.endStartupJITDeferral");
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

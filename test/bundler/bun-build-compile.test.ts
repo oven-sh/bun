@@ -1020,3 +1020,116 @@ console.log(require("fs").statSync(big).size);`,
 });
 
 // file command test works well
+
+// `optimize.prelinkModules: false` / `--no-prelink-modules` is the only build that still loads compile+bytecode+esm
+// chunks through per-module module_info records instead of the embedded graph, and `optimize.bytecode: false` /
+// `--no-optimize-bytecode` the only one that embeds unoptimized bytecode; both must keep producing working output.
+describe("Bun.build compile optimize", () => {
+  const files = {
+    "entry.ts": `
+      import { a, bump, counter } from "./a";
+      import { b } from "./b";
+      console.log(a, b, counter);
+      bump();
+      console.log(counter, (await import("./lazy")).lazy());
+    `,
+    "a.ts": `
+      import { nameB } from "./b";
+      export let counter = 0;
+      export function bump() { counter++; }
+      export function nameA() { return "A"; }
+      export const a = "a:" + nameB();
+    `,
+    "b.ts": `
+      import { nameA } from "./a";
+      export function nameB() { return "B"; }
+      export const b = "b:" + nameA();
+    `,
+    "lazy.ts": `
+      import { counter } from "./a";
+      export function lazy() { return "lazy:" + counter; }
+    `,
+  };
+  const expected = "a:B b:A 0\n1 lazy:1\n";
+
+  async function runExe(exe: string) {
+    await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
+  }
+
+  test.each([
+    ["prelinkModules-off", { prelinkModules: false }],
+    ["bytecode-off", { bytecode: false }],
+    ["both-off", { prelinkModules: false, bytecode: false }],
+  ] as const)("optimize %s (Bun.build, esm + splitting)", async (tag, optimize) => {
+    using dir = tempDir("build-compile-optimize-" + tag, files);
+    const outfile = join(String(dir), "app-" + tag + (isWindows ? ".exe" : ""));
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      compile: { outfile },
+      bytecode: true,
+      format: "esm",
+      splitting: true,
+      optimize,
+    });
+    expect(result.logs.map(String).join("\n")).toBe("");
+    expect(result.success).toBe(true);
+    await runExe(outfile);
+  });
+
+  test.each([
+    ["--no-prelink-modules", ["--format=esm", "--no-prelink-modules"]],
+    ["--no-optimize-bytecode esm", ["--format=esm", "--no-optimize-bytecode"]],
+    ["--no-optimize-bytecode cjs", ["--format=cjs", "--no-optimize-bytecode"]],
+  ])("%s (CLI)", async (tag, flags) => {
+    using dir = tempDir("build-compile-optimize-cli", files);
+    const outfile = join(String(dir), "app" + (isWindows ? ".exe" : ""));
+    // cjs output has no top-level await.
+    const entry = flags.includes("--format=cjs") ? "entry-cjs.ts" : "entry.ts";
+    await Bun.write(
+      join(String(dir), "entry-cjs.ts"),
+      files["entry.ts"].replace("(await import(\"./lazy\")).lazy()", "require(\"./lazy\").lazy()"),
+    );
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--bytecode", ...flags, entry, "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    await runExe(outfile);
+  });
+
+  test("--no-optimize-bytecode without --compile (--outdir)", async () => {
+    using dir = tempDir("build-optimize-bytecode-outdir", {
+      "index.ts": `const f = (n: number) => n * 2; console.log(f(21));`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--bytecode", "--no-optimize-bytecode", "--target=bun", "index.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    expect(existsSync(join(String(dir), "out", "index.js.jsc"))).toBe(true);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "index.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("42\n");
+    expect(exitCode).toBe(0);
+  });
+});

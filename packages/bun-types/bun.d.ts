@@ -3424,6 +3424,36 @@ declare module "bun" {
     bytecodeDepth?: number;
 
     /**
+     * Startup optimizations for `bytecode` / `compile` builds. Each defaults to on when it applies.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+      /**
+       * Embed a pre-resolved module graph so the executable links its ES modules
+       * without resolving imports and exports by name at startup. Only used with
+       * `compile` + `bytecode: true` + `format: "esm"`.
+       * @default true
+       */
+      prelinkModules?: boolean;
+      /**
+       * Keep the JIT reluctant to compile while the executable starts up; the
+       * window ends when the program becomes interactive (first stdin data, first
+       * write to a terminal or stdout/stderr, event loop idle for 100ms,
+       * {@link Bun.unsafe.endStartupJITDeferral}) or after `maxMs`. `false` or
+       * `{ maxMs: 0 }` turns it off. Baked into the executable;
+       * `BUN_STARTUP_JIT_DEFERRAL=0|1` and `BUN_STARTUP_JIT_DEFERRAL_MS` override it
+       * at run time. Requires `compile`.
+       * @default { maxMs: 1500 }
+       */
+      startupJITDeferral?: boolean | { maxMs?: number };
+    };
+
+    /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
@@ -5398,6 +5428,22 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * End the startup JIT deferral window of a `bun build --compile` executable.
+     *
+     * While the window is open the JIT is reluctant to compile, so code that only
+     * runs during startup stays in the interpreter. Bun ends it on its own when the
+     * program becomes interactive (first stdin data, first write to a terminal or
+     * stdout/stderr, event loop idle for 100ms) or after `optimize.startupJITDeferral.maxMs`.
+     * An app that knows better when it became interactive — e.g. right after its
+     * first render — can call this instead.
+     *
+     * Main thread only: the window belongs to the main thread's VM, so calling this
+     * from a `Worker` does nothing. No-op if the window already ended or was never
+     * enabled.
+     */
+    function endStartupJITDeferral(): void;
 
     /**
      * Accurate per-process memory footprint in bytes.

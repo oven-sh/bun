@@ -1,6 +1,6 @@
-// `bun build --compile` executables start with JSC tier-up deferred (startupJITDeferralScale) and end that window when the
-// program becomes interactive (docs/bundler/executables.mdx "JIT during startup"). BUN_JSC_verboseOSR=1 makes JSC log
-// "Ending startup JIT deferral window: <reason>" when it ends.
+// `bun build --compile` executables start with JSC tier-up deferred (startupJITDeferralScale) and end that window when
+// the program becomes interactive (docs/bundler/executables.mdx "Startup optimizations"). BUN_JSC_verboseOSR=1 makes
+// JSC log "Ending startup JIT deferral window: <reason>" when it ends.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
@@ -23,6 +23,11 @@ describe("startup JIT deferral window", () => {
         break;
       }
     `,
+    "unsafe.ts": `
+      Bun.unsafe.endStartupJITDeferral();
+      Bun.unsafe.endStartupJITDeferral(); // no-op once ended
+      process.stderr.write("got here\\n");
+    `,
     // Never interactive: spins past a short deadline, then calls a fresh function often enough that its first tier-up
     // check observes the passed deadline.
     "busy.ts": `
@@ -36,20 +41,29 @@ describe("startup JIT deferral window", () => {
   };
 
   const compiled = new Map<string, string>();
-  function compile(dir: string, name: keyof typeof sources) {
-    const cached = compiled.get(name);
+  function compile(dir: string, name: keyof typeof sources, flags: string[] = []) {
+    const key = path.join(dir, name + flags.join(""));
+    const cached = compiled.get(key);
     if (cached) return cached;
-    const out = path.join(dir, path.basename(name, ".ts") + ".exe");
+    const out = path.join(dir, path.basename(name, ".ts") + flags.join("").replaceAll("=", "") + ".exe");
     const build = Bun.spawnSync({
-      cmd: [bunExe(), "build", "--compile", path.join(dir, name), "--outfile", out],
+      cmd: [bunExe(), "build", "--compile", ...flags, path.join(dir, name), "--outfile", out],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
     });
     expect(build.stderr.toString()).not.toContain("error:");
     expect(build.exitCode).toBe(0);
-    compiled.set(name, out);
+    compiled.set(key, out);
     return out;
+  }
+
+  async function buildApi(dir: string, name: keyof typeof sources, optimize: Bun.BuildConfig["optimize"], tag: string) {
+    const outfile = path.join(dir, path.basename(name, ".ts") + "-" + tag + ".exe");
+    const result = await Bun.build({ entrypoints: [path.join(dir, name)], compile: { outfile }, optimize });
+    expect(result.logs.map(String).join("\n")).toBe("");
+    expect(result.success).toBe(true);
+    return outfile;
   }
 
   async function run(exe: string, env: Record<string, string | undefined> = {}, stdin?: string) {
@@ -107,4 +121,53 @@ describe("startup JIT deferral window", () => {
       expect(exitCode).toBe(0);
     }
   }, 60_000);
+
+  test("build options bake the window into the executable", async () => {
+    using dir = tempDir("startup-jit-deferral-build", sources);
+    const d = String(dir);
+
+    {
+      // optimize.startupJITDeferral: false → no window; either env var still turns it on at run time.
+      const exe = await buildApi(d, "write.ts", { startupJITDeferral: false }, "off");
+      const { stdout, lines, exitCode } = await run(exe);
+      expect(stdout).toBe("ready\n");
+      expect(lines).toEqual([]);
+      expect(exitCode).toBe(0);
+      for (const env of [{ BUN_STARTUP_JIT_DEFERRAL: "1" }, { BUN_STARTUP_JIT_DEFERRAL_MS: "500" }]) {
+        const forced = await run(exe, env);
+        expect(forced.lines).toHaveLength(1);
+        expect(forced.exitCode).toBe(0);
+      }
+    }
+    {
+      const { stdout, lines, exitCode } = await run(compile(d, "write.ts", ["--no-startup-jit-deferral"]));
+      expect(stdout).toBe("ready\n");
+      expect(lines).toEqual([]);
+      expect(exitCode).toBe(0);
+    }
+    {
+      // { maxMs } is the baked deadline; the env var still overrides it.
+      const exe = await buildApi(d, "busy.ts", { startupJITDeferral: { maxMs: 20 } }, "20ms");
+      const { lines, exitCode } = await run(exe);
+      expect(lines).toEqual([ENDED + "deadline (scale was 8)"]);
+      expect(exitCode).toBe(0);
+      const off = await run(exe, { BUN_STARTUP_JIT_DEFERRAL: "0" });
+      expect(off.lines).toEqual([]);
+      expect(off.exitCode).toBe(0);
+    }
+    {
+      const { lines, exitCode } = await run(compile(d, "busy.ts", ["--startup-jit-deferral=20"]));
+      expect(lines).toEqual([ENDED + "deadline (scale was 8)"]);
+      expect(exitCode).toBe(0);
+    }
+  }, 60_000);
+
+  test("Bun.unsafe.endStartupJITDeferral() ends it from the program", async () => {
+    using dir = tempDir("startup-jit-deferral-unsafe", sources);
+    const { lines, exitCode } = await run(compile(String(dir), "unsafe.ts"));
+    expect(lines).toEqual([ENDED + "Bun.unsafe.endStartupJITDeferral (scale was 8)", "got here"]);
+    expect(exitCode).toBe(0);
+    // Outside a compiled executable there is no window: a no-op.
+    expect(Bun.unsafe.endStartupJITDeferral()).toBeUndefined();
+  });
 });

@@ -57,6 +57,27 @@ pub struct StandaloneModuleGraph {
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
+    pub runtime_options: RuntimeOptions,
+}
+
+/// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record).
+#[derive(Clone, Copy)]
+pub struct RuntimeOptions {
+    /// The main VM's startup JIT deferral window in ms (`optimize.startupJITDeferral`); 0 = none.
+    pub startup_jit_deferral_ms: u32,
+}
+
+impl RuntimeOptions {
+    const STARTUP_JIT_DEFERRAL: u32 = 1 << 0;
+    pub const DEFAULT_STARTUP_JIT_DEFERRAL_MS: u32 = 1500;
+}
+
+impl Default for RuntimeOptions {
+    fn default() -> Self {
+        Self {
+            startup_jit_deferral_ms: Self::DEFAULT_STARTUP_JIT_DEFERRAL_MS,
+        }
+    }
 }
 
 // We never want to hit the filesystem for these files
@@ -1015,7 +1036,11 @@ bitflags::bitflags! {
         /// After the module-info string table pointer: `StringPointer` to the pre-resolved module graph blob
         /// (`JSC::PrelinkedModuleGraph` layout), then `u32 count` and `count` × `u32` file-table index per graph module.
         const HAS_PRELINKED_MODULE_GRAPH    = 1 << 11;
-        // _padding: u20
+        /// After the prelinked-graph record: `u32 flags` (`RuntimeOptions::STARTUP_JIT_DEFERRAL`), `u32
+        /// startup_jit_deferral_ms`. Flag clear or ms == 0 = window off (not JSC's "0 = no deadline"); other flag
+        /// bits reserved. Absent = `RuntimeOptions::default()`.
+        const HAS_RUNTIME_OPTIONS           = 1 << 12;
+        // _padding: u19
     }
 }
 
@@ -1051,6 +1076,7 @@ impl StandaloneModuleGraph {
                 prelinked_module_graph: &[],
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
+                runtime_options: RuntimeOptions::default(),
             });
         }
 
@@ -1194,7 +1220,23 @@ impl StandaloneModuleGraph {
                     prelinked_module_graph = &[];
                     prelinked_module_files = Vec::new();
                 }
+            } else {
+                record_at = raw_len;
             }
+        }
+        let mut runtime_options = RuntimeOptions::default();
+        if offsets.flags.contains(Flags::HAS_RUNTIME_OPTIONS)
+            && record_at + 2 * size_of::<u32>() <= raw_len
+        {
+            let flags = read_u32(record_at);
+            let max_ms = read_u32(record_at + 4);
+            record_at += 2 * size_of::<u32>();
+            runtime_options.startup_jit_deferral_ms =
+                if flags & RuntimeOptions::STARTUP_JIT_DEFERRAL != 0 {
+                    max_ms
+                } else {
+                    0
+                };
         }
         let _ = record_at;
         let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
@@ -1311,6 +1353,7 @@ impl StandaloneModuleGraph {
             prelinked_module_graph,
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
+            runtime_options,
         })
     }
 
@@ -1451,6 +1494,7 @@ pub(crate) fn to_bytes(
     output_format: Format,
     compile_exec_argv: &[u8],
     flags: Flags,
+    runtime_options: RuntimeOptions,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -1510,6 +1554,7 @@ pub(crate) fn to_bytes(
         (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16 + 2 * size_of::<u32>();
+    string_builder.cap += 2 * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1833,6 +1878,19 @@ pub(crate) fn to_bytes(
         }
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
+    }
+    {
+        let deferral_ms = runtime_options.startup_jit_deferral_ms;
+        let runtime_flags = if deferral_ms != 0 {
+            RuntimeOptions::STARTUP_JIT_DEFERRAL
+        } else {
+            0
+        };
+        let mut record = [0u8; 8];
+        record[0..4].copy_from_slice(&runtime_flags.to_le_bytes());
+        record[4..8].copy_from_slice(&deferral_ms.to_le_bytes());
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_RUNTIME_OPTIONS;
     }
     if !target.is_host_platform()
         && output_files
@@ -2775,6 +2833,7 @@ pub fn to_executable(
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
     flags: Flags,
+    runtime_options: RuntimeOptions,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
@@ -2785,6 +2844,7 @@ pub fn to_executable(
         output_format,
         compile_exec_argv,
         flags,
+        runtime_options,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -3017,7 +3077,9 @@ impl StandaloneModuleGraph {
     /// prefetch run (`prefetch_startup_pages`: densely read at every boot, so
     /// fault-around there saves traps and maps little extra) unless
     /// `BUN_STANDALONE_NO_FAULTAROUND=2`, the names / module table at the tail,
-    /// and everything outside the payload.
+    /// and everything outside the payload. The whole run also opts out of
+    /// transparent huge pages (khugepaged with `READ_ONLY_THP_FOR_FS` would
+    /// collapse it to 2 MiB pages).
     fn disable_payload_fault_around(&self) {
         #[cfg(target_os = "linux")]
         {
@@ -3067,6 +3129,14 @@ impl StandaloneModuleGraph {
             let Some((mut lo, hi)) = span else {
                 return;
             };
+            {
+                let page = bun_alloc::page_size();
+                let (lo, hi) = ((lo + page - 1) & !(page - 1), hi & !(page - 1));
+                if lo < hi {
+                    // SAFETY: page-aligned range inside the mapped executable image; only sets a VMA flag.
+                    unsafe { libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_NOHUGEPAGE) };
+                }
+            }
             if mode == 1
                 && let Some((_, startup_hi)) = self.startup_prefetch_span()
             {

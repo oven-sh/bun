@@ -640,7 +640,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 });
                 chunk_indices.push(chunk_index as u32);
             }
-            if complete && !inputs.is_empty() {
+            if c.options.prelink_modules && complete && !inputs.is_empty() {
                 prelinked_graph = crate::prelinked_module_graph::build(
                     &inputs,
                     &mut module_info_strings,
@@ -1149,6 +1149,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             &code_result.buffer,
                             &source_provider_url,
                             c.options.bytecode_depth,
+                            c.options.optimize_bytecode,
                             external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();

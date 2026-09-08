@@ -136,6 +136,10 @@ pub mod js_bundler {
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
+        pub(crate) optimize_bytecode: bool,
+        pub(crate) prelink_modules: bool,
+        /// `optimize.startupJITDeferral`: `None` = default window, `Some(0)` = off.
+        pub(crate) startup_jit_deferral_ms: Option<u32>,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -204,6 +208,9 @@ pub mod js_bundler {
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
+                optimize_bytecode: true,
+                prelink_modules: true,
+                startup_jit_deferral_ms: None,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -618,6 +625,46 @@ pub mod js_bundler {
                         always_allow_zero: false,
                     },
                 )?;
+            }
+
+            if let Some(optimize) = config
+                .get_truthy(global_this, "optimize")?
+                .filter(|v| !v.is_boolean())
+            {
+                if !optimize.is_object() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected optimize to be a boolean or an object"
+                    )));
+                }
+                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
+                    this.optimize_bytecode = bytecode;
+                }
+                if let Some(prelink) = optimize.get_boolean_loose(global_this, "prelinkModules")? {
+                    this.prelink_modules = prelink;
+                }
+                if let Some(deferral) = optimize.get(global_this, "startupJITDeferral")? {
+                    if deferral.is_boolean() {
+                        this.startup_jit_deferral_ms = (deferral == JSValue::FALSE).then_some(0);
+                    } else if deferral.is_object() {
+                        if let Some(max_ms) = deferral.get(global_this, "maxMs")? {
+                            this.startup_jit_deferral_ms =
+                                Some(global_this.validate_integer_range::<u32>(
+                                    max_ms,
+                                    0,
+                                    bun_jsc::IntegerRange {
+                                        min: 0,
+                                        max: i128::from(u32::MAX),
+                                        field_name: b"optimize.startupJITDeferral.maxMs",
+                                        always_allow_zero: true,
+                                    },
+                                )?);
+                        }
+                    } else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected optimize.startupJITDeferral to be a boolean or an object"
+                        )));
+                    }
+                }
             }
 
             if let Some(react_fast_refresh) =
@@ -1296,6 +1343,12 @@ pub mod js_bundler {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
+            }
+
+            if this.startup_jit_deferral_ms.is_some() && this.compile.is_none() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "optimize.startupJITDeferral requires compile: true"
+                )));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints

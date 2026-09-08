@@ -436,6 +436,18 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
         ),
         parse_param!(
+            "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
+        ),
+        parse_param!(
+            "--no-prelink-modules             With --compile --bytecode --format=esm: don't embed the pre-resolved module graph"
+        ),
+        parse_param!(
+            "--startup-jit-deferral <NUMBER>   With --compile: keep the JIT reluctant until the program becomes interactive, for at most this many ms (default 1500; 0 = off)"
+        ),
+        parse_param!(
+            "--no-startup-jit-deferral        With --compile: let the JIT tier up from the first instruction"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -2066,6 +2078,9 @@ fn parse_build_command_options(
             FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
+    ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
+    ctx.bundler_options.prelink_modules = !args.flag(b"--no-prelink-modules");
+
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
         ctx.args.target = Some(api::Target::Bun);
@@ -2240,6 +2255,37 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    {
+        let positive = args.option(b"--startup-jit-deferral");
+        let negative = args.flag(b"--no-startup-jit-deferral");
+        if positive.is_some() || negative {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--startup-jit-deferral requires --compile", ());
+                Global::crash();
+            }
+            if positive.is_some() && negative {
+                Output::err_generic(
+                    "Cannot use both --startup-jit-deferral and --no-startup-jit-deferral",
+                    (),
+                );
+                Global::crash();
+            }
+            ctx.bundler_options.compile_startup_jit_deferral_ms = match positive {
+                None => Some(0),
+                Some(ms) => match strings::parse_int::<u32>(ms, 10) {
+                    Ok(ms) => Some(ms),
+                    Err(_) => {
+                        Output::err_generic(
+                            "Invalid value for --startup-jit-deferral: \"{}\". Must be a non-negative integer\n",
+                            format_args!("{}", BStr::new(ms)),
+                        );
+                        Global::exit(1);
+                    }
+                },
+            };
+        }
     }
 
     {

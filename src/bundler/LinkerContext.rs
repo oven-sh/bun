@@ -1381,6 +1381,8 @@ pub struct LinkerOptions {
     /// See `CompileTargetBuiltins::Target`.
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
+    pub(crate) optimize_bytecode: bool,
+    pub(crate) prelink_modules: bool,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1429,6 +1431,8 @@ impl Default for LinkerOptions {
             generate_internal_module_bytecode: false,
             target_builtins: None,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
+            prelink_modules: true,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,

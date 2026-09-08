@@ -1118,15 +1118,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         graph: &mut bun_standalone_graph::Graph,
     ) -> crate::Result<()> {
-        use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
+        use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, RuntimeOptions};
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        let baked_deferral_ms = graph.runtime_options.startup_jit_deferral_ms;
+        let env_deferral_ms = bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL_MS
+            .get()
+            .map(|ms| u32::try_from(ms).unwrap_or(u32::MAX));
         bun_jsc::initialize(bun_jsc::InitializeOptions {
-            startup_jit_deferral_max_ms: bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL
-                .get()
-                .unwrap_or(true)
-                .then(|| bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL_MS.get().unwrap_or(1500))
-                .map(|ms| u32::try_from(ms).unwrap_or(u32::MAX)),
+            startup_jit_deferral_max_ms: match (
+                bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL.get(),
+                env_deferral_ms,
+            ) {
+                (Some(false), _) => None,
+                (_, Some(ms)) => Some(ms),
+                (Some(true), None) if baked_deferral_ms == 0 => {
+                    Some(RuntimeOptions::DEFAULT_STARTUP_JIT_DEFERRAL_MS)
+                }
+                (_, None) => (baked_deferral_ms != 0).then_some(baked_deferral_ms),
+            },
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

@@ -72,6 +72,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: &BunString,
         depth: u32,
+        optimize: bool,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -82,6 +83,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: &BunString,
         depth: u32,
+        optimize: bool,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -151,6 +153,7 @@ impl CachedBytecode {
         input: &[u8],
         source_provider_url: &BunString,
         depth: u32,
+        optimize: bool,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let f = match format {
@@ -174,6 +177,7 @@ impl CachedBytecode {
                 source_provider_url,
                 &source,
                 depth,
+                optimize,
                 &raw mut out_ptr,
                 &raw mut out_size,
                 &raw mut this,
@@ -214,11 +218,18 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     source: &[u8],
     source_provider_url: &BunString,
     depth: u32,
+    optimize: bool,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
-    let (bytes, handle) =
-        CachedBytecode::generate(format, source, source_provider_url, depth, external_strings)?;
+    let (bytes, handle) = CachedBytecode::generate(
+        format,
+        source,
+        source_provider_url,
+        depth,
+        optimize,
+        external_strings,
+    )?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the

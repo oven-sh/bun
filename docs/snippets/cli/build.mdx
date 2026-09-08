@@ -18,6 +18,19 @@ bun build <entry points>
   How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
 </ParamField>
 
+<ParamField path="--no-optimize-bytecode" type="boolean">
+  With <code>--bytecode</code>: skip the build-time bytecode optimization passes
+</ParamField>
+
+<ParamField path="--no-prelink-modules" type="boolean">
+  With <code>--compile --bytecode --format=esm</code>: don't embed the pre-resolved module graph
+</ParamField>
+
+<ParamField path="--startup-jit-deferral" type="number" default="1500">
+  With <code>--compile</code>: keep the JIT reluctant to compile until the program becomes interactive, for at most this many
+  milliseconds (<code>--startup-jit-deferral=&lt;ms&gt;</code>). <code>--no-startup-jit-deferral</code> or <code>0</code> turns it off
+</ParamField>
+
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>

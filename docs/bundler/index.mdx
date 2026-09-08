@@ -1886,6 +1886,15 @@ interface BuildConfig {
    */
   bytecodeDepth?: number;
   /**
+   * Startup optimizations for `bytecode` / `compile` builds, each on by default when it applies.
+   * See https://bun.com/docs/bundler/executables#startup-optimizations
+   */
+  optimize?: {
+    bytecode?: boolean;
+    prelinkModules?: boolean;
+    startupJITDeferral?: boolean | { maxMs?: number };
+  };
+  /**
    * Add a banner to the bundled code such as "use client";
    */
   banner?: string;

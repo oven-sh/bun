@@ -1413,6 +1413,7 @@ pub mod bv2_impl {
                 source: &[u8],
                 source_provider_url: &bun_core::String,
                 depth: u32,
+                optimize: bool,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
@@ -1491,6 +1492,7 @@ pub mod bv2_impl {
             source: &[u8],
             source_provider_url: &bun_core::String,
             depth: u32,
+            optimize: bool,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
             // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
@@ -1503,6 +1505,7 @@ pub mod bv2_impl {
                 source,
                 source_provider_url,
                 depth,
+                optimize,
                 external_strings,
             )
         }
@@ -3076,6 +3079,8 @@ pub mod bv2_impl {
                     _ => None,
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
+            this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
+            this.linker.options.prelink_modules = this.transpiler.options.prelink_modules;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

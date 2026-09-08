@@ -117,13 +117,14 @@ new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITO
 new!(pub BUN_RUNTIME_TRANSPILER_CACHE_PATH: string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", {});
 new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", { default: false });
 // `bun build --compile --bytecode` executables, Linux >= 6.7: map payload pages without kernel fault-around (never-armed
-// userfaultfd WP registration). 0 = keep kernel fault-around; 1 = off past the startup prefetch run; 2 = off for the whole
-// bytecode..source run (A/B arm, pick one after measuring).
+// userfaultfd WP registration) and without transparent huge pages. 0 = kernel defaults; 1 = fault-around off past the
+// startup prefetch run; 2 = off for the whole bytecode..source run (A/B arm, pick one after measuring).
 new!(pub BUN_STANDALONE_NO_FAULTAROUND: unsigned, "BUN_STANDALONE_NO_FAULTAROUND", { default: 1 });
 // `bun build --compile` executables: defer JIT tier-up until the program becomes interactive or BUN_STARTUP_JIT_DEFERRAL_MS
-// pass (docs/bundler/executables.mdx "JIT during startup"); BUN_STARTUP_JIT_DEFERRAL=0 or _MS=0 turns it off.
-new!(pub BUN_STARTUP_JIT_DEFERRAL: boolean, "BUN_STARTUP_JIT_DEFERRAL", { default: true });
-new!(pub BUN_STARTUP_JIT_DEFERRAL_MS: unsigned, "BUN_STARTUP_JIT_DEFERRAL_MS", { default: 1500 });
+// pass (docs/bundler/executables.mdx "Startup optimizations"). Unset = what the build baked in (`optimize.startupJITDeferral`,
+// StandaloneModuleGraph `RuntimeOptions`); BUN_STARTUP_JIT_DEFERRAL=0 or _MS=0 turns it off, =1 or _MS=<ms> turns it on.
+new!(pub BUN_STARTUP_JIT_DEFERRAL: boolean, "BUN_STARTUP_JIT_DEFERRAL", {});
+new!(pub BUN_STARTUP_JIT_DEFERRAL_MS: unsigned, "BUN_STARTUP_JIT_DEFERRAL_MS", {});
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.

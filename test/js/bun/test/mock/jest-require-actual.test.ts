@@ -155,17 +155,27 @@ describe("jest.requireActual", () => {
   });
 
   test("re-mocking a loaded ESM mock does not cache mocked exports as actual", async () => {
-    mock.module("./require-actual-esm-remock-fixture.js", () => ({ value: "first mock" }));
+    mock.module("./require-actual-esm-remock-fixture.js", () => ({
+      untouched: "first mock untouched",
+      value: "first mock",
+    }));
     const first = await import("./require-actual-esm-remock-fixture.js");
+    expect(first.untouched).toBe("first mock untouched");
     expect(first.value).toBe("first mock");
 
-    mock.module("./require-actual-esm-remock-fixture.js", () => ({ value: "second mock" }));
+    mock.module("./require-actual-esm-remock-fixture.js", () => ({
+      ...jest.requireActual("./require-actual-esm-remock-fixture.js"),
+      value: "second mock",
+    }));
 
     expect(jest.requireActual("./require-actual-esm-remock-fixture.js")).toEqual({
       untouched: "untouched",
       value: "real",
     });
-    expect((await import("./require-actual-esm-remock-fixture.js")).value).toBe("second mock");
+    const second = await import("./require-actual-esm-remock-fixture.js");
+    expect(second).toBe(first);
+    expect(second.untouched).toBe("untouched");
+    expect(second.value).toBe("second mock");
   });
 
   test("requireActual preserves an already-loaded mocked ESM namespace", async () => {
@@ -247,8 +257,7 @@ describe("jest.requireActual", () => {
   });
 
   test("requireActual never returns internal sentinel values", () => {
-    // Regression: if fetchCommonJSModule returns -1 (ESM sentinel) but the
-    // registry lookup fails, requireActual should throw instead of returning -1.
+    // The public API must only expose module exports, never loader bookkeeping values.
     const real = jest.requireActual("./require-actual-fixture.js");
     expect(real).not.toBe(-1);
     expect(typeof real).toBe("object");

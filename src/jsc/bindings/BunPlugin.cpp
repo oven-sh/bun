@@ -502,6 +502,65 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     return object;
 }
 
+static bool resolveTestModuleSpecifier(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    Zig::GlobalObject* globalObject,
+    JSC::CallFrame* callframe,
+    JSC::ThrowScope& scope,
+    JSC::JSString*& specifierString,
+    WTF::String& specifier)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    if (sourceOrigin.isNull())
+        return true;
+
+    const URL& url = sourceOrigin.url();
+    if (specifier.startsWith("file:"_s)) {
+        URL fileURL = URL(url, specifier);
+        if (!fileURL.isValid()) {
+            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+            return false;
+        }
+
+        specifier = fileURL.fileSystemPath();
+        specifierString = jsString(vm, specifier);
+        globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+        return true;
+    }
+
+    if (!url.isValid() || !url.protocolIsFile())
+        return true;
+
+    auto fromString = url.fileSystemPath();
+    BunString from = Bun::toString(fromString);
+    // An unresolved result is handled by the caller; resolver exceptions still propagate.
+    auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
+    RETURN_IF_EXCEPTION(scope, false);
+
+    if (result.isString()) {
+        auto* resolvedSpecifier = asString(result);
+        if (resolvedSpecifier->length() > 0) {
+            specifierString = resolvedSpecifier;
+            specifier = specifierString->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+    } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
+        // If module resolution fails, resolve it relative to the calling file.
+        auto relativeURL = URL(url, specifier);
+        if (relativeURL.isValid()) {
+            globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+            if (relativeURL.protocolIsFile())
+                specifier = relativeURL.fileSystemPath();
+            else
+                specifier = relativeURL.string();
+            specifierString = jsString(vm, specifier);
+        }
+    }
+
+    return true;
+}
+
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -539,59 +598,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         return {};
     }
 
-    auto resolveSpecifier = [&]() -> void {
-        JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
-        if (sourceOrigin.isNull())
-            return;
-        const URL& url = sourceOrigin.url();
-
-        if (specifier.startsWith("file:"_s)) {
-            URL fileURL = URL(url, specifier);
-            if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
-                specifierString = jsString(vm, specifier);
-                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
-                return;
-            } else {
-                scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
-                return;
-            }
-        }
-
-        if (url.isValid() && url.protocolIsFile()) {
-            auto fromString = url.fileSystemPath();
-            BunString from = Bun::toString(fromString);
-            // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
-            // while resolving (e.g. by an onResolve plugin) propagates.
-            auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
-            RETURN_IF_EXCEPTION(scope, );
-
-            if (result.isString()) {
-                auto* specifierStr = asString(result);
-                if (specifierStr->length() > 0) {
-                    specifierString = specifierStr;
-                    specifier = specifierString->value(globalObject);
-                }
-            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
-                // If module resolution fails, we try to resolve it relative to the current file
-                auto relativeURL = URL(url, specifier);
-
-                if (relativeURL.isValid()) {
-                    globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
-
-                    if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
-                    else
-                        specifier = relativeURL.string();
-
-                    specifierString = jsString(vm, specifier);
-                }
-            }
-        }
-    };
-
-    resolveSpecifier();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!resolveTestModuleSpecifier(lexicalGlobalObject, globalObject, callframe, scope, specifierString, specifier))
+        return {};
 
     JSC::JSObject* callback = callbackValue.getObject();
 
@@ -788,33 +796,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRequireActual, (JSC::JSGlobalObject * lexical
     WTF::String specifier = specifierString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (!resolveTestModuleSpecifier(lexicalGlobalObject, globalObject, callframe, scope, specifierString, specifier))
+        return {};
+
     JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
-    if (!sourceOrigin.isNull()) {
-        const URL& url = sourceOrigin.url();
-        if (url.isValid() && url.protocolIsFile()) {
-            auto fromString = url.fileSystemPath();
-            BunString from = Bun::toString(fromString);
-            auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (result.isString()) {
-                auto* resolvedSpecifier = asString(result);
-                if (resolvedSpecifier->length() > 0) {
-                    specifierString = resolvedSpecifier;
-                    specifier = specifierString->value(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
-                auto relativeURL = URL(url, specifier);
-                if (relativeURL.isValid()) {
-                    if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
-                    else
-                        specifier = relativeURL.string();
-                    specifierString = jsString(vm, specifier);
-                }
-            }
-        }
-    }
 
     if (globalObject->onLoadPlugins.requireActualCache) {
         auto cached = globalObject->onLoadPlugins.requireActualCache->find(specifier);

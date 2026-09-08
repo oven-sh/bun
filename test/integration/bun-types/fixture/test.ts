@@ -18,6 +18,10 @@ import {
 } from "bun:test";
 import { expectType } from "./utilities";
 
+const untypedActualProperty: string = jest.requireActual("./module").hello;
+expectType<string>(untypedActualProperty);
+expectType<string>(jest.requireActual<{ hello: string }>("./module").hello);
+
 const hooks = [beforeAll, beforeEach, afterAll, afterEach];
 
 for (const hook of hooks) {

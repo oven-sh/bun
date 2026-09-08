@@ -1085,27 +1085,35 @@ impl<'a> PackageInstall<'a> {
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
-        if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
-                let slash = slash as usize;
-                self.destination_dir_subpath_buf[slash] = 0;
-                // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let scope_dir = destination_dir.make_open_real_dir(subdir.as_bytes());
-                self.destination_dir_subpath_buf[slash] = SEP;
-                // `clonefileat` below names `@scope/<pkg>` by path, so without a
-                // real `@scope` directory there is nothing safe to clone into.
-                if let Err(err) = scope_dir {
-                    return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None));
+        // For `@scope/<pkg>`, open `@scope` as a real directory (replacing a
+        // symlink planted there) and clone relative to that fd with the bare
+        // package name, so no component of the destination is resolved by path.
+        let subpath = self.destination_dir_subpath.as_bytes();
+        let mut scope_dir: Option<Dir> = None;
+        let mut clone_name: &ZStr = self.destination_dir_subpath;
+        if subpath[0] == b'@' {
+            if let Some(slash) = strings::index_of_char_usize(subpath, SEP) {
+                match destination_dir.make_open_real_dir(&subpath[..slash]) {
+                    Ok(dir) => scope_dir = Some(dir),
+                    Err(err) => {
+                        return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None));
+                    }
                 }
+                // SAFETY: `destination_dir_subpath` is NUL-terminated inside
+                // `destination_dir_subpath_buf`, so this suffix of it is too.
+                clone_name = ZStr::from_buf(
+                    &self.destination_dir_subpath_buf[slash + 1..],
+                    subpath.len() - slash - 1,
+                );
             }
         }
+        let clone_dir = scope_dir.as_ref().unwrap_or(destination_dir);
 
         match sys::clonefileat(
             self.cache_dir,
             self.cache_dir_subpath,
-            destination_dir.fd(),
-            self.destination_dir_subpath,
+            clone_dir.fd(),
+            clone_name,
         ) {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {

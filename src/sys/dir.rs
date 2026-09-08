@@ -180,12 +180,16 @@ impl Dir {
 
     /// `mkdir -p`-and-open `sub_path`, one component at a time, with
     /// [`Dir::make_open_real_dir`]. No component of `sub_path` can be a
-    /// symlink once this returns.
+    /// symlink once this returns, and none can be `..`: the result is always
+    /// at or below `self`.
     pub fn make_open_real_path(&self, sub_path: &[u8]) -> Maybe<Dir> {
         let mut dir: Option<Dir> = None;
         for component in bun_core::strings::split_any(sub_path, SEPARATORS) {
             if component.is_empty() || component == b"." {
                 continue;
+            }
+            if component == b".." {
+                return Err(Error::from_code(E::EINVAL, Tag::open).with_path(sub_path));
             }
             let next = dir.as_ref().unwrap_or(self).make_open_real_dir(component)?;
             dir = Some(next);

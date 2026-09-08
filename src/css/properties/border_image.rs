@@ -583,9 +583,7 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    /// A complete unprefixed `border-image` is buffered and nothing was written
-    /// for this block yet, so the next flush overrides every `border-image-*`
-    /// longhand that a declaration written before it resets.
+    /// A complete unprefixed `border-image` is buffered as this block's first `border-image` output.
     pub(crate) fn will_flush_shorthand(&self) -> bool {
         self.has_any
             && self.flushed_properties.is_empty()

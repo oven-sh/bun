@@ -609,8 +609,7 @@ pub struct BorderHandler {
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
-    /// A `border` declaration was seen since the last flush. It resets
-    /// `border-image`, so writing a `border` shorthand keeps that reset.
+    /// A `border` (which also resets `border-image`) was seen since the last flush.
     has_border_shorthand: bool,
     has_any: bool,
 }
@@ -652,8 +651,7 @@ mod border_handler_body {
         arena: &'bump Bump,
         logical_supported: bool,
         logical_shorthand_supported: bool,
-        /// `border` also resets `border-image`, so it may only be synthesized
-        /// when this block resets or fully redeclares `border-image` anyway.
+        /// This block resets or fully redeclares `border-image`, as `border` does.
         border_shorthand_safe: bool,
     }
 
@@ -1141,8 +1139,7 @@ mod border_handler_body {
                     side_diff!(block_end, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
                 }, true);
             } else {
-                // `border` always goes out on this path, so a `border` in the
-                // source keeps resetting `border-image` here too.
+                // Still leads with `border`, so a source `border` keeps its reset.
                 prop_diff!(block_start, {
                     fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
                     fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
@@ -1154,17 +1151,13 @@ mod border_handler_body {
             && !(is_eq!(width) || is_eq!(style) || is_eq!(color))
             && !(block_start.eql(block_end) && inline_start.eql(inline_end))
         {
-            // Without `border`, and with no component that repeats on all four
-            // sides, the four sides as written beat three multi-value shorthands
-            // (`border-top: 0; ...; border-bottom: 1px solid` stays as is).
+            // Shorter than three multi-value shorthands (`border-top: 0; ...; border-bottom: 1px solid`).
             fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
             fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
             fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
             fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
         } else {
-            // Four complete but unequal logical sides are shorter as the
-            // `border-block` / `border-inline` properties below than as what
-            // is left over after three four-sided physical shorthands.
+            // Complete, unequal logical sides are shorter as `border-block` / `border-inline` below.
             let all_equal = block_start.eql(block_end)
                 && block_start.eql(inline_start)
                 && block_start.eql(inline_end);

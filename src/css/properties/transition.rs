@@ -75,9 +75,7 @@ impl Transition {
             if property.is_none() {
                 if let Ok(value) = parser.try_parse(|p: &mut Parser| -> CssResult<PropertyId> {
                     let id = PropertyId::parse(p)?;
-                    // These are the `<transition-behavior-value>` of the shorthand, not
-                    // property names. This struct does not hold one, so such a value
-                    // stays unparsed.
+                    // `<transition-behavior-value>` keywords, which this struct does not hold.
                     if TransitionBehavior::is_keyword(id.name()) {
                         return Err(p.new_custom_error(crate::ParserError::invalid_value));
                     }
@@ -174,12 +172,9 @@ pub struct TransitionHandler {
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
-    /// `transition-behavior` has no vendor prefixes. The unprefixed `transition`
-    /// shorthand resets it, so that shorthand is only synthesized from
-    /// longhands when this is known too.
+    /// No vendor prefixes. The unprefixed `transition` shorthand resets it.
     pub(crate) behaviors: Option<SmallList<TransitionBehavior, 1>>,
-    /// Prefixes a `transition` shorthand was seen with since the last flush.
-    /// Writing the shorthand back out with these is always faithful.
+    /// Prefixes the source used a `transition` shorthand with since the last flush.
     pub(crate) shorthand_prefixes: VendorPrefix,
     pub(crate) has_any: bool,
 }
@@ -285,9 +280,7 @@ mod transition_handler_body {
                     let val: &SmallList<Transition, 1> = &x.0;
                     let vp: VendorPrefix = x.1;
 
-                    // Only the unprefixed shorthand resets `transition-behavior` in every
-                    // engine. A prefixed one is an alias in some engines and ignored in
-                    // others, so it must keep its source order with a non-default value.
+                    // Other engines ignore a prefixed shorthand, so it does not reset `transition-behavior`.
                     let resets_behavior = vp.contains(VendorPrefix::NONE);
                     if !resets_behavior
                         && self.behaviors.as_ref().is_some_and(|b| {
@@ -437,9 +430,7 @@ mod transition_handler_body {
             let behaviors_all_normal = _behaviors
                 .as_ref()
                 .is_some_and(|b| b.slice().iter().all(|b| *b == TransitionBehavior::Normal));
-            // The shorthand also resets `transition-behavior`, so synthesizing it
-            // from longhands is only equivalent when that is written too. With a
-            // prefix the source used for a shorthand it is always faithful.
+            // A synthesized shorthand would also reset an unknown `transition-behavior`.
             let shorthand_allowed = if _behaviors.is_some() {
                 VendorPrefix::all()
             } else {

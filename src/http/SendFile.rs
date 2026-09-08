@@ -23,9 +23,12 @@ impl SendFile {
         url.is_http() && url.href.len() > 0
     }
 
-    // Takes the resolved fd directly rather than the socket; callers pass
-    // `socket.fd()`.
-    pub(crate) fn write(&mut self, socket_fd: Fd) -> Status {
+    /// `socket_fd` feeds `sendfile(2)`; `send` is the socket's own write (the one a `Bytes` body uses) for the copy path.
+    pub(crate) fn write(
+        &mut self,
+        socket_fd: Fd,
+        send: impl FnMut(&[u8]) -> crate::Result<usize>,
+    ) -> Status {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE
             .get()
@@ -35,11 +38,14 @@ impl SendFile {
         }
 
         #[cfg(unix)]
-        return self.write_copy(socket_fd);
+        {
+            let _ = socket_fd;
+            return self.write_copy(send);
+        }
 
         #[cfg(windows)]
         {
-            let _ = socket_fd;
+            let _ = (socket_fd, send);
             Status::Again
         }
     }
@@ -114,9 +120,9 @@ impl SendFile {
         Status::Again
     }
 
-    /// `pread` + non-blocking `send`, leaving `offset`/`remain` at the first byte the socket did not take.
+    /// `pread` + `send`, leaving `offset`/`remain` at the first byte the socket did not take.
     #[cfg(unix)]
-    fn write_copy(&mut self, socket_fd: Fd) -> Status {
+    fn write_copy(&mut self, mut send: impl FnMut(&[u8]) -> crate::Result<usize>) -> Status {
         bun_core::scoped_log!(
             crate::fetch,
             "copy file body offset={} remain={}",
@@ -137,13 +143,9 @@ impl SendFile {
                 Ok(n) => n,
                 Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
             };
-            let wrote = match bun_sys::send_non_block(socket_fd, &buf[..read]) {
+            let wrote = match send(&buf[..read]) {
                 Ok(n) => n,
-                // ENOBUFS (kernel buffer pool empty) is transient, as in us_socket_write.
-                Err(err) if matches!(err.get_errno(), bun_sys::E::EAGAIN | bun_sys::E::ENOBUFS) => {
-                    break;
-                }
-                Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+                Err(err) => return Status::Err(err),
             };
             self.offset += wrote;
             self.remain -= wrote;

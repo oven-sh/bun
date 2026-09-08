@@ -3367,8 +3367,8 @@ impl<'a> HTTPClient<'a> {
                             );
                         }
 
-                        // sendfile.write() takes the raw fd, not the socket handle.
-                        match sendfile.write(socket.fd()) {
+                        let send = |chunk: &[u8]| write_to_socket::<IS_SSL>(socket, chunk);
+                        match sendfile.write(socket.fd(), send) {
                             #[cfg(not(windows))]
                             crate::send_file::Status::Done => {
                                 self.state.request_stage = RequestStage::Done;

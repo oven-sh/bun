@@ -651,6 +651,8 @@ impl ArrayBuffer {
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
+    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
+    copy: Option<Vec<u8>>,
 }
 
 impl PinnedArrayBuffer {
@@ -669,6 +671,7 @@ impl PinnedArrayBuffer {
         Some(Self {
             buffer,
             rooted: false,
+            copy: None,
         })
     }
 
@@ -680,8 +683,36 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::root(global, value)?;
+        this.copy_if_resizable(global).then_some(this)
+    }
+
+    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
+    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.resizable
+            || self.buffer.shared
+            || self.buffer.byte_len == 0
+            || self.copy.is_some()
+        {
+            return true;
+        }
+        let bytes = self.buffer.byte_slice();
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(bytes.len()).is_err() {
+            return false;
+        }
+        copy.extend_from_slice(bytes);
+        global.vm().report_extra_memory(copy.len());
+        self.buffer.ptr = copy.as_mut_ptr();
+        self.copy = Some(copy);
+        true
+    }
+
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [u8] {
+        debug_assert!(self.copy.is_none(), "a read-only root is not writable");
         self.buffer.byte_slice_mut()
     }
 
@@ -690,6 +721,7 @@ impl PinnedArrayBuffer {
     pub fn defuse(&mut self) {
         self.buffer = ArrayBuffer::default();
         self.rooted = false;
+        self.copy = None;
     }
 }
 

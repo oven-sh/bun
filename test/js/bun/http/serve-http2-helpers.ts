@@ -335,6 +335,55 @@ export const baseHeaders = (path: string, method = "GET"): [string, string][] =>
   [":authority", "localhost"],
 ];
 
+export type HpackField = {
+  /** Static or dynamic table index when the whole field, or only its name, is indexed. */
+  index?: number;
+  /** Literal name and value as sent, with their Huffman flags. Absent on a fully indexed field. */
+  name?: { huffman: boolean; bytes: Buffer };
+  value?: { huffman: boolean; bytes: Buffer };
+};
+
+/** Split a header block into its fields (RFC 7541 §6) without decoding them:
+ * indexed fields keep their index, literals keep their raw bytes and Huffman
+ * flag. Enough to check what bytes the server put on the wire for one header. */
+export function hpackFields(block: Buffer): HpackField[] {
+  let pos = 0;
+  const int = (prefixBits: number) => {
+    const max = (1 << prefixBits) - 1;
+    let value = block[pos++] & max;
+    if (value < max) return value;
+    for (let shift = 0; ; shift += 7) {
+      const byte = block[pos++];
+      value += (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value;
+    }
+  };
+  const str = () => {
+    const huffman = (block[pos] & 0x80) !== 0;
+    const length = int(7);
+    const bytes = block.subarray(pos, pos + length);
+    pos += length;
+    return { huffman, bytes };
+  };
+  const fields: HpackField[] = [];
+  while (pos < block.length) {
+    const first = block[pos];
+    if (first & 0x80) {
+      fields.push({ index: int(7) });
+      continue;
+    }
+    if ((first & 0xe0) === 0x20) {
+      int(5); // dynamic table size update
+      continue;
+    }
+    const index = int(first & 0x40 ? 6 : 4);
+    const field: HpackField = index ? { index } : { name: str() };
+    field.value = str();
+    fields.push(field);
+  }
+  return fields;
+}
+
 /** Just enough HPACK to read the `:status` the server always encodes first:
  * either an indexed static-table entry (200/204/206/304/400/404/500) or a
  * literal with indexed name whose 3-digit value may be Huffman-coded. */

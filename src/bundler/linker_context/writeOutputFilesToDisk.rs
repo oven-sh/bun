@@ -6,7 +6,7 @@ use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
@@ -74,7 +74,7 @@ pub(crate) fn write_output_files_to_disk(
     let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
     let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
-    let mut pathbuf = PathBuffer::uninit();
+    let mut pathbuf = bun_paths::path_buffer_pool::get();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
@@ -394,7 +394,7 @@ pub(crate) fn write_output_files_to_disk(
                 };
 
                 if loader.is_javascript_like() {
-                    let mut fdpath = PathBuffer::uninit();
+                    let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
                         bstr::BStr::new(&chunk.final_rel_path),
@@ -467,11 +467,11 @@ pub(crate) fn write_output_files_to_disk(
                             output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
                             input_path: input_path_buf.into_boxed_slice(),
                             input_loader: Loader::File,
-                            hash: if chunk.template.placeholder.hash.is_some() {
-                                Some(hash(&bytecode))
-                            } else {
-                                None
-                            },
+                            hash: chunk
+                                .template
+                                .placeholder
+                                .hash
+                                .map(|_| chunk.template.content_hash(hash(&bytecode))),
                             output_kind: options::OutputKind::Bytecode,
                             loader: Loader::File,
                             size: Some(bytecode.len()),
@@ -532,14 +532,7 @@ pub(crate) fn write_output_files_to_disk(
             None
         };
 
-        let output_kind = if matches!(chunk.content, Content::Css(_)) {
-            options::OutputKind::Asset
-        } else if chunk.entry_point.is_entry_point() {
-            c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                .output_kind()
-        } else {
-            options::OutputKind::Chunk
-        };
+        let output_kind = c.chunk_output_kind(chunk);
 
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
@@ -559,14 +552,7 @@ pub(crate) fn write_output_files_to_disk(
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
             data: OutputFileData::Saved(0),
-            side: Some(if matches!(chunk.content, Content::Css(_)) {
-                options::Side::Client
-            } else {
-                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                    options::Target::Browser => options::Side::Client,
-                    _ => options::Side::Server,
-                }
-            }),
+            side: Some(c.chunk_side(chunk)),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // Server-components builds insert 2 extra synthetic sources
                 // before user entry points, so the source-index offset is 3.

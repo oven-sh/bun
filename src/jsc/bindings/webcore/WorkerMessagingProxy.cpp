@@ -257,7 +257,6 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
         Locker lock { m_pendingTasksLock };
         switch (m_state.load()) {
         case State::Pending:
-        case State::Started:
             m_pendingTasks.append(WTF::move(task));
             return true;
         case State::Running:
@@ -411,11 +410,10 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 void WorkerMessagingProxy::workerThreadStarted()
 {
+    // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
-        // An exiting parent (parentContextWillDestroy) may already have moved this to Closing.
         Locker lock { m_pendingTasksLock };
-        auto expected = State::Pending;
-        if (!m_state.compare_exchange_strong(expected, State::Started))
+        if (m_state.load() != State::Pending)
             return;
     }
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
@@ -431,8 +429,7 @@ void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlo
     auto& context = *workerGlobalObject.scriptExecutionContext();
     ASSERT(context.identifier() == m_workerContextIdentifier);
 
-    // Started -> Running under the lock postTaskToWorkerGlobalScope() takes, so a task is either
-    // queued here (and run below) or posted directly, never lost.
+    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
     Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
     {
         Locker lock { m_pendingTasksLock };

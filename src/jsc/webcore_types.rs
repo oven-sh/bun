@@ -17,7 +17,6 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
-use std::rc::Rc;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
@@ -833,7 +832,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike<'static>,
         pub(crate) mime_type: MimeType,
-        pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
+        pub(crate) credentials: Option<RefPtr<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -841,7 +840,7 @@ pub mod store {
     }
 
     impl S3 {
-        pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
+        pub fn get_credentials(&self) -> &RefPtr<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
         }
@@ -877,8 +876,7 @@ pub mod store {
             credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
             S3 {
-                // Heap-allocate a fresh refcounted copy.
-                credentials: Some(Rc::new(credentials)),
+                credentials: Some(RefPtr::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),

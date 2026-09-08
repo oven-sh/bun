@@ -70,8 +70,7 @@ class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingPr
 public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
-        Started, // the worker's VM is up and its entry point is loading; 'online' has been posted
-        Running, // workerGlobalScopeStarted() has run on the worker thread: tasks are routed directly
+        Running, // workerGlobalScopeStarted() has run on the worker thread
         Closing, // workerGlobalScopeDestroyedInternal() is dispatching 'close' on the parent
         Closed, // the thread is joined and released; nothing further will happen
     };
@@ -96,22 +95,16 @@ public:
     void parentContextWillDestroy();
 
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
-    // node's kIsOnline: from 'online' until the thread goes.
-    bool isOnline() const
-    {
-        auto state = m_state.load();
-        return state == State::Started || state == State::Running;
-    }
+    bool isOnline() const { return m_state.load() == State::Running; }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
 
     uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
-    // The VM is up; the entry point loads next. Posts 'online' (node reports it before user code).
+    // Before the entry point loads: posts 'online' to the parent, as node does before user code.
     void workerThreadStarted();
-    // The entry point has evaluated (up to its first top-level await): tasks and messages that
-    // arrived meanwhile are delivered and later ones routed directly.
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);

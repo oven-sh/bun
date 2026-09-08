@@ -240,7 +240,6 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_paths::PathBuffer;
 use std::io::Write as _;
 #[allow(non_snake_case)]
 mod NativePromiseContext {
@@ -352,6 +351,23 @@ where
 #[inline]
 fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
+}
+
+/// Release the body's hold on a stream the sink is done with, and mark a
+/// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
+/// monomorphizations share one copy.
+#[inline(never)]
+fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+    if let Some(stream) = response.get_body_readable_stream() {
+        stream.value.ensure_still_alive();
+        response.detach_readable_stream(global_this);
+        stream.done();
+    }
+    // Read after the stream calls: the check observes the post-detach state.
+    let body_value = response.get_body_value();
+    if matches!(body_value, Body::Value::Locked(_)) {
+        *body_value = Body::Value::Used;
+    }
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -686,13 +702,14 @@ where
         ));
     }
 
-    pub(crate) fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 
         let arguments = callframe.arguments_as_array::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
+            Self::discard_response_body(global, arguments[0]);
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
@@ -701,8 +718,59 @@ where
         let result = arguments[0];
         result.ensure_still_alive();
 
-        ctx.ctx().handle_resolve(result);
+        ctx.ctx().handle_resolve(global, result);
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Cancel the body stream of a Response the server will not transmit.
+    fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
+        if let Some(stream) = response.get_body_readable_stream() {
+            let _keep = jsc::EnsureStillAlive(stream.value);
+            response.detach_readable_stream(global_this);
+            // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
+            crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+        }
+        *response.get_body_value() = Body::Value::Used;
+    }
+
+    /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
+    fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
+        let value = match value.as_any_promise() {
+            Some(promise) => {
+                match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                    jsc::PromiseResult::Fulfilled(fulfilled) => fulfilled,
+                    jsc::PromiseResult::Pending | jsc::PromiseResult::Rejected(_) => return,
+                }
+            }
+            None => value,
+        };
+        if let Some(response) = response::from_js_ref(value) {
+            Self::cancel_unread_body(response.get(), global_this);
+        }
+        value.ensure_still_alive();
+    }
+
+    /// [`Self::discard_response_body`] for a request this context can no longer respond to.
+    fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
+        let Some(promise) = result.as_any_promise() else {
+            Self::discard_response_body(global_this, result);
+            return;
+        };
+        let resp_held = self.resp.get().is_some();
+        match promise.status() {
+            // Only while `resp` is held: the `on_abort` that follows then reclaims the cell.
+            jsc::PromiseStatus::Pending if resp_held => {
+                let cell = self.create_promise_cell(global_this);
+                result.then_with_value(global_this, cell, Self::ON_RESOLVE, Self::ON_REJECT);
+            }
+            // A subscribed promise that rejects later is dropped. Drop this one the same way.
+            jsc::PromiseStatus::Rejected if resp_held => promise.set_handled(global_this.vm()),
+            // Nothing subscribes, so a rejection stays unhandled and reaches `unhandledRejection`.
+            jsc::PromiseStatus::Pending | jsc::PromiseStatus::Rejected => {}
+            jsc::PromiseStatus::Fulfilled => {
+                Self::discard_response_body(global_this, promise.result(global_this.vm()));
+            }
+        }
     }
 
     fn render_missing_invalid_response(&self, value: JSValue) {
@@ -749,8 +817,9 @@ where
         self.render_missing();
     }
 
-    fn handle_resolve(&self, value: JSValue) {
+    fn handle_resolve(&self, global_this: &JSGlobalObject, value: JSValue) {
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+            Self::discard_response_body(global_this, value);
             return;
         }
 
@@ -1003,24 +1072,15 @@ where
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
 
-        // The status line is already committed (a direct ReadableStream's
-        // pull() threw synchronously after do_render_stream wrote headers).
-        // error() cannot replace a response whose status is on the wire;
-        // report the failure and terminate the body so the client observes an
-        // incomplete message instead of a second header block spliced into
-        // the chunked body.
+        // The status line is already committed (a direct stream's pull() threw
+        // synchronously after the headers were written): report and close.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
                 server.vm().as_mut().run_error_handler(value, None);
             }
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                self.force_close();
-            } else {
-                self.end_stream(self.should_close_connection());
-            }
+            self.close_incomplete_stream();
             return;
         }
 
@@ -1293,6 +1353,18 @@ where
         }
     }
 
+    /// Closes a response whose body failed after the status line was committed.
+    /// Never the terminating chunk: it would make a truncated body look complete.
+    pub(crate) fn close_incomplete_stream(&self) {
+        if let Some(resp) = self.resp.get() {
+            if resp.state().is_response_pending() {
+                self.force_close();
+                return;
+            }
+        }
+        self.end_stream(self.should_close_connection());
+    }
+
     fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
@@ -1516,6 +1588,13 @@ where
             self.flags.set_has_finalized(true);
         }
 
+        // A stream pump that settles after this point finds no context
+        // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
+        // runs: release the body's hold on the stream here.
+        if let Some(resp) = self.response_mut() {
+            release_body_stream(resp, global_this);
+        }
+
         let response_jsvalue = self.response_jsvalue.get();
         if !response_jsvalue.is_empty() {
             ctx_log!("finalizeWithoutDeinit: response_jsvalue != .zero");
@@ -1706,7 +1785,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = PathBuffer::uninit();
+        let mut file_buf = bun_paths::path_buffer_pool::get();
         let auto_close = !matches!(
             file.pathlike,
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
@@ -2032,7 +2111,8 @@ where
         // Armed here, not in `to_async()`: `stop(true)` inside `pull()` must reach `on_abort`; see `end_already_responded_stream`.
         this.set_abort_handler();
         if this.is_aborted_or_ended() {
-            crate::dispatch::fold(stream.cancel(global_this));
+            // No reader yet: `cancel()` would skip the stream.
+            crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             return;
@@ -2599,19 +2679,10 @@ where
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
-                // HEAD never transmits the body: cancel the stream so the
-                // source's cancel() runs and its resources are released.
-                // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
-                let response = unsafe { &mut *response_ptr };
-                if let Some(stream) = response.get_body_readable_stream() {
-                    let _keep = jsc::EnsureStillAlive(stream.value);
-                    response.detach_readable_stream(global_this);
-                    // Unread stream has no reader; `cancel()` would no-op.
-                    crate::dispatch::fold(
-                        stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
-                    );
+                // HEAD never transmits the body.
+                if let Some(response) = this.response_mut() {
+                    Self::cancel_unread_body(response, global_this);
                 }
-                *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
@@ -2627,10 +2698,7 @@ where
     #[cold]
     fn on_connection_closed_during_dispatch(&self, this: &ThisServer, result: JSValue) {
         ctx_log!("connection closed during dispatch");
-        if let Some(promise) = result.as_any_promise() {
-            // Subscribing to it would have made a later rejection handled.
-            promise.set_handled(this.global_this().vm());
-        }
+        self.discard_handler_result(this.global_this(), result);
         self.set_abort_handler();
     }
 
@@ -2659,7 +2727,11 @@ where
         let ctx = self;
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
-        if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
+        if ctx.drain_microtasks().is_err() {
+            return;
+        }
+        if ctx.is_aborted_or_ended() {
+            ctx.discard_handler_result(this.global_this(), response_value);
             return;
         }
         if ctx.resp.get().is_some_and(|resp| resp.is_closed()) {
@@ -2671,6 +2743,7 @@ where
         // just ignore the Response object. It doesn't do anything.
         // it's better to do that than to throw an error
         if ctx.did_upgrade_web_socket() {
+            ctx.discard_handler_result(this.global_this(), response_value);
             return;
         }
 
@@ -2953,18 +3026,7 @@ where
         }
 
         if let Some(resp) = self.response_mut() {
-            // NOTE: the body value is read after the stream calls (the check
-            // observes the post-detach state).
-            if let Some(stream) = resp.get_body_readable_stream() {
-                stream.value.ensure_still_alive();
-                resp.detach_readable_stream(global_this);
-                stream.done();
-            }
-
-            let body_value = resp.get_body_value();
-            if matches!(body_value, Body::Value::Locked(_)) {
-                *body_value = Body::Value::Used;
-            }
+            release_body_stream(resp, global_this);
         }
 
         // aborted so call finalizeForAbort
@@ -2984,50 +3046,9 @@ where
             self.render_metadata();
         }
 
-        if DEBUG_MODE {
-            if let Some(server) = self.server.get() {
-                if !err.is_empty_or_undefined_or_null() {
-                    let server = &*server;
-                    let mut exception_list: jsc::ExceptionList = Vec::new();
-                    server
-                        .vm()
-                        .as_mut()
-                        .run_error_handler(err, Some(&mut exception_list));
-
-                    // The fallback page below writes into `resp`, which must
-                    // not be dereferenced once the sink has already ended the
-                    // response (see `end_already_responded_stream`).
-                    if !ended_response && server.dev_server().is_some() {
-                        // Render the error fallback HTML page like renderDefaultError does
-                        if !self.flags.has_written_status() {
-                            self.flags.set_has_written_status(true);
-                            if let Some(resp) = self.resp.get() {
-                                resp.write_status(b"500 Internal Server Error");
-                                resp.write_header(
-                                    b"content-type",
-                                    &bun_http_types::MimeType::HTML.value,
-                                );
-                            }
-                        }
-
-                        let bb = DevErrorPage {
-                            message: b"Stream error during server-side rendering",
-                            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
-                            exceptions: &exception_list,
-                            log: None,
-                        }
-                        .render();
-
-                        if let Some(resp) = self.resp.get() {
-                            // SAFETY: FFI handle
-                            resp.write(&bb);
-                        }
-
-                        self.end_stream(self.should_close_connection());
-                        return;
-                    }
-                }
-            }
+        // Production mode keeps this asynchronous JS path quiet.
+        if DEBUG_MODE && self.report_committed_body_error(err, !ended_response) {
+            return;
         }
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
@@ -3037,17 +3058,43 @@ where
             self.end_already_responded_stream();
             return;
         }
-        // Body bytes were already written: close without the terminating chunk
-        // (RFC 9112 section 7) so the client sees an incomplete message, not a
-        // truncated body that looks like a complete, successful response.
-        if let Some(resp) = self.resp.get() {
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                self.force_close();
-                return;
-            }
+        self.close_incomplete_stream();
+    }
+
+    /// Reports a body failure that arrived after the status line was
+    /// committed. Under a bake dev server the error page ends the response:
+    /// returns `true`, and `resp` must not be touched again.
+    fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
+        if err.is_empty_or_undefined_or_null() {
+            return false;
         }
+        let server = self.server();
+        if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
+            server.vm().as_mut().run_error_handler(err, None);
+            return false;
+        }
+
+        let mut exception_list: jsc::ExceptionList = Vec::new();
+        server
+            .vm()
+            .as_mut()
+            .run_error_handler(err, Some(&mut exception_list));
+
+        let bb = DevErrorPage {
+            message: b"Stream error during server-side rendering",
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            exceptions: &exception_list,
+            log: None,
+        }
+        .render();
+
+        if let Some(resp) = self.resp.get() {
+            // SAFETY: FFI handle
+            resp.write(&bb);
+        }
+
         self.end_stream(self.should_close_connection());
+        true
     }
 
     pub(crate) fn do_render_with_body(
@@ -3246,9 +3293,13 @@ where
 
                 if lock.on_receive_value.is_some() || lock.task.is_some() {
                     // someone else is waiting for the stream or waiting for `onStartStreaming`
-                    let Ok(readable) = value.to_readable_stream(global_this) else {
-                        return;
-                    }; // TODO: properly propagate exception upwards
+                    let readable = match value.to_readable_stream(global_this) {
+                        Ok(readable) => readable,
+                        Err(err) => {
+                            this.run_error_handler(global_this.take_exception(err));
+                            return;
+                        }
+                    };
                     readable.ensure_still_alive();
                     this.do_render_with_body(std::ptr::from_mut(value), None);
                     return;
@@ -3336,13 +3387,13 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            if let Some(resp) = this.resp.get() {
-                let state = resp.state();
-                if state.is_http_write_called() && state.is_response_pending() {
-                    this.force_close();
-                    return;
-                }
+            // Committed status: report in both modes, then close.
+            let global_this = this.server().global_this();
+            if this.report_committed_body_error(err.to_js(global_this), true) {
+                return;
             }
+            this.close_incomplete_stream();
+            return;
         } else if !this.flags.has_written_status() {
             // Upstream ended cleanly before any chunk: flush the deferred
             // status/headers so the client sees them before the terminator.
@@ -3440,6 +3491,14 @@ where
         };
 
         this.render_metadata();
+
+        // A null-body status never transmits the body.
+        if let Some(server) = this.server.get()
+            && let Some(response) = this.response_mut()
+            && matches!(response.get_body_value(), Body::Value::Locked(_))
+        {
+            Self::cancel_unread_body(response, server.global_this());
+        }
 
         if status == 304 {
             if let Some(resp) = this.resp.get() {
@@ -3603,6 +3662,7 @@ where
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
                 if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                    self.discard_handler_result(server.global_this(), result);
                     return;
                 }
                 if self.resp.get().is_some_and(|resp| resp.is_closed()) {

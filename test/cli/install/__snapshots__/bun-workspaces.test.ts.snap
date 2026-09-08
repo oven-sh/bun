@@ -419,7 +419,10 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     {
       "name": "no-deps",
       "literal": "kjwoehcojrgjoj",
-      "workspace": "packages/mono",
+      "dist_tag": {
+        "name": "no-deps",
+        "tag": "no-deps"
+      },
       "package_id": 2,
       "behavior": {
         "prod": true

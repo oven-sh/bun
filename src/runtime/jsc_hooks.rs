@@ -312,7 +312,11 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             )),
         }
     }
-    rare.default_client_ssl_ctx.unwrap()
+    rare.default_client_ssl_ctx
+        .as_ref()
+        .unwrap()
+        .as_ptr()
+        .cast()
 }
 
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
@@ -332,10 +336,7 @@ fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache
-        .get_or_create_opts(opts, err)
-        // SAFETY: `get_or_create_opts` returns a +1 ref.
-        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
+    cache.get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1337,7 +1338,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
         None
     };
     bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        sync_error_buf: bun_paths::path_buffer_pool::get(),
         vm: vm_field,
     }))
     .cast::<c_void>()
@@ -2833,15 +2834,11 @@ fn transpile_source_code_inner(
                 // disable_transpiling: return raw source.
                 if disable_transpilying {
                     let source_code = match args.flags {
-                        FetchFlags::PrintSourceAndClone => {
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
                         FetchFlags::PrintSource => {
                             // The file contents live in a Drop-carrying
                             // `source_contents_backing` on `parse_result`, so a
                             // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead — matches the
-                            // `PrintSourceAndClone` arm.
+                            // return. Clone instead.
                             bun_core::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
@@ -3518,7 +3515,7 @@ fn transpile_source_code_inner(
                 // Rewrite `specifier` against `vm.origin` so
                 // importing an asset via the file loader yields the public URL,
                 // not the absolute filesystem path.
-                let mut buf = std::string::String::new();
+                let mut public_path: Vec<u8> = Vec::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 // `URL<'static>` is a view struct; borrow it in place — no
                 // `&mut *jsc_vm` aliases through the call below, so there is no
@@ -3531,10 +3528,10 @@ fn transpile_source_code_inner(
                     top_level_dir,
                     origin,
                     b"",
-                    &mut buf,
+                    &mut public_path,
                     bun_paths::Platform::Loose,
                 );
-                bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
             } else {
                 bun_string_jsc::create_utf8_for_js(global_object, path.text)
@@ -3843,11 +3840,17 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
-            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            // An embedded file is served through the builtin-module path but is a file: its origin is its own path
+            // (or, with --bytecode, the path the cache was generated under, which must match exactly).
+            origin_path: if file.bytecode_origin_path.is_empty() {
+                specifier.clone()
+            } else {
+                bun_core::String::from_bytes(file.bytecode_origin_path)
+            },
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
-                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()
@@ -4523,7 +4526,7 @@ fn transpile_error_value(
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
-        crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
+        crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
         // `take_error` unwraps the JSC::Exception to its inner value; the C++
         // caller re-wraps via `JSC::Exception::create`, so storing the raw
         // Exception here would double-wrap and trip

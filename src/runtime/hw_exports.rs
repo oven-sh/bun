@@ -227,12 +227,10 @@ mod sql_hooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx {
+    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache
-            .get_or_create_opts(opts, err)
-            .unwrap_or(core::ptr::null_mut())
+        cache.get_or_create_opts(opts, err)
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;

@@ -869,9 +869,20 @@ blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# MSVC STL vectorized algorithms. Gate: __isa_available.
-# (14 symbols)
+# BoringSSL Keccak x4 (ML-KEM batch SHAKE). __attribute__((target("avx2"))); only reached when
+# BORINGSSL_have_keccak_x4() -> CRYPTO_is_AVX2_capable() (crypto/fipsmodule/keccak/internal.h).
+# (3 symbols)
 # ----------------------------------------------------------------------------
+keccak_f_x4                        [AVX, AVX2]
+bssl::BORINGSSL_keccak_short_x4    [AVX, AVX2]
+bssl::BORINGSSL_keccak_squeeze_x4  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC STL vectorized algorithms. Gate: __isa_available.
+# (15 symbols)
+# ----------------------------------------------------------------------------
+__std_mismatch_1                                                                                          [AVX, AVX2]
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]
@@ -1062,8 +1073,9 @@ bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 # ----------------------------------------------------------------------------
 # Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (40 symbols; PDB demangles these to bun_image::N_*::*)
+# (45 symbols; PDB demangles these to bun_image::N_*::*)
 # ----------------------------------------------------------------------------
+bun_image::N_AVX2::CmykToRgbaImpl  [AVX, AVX2]
 bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]
 bun_image::N_AVX2::HorizPass  [AVX, AVX2, FMA]
 bun_image::N_AVX2::ModulateImpl  [AVX, AVX2, FMA]
@@ -1072,6 +1084,7 @@ bun_image::N_AVX2::Rotate180Impl  [AVX, AVX2]
 bun_image::N_AVX2::Rotate270Impl  [AVX]
 bun_image::N_AVX2::Rotate90Impl  [AVX]
 bun_image::N_AVX2::VertPass  [AVX, AVX2, BMI1, FMA]
+bun_image::N_AVX3::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun_image::N_AVX3::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1080,6 +1093,7 @@ bun_image::N_AVX3::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
+bun_image::N_AVX3_DL::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_DL::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_DL::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1088,6 +1102,7 @@ bun_image::N_AVX3_DL::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+bun_image::N_AVX3_SPR::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_SPR::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_SPR::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -1096,6 +1111,7 @@ bun_image::N_AVX3_SPR::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+bun_image::N_AVX3_ZEN4::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun_image::N_AVX3_ZEN4::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_ZEN4::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_ZEN4::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]

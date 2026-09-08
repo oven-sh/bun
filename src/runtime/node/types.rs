@@ -454,13 +454,19 @@ impl StringOrBuffer<'static> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
-    /// [`from_js`](Self::from_js) for a work-pool job: strings thread-isolated, buffers pinned and GC-rooted.
+    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
     #[inline]
     pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        let mut parsed =
+            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
+            && !buffer.copy_if_resizable(global)
+        {
+            return Err(global.throw_out_of_memory());
+        }
         // SAFETY: parsed with `Flavor::Async`.
         Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }
@@ -1099,12 +1105,16 @@ impl PathLikeExt for PathLike<'_> {
         use jsc::JSType;
         let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
-                let buffer = if arguments.will_be_async {
+                let mut buffer = if arguments.will_be_async {
                     PinnedArrayBuffer::root(ctx, arg)
                 } else {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
+                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
+                if !buffer.copy_if_resizable(ctx) {
+                    return Err(ctx.throw_out_of_memory());
+                }
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();

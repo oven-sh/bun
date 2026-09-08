@@ -1062,6 +1062,60 @@ test(
   timeout,
 );
 
+// The Bun.write(file, Response(stream)) side of the test above. The pipe into the FileSink starts the
+// pump (which runs `pull()`), drains microtasks, then attaches its continuation to the pump's promise.
+// A terminate() that landed in `pull()` or in that checkpoint left the TerminationException pending
+// while the pipe carried on: JSC assertNoException in the promise `then`, or the sink freed with its
+// JS controller still attached (heap-use-after-free in the controller's destructor at teardown). The
+// pipe now detaches the controller and unwinds.
+test(
+  "terminate() while the worker's Bun.write() pipes a stream body stuck in pull() or a microtask",
+  async () => {
+    const workers = slow ? 4 : 8;
+    using dir = tempDir("worker-terminate-bun-write", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { join } = require("node:path");
+        // SPIN=sync never leaves pull(); SPIN=microtask suspends pull() and spins in the checkpoint.
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const spin = process.env.SPIN === 'sync' ? () => { for (;;) {} } : async () => { for (;;) await 1; };" +
+          "const body = process.env.SHAPE === 'direct'" +
+          "  ? new ReadableStream({ type: 'direct', async pull(c) { c.write('x'); parentPort.postMessage('pulled'); await spin(); } })" +
+          "  : new ReadableStream({ async pull(c) { c.enqueue(new TextEncoder().encode('x')); parentPort.postMessage('pulled'); await spin(); } });" +
+          "Bun.write(process.env.OUT, new Response(body)).then(() => parentPort.postMessage('settled'), () => parentPort.postMessage('settled'));";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const SHAPE = i % 2 ? "default" : "direct";
+            const SPIN = i % 4 < 2 ? "microtask" : "sync";
+            const OUT = join(${JSON.stringify(String(dir))}, "out-" + i + ".txt");
+            const w = new Worker(src, { eval: true, env: { ...process.env, SHAPE, SPIN, OUT } });
+            const message = await new Promise((resolve, reject) => { w.once("message", resolve); w.once("error", reject); });
+            if (message !== "pulled") throw new Error("unexpected message from worker " + i + ": " + message);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // A worker terminated while HTMLRewriter transforms with async element handlers are in flight: a
 // handler's promise reaction resumes the rewrite (more handlers, sink writes, stream delivery) beneath a
 // microtask, and the reaction returned a value with the termination it met still pending ("host fn

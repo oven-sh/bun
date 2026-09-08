@@ -1587,7 +1587,19 @@ impl BlobExt for Blob {
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
-            global_this.bun_vm().as_mut().drain_microtasks();
+            if let Err(stopped) = global_this
+                .bun_vm()
+                .as_mut()
+                .event_loop_mut()
+                .drain_microtasks()
+            {
+                // The VM is stopping (a worker's terminate() met in `pull()` or in this checkpoint).
+                // The pump will never end()/close() the controller now, so detach it while the sink
+                // is alive: its destructor at teardown would otherwise finalize a freed sink.
+                let mut source = file_sink.source.replace(streams::SourceHandle::None);
+                webcore::file_sink::JSSink::detach(&mut source, global_this);
+                return Err(stopped.throw(global_this));
+            }
 
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader

@@ -4065,10 +4065,15 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
+/// `path_str` is the FormData entry's filename. With an explicit `filename`
+/// argument it must win over an already-named File
+/// (https://xhr.spec.whatwg.org/#create-an-entry step 3). Without one, the C++
+/// caller defaulted it from `Blob__getFileNameString(this)`, so the write is a
+/// no-op. `this` is the FormData-held dupe, so the caller's File is untouched.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    if !path_str.is_empty() && this.get_file_name().is_none() {
+    if !path_str.is_empty() {
         this.name.set(path_str.clone());
     }
 }

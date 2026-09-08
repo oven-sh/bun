@@ -1,11 +1,8 @@
-//! SIGINT/SIGTERM/SIGHUP hook for a process that supervises background
-//! children and must forward the signal to them before it exits (today:
-//! `bun install` while lifecycle scripts run). The handler records the
-//! signal and posts a task to the supervisor's `MiniEventLoop`; the
-//! supervisor's callback decides what to forward and when to exit.
-//!
-//! Unlike [`crate::ctrl_c`] (foreground child sharing the terminal, nothing
-//! forwarded), this is for children that a pid-targeted signal never reaches.
+//! SIGINT/SIGTERM/SIGHUP hook for a supervisor of background children (`bun
+//! install` running lifecycle scripts): the handler records the signal and
+//! posts the supervisor's callback to its `MiniEventLoop`. Contrast
+//! [`crate::ctrl_c`], where the child shares the terminal and nothing is
+//! forwarded.
 
 use core::ffi::c_int;
 use core::ptr::NonNull;
@@ -31,11 +28,9 @@ static ON_SIGNAL: Mutex<Option<fn(c_int)>> = Mutex::new(None);
 /// Dispositions replaced by `hook`; `None` while not hooked.
 static PREVIOUS: Mutex<Option<[libc::sigaction; SIGNALS.len()]>> = Mutex::new(None);
 
-/// Until [`unhook`], a hooked signal wakes `event_loop` and runs
-/// `on_signal(sig)` on its thread at the next tick (signals coalesce; the
-/// latest wins). An inherited `SIG_IGN` is left alone. Returns `false` for a
-/// JS event loop, where the runtime owns process signals. Call from the
-/// loop's thread.
+/// Until [`unhook`], a hooked signal runs `on_signal(sig)` on the loop's
+/// thread at its next tick (coalesced; latest wins). Skips an inherited
+/// `SIG_IGN`. Returns `false` (no hook) for a JS event loop.
 pub fn hook(event_loop: EventLoopHandle, on_signal: fn(c_int)) -> bool {
     let EventLoopHandle::Mini(mini) = event_loop else {
         return false;

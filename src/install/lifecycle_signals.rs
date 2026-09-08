@@ -1,8 +1,6 @@
 //! Forwards SIGINT/SIGTERM/SIGHUP sent to `bun install` to its running
-//! lifecycle scripts instead of dying at once and orphaning them. After
-//! forwarding, the hook is removed (a second signal takes the default action),
-//! no new script starts, and once the last script exits `bun install` dies by
-//! the same signal. The hook itself is `bun_spawn::exit_signals`.
+//! lifecycle scripts, waits for them, then dies by the same signal (hook:
+//! `bun_spawn::exit_signals`). After forwarding, a second signal is default.
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
@@ -32,9 +30,8 @@ fn signal_code(sig: c_int) -> bun_core::SignalCode {
         .unwrap_or(bun_core::SignalCode::DEFAULT)
 }
 
-/// Call before spawning a lifecycle script. `manager` must be the
-/// allocation-rooted `PackageManager` pointer; it is dereferenced from the
-/// signal callback until the last script exits.
+/// Call before spawning a lifecycle script. `manager` (allocation-rooted) is
+/// dereferenced from the signal callback until the last script exits.
 pub(crate) fn on_script_started(manager: *mut PackageManager) {
     if RUNNING.fetch_add(1, Ordering::Relaxed) != 0 {
         return;

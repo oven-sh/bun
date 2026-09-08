@@ -3145,8 +3145,7 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// Reports a `Fatal` result from the libarchive write side (a failed `write(2)`
-/// to the tarball at `tarball_path`, or OOM inside libarchive), then exits.
+/// Reports a `Fatal` libarchive write result (a failed `write(2)`, or OOM) and exits.
 #[cold]
 fn tarball_write_failed(archive: &Archive, tarball_path: &ZStr) -> ! {
     let errno = archive.errno();
@@ -3168,8 +3167,7 @@ fn tarball_write_failed(archive: &Archive, tarball_path: &ZStr) -> ! {
     Global::crash();
 }
 
-/// `archive_write_data` returns the number of bytes it took, or a negative
-/// status once a write to the destination fails (ENOSPC, EIO, ...).
+/// `archive_write_data` returns the byte count, or a negative status when the write fails.
 fn write_archive_data(archive: &Archive, data: &[u8], tarball_path: &ZStr) -> usize {
     match usize::try_from(archive.write_data(data)) {
         Ok(written) => written,

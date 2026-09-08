@@ -479,25 +479,21 @@ describe.concurrent("flags", () => {
   });
 
   // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
-  test.skipIf(!isLinux)("reports ENOSPC when the tarball destination is full", async () => {
-    // Enough incompressible data that libarchive flushes a block while it writes the entry,
-    // not only when it closes the archive.
-    using big = tempDir("pack-enospc-data", {
+  // "an entry": enough incompressible data that libarchive flushes a block while it writes index.js.
+  // "the end of the archive": small enough that the only write(2) happens when the archive is closed.
+  test.skipIf(!isLinux).each([
+    ["an entry", () => `// ${randomBytes(128 * 1024).toString("base64")}`],
+    ["the end of the archive", () => indexJs],
+  ] as const)("reports ENOSPC when the disk fills up while writing %s", async (_, indexJsContents) => {
+    using dir = tempDir("pack-enospc", {
       "package.json": JSON.stringify({ name: "pack-enospc", version: "1.1.1" }),
-      "index.js": `// ${randomBytes(128 * 1024).toString("base64")}`,
-    });
-    // Small enough that the only write(2) happens when the archive is closed.
-    using small = tempDir("pack-enospc-close", {
-      "package.json": JSON.stringify({ name: "pack-enospc", version: "1.1.1" }),
-      "index.js": indexJs,
+      "index.js": indexJsContents(),
     });
 
-    for (const dir of [big, small]) {
-      const { out, err, exitCode } = await runPack(dir, ["--filename=/dev/full"]);
-      expect(err).toBe(`ENOSPC: No space left on device: failed to write tarball "/dev/full" (write)`);
-      expect(out).toStartWith("bun pack <version> (<revision>)");
-      expect(exitCode).toBe(1);
-    }
+    const { out, err, exitCode } = await runPack(dir, ["--filename=/dev/full"]);
+    expect(err).toBe(`ENOSPC: No space left on device: failed to write tarball "/dev/full" (write)`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
   });
 
   test("--filename and --destination", async () => {

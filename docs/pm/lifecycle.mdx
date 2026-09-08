@@ -87,3 +87,9 @@ Or in `.npmrc`:
 ```ini .npmrc icon="npm"
 ignore-scripts=true
 ```
+
+---
+
+## Interrupted and failed scripts
+
+If `bun install` stops before a dependency's lifecycle scripts finish (the process was killed, or another package's script failed), the next `bun install` reinstalls that package and runs its scripts again. The same applies to a trusted dependency whose script exited with an error: every `bun install` runs it again, and fails again, until the script succeeds, the package is removed from `trustedDependencies`, or scripts are disabled with `--ignore-scripts`.

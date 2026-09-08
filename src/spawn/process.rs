@@ -385,11 +385,10 @@ impl Process {
                         if self.reap_on_thread().is_ok() {
                             break 'brk None;
                         }
-                        // No thread could be started: reap with a blocking `wait4`, as before.
-                        break 'brk Status::from(
-                            pid,
-                            &posix_spawn::wait4(pid, 0, Some(&mut rusage_result)),
-                        );
+                        // No thread could start: one more non-blocking reap, else report the error rather than block the loop.
+                        let retry =
+                            posix_spawn::wait4(pid, libc::WNOHANG as u32, Some(&mut rusage_result));
+                        break 'brk Status::from(pid, &retry).or(Some(Status::Err(err_)));
                     }
                     break 'brk Some(Status::Err(err_));
                 }

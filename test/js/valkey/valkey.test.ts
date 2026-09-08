@@ -7376,8 +7376,10 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const url = new URL(connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL);
         url.username = "invaliduser";
         url.password = "invalidpassword";
+        // The rejected HELLO is retried; two retries keep the rejection of connect() quick.
         const failedRedis = new RedisClient(url.toString(), {
           tls: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tls : false,
+          maxRetries: 2,
         });
 
         let connectionFailed = false;

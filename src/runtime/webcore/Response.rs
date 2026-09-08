@@ -982,7 +982,7 @@ impl Response {
                     let status = StatusRule::Redirect.check_value(global_this, arg_init)?;
                     response.init.with_mut(|i| i.status_code = status);
                 } else if let Some(init) =
-                    Init::init_with_rule(global_this, arg_init, StatusRule::Redirect)?
+                    Init::init_with_rule(global_this, arg_init, Some(StatusRule::Redirect))?
                 {
                     response.init.set(init);
                 }
@@ -1205,17 +1205,25 @@ impl Init {
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
-        Self::init_with_rule(global_this, response_init, StatusRule::Response)
+        Self::init_with_rule(global_this, response_init, Some(StatusRule::Response))
+    }
+
+    /// For a `RequestInit`: `status` and `statusText` are neither read nor checked.
+    pub(crate) fn init_without_status(
+        global_this: &JSGlobalObject,
+        request_init: JSValue,
+    ) -> JsResult<Option<Init>> {
+        Self::init_with_rule(global_this, request_init, None)
     }
 
     /// `rule` picks the default status and checks any status that `response_init` provides.
     pub(crate) fn init_with_rule(
         global_this: &JSGlobalObject,
         response_init: JSValue,
-        rule: StatusRule,
+        rule: Option<StatusRule>,
     ) -> JsResult<Option<Init>> {
         let mut result = Init {
-            status_code: rule.default_status(),
+            status_code: rule.map_or(0, StatusRule::default_status),
             ..Default::default()
         };
 
@@ -1251,7 +1259,9 @@ impl Init {
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
                 let mut init = resp.init.get().clone(global_this)?;
-                init.status_code = rule.check(global_this, i64::from(init.status_code))?;
+                if let Some(rule) = rule {
+                    init.status_code = rule.check(global_this, i64::from(init.status_code))?;
+                }
                 return Ok(Some(init));
             }
         }
@@ -1276,14 +1286,16 @@ impl Init {
             }
         }
 
-        if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
-            result.status_code = rule.check_value(global_this, status_value)?;
-        }
+        if let Some(rule) = rule {
+            if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
+                result.status_code = rule.check_value(global_this, status_value)?;
+            }
 
-        if let Some(status_text) =
-            response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
-        {
-            result.status_text = status_text.to_bun_string(global_this)?;
+            if let Some(status_text) =
+                response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
+            {
+                result.status_text = status_text.to_bun_string(global_this)?;
+            }
         }
 
         if let Some(method_value) =

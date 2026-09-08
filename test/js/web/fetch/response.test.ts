@@ -167,6 +167,26 @@ test("new Response(body, response) checks the status it copies from the other Re
   expect(() => new Response("x", { status: 0 })).toThrow(RangeError);
 });
 
+test("the ResponseInit status check does not apply to new Request(input, init)", () => {
+  // RequestInit has no `status` or `statusText`: neither is read, so neither can throw
+  expect(new Request("http://x/", { method: "POST", status: 0 }).method).toBe("POST");
+  const init = {
+    method: "PUT",
+    get status() {
+      throw new Error("status was read");
+    },
+    get statusText() {
+      throw new Error("statusText was read");
+    },
+  };
+  expect(new Request("http://x/", init).method).toBe("PUT");
+  // a Response as the init lends its method and headers, whatever its status
+  const fromError = new Request("http://x/", Response.error());
+  expect(fromError.method).toBe("GET");
+  const withHeaders = new Request("http://x/", new Response(null, { status: 599, headers: { "X-A": "1" } }));
+  expect(withHeaders.headers.get("X-A")).toBe("1");
+});
+
 // https://fetch.spec.whatwg.org/#dom-response-redirect
 // `Location` gets the serialization of the parsed url, not the raw input string.
 test.each([

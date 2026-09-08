@@ -88,7 +88,12 @@ impl<'o> Converter<'o> {
                 }
                 NodeData::Element { .. } => {
                     self.replacement_for_node(child, out, depth, in_code, element_index);
-                    element_index += 1;
+                    // Position among element siblings (list numbering, the
+                    // heading row of a table); dropped subtrees do not count,
+                    // being absent everywhere else too.
+                    if !child.tag().is_skipped() {
+                        element_index += 1;
+                    }
                 }
                 NodeData::Document | NodeData::Ignored => {}
             }

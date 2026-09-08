@@ -454,6 +454,10 @@ impl<'a> Builder<'a> {
                 continue;
             };
             if self.stack.len() >= MAX_TREE_DEPTH || self.clone_budget == 0 {
+                // What cannot be reopened now is forgotten rather than left
+                // for the next token to walk past again (the search above is
+                // O(list × stack) whenever the tail of the list is closed).
+                self.afe.truncate(j);
                 break;
             }
             self.clone_budget -= 1;
@@ -474,9 +478,6 @@ impl<'a> Builder<'a> {
             return true;
         }
         for _ in 0..8 {
-            if self.clone_budget < 4 {
-                return false;
-            }
             // Formatting element: the last one with this name after the
             // last marker.
             let mut fe_afe = None;
@@ -514,6 +515,15 @@ impl<'a> Builder<'a> {
                 self.afe.remove(fe_afe);
                 return true;
             };
+            if self.clone_budget < 4 {
+                // Out of budget for the restructuring below (up to four new
+                // elements per round): take the element off both lists and
+                // leave the tree as it is — what it still encloses stays
+                // formatted, nothing later reopens it.
+                self.stack.remove(fe_stack);
+                self.afe.remove(fe_afe);
+                return true;
+            }
             let furthest = self.stack[fb_stack].node;
             let common_ancestor = if fe_stack == 0 {
                 self.body

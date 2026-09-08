@@ -619,6 +619,11 @@ describe("Bun.markdown.fromHTML", () => {
         "<a href=/x>o<object><a href=/y>y<a href=/z>z</object>after</a>",
         "[o[y](/y)[z](/z)after](/x)",
       ],
+      [
+        "dropped siblings do not shift list numbering",
+        "<ol><script></script><li>a</li><template></template><li>b</ol>",
+        "1. a\n2. b",
+      ],
       ["<image> is <img>", "<image src=a.png alt=i>", "![i](a.png)"],
       ["first newline after <pre> is dropped, even as a reference", "<pre>&#10;x\n</pre>", "```\nx\n```"],
       ["<textarea> is RCDATA", "<textarea>\n&lt;b&gt;<i></textarea>", "\\<b>\\<i>"],
@@ -748,6 +753,18 @@ describe("Bun.markdown.fromHTML", () => {
         () => repeat("<span>", 500) + repeat("\u00a0", 200_000) + "deep",
       ],
       ["long list with omitted </li> and inline content", () => repeat("<li><a href=x>x</a>", depth) + "<li>deep"],
+      // A closed formatting list that can no longer be reopened (budget spent,
+      // deep stack) must not be re-walked for every later token.
+      [
+        "unreopenable formatting list under a deep stack",
+        () =>
+          "<ul>" +
+          Array.from({ length: 1022 }, (_, i) => `<li><b x=${i}>`).join("") +
+          "</ul>" +
+          repeat("<div>", 500) +
+          repeat("<wbr>", 100_000) +
+          "deep",
+      ],
       ["stray end tags against many unclosed <p>", () => repeat("<p>x</q>", depth) + "<p>deep"],
     ];
     for (const [name, html] of cases) {
@@ -755,6 +772,14 @@ describe("Bun.markdown.fromHTML", () => {
         expect(fromHTML(html())).toContain("deep");
       });
     }
+    test("links still convert after the reopen budget is spent", () => {
+      const prefix =
+        "<ul><li>" + Array.from({ length: 509 }, (_, i) => `<b x=${i}>`).join("") + repeat("<li>x", 400) + "</ul>";
+      const links = Array.from({ length: 1200 }, (_, i) => `<p><a href=/p${i}>t${i}</a></p>`).join("");
+      const md = fromHTML(prefix + links);
+      expect(md).toContain("[t0](/p0)");
+      expect(md).toEndWith("[t1199](/p1199)");
+    });
     test("content after a deep region is still structured", () => {
       const md = fromHTML(
         repeat("<div>", 5000) + "deep" + repeat("</div>", 5000) + "<h2>After</h2><ul><li>ok</li></ul>",

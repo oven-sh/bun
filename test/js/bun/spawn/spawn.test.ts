@@ -835,8 +835,10 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
     trickling: `const chunk = Buffer.alloc(2048, 120); setInterval(() => require("fs").writeSync(1, chunk), 1);`,
   };
   for (const [kind, producer] of Object.entries(producers)) {
-    it.concurrent(`an idle reader stopped at the highwater mark does not keep the process alive (${kind} writer)`, async () => {
-      const stdout = await run(`
+    it.concurrent(
+      `an idle reader stopped at the highwater mark does not keep the process alive (${kind} writer)`,
+      async () => {
+        const stdout = await run(`
         const producer = Bun.spawn({
           cmd: [process.execPath, "-e", ${JSON.stringify(producer)}],
           stdin: "ignore",
@@ -855,8 +857,9 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
         // The reader stays locked and idle while the child keeps writing: the pipe
         // reader fills to its highwater mark and stops, and then nothing is pending.
       `);
-      expect(JSON.parse(stdout)).toEqual({ gotFirstChunk: true, producerExitCode: null });
-    });
+        expect(JSON.parse(stdout)).toEqual({ gotFirstChunk: true, producerExitCode: null });
+      },
+    );
   }
 
   it.concurrent("a pending read keeps the process alive until the child writes", async () => {

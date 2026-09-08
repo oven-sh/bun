@@ -180,6 +180,9 @@ pub mod linker_context {
     #[path = "renameSymbolsInChunk.rs"]
     pub(crate) mod rename_symbols_in_chunk;
 
+    #[path = "standaloneHtmlCsp.rs"]
+    pub(crate) mod standalone_html_csp;
+
     #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
 

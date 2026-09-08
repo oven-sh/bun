@@ -7713,6 +7713,14 @@ pub mod bv2_impl {
             source_index: IndexInt,
             code: Box<[u8]>,
             script_injection_offset: u32,
+            /// Standalone mode: the `content` attribute value of each
+            /// `<meta http-equiv="Content-Security-Policy">`, in document
+            /// order, ready to splice where `code` holds its
+            /// `QueryKind::ContentSecurityPolicy` placeholder. The HTML pass
+            /// stores the policy as written; `generate_chunks_in_parallel`
+            /// rewrites it for the inlined content once the sibling chunks
+            /// are final.
+            content_security_policies: Box<[Box<[u8]>]>,
         },
     }
 

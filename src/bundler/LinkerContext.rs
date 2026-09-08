@@ -2650,7 +2650,9 @@ impl<'a> LinkerContext<'a> {
                                 out.push(chunk_index);
                             }
                         }
-                        crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
+                        crate::chunk::QueryKind::None
+                        | crate::chunk::QueryKind::HtmlImport
+                        | crate::chunk::QueryKind::ContentSecurityPolicy => {}
                     }
                 }
             }
@@ -5108,7 +5110,10 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                _ => unreachable!(),
+                // Bounded by the number of CSP `<meta>` tags in the HTML
+                // document, which only its `CompileResult::Html` knows.
+                crate::chunk::QueryKind::ContentSecurityPolicy => {}
+                crate::chunk::QueryKind::None => unreachable!(),
             }
 
             // Note: `Query` is a packed `u32` (`index: u29`, `kind: u3`);

@@ -522,6 +522,189 @@ console.log(message);`,
     expect(html).toContain("</script>");
   });
 
+  // A <meta http-equiv="Content-Security-Policy"> written for the multi-file
+  // site (`'self'`) blocks the inline <script>/<style> and data: URLs the
+  // standalone document is made of. The policy is rewritten with a hash per
+  // inline block and `data:` for the kinds of asset that were inlined.
+  describe.concurrent("Content-Security-Policy meta", () => {
+    const png = Buffer.from("89504e470d0a1a0a", "hex");
+    const sha256 = (text: string) => `'sha256-${new Bun.CryptoHasher("sha256").update(text).digest("base64")}'`;
+    const policies = (html: string) =>
+      [...html.matchAll(/http-equiv="content-security-policy"\s+content="([^"]*)"/gi)].map(m => m[1]);
+    const inlineScript = (html: string) => /<script type="module">([\s\S]*?)<\/script>/.exec(html)?.[1];
+    const inlineStyle = (html: string) => /<style>([\s\S]*?)<\/style>/.exec(html)?.[1];
+
+    async function buildStandalone(dir: string) {
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs).toHaveLength(1);
+      return { html: await result.outputs[0].text(), logs: result.logs };
+    }
+
+    test("default-src 'self' gets a directive per kind of inlined content", async () => {
+      using dir = tempDir("compile-browser-csp-default-src", {
+        "index.html": `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<link rel="stylesheet" href="./a.css"></head>
+<body><img src="./i.png"><script type="module" src="./app.js"></script></body></html>`,
+        "a.css": `body { background: rgb(1, 2, 3) }`,
+        "i.png": png,
+        "app.js": `document.documentElement.setAttribute("data-ran", "1");`,
+      });
+
+      const { html, logs } = await buildStandalone(String(dir));
+      const script = inlineScript(html)!;
+      const style = inlineStyle(html)!;
+      expect(script).toContain("data-ran");
+      expect(style).toContain("background");
+      expect(html).toContain('<img src="data:image/png;base64,');
+
+      // default-src itself stays as written so everything else still
+      // inherits 'self'; each kind of inlined content gets its own directive.
+      expect(policies(html)).toEqual([
+        `default-src 'self'; script-src 'self' ${sha256(script)}; style-src 'self' ${sha256(style)}; img-src 'self' data:`,
+      ]);
+      // The build says what it added.
+      expect(logs.map(log => log.level)).toEqual(["note"]);
+      expect(logs[0].message).toEndWith(
+        `index.html: added ${sha256(script)} to script-src, ${sha256(style)} to style-src, data: to img-src in its <meta http-equiv="Content-Security-Policy"> for the content this build inlined`,
+      );
+    });
+
+    test("existing directives are extended in place and satisfied ones are left alone", async () => {
+      using dir = tempDir("compile-browser-csp-existing", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="content-security-policy" content=" Script-Src 'self' https://cdn.example.com ;style-src 'unsafe-inline'; img-src * ; font-src 'self' data:; media-src 'none';;">
+<link rel="stylesheet" href="./a.css"></head>
+<body><video src="./v.mp4"></video><script src="./app.js"></script></body></html>`,
+        "a.css": `@font-face { font-family: f; src: url(./f.woff2); } body { background: url("./i.png"); }`,
+        "f.woff2": "not really a font",
+        "i.png": png,
+        "v.mp4": "not really a video",
+        "app.js": `console.log("app");`,
+      });
+
+      const { html } = await buildStandalone(String(dir));
+      const script = inlineScript(html)!;
+      expect(html).toContain('url("data:font/woff2;base64,');
+      expect(html).toContain('url("data:image/png;base64,');
+      expect(html).toContain('<video src="data:video/mp4;base64,');
+
+      // script-src: hash appended (directive names are case-insensitive).
+      // style-src: 'unsafe-inline' already allows the <style>.
+      // img-src: `*` does not match data:, so it is added.
+      // font-src: already lists data:.
+      // media-src 'none': the video was blocked on the multi-file site too.
+      expect(policies(html)).toEqual([
+        `Script-Src 'self' https://cdn.example.com ${sha256(script)}; style-src 'unsafe-inline'; img-src * data:; font-src 'self' data:; media-src 'none'`,
+      ]);
+    });
+
+    test("a nonce or hash next to 'unsafe-inline' still needs the hash", async () => {
+      using dir = tempDir("compile-browser-csp-nonce", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' 'nonce-abc123'">
+</head><body><script nonce="abc123" src="./app.js"></script></body></html>`,
+        "app.js": `console.log("app");`,
+      });
+
+      const { html } = await buildStandalone(String(dir));
+      const script = inlineScript(html)!;
+      // Browsers ignore 'unsafe-inline' when a nonce or hash is present.
+      expect(policies(html)).toEqual([`script-src 'unsafe-inline' 'nonce-abc123' ${sha256(script)}`]);
+    });
+
+    test("the hash covers the escaped <\\/script> text the browser sees", async () => {
+      using dir = tempDir("compile-browser-csp-escape", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="script-src 'self'">
+</head><body><script src="./app.js"></script></body></html>`,
+        "app.js": `document.title = "</script><script>alert(1)</script>";`,
+      });
+
+      const { html } = await buildStandalone(String(dir));
+      expect(html.split("</script>").length - 1).toBe(1);
+      const script = inlineScript(html)!;
+      expect(script).toContain("<\\/script>");
+      expect(policies(html)).toEqual([`script-src 'self' ${sha256(script)}`]);
+    });
+
+    test("every policy in the document is rewritten, other http-equiv metas are not", async () => {
+      using dir = tempDir("compile-browser-csp-multiple", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; img-src 'self'; report-uri /csp?a=1&amp;b=2">
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'strict-dynamic'">
+</head><body><img><script src="./app.js"></script></body></html>`,
+        "app.js": `import logo from "./logo.png";
+document.querySelector("img").src = logo;`,
+        "logo.png": png,
+      });
+
+      const { html } = await buildStandalone(String(dir));
+      const script = inlineScript(html)!;
+      // An image that only JS references still becomes a data: URL.
+      expect(script).toContain('"data:image/png;base64,');
+      expect(html).toContain('<meta http-equiv="X-UA-Compatible" content="IE=edge">');
+      expect(policies(html)).toEqual([
+        `default-src 'none'; script-src 'self' ${sha256(script)}; img-src 'self' data:; report-uri /csp?a=1&amp;b=2`,
+        `script-src 'self' 'strict-dynamic' ${sha256(script)}`,
+      ]);
+    });
+
+    test("a policy that does not restrict the inlined content is left as written", async () => {
+      using dir = tempDir("compile-browser-csp-unrelated", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content=" upgrade-insecure-requests;;object-src  'none' ">
+</head><body><script src="./app.js"></script></body></html>`,
+        "app.js": `console.log("app");`,
+      });
+      const { html, logs } = await buildStandalone(String(dir));
+      expect(policies(html)).toEqual([` upgrade-insecure-requests;;object-src  'none' `]);
+      expect(logs).toEqual([]);
+    });
+
+    test("character references in the attribute are decoded before the policy is read", async () => {
+      using dir = tempDir("compile-browser-csp-entities", {
+        // What a server-side renderer that escapes `'` leaves behind.
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src &#x27;self&#x27;; style-src &#39;unsafe-inline&#39;; script-src 'self' &quot;">
+<link rel="stylesheet" href="./a.css"></head><body><script src="./app.js"></script></body></html>`,
+        "a.css": `body { color: red }`,
+        "app.js": `console.log("app");`,
+      });
+      const { html } = await buildStandalone(String(dir));
+      const script = inlineScript(html)!;
+      // 'unsafe-inline' is recognized through the references, so style-src
+      // gets no hash (a hash would turn 'unsafe-inline' off). The rewritten
+      // value is re-escaped for the double-quoted attribute.
+      expect(policies(html)).toEqual([
+        `default-src 'self'; style-src 'unsafe-inline'; script-src 'self' &quot; ${sha256(script)}`,
+      ]);
+    });
+
+    test("a non-standalone HTML build leaves the policy alone", async () => {
+      using dir = tempDir("compile-browser-csp-regular-build", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+</head><body><script src="./app.js"></script></body></html>`,
+        "app.js": `console.log("app");`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        outdir: `${dir}/out`,
+      });
+      expect(result.success).toBe(true);
+      const html = await Bun.file(result.outputs.find(o => o.path.endsWith(".html"))!.path).text();
+      expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'self'">`);
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/32114
   describe.concurrent("sourcemaps", () => {
     const fixture = {

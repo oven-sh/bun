@@ -345,6 +345,11 @@ impl Chunk {
     }
 
     pub(crate) fn get_css_chunk_for_html<'a>(&self, chunks: &'a [Chunk]) -> Option<&'a Chunk> {
+        self.get_css_chunk_index_for_html(chunks)
+            .map(|i| &chunks[i])
+    }
+
+    pub(crate) fn get_css_chunk_index_for_html(&self, chunks: &[Chunk]) -> Option<usize> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
@@ -355,22 +360,18 @@ impl Chunk {
                     && other.entry_point.entry_point_id() == entry_point_id
                 {
                     if let Some(&css_idx) = js.css_chunks.first() {
-                        return Some(&chunks[css_idx as usize]);
+                        return Some(css_idx as usize);
                     }
                     break;
                 }
             }
         }
         // Fallback: match by entry_point_id for cases without a JS chunk.
-        for other in chunks.iter() {
-            if matches!(other.content, Content::Css(_))
+        chunks.iter().position(|other| {
+            matches!(other.content, Content::Css(_))
                 && other.entry_point.is_entry_point()
                 && other.entry_point.entry_point_id() == entry_point_id
-            {
-                return Some(other);
-            }
-        }
-        None
+        })
     }
 
     #[inline]
@@ -553,13 +554,19 @@ impl IntermediateOutput {
         &()
     }
 
-    /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
-    /// Used to calculate the extra bytes needed when escaping `</` → `<\/`.
-    fn count_closing_tags(content: &[u8], close_tag: &[u8]) -> usize {
+    /// Calls `emit` with consecutive pieces of `content` as it must appear
+    /// inside an inline `<script>`/`<style>` element: each `</` that starts
+    /// `close_tag` (e.g. `</script`, `</style`) becomes `<\/` so it cannot
+    /// end the element early.
+    fn for_each_escaping_closing_tags(
+        content: &[u8],
+        close_tag: &[u8],
+        mut emit: impl FnMut(&[u8]),
+    ) {
         let tag_suffix = &close_tag[2..];
-        let mut count: usize = 0;
         let mut remaining = content;
         while let Some(idx) = strings::index_of(remaining, b"</") {
+            emit(&remaining[..idx]);
             remaining = &remaining[idx + 2..];
             if remaining.len() >= tag_suffix.len()
                 && strings::eql_case_insensitive_ascii_ignore_length(
@@ -567,44 +574,43 @@ impl IntermediateOutput {
                     tag_suffix,
                 )
             {
-                count += 1;
-                remaining = &remaining[tag_suffix.len()..];
+                emit(b"<\\/");
+            } else {
+                emit(b"</");
             }
         }
-        count
+        emit(remaining);
+    }
+
+    /// The extra bytes [`memcpy_escaping_closing_tags`] needs over `content.len()`.
+    fn count_closing_tags(content: &[u8], close_tag: &[u8]) -> usize {
+        let mut escaped_len: usize = 0;
+        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| {
+            escaped_len += bytes.len()
+        });
+        escaped_len - content.len()
     }
 
     /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
     /// replacing `</` with `<\/`. Returns the number of bytes written.
     /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
     fn memcpy_escaping_closing_tags(dest: &mut [u8], content: &[u8], close_tag: &[u8]) -> usize {
-        let tag_suffix = &close_tag[2..];
-        let mut remaining = content;
         let mut dst: usize = 0;
-        while let Some(idx) = strings::index_of(remaining, b"</") {
-            dest[dst..][..idx].copy_from_slice(&remaining[..idx]);
-            dst += idx;
-            remaining = &remaining[idx + 2..];
-
-            if remaining.len() >= tag_suffix.len()
-                && strings::eql_case_insensitive_ascii_ignore_length(
-                    &remaining[..tag_suffix.len()],
-                    tag_suffix,
-                )
-            {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'\\';
-                dest[dst + 2] = b'/';
-                dst += 3;
-            } else {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'/';
-                dst += 2;
-            }
-        }
-        dest[dst..][..remaining.len()].copy_from_slice(remaining);
-        dst += remaining.len();
+        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| {
+            dest[dst..][..bytes.len()].copy_from_slice(bytes);
+            dst += bytes.len();
+        });
         dst
+    }
+
+    /// SHA-256 of `content` as [`memcpy_escaping_closing_tags`] writes it,
+    /// which is what a browser hashes for the inline element's CSP check.
+    pub(crate) fn sha256_escaping_closing_tags(content: &[u8], close_tag: &[u8]) -> [u8; 32] {
+        let mut hasher = bun_sha_hmac::sha::SHA256::init();
+        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| hasher.update(bytes));
+        let mut digest = [0u8; 32];
+        hasher.r#final(&mut digest);
+        digest
     }
 
     pub(crate) fn get_size(&self) -> usize {
@@ -776,12 +782,28 @@ impl IntermediateOutput {
                     &[]
                 };
 
+                // Standalone HTML: the `content` of each
+                // `<meta http-equiv="Content-Security-Policy">`, by placeholder index.
+                let content_security_policies: &[Box<[u8]>] =
+                    match chunk.compile_results_for_chunk.iter().next() {
+                        Some(CompileResult::Html {
+                            content_security_policies,
+                            ..
+                        }) => content_security_policies,
+                        _ => &[],
+                    };
+
                 for piece in pieces.slice() {
                     count += piece.data.len();
 
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
                             count += chunks[piece.query.index() as usize].id().len()
+                        }
+                        QueryKind::ContentSecurityPolicy => {
+                            count += content_security_policies
+                                .get(piece.query.index() as usize)
+                                .map_or(0, |policy| policy.len());
                         }
                         QueryKind::Chunk
                         | QueryKind::Asset
@@ -849,7 +871,9 @@ impl IntermediateOutput {
                                     ));
                                     continue;
                                 }
-                                QueryKind::None | QueryKind::ChunkId => unreachable!(),
+                                QueryKind::None
+                                | QueryKind::ChunkId
+                                | QueryKind::ContentSecurityPolicy => unreachable!(),
                             };
 
                             let cheap_normalizer = cheap_prefix_normalizer(
@@ -921,6 +945,16 @@ impl IntermediateOutput {
                                 shifts.push(shift);
                             }
                             remain = &mut remain[len..];
+                        }
+                        QueryKind::ContentSecurityPolicy => {
+                            // Only HTML documents carry these, and they have no source map.
+                            debug_assert!(!ENABLE_SOURCE_MAP_SHIFTS);
+                            if let Some(policy) =
+                                content_security_policies.get(piece.query.index() as usize)
+                            {
+                                remain[..policy.len()].copy_from_slice(policy);
+                                remain = &mut remain[policy.len()..];
+                            }
                         }
                         QueryKind::Asset
                         | QueryKind::Chunk
@@ -1233,6 +1267,7 @@ impl Query {
             3 => QueryKind::Scb,
             4 => QueryKind::HtmlImport,
             5 => QueryKind::ChunkId,
+            6 => QueryKind::ContentSecurityPolicy,
             _ => unreachable!("Query: invalid kind tag"),
         }
     }
@@ -1253,6 +1288,10 @@ pub enum QueryKind {
     HtmlImport = 4,
     /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
+    /// Given the ordinal of a `<meta http-equiv="Content-Security-Policy">`
+    /// in a standalone HTML document, print its policy rewritten to allow
+    /// the blocks and data: URLs inlined into that document
+    ContentSecurityPolicy = 6,
 }
 
 impl QueryKind {
@@ -1266,6 +1305,7 @@ impl QueryKind {
             QueryKind::Scb => b'S',
             QueryKind::HtmlImport => b'H',
             QueryKind::ChunkId => b'I',
+            QueryKind::ContentSecurityPolicy => b'P',
             QueryKind::None => unreachable!(),
         }
     }
@@ -1279,6 +1319,7 @@ impl QueryKind {
             b'S' => Some(QueryKind::Scb),
             b'H' => Some(QueryKind::HtmlImport),
             b'I' => Some(QueryKind::ChunkId),
+            b'P' => Some(QueryKind::ContentSecurityPolicy),
             _ => None,
         }
     }

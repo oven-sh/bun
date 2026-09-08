@@ -102,6 +102,28 @@ Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any 
 
 Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 
+### Content Security Policy
+
+A `<meta http-equiv="Content-Security-Policy">` written for the multi-file site usually allows `'self'`, which does not cover inline `<script>` and `<style>` elements or `data:` URLs. So that the single file still loads under its own policy, Bun rewrites the `content` of that tag at build time:
+
+- The directive that governs scripts (`script-src`, or `default-src` as its fallback) gets a `'sha256-...'` hash of the inlined `<script>`, and the one that governs styles gets a hash of the inlined `<style>`.
+- `img-src`, `font-src`, `media-src` and `manifest-src` get `data:` when an image, font, media file or manifest was inlined.
+- When only `default-src` is present, Bun adds a dedicated directive (for example `script-src 'self' 'sha256-...'`) and leaves `default-src` as written.
+- The build prints a note that lists what it added.
+
+```html
+<!-- source -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
+
+<!-- output -->
+<meta
+  http-equiv="Content-Security-Policy"
+  content="default-src 'self'; script-src 'self' 'sha256-L+kgRXS/...'; style-src 'self' 'sha256-zNeGjz5m...'; img-src 'self' data:"
+/>
+```
+
+A directive that already allows the content (`'unsafe-inline'`, `data:`) is left alone, and so is `'none'`: content the policy blocked on the multi-file site stays blocked. Other directives, such as `connect-src`, are not touched, so a `fetch()` of an inlined `data:` URL still needs `data:` there. Pages without a policy are not changed.
+
 ## Using with React
 
 React apps need no extra configuration: Bun transpiles JSX and resolves npm packages.
@@ -231,7 +253,8 @@ When you pass `--compile --target=browser` with an HTML entrypoint, Bun:
 4. Converts every relative asset reference into a base64 `data:` URI
 5. Inlines the bundled JS as `<script type="module">` before `</body>`
 6. Inlines the bundled CSS as `<style>` in `<head>`
-7. Outputs a single `.html` file with no external dependencies
+7. Adds hashes of the inlined blocks, and `data:`, to a `<meta http-equiv="Content-Security-Policy">` if the page has one
+8. Outputs a single `.html` file with no external dependencies
 
 ## Minification
 
@@ -311,4 +334,5 @@ Bun replaces references to `process.env.API_URL` in your JavaScript with the lit
 
 - **Code splitting** is not supported — `--splitting` cannot be used with `--compile --target=browser`
 - **Large assets** increase file size since they're base64-encoded (33% overhead vs the raw binary)
+- **Repeated references** to one asset each embed their own copy. A `data:` URI cannot be shared, so an image used by two `<img>` tags, a CSS `url()` and a JS import is stored four times. When size matters, reference a large asset from one place (one CSS class, or one JS import that the rest of the code reuses)
 - **External URLs** (CDN links, absolute URLs) stay as-is: Bun inlines only relative paths

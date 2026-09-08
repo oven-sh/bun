@@ -10,6 +10,7 @@ use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::chunk::QueryKind;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -87,6 +88,9 @@ struct HTMLLoader<'a> {
     end_tag_indices: EndTagIndices,
     added_head_tags: bool,
     added_body_script: bool,
+    /// Standalone mode: the `content` of each
+    /// `<meta http-equiv="Content-Security-Policy">`, in document order.
+    content_security_policies: Vec<Box<[u8]>>,
 }
 
 /// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
@@ -212,6 +216,45 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
     fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
         self.register_end_tag_handler(element, Self::end_body_tag_handler)
+    }
+
+    fn on_meta_http_equiv_tag(&mut self, element: &mut Element<'_, '_>, http_equiv: &[u8]) {
+        if !self.compile_to_standalone_html
+            || self.linker.dev_server.is_some()
+            || !strings::eql_case_insensitive_ascii_check_length(
+                strings::trim(http_equiv, b" \t\n\x0c\r"),
+                b"content-security-policy",
+            )
+        {
+            return;
+        }
+        let Some(policy) = element.get_attribute("content") else {
+            return;
+        };
+        // A policy written for the multi-file site blocks the inline blocks
+        // and data: URLs this mode emits. The sources that allow them (a hash
+        // per block) depend on the final bytes of sibling chunks, so leave a
+        // placeholder that `generate_chunks_in_parallel` resolves. The value
+        // is kept ready to splice into the double-quoted attribute lol-html
+        // writes: character references as written, `"` escaped.
+        let index = u32::try_from(self.content_security_policies.len()).expect("int cast");
+        let mut value = Vec::with_capacity(policy.len());
+        for byte in policy.into_bytes() {
+            if byte == b'"' {
+                value.extend_from_slice(b"&quot;");
+            } else {
+                value.push(byte);
+            }
+        }
+        self.content_security_policies
+            .push(value.into_boxed_slice());
+        let placeholder = format!(
+            "{}{}{:08}",
+            BStr::new(&self.linker.unique_key_prefix),
+            QueryKind::ContentSecurityPolicy.letter() as char,
+            index
+        );
+        set_attribute(element, b"content", placeholder.as_bytes());
     }
 }
 
@@ -404,6 +447,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         },
         added_head_tags: false,
         added_body_script: false,
+        content_security_policies: Vec::new(),
     };
 
     HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
@@ -460,5 +504,6 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
         code: html_loader.output.into_boxed_slice(),
         source_index,
         script_injection_offset,
+        content_security_policies: html_loader.content_security_policies.into_boxed_slice(),
     }
 }

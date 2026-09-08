@@ -442,37 +442,7 @@ fn byte_literal(s: &'static [u8]) -> EncLit<u8> {
 }
 
 #[derive(Clone, Copy)]
-pub struct Latin1;
-#[derive(Clone, Copy)]
 pub struct Utf8;
-#[derive(Clone, Copy)]
-pub struct Utf16;
-
-impl Encoding for Latin1 {
-    type Unit = u8;
-    const KIND: EncodingKind = EncodingKind::Latin1;
-    const NUL: u8 = 0;
-    fn ch(c: u8) -> u8 {
-        c
-    }
-    #[inline]
-    fn literal(s: &'static [u8]) -> EncLit<u8> {
-        byte_literal(s)
-    }
-    #[inline]
-    fn key_bytes(s: &[u8]) -> &[u8] {
-        s
-    }
-    #[inline]
-    fn unit_from_u16(_u: u16) -> u8 {
-        // Only reachable from `EncodingKind::Utf16`-gated arms.
-        unreachable!("unit_from_u16 on Latin1")
-    }
-    #[inline]
-    fn bom_len(_input: &[u8]) -> usize {
-        0
-    }
-}
 
 impl Encoding for Utf8 {
     type Unit = u8;
@@ -501,50 +471,6 @@ impl Encoding for Utf8 {
         } else {
             0
         }
-    }
-}
-
-impl Encoding for Utf16 {
-    type Unit = u16;
-    const KIND: EncodingKind = EncodingKind::Utf16;
-    const NUL: u16 = 0;
-    fn ch(c: u8) -> u16 {
-        c as u16
-    }
-    #[inline]
-    fn literal(s: &'static [u8]) -> EncLit<u16> {
-        // All call sites pass ASCII, so widen byte-by-byte into the inline buffer.
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u16; 8];
-        let mut i = 0;
-        while i < s.len() {
-            debug_assert!(s[i] < 0x80, "Enc::literal expects ASCII");
-            buf[i] = s[i] as u16;
-            i += 1;
-        }
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
-    }
-    #[inline]
-    fn key_bytes(s: &[u16]) -> &[u8] {
-        // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
-        // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
-        // pattern as `bun_ast::E::EString::hash()` for the utf16 arm.
-        bytemuck::cast_slice(s)
-    }
-    #[inline]
-    fn unit_from_u16(u: u16) -> u16 {
-        u
-    }
-    #[inline]
-    fn bom_len(input: &[u16]) -> usize {
-        if input.first() == Some(&0xFEFF) { 1 } else { 0 }
-    }
-    #[inline]
-    fn as_u16_slice(s: &[u16]) -> &[u16] {
-        s
     }
 }
 

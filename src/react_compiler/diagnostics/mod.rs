@@ -282,13 +282,6 @@ impl CompilerErrorOrDiagnostic {
         }
     }
 
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            Self::Diagnostic(d) => d.logged_severity(),
-            Self::ErrorDetail(d) => d.logged_severity(),
-        }
-    }
-
     pub fn category(&self) -> ErrorCategory {
         match self {
             Self::Diagnostic(d) => d.category,

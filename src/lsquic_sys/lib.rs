@@ -397,10 +397,6 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_going_away(self.0) }
     }
-    pub fn abort(&self) {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_abort(self.0) }
-    }
     pub fn abort_silent(&self) {
         unsafe extern "C" {
             fn lsquic_conn_abort_silent(c: *mut lsquic_conn);

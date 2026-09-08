@@ -7409,9 +7409,6 @@ impl<C: WriterContext> Writer<C> {
         }
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
-        self.ctx.flush()
-    }
     pub(crate) fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }

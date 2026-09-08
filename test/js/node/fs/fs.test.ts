@@ -1017,7 +1017,7 @@ describe("copyFileSync", () => {
       expect(readFileSync(dest).equals(content)).toBe(true);
 
       // No temporary file is left behind.
-      expect(readdirSync(tempdir).filter(f => f.startsWith(`${name}.bin.`))).toEqual([]);
+      expect(readdirSync(tempdir).filter(f => f.startsWith(`${name}.bin`) && f !== `${name}.bin`)).toEqual([]);
     }
   });
 

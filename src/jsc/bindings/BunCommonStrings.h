@@ -6,11 +6,7 @@
     macro(require, require) \
     macro(resolve, resolve) \
     macro(mockedFunction, mockedFunction) \
-    macro(binaryTypeBlob, blob) \
-    macro(close, close) \
-    macro(end, end) \
-    macro(flush, flush) \
-    macro(write, write)
+    macro(binaryTypeBlob, blob)
 
 // macro(name, propertyName, literal): strings that are also JSC common identifiers (vm.propertyNames).
 #define BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(macro) \

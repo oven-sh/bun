@@ -1606,3 +1606,48 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// The production build writes a percent-encoded URL into the page for an asset
+// whose name has a space, `#`, `%` or a non-ASCII byte, and registers the file
+// under that URL, so the request a browser makes for each `<img src>` is a 200.
+// A JS `file` loader string carries the raw name; that path keeps serving too.
+test.concurrent("production build serves assets whose names need percent-encoding", async () => {
+  using dir = tempDir("bun-serve-html-encoded-asset-routes", {
+    "index.html": `<!DOCTYPE html><html><body><img src="./my photo.png"><img src="./shot #1.png"><img src="./100%.png"><img src="./ünï.png"><script type="module" src="./app.ts"></script></body></html>`,
+    "my photo.png": "photo",
+    "shot #1.png": "shot",
+    "100%.png": "percent",
+    "ünï.png": "unicode",
+    "app.ts": `import raw from "./100%.png"; globalThis.rawAssetPath = raw;`,
+    "serve.ts": /*ts*/ `
+      import page from "./index.html";
+      using server = Bun.serve({ port: 0, development: false, routes: { "/": page } });
+      const html = await (await fetch(server.url)).text();
+      const images = [];
+      for (const [, src] of html.matchAll(/<img src="([^"]+)"/g)) {
+        const url = new URL(src, server.url);
+        const res = await fetch(url);
+        images.push([src, url.pathname === src, res.status, await res.text()]);
+      }
+      const js = await (await fetch(new URL(html.match(/<script[^>]* src="([^"]+)"/)[1], server.url))).text();
+      const raw = js.match(/"(\\/100%-[a-z0-9]+\\.png)"/)?.[1] ?? null;
+      const rawStatus = raw === null ? null : (await fetch(server.url.origin + raw)).status;
+      console.log(JSON.stringify({ images, raw, rawStatus }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    result: {
+      // [src as written in the page, src is already what the browser requests, status, body]
+      images: [
+        [expect.stringMatching(/^\/my%20photo-[a-z0-9]+\.png$/), true, 200, "photo"],
+        [expect.stringMatching(/^\/shot%20%231-[a-z0-9]+\.png$/), true, 200, "shot"],
+        [expect.stringMatching(/^\/100%25-[a-z0-9]+\.png$/), true, 200, "percent"],
+        [expect.stringMatching(/^\/%C3%BCn%C3%AF-[a-z0-9]+\.png$/), true, 200, "unicode"],
+      ],
+      raw: expect.stringMatching(/^\/100%-[a-z0-9]+\.png$/),
+      rawStatus: 200,
+    },
+    exitCode: 0,
+  });
+});

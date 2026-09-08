@@ -121,5 +121,55 @@ describe.concurrent("bundler", () => {
         stdout: "Home status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true",
       },
     });
+
+    // The embedded page references each asset by its percent-encoded name and
+    // the compiled server registers the file under that name, so the request a
+    // browser makes for each `<img src>` is a 200.
+    itBundled(`compile/${backend}/HTMLServerPercentEncodedAssets`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
+        import index from "./index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+        });
+
+        const html = await (await fetch(server.url)).text();
+        for (const [, src] of html.matchAll(/<img src="([^"]+)"/g)) {
+          const url = new URL(src, server.url);
+          const res = await fetch(url);
+          console.log(src.replace(/-[a-z0-9]+\\.png$/, ".png"), url.pathname === src, res.status, await res.text());
+        }
+      `,
+        "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <img src="./my photo.png">
+            <img src="./shot #1.png">
+            <img src="./100%.png">
+            <img src="./ünï.png">
+          </body>
+        </html>
+      `,
+        "/my photo.png": "photo",
+        "/shot #1.png": "shot",
+        "/100%.png": "percent",
+        "/ünï.png": "unicode",
+      },
+      run: {
+        stdout: [
+          "/my%20photo.png true 200 photo",
+          "/shot%20%231.png true 200 shot",
+          "/100%25.png true 200 percent",
+          "/%C3%BCn%C3%AF.png true 200 unicode",
+        ].join("\n"),
+      },
+    });
   }
 });

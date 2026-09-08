@@ -486,6 +486,7 @@ declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
 declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
+declare function $ERR_TLS_REQUIRED_SERVER_NAME(): Error;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
 declare function $ERR_SSL_NO_CIPHER_MATCH(): Error;
 declare function $ERR_INVALID_URI(): URIError;

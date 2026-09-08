@@ -198,94 +198,48 @@ describe("tls.createServer listen", () => {
     );
   });
 
-  it("should not listen with wrong password", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer({
-      key: passKey,
-      passphrase: "invalid",
-      cert: cert,
-    });
-
-    server.on("error", mustCall());
-    let timeout: Timer;
-    function closeAndFail() {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    }
-
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(0, "0.0.0.0", closeAndFail);
+  // Node decrypts the key while tls.createServer() builds the SecureContext, so
+  // a wrong or missing passphrase throws synchronously from the constructor
+  // instead of surfacing later on the 'error' event of listen().
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1383
+  it("should throw from createServer with wrong password", () => {
+    expect(() =>
+      createServer({
+        key: passKey,
+        passphrase: "invalid",
+        cert: cert,
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_OSSL_BAD_DECRYPT" }));
   });
 
-  it("should reject passphrase longer than PEM_BUFSIZE without crashing", done => {
+  it("should reject passphrase longer than PEM_BUFSIZE without crashing", () => {
     // BoringSSL invokes the passphrase callback with a 1024-byte stack buffer.
     // A longer passphrase must fail key decryption rather than overflow that buffer.
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer({
-      key: passKey,
-      passphrase: Buffer.alloc(2000, "A").toString(),
-      cert: cert,
-    });
-
-    server.on("error", mustCall());
-    let timeout: Timer;
-    function closeAndFail() {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    }
-
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(0, "0.0.0.0", closeAndFail);
+    expect(() =>
+      createServer({
+        key: passKey,
+        passphrase: Buffer.alloc(2000, "A").toString(),
+        cert: cert,
+      }),
+    ).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
   });
 
-  it("should not listen without cert", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer({
-      key: passKey,
-      passphrase: "invalid",
-    });
-
-    server.on("error", mustCall());
-
-    let timeout: Timer;
-    function closeAndFail() {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    }
-
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(0, "0.0.0.0", closeAndFail);
+  it("should throw from createServer with wrong password and no cert", () => {
+    expect(() =>
+      createServer({
+        key: passKey,
+        passphrase: "invalid",
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_OSSL_BAD_DECRYPT" }));
   });
 
-  it("should not listen without password", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer({
-      key: passKey,
-      cert: cert,
-    });
-
-    server.on("error", mustCall());
-
-    let timeout: Timer;
-    function closeAndFail() {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    }
-
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(0, "0.0.0.0", closeAndFail);
+  it("should throw from createServer without password", () => {
+    expect(() =>
+      createServer({
+        key: passKey,
+        cert: cert,
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_OSSL_BAD_DECRYPT" }));
   });
 });
 
@@ -1354,6 +1308,92 @@ it("setSecureContext() clears omitted options instead of keeping stale values", 
   expect((server as any).key).toBe(COMMON_CERT.key);
 });
 
+it("setSecureContext() with material the native loader rejects throws synchronously before listen()", async () => {
+  // Node builds the SecureContext inside setSecureContext(), so an unparseable
+  // key or a key/cert mismatch throws from the call itself and the server keeps
+  // its previous credentials. The error must not surface later out of listen().
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1520-L1542
+  const server: Server = createServer(COMMON_CERT);
+  let thrown: any;
+  try {
+    server.setSecureContext({ key: "garbage", cert: "garbage" });
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown?.code).toBe("ERR_OSSL_PEM_NO_START_LINE");
+  thrown = undefined;
+  try {
+    // rsa_private.pem is not the key of the harness certificate.
+    server.setSecureContext({ key: rawKey, cert: COMMON_CERT.cert });
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown?.code).toBe("ERR_OSSL_X509_KEY_VALUES_MISMATCH");
+  expect({ key: (server as any).key, cert: (server as any).cert }).toEqual({
+    key: COMMON_CERT.key,
+    cert: COMMON_CERT.cert,
+  });
+
+  const errors: Error[] = [];
+  server.on("error", err => errors.push(err));
+  server.on("secureConnection", socket => socket.end());
+  const listening = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", () => listening.resolve());
+  server.once("error", listening.reject);
+  await listening.promise;
+  let client: TLSSocket | undefined;
+  try {
+    const connected = Promise.withResolvers<void>();
+    client = connect(
+      {
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        checkServerIdentity: () => undefined,
+      },
+      () => connected.resolve(),
+    );
+    client.on("error", connected.reject);
+    await connected.promise;
+    const expectedCert = new crypto.X509Certificate(COMMON_CERT.cert);
+    expect(client.getPeerCertificate().fingerprint256).toBe(expectedCert.fingerprint256);
+    expect(errors).toEqual([]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("addContext() without a servername throws ERR_TLS_REQUIRED_SERVER_NAME synchronously", async () => {
+  // Node rejects a falsy servername at the call. The empty pattern must not be
+  // stashed and then rejected later out of listen().
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+  const server: Server = createServer(COMMON_CERT);
+  for (const servername of ["", undefined, null]) {
+    expect(() => server.addContext(servername as any, COMMON_CERT)).toThrow(
+      expect.objectContaining({
+        code: "ERR_TLS_REQUIRED_SERVER_NAME",
+        message: '"servername" is required parameter for Server.addContext',
+      }),
+    );
+  }
+  const errors: Error[] = [];
+  server.on("error", err => errors.push(err));
+  const listening = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", () => listening.resolve());
+  server.once("error", listening.reject);
+  try {
+    await listening.promise;
+    // After listen() the same guard applies before the native SNI registration.
+    expect(() => server.addContext("", COMMON_CERT)).toThrow(
+      expect.objectContaining({ code: "ERR_TLS_REQUIRED_SERVER_NAME" }),
+    );
+    expect(errors).toEqual([]);
+  } finally {
+    server.close();
+  }
+});
+
 it("SNICallback rejecting with a non-Error value drops the connection (no hang)", async () => {
   // cb(true) / cb("reason"): Node treats any truthy err as an abort. The
   // boolean form must not be confused with internal sentinels - the
@@ -1853,45 +1893,18 @@ describe("tls.Server secure-context options", () => {
     }
   });
 
-  it("surfaces a natively-rejected key on the server 'error' event for a STARTTLS-only server", async () => {
-    // Node throws this from tls.createServer() itself; bun builds the context
-    // lazily and reports native load failures on the server 'error' event at
-    // listen() time, so the STARTTLS wrap must use that same surface instead
-    // of throwing synchronously out of the user's server.emit('connection').
-    const tlsServer = createServer({ key: "not a private key", cert: agent6CertChain });
-    const surfaced = Promise.withResolvers<Error & { code?: string }>();
-    tlsServer.on("error", surfaced.resolve);
-    const emitted: string[] = [];
-    let raw: net.Socket | undefined;
-    const rawServer = net.createServer(sock => {
-      raw = sock;
-      try {
-        tlsServer.emit("connection", sock);
-        emitted.push("returned");
-      } catch (e) {
-        emitted.push("threw");
-        surfaced.resolve(e as Error);
-      }
-    });
-    let client: net.Socket | undefined;
-    try {
-      const listening = Promise.withResolvers<void>();
-      rawServer.once("error", listening.reject);
-      rawServer.listen(0, "127.0.0.1", listening.resolve);
-      await listening.promise;
-      client = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
-      client.on("error", () => {});
-      const err = await surfaced.promise;
-      expect({ emitted, code: err.code, rawDestroyed: raw!.destroyed }).toEqual({
-        emitted: ["returned"],
+  it("throws a natively-rejected key from tls.createServer() itself", () => {
+    // Node builds the server's SecureContext in the constructor, so an
+    // unparseable key throws synchronously instead of surfacing later on the
+    // 'error' event of a listen() or of a STARTTLS wrap.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1383
+    expect(() => createServer({ key: "not a private key", cert: agent6CertChain })).toThrow(
+      expect.objectContaining({
         code: "ERR_OSSL_PEM_NO_START_LINE",
-        rawDestroyed: true,
-      });
-    } finally {
-      client?.destroy();
-      rawServer.close();
-      tlsServer.close();
-    }
+        library: "PEM routines",
+        reason: "NO_START_LINE",
+      }),
+    );
   });
 
   it("a failing setSecureContext() leaves the STARTTLS wrap credentials untouched", async () => {

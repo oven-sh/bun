@@ -3046,9 +3046,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // borrow is live — `&mut` scoped to this call.
             unsafe { (*this).set_using_custom_expect_handler(true) };
         } else {
-            // Bun.serve: tell uWS the body-size limit so its auto 100-continue
-            // is skipped for an over-limit Content-Length (RFC 9110 10.1.1);
-            // `prepare_js_request_context*` answers 413 from the head alone.
+            // Lets uWS skip its auto 100-continue for an over-limit Content-Length.
             let limit = this_ref.config.max_request_body_size as u64;
             bun_opaque::opaque_deref_mut(app).set_max_request_body_size(limit);
             if Self::HAS_H3 {

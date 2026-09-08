@@ -187,7 +187,26 @@ test.concurrent("blocked scripts are reported when installing from an existing b
   expect(exitCode).toBe(0);
 
   expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
-    .toMatchInlineSnapshot();
+    .toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "foo",
+            "dependencies": {
+              "uses-what-bin": "1.0.0",
+            },
+          },
+        },
+        "packages": {
+          "uses-what-bin": ["uses-what-bin@1.0.0", "http://localhost:1234/uses-what-bin/-/uses-what-bin-1.0.0.tgz", { "dependencies": { "what-bin": "1.0.0" }, "hasInstallScript": true }, "sha512-87/Emb1Hh7HtsMMU1yXXhI/+/5opQFbnqtR0Yq/1rgr7jp4mzkMU8wQBiYtS8C45GJY6YfdIqq1Dci+0ivJB2g=="],
+
+          "what-bin": ["what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, "sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ=="],
+        }
+      }
+      "
+    `);
 
   // The second install loads every package from bun.lock. The blocked
   // script must still be reported.

@@ -116,21 +116,23 @@ impl Dir {
     /// instead of following when `name` is a symlink (`ENOTDIR` on Linux,
     /// `ELOOP` elsewhere).
     pub fn open_real_dir(&self, name: &[u8]) -> Maybe<Dir> {
-        // On Windows `no_follow` maps to `FILE_OPEN_REPARSE_POINT`, which
-        // opens the reparse point itself and succeeds. So reject the entry
-        // first and open it normally. A probe that cannot tell is an error,
-        // never a pass.
-        #[cfg(windows)]
-        if self.entry_is_symlink(name)? {
-            return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
-        }
-        self.open_dir(
+        let dir = self.open_dir(
             name,
             OpenDirOptions {
                 iterate: true,
-                no_follow: !cfg!(windows),
+                no_follow: true,
             },
-        )
+        )?;
+        // On Windows `no_follow` maps to `FILE_OPEN_REPARSE_POINT`, which does
+        // not fail on a junction or a directory symlink: it opens the reparse
+        // point itself. So ask that same handle what it is, and reject it if
+        // it is one. One open, so nothing can be swapped in between a check
+        // and a use, and a query that cannot tell is an error, never a pass.
+        #[cfg(windows)]
+        if handle_is_reparse_point(dir.fd()).map_err(|err| err.with_path(name))? {
+            return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
+        }
+        Ok(dir)
     }
 
     /// Open `name`, a single path component, relative to this dir, and create

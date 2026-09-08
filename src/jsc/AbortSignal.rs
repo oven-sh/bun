@@ -73,6 +73,11 @@ pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }
 
+/// [`AbortListener`] for [`AbortListenerHandle`].
+pub trait AbortListenerRef {
+    fn on_abort(&self, reason: JSValue);
+}
+
 impl AbortSignal {
     pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
         extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
@@ -250,6 +255,54 @@ impl AbortSignal {
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         AbortSignal::from_js(value).map(|p| bun_opaque::opaque_deref(p).ref_())
+    }
+}
+
+/// A native listener registration on an `AbortSignal` for a re-entrant
+/// listener `C` (the abort may fire from inside JS that `C` itself is
+/// running, so dispatch goes through `&C`). Holds a ref and a pending-activity
+/// count on the signal; dropping it unregisters, then releases both. `C` keeps
+/// the handle, so the registration cannot outlive it.
+pub struct AbortListenerHandle {
+    signal: AbortSignalRef,
+    ctx: *mut c_void,
+}
+
+impl AbortListenerHandle {
+    /// Hands the new handle to `store` (which puts it in `C`'s slot) and then
+    /// registers the listener. An already-aborted signal calls `C::on_abort`
+    /// synchronously from here instead, after `store`, so `C` may drop the
+    /// stored handle from inside that call.
+    pub fn install<C: AbortListenerRef>(
+        signal: AbortSignalRef,
+        listener: bun_ptr::ThisPtr<C>,
+        store: impl FnOnce(Self),
+    ) {
+        extern "C" fn callback<C: AbortListenerRef>(ptr: *mut c_void, reason: JSValue) {
+            // SAFETY: `ptr` was registered below from a live `ThisPtr<C>`; the
+            // handle `C` holds unregisters this callback before `C` is freed.
+            C::on_abort(unsafe { &*ptr.cast::<C>() }, reason);
+        }
+        let ctx = listener.as_ptr().cast::<c_void>();
+        signal.pending_activity_ref();
+        // Keeps the signal alive across `add_listener` even if `on_abort`
+        // drops the stored handle.
+        let signal_for_call = signal.clone();
+        store(Self { signal, ctx });
+        signal_for_call.add_listener(ctx, callback::<C>);
+    }
+
+    #[inline]
+    pub fn signal(&self) -> &AbortSignal {
+        &self.signal
+    }
+}
+
+impl Drop for AbortListenerHandle {
+    fn drop(&mut self) {
+        self.signal.pending_activity_unref();
+        self.signal.clean_native_bindings(self.ctx);
+        // `signal`'s own drop releases the ref.
     }
 }
 

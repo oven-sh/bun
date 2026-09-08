@@ -200,6 +200,52 @@ impl ProcessHandle {
     pub fn as_ptr(&self) -> *mut Process {
         self.0.as_ptr()
     }
+
+    /// See [`Process::watch`].
+    pub fn watch(&self) -> bun_sys::Result<()> {
+        self.process_mut().watch()
+    }
+
+    /// See [`Process::wait`]; may synchronously run the exit handler (same
+    /// rule as [`watch_or_reap`](Self::watch_or_reap)).
+    pub fn wait(&self, sync_: bool) {
+        self.process_mut().wait(sync_)
+    }
+
+    /// See [`Process::close`].
+    pub fn close(&self) {
+        self.process_mut().close()
+    }
+
+    /// See [`Process::detach`]: closes the poller and clears the exit handler
+    /// now; the owned ref is still released on drop.
+    pub fn detach(&self) {
+        self.process_mut().detach()
+    }
+
+    pub fn enable_keeping_event_loop_alive(&self) {
+        self.process_mut().enable_keeping_event_loop_alive()
+    }
+
+    pub fn disable_keeping_event_loop_alive(&self) {
+        self.process_mut().disable_keeping_event_loop_alive()
+    }
+
+    /// `uv_getrusage` on the live `uv_process_t`, if this process is still
+    /// polled through libuv.
+    #[cfg(windows)]
+    pub fn uv_rusage(&self) -> Option<Rusage> {
+        match &mut self.process_mut().poller {
+            Poller::Uv(uv_proc) => Some(uv_getrusage(uv_proc)),
+            _ => None,
+        }
+    }
+
+    /// [`as_ptr`](Self::as_ptr), for registries keyed by it (`ProcessAutoKiller`).
+    #[inline]
+    pub fn as_non_null(&self) -> core::ptr::NonNull<Process> {
+        self.0.as_non_null()
+    }
 }
 
 impl Drop for ProcessHandle {

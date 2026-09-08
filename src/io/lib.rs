@@ -542,23 +542,145 @@ bun_dispatch::link_interface! {
 /// case where the inherent takes `&self`/`&mut self`; sites whose inherent must
 /// stay raw-pointer (e.g. `Arc::from_raw` keepalive in shell `PipeReader`)
 /// forward as `<Self>::method(this)` instead.
+///
+/// With a leading `borrow = this;` the bodies instead get `this` bound as a
+/// [`bun_ptr::ThisPtr<Self>`] and are pasted as-is (no `unsafe` block) — for
+/// intrusively refcounted parents whose handlers are safe fns taking
+/// `ThisPtr<Self>` and may drop their last ref mid-callback. An optional
+/// `reader = <field>;` names the by-value field (a `BufferedReader` or a
+/// `JsCell<BufferedReader>`) holding the reader; it implements
+/// [`pipe_reader::BufferedReaderOwner`] so the parent can drive the reader
+/// through [`BufferedReader::read_from`] / [`BufferedReader::on_error_from`].
 #[macro_export]
 macro_rules! impl_buffered_reader_parent {
     // Single-lifetime generic: trait impl over `<'lt>`, link registered at `'static`.
     (
         $variant:ident for $T:ident<$lt:lifetime>;
-        $($rest:tt)*
+        borrow = this;
+        $( reader = $reader:ident; )?
+        has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T<'static>);
-        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; $($rest)* }
+        $( $crate::__impl_buffered_reader_owner! { [$lt] [$T<$lt>] $reader } )?
+        $crate::__impl_buffered_reader_parent_body_this! { [$lt] [$T<$lt>] $variant; has_on_read_chunk = $($rest)* }
+    };
+    (
+        $variant:ident for $T:ident<$lt:lifetime>;
+        $( reader = $reader:ident; )?
+        has_on_read_chunk = $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T<'static>);
+        $( $crate::__impl_buffered_reader_owner! { [$lt] [$T<$lt>] $reader } )?
+        $crate::__impl_buffered_reader_parent_body! { [$lt] [$T<$lt>] $variant; has_on_read_chunk = $($rest)* }
     };
     // Non-generic.
     (
         $variant:ident for $T:ty;
-        $($rest:tt)*
+        borrow = this;
+        $( reader = $reader:ident; )?
+        has_on_read_chunk = $($rest:tt)*
     ) => {
         $crate::buffered_reader_parent_link!($variant for $T);
-        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; $($rest)* }
+        $( $crate::__impl_buffered_reader_owner! { [] [$T] $reader } )?
+        $crate::__impl_buffered_reader_parent_body_this! { [] [$T] $variant; has_on_read_chunk = $($rest)* }
+    };
+    (
+        $variant:ident for $T:ty;
+        $( reader = $reader:ident; )?
+        has_on_read_chunk = $($rest:tt)*
+    ) => {
+        $crate::buffered_reader_parent_link!($variant for $T);
+        $( $crate::__impl_buffered_reader_owner! { [] [$T] $reader } )?
+        $crate::__impl_buffered_reader_parent_body! { [] [$T] $variant; has_on_read_chunk = $($rest)* }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_buffered_reader_owner {
+    ([$($lt:lifetime)?] [$T:ty] $reader:ident) => {
+        // SAFETY: `$reader` is a by-value field of `$T`, so the projection
+        // stays inside `*this`'s allocation.
+        unsafe impl $(<$lt>)? $crate::pipe_reader::BufferedReaderOwner for $T {
+            #[inline]
+            fn reader(this: *mut Self) -> *mut $crate::BufferedReader {
+                $crate::pipe_reader::reader_slot_ptr(
+                    this,
+                    ::core::mem::offset_of!(Self, $reader),
+                    |p: &Self| &p.$reader,
+                )
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __impl_buffered_reader_parent_body_this {
+    (
+        [$($lt:lifetime)?] [$T:ty] $variant:ident;
+        has_on_read_chunk = $has:expr;
+        $( on_read_chunk = |$rc_this:ident, $rc_chunk:ident, $rc_more:ident| $rc:expr; )?
+        on_reader_done = |$rd_this:ident| $rd:expr;
+        on_reader_error = |$re_this:ident, $re_err:ident| $re:expr;
+        loop_ = |$l_this:ident| $lp:expr;
+        event_loop = |$e_this:ident| $ev:expr;
+        $( ref_ = |$rf_this:ident| $rf:expr; )?
+        $( deref = |$dr_this:ident| $dr:expr; )?
+    ) => {
+        // SAFETY (all generated methods): `this` is the `*mut Self` registered
+        // via `set_parent` — the live parent's root pointer for as long as the
+        // reader it embeds is being called, which is `ThisPtr::new`'s contract.
+        impl $(<$lt>)? $crate::pipe_reader::BufferedReaderParent for $T {
+            const KIND: $crate::BufferedReaderParentLinkKind =
+                $crate::BufferedReaderParentLinkKind::$variant;
+            const HAS_ON_READ_CHUNK: bool = $has;
+            $(
+                unsafe fn on_read_chunk(
+                    this: *mut Self,
+                    $rc_chunk: $crate::Chunk<'_>,
+                    $rc_more: $crate::ReadState,
+                ) -> bool {
+                    // SAFETY: see impl-level note.
+                    let $rc_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                    $rc
+                }
+            )?
+            unsafe fn on_reader_done(this: *mut Self) {
+                // SAFETY: see impl-level note.
+                let $rd_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                $rd
+            }
+            unsafe fn on_reader_error(this: *mut Self, $re_err: $crate::__bun_sys::Error) {
+                // SAFETY: see impl-level note.
+                let $re_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                $re
+            }
+            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+                // SAFETY: see impl-level note.
+                let $l_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                $lp
+            }
+            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+                // SAFETY: see impl-level note.
+                let $e_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                $ev
+            }
+            $(
+                unsafe fn ref_(this: *mut Self) {
+                    // SAFETY: see impl-level note.
+                    let $rf_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                    $rf
+                }
+            )?
+            $(
+                unsafe fn deref(this: *mut Self) {
+                    // SAFETY: see impl-level note.
+                    let $dr_this = unsafe { $crate::__bun_ptr::ThisPtr::<Self>::new(this) };
+                    $dr
+                }
+            )?
+        }
     };
 }
 
@@ -626,6 +748,8 @@ macro_rules! __impl_buffered_reader_parent_body {
 }
 
 #[doc(hidden)]
+pub use bun_ptr as __bun_ptr;
+#[doc(hidden)]
 pub use bun_sys as __bun_sys;
 
 /// Generates the `link_impl_BufferedReaderParentLink!` body for a type that
@@ -663,7 +787,7 @@ pub use source::Source;
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{BufferedReader, BufferedReaderOwner, BufferedReaderParent, PosixFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

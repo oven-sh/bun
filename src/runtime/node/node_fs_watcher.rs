@@ -32,9 +32,7 @@ use super::path_watcher;
 #[cfg(windows)]
 use super::win_watcher as path_watcher;
 
-/// `cwd`-absolute, NUL-terminated copy of a `fs.watch()` / `fs.watchFile()`
-/// path, or `None` if it does not fit `buf`. POSIX keeps the caller's bytes
-/// (no `..` folding, `\` is a filename byte); Win32 is lexical anyway.
+/// Absolute watch path; POSIX keeps the caller's bytes unnormalized. `None` if it does not fit.
 pub(crate) fn absolute_watch_path_z<'a>(
     cwd: &[u8],
     path: &[u8],

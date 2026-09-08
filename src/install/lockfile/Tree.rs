@@ -1145,12 +1145,10 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     }
     let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
 
-    // The `node_modules` folder of a package placed in `parent`, if it has one.
-    let mut own_folder: HashMap<(Id, PackageID), Id> = HashMap::default();
+    // The `node_modules` folder of the package an edge placed in `parent`, if it has one.
+    let mut own_folder: HashMap<(Id, DependencyID), Id> = HashMap::default();
     for tree in &trees[1..] {
-        if let Some(&pkg_id) = resolutions.get(tree.dependency_id as usize) {
-            own_folder.insert((tree.parent, pkg_id), tree.id);
-        }
+        own_folder.insert((tree.parent, tree.dependency_id), tree.id);
     }
 
     let resolve_from = |mut tree_id: Id, name_hash: PackageNameHash| -> Option<PackageID> {
@@ -1189,7 +1187,7 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
                 continue;
             }
             let from = own_folder
-                .get(&(tree.id, pkg_id))
+                .get(&(tree.id, dep_id))
                 .copied()
                 .unwrap_or(tree.id);
             visit(pkg_id, from);

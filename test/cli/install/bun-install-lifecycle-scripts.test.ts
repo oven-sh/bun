@@ -141,8 +141,9 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
 
 for (const linker of ["hoisted", "isolated"] as const) {
   // `lifecycle-blocking`'s postinstall appends a line to $LIFECYCLE_TEST_LOG, then with
-  // $LIFECYCLE_TEST_BLOCK set writes its pid there and never exits; without it, it writes
-  // `built.txt`. `lifecycle-blocking-parent` depends on it and writes its own `built.txt`.
+  // $LIFECYCLE_TEST_BLOCK set writes its pid there and never exits, with $LIFECYCLE_TEST_FAIL
+  // set exits 1, and otherwise writes `built.txt`. `lifecycle-blocking-parent` depends on it
+  // and writes its own `built.txt`.
   test.concurrent(
     `an install that stops before a dependency's lifecycle scripts finish runs them on the next install (${linker})`,
     async () => {
@@ -267,6 +268,63 @@ for (const linker of ["hoisted", "isolated"] as const) {
         expect(err).not.toContain("error:");
         expect(out).toContain("(no changes)");
         expect(await state()).toEqual(before);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+
+  test.concurrent(
+    `a dependency whose lifecycle script failed runs it again on the next install (${linker})`,
+    async () => {
+      using ctx = await setupTest(linker);
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { "lifecycle-blocking": "1.0.0" },
+          trustedDependencies: ["lifecycle-blocking"],
+        }),
+      );
+
+      const installedDir =
+        linker === "isolated"
+          ? join(packageDir, "node_modules", ".bun", "lifecycle-blocking@1.0.0", "node_modules", "lifecycle-blocking")
+          : join(packageDir, "node_modules", "lifecycle-blocking");
+      const state = async () => ({
+        built: await exists(join(installedDir, "built.txt")),
+        pending: await exists(join(installedDir, ".bun-scripts-pending")),
+      });
+
+      {
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: { ...env, LIFECYCLE_TEST_FAIL: "1" },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [err, exitCode] = await Promise.all([install.stderr.text(), install.exited]);
+        expect(err).toContain(`error: postinstall script from "lifecycle-blocking" exited with 1`);
+        expect(await state()).toEqual({ built: false, pending: true });
+        expect(exitCode).toBe(1);
+      }
+
+      {
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).not.toContain("(no changes)");
+        expect(await state()).toEqual({ built: true, pending: false });
         expect(exitCode).toBe(0);
       }
     },

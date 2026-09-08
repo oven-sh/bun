@@ -5,7 +5,8 @@
 //
 // `lifecycle-blocking`'s postinstall appends a line to $LIFECYCLE_TEST_LOG. With
 // $LIFECYCLE_TEST_BLOCK set it then writes its pid to that path and never exits, so the
-// test can kill `bun install` while the script runs. Without it, it writes `built.txt`.
+// test can kill `bun install` while the script runs. With $LIFECYCLE_TEST_FAIL set it
+// exits 1. Otherwise it writes `built.txt`.
 // `lifecycle-blocking-parent` depends on it and writes its own `built.txt`.
 
 import { mkdir, writeFile } from "fs/promises";
@@ -24,6 +25,9 @@ if (pidFile) {
   writeFileSync(pidFile + ".tmp", String(process.pid));
   renameSync(pidFile + ".tmp", pidFile);
   setInterval(() => {}, 1 << 30);
+} else if (process.env.LIFECYCLE_TEST_FAIL) {
+  console.error("lifecycle-blocking: failing because LIFECYCLE_TEST_FAIL is set");
+  process.exit(1);
 } else {
   writeFileSync("built.txt", "built");
 }

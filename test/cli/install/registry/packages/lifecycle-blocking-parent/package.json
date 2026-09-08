@@ -16,8 +16,8 @@
       },
       "_id": "lifecycle-blocking-parent@1.0.0",
       "dist": {
-        "integrity": "sha512-FiDac1dhHs5aDRw5FVAz35I3+ehOz2YI4IFWJemkEOufnF+bBj7xtSPFJR4nPky287r+abM/b7U8aAbRDGavyg==",
-        "shasum": "63ad99ce8c6133a8c5c59c7d02a28c797c0d3fc9",
+        "integrity": "sha512-PsIBtW/VsqTH7xnnLXPx3I0UeMnu9eRPTVd8hX6jjzitDoLzqUIuFE172SU9OK0j2uBe6+WtFpMvXi9ABWojUw==",
+        "shasum": "d2041c96aea0458bab0b16b775d0474634d132a9",
         "tarball": "http://localhost:4873/lifecycle-blocking-parent/-/lifecycle-blocking-parent-1.0.0.tgz"
       }
     }

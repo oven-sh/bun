@@ -4381,17 +4381,17 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 }
 
 // `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
-// (as WebCore does for a stopped document), so work it left in flight cannot resume its script.
+// (as WebCore does for a stopped document) and Bun__JSValue__call no longer enters its functions,
+// so neither the swap's teardown nor work the file left in flight can resume its script.
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    WebCore::clientData(globalObject->vm())->hasRetiredTestIsolationRealm = true;
 }
 
-// Whether `value` is an object of a realm retired above; native code does not call into one.
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
 {
-    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    return object && object->globalObject()->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+    return Bun::isFromRetiredTestIsolationRealm(JSC::JSValue::decode(encodedValue));
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

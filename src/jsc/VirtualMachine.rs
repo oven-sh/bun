@@ -5108,15 +5108,26 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// The finished file's exit under `--isolate`. From here on JSC discards
+    /// microtasks queued against its realm and native code does not call its
+    /// functions, so neither the teardown that follows (stopping its servers,
+    /// closing its sockets, killing its children) nor work it left in flight
+    /// runs its script again. Runs before `stop_active_handles_for_test_isolation`.
+    pub fn retire_global_for_test_isolation(&mut self) {
+        debug_assert!(self.test_isolation_enabled);
+        Zig__GlobalObject__retireForTestIsolation(self.global());
+    }
+
     /// Replaces the global object between test files so each file runs in a fresh realm.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
     /// Strongs, which otherwise pin the outgoing global) before the blind
     /// socket-group close below. That helper lives in the higher-tier crate
-    /// and cannot be called from here.
+    /// and cannot be called from here. It also retires the outgoing global.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+        debug_assert!(self.global().to_js_value().is_from_retired_test_isolation_realm());
 
         // The finished file's workers, ports, channels and sockets are stopped
         // first (no events dispatched), before its socket groups and timers are
@@ -5178,9 +5189,8 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
-        // The outgoing file's exit: work it left in flight (thread-pool jobs,
-        // the children just killed) lands later and must not resume its script.
-        Zig__GlobalObject__retireForTestIsolation(self.global());
+        // Thread-pool jobs the outgoing file left in flight compare against
+        // this when they land (`Job::complete_erased`) and are released unrun.
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // Generation-stale JS timers would otherwise release their pins only

@@ -3279,7 +3279,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
     // teardown has forbidden script, a callback from any event source is a silent no-op rather
     // than each source checking.
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->isStoppingOrStopped(vm)) [[unlikely]] {
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
@@ -3289,10 +3290,21 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
+    auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject);
+    if (wrapper)
+        jsObject = wrapper->callback.get();
+
+    // Likewise a function of a file that `bun test --isolate` has finished with: the per-file swap
+    // was that file's exit (Zig__GlobalObject__retireForTestIsolation), so the handlers of the
+    // sockets and servers it left open do not run when the swap, or anything later, closes them.
+    if (clientData->hasRetiredTestIsolationRealm && Bun::isFromRetiredTestIsolationRealm(jsObject)) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
-        jsObject = wrapper->callback.get();
+    if (wrapper) {
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());

@@ -1710,12 +1710,15 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     result
 }
 
-/// `--isolate` swap: a microtask still pending at end-of-file (queued by
-/// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
-/// handles when it runs, so drain first so they land in the registry before it
-/// empties, then stop. (VM teardown must *not* drain here — its
-/// prepareForDestruction discards the pre-exit queues.)
+/// `--isolate` swap: the file has exited, so retire its global before anything
+/// is stopped. The drain then discards the microtasks still pending at
+/// end-of-file (queued by `tick_immediate_tasks` or `handle_rejected_promises`)
+/// instead of running them, and the close/error handlers of the servers and
+/// sockets stopped below and in `swap_global_for_test_isolation` do not run.
+/// (VM teardown must *not* drain here — its prepareForDestruction discards the
+/// pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
+    vm.retire_global_for_test_isolation();
     let _ = vm.event_loop_mut().drain_microtasks();
     let _ = stop_active_handles(vm, StopReason::TestIsolation);
 }

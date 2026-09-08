@@ -255,6 +255,9 @@ public:
     // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
+    // `bun test --isolate` has retired a finished file's realm on this VM (Zig__GlobalObject__retireForTestIsolation).
+    // Only then does the native→JS boundary (Bun__JSValue__call) look at the callee's realm.
+    bool hasRetiredTestIsolationRealm { false };
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // One slot per string of the executable's module-info string table,

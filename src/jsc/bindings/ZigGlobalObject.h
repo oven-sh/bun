@@ -855,6 +855,15 @@ namespace Bun {
 
 void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
+// `value` is an object of a realm that `bun test --isolate` retired (its file finished).
+// `Zig__GlobalObject__retireForTestIsolation` is what marks one, by the same
+// `microtaskRunnability` JSC reads to drop that realm's microtasks.
+ALWAYS_INLINE bool isFromRetiredTestIsolationRealm(JSC::JSValue value)
+{
+    JSC::JSObject* object = value.getObject();
+    return object && object->globalObject()->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+}
+
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {
     return globalObject->bunVM();

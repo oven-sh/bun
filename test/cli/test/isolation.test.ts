@@ -1169,6 +1169,74 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   });
 });
 
+// The swap itself closes what the finished file left open: its listeners and
+// servers, then every socket. That used to call the file's close and error
+// handlers after the file had exited. What they did escaped the run (a throw
+// printed `error:` under the next file's header with exit code 0, a node:http
+// request in flight printed `socket hang up`), and what they created was the
+// next file's problem. The finished file's functions are not entered anymore.
+describe.concurrent("--isolate: a finished file's socket handlers do not run at the swap", () => {
+  const socketFixtures = {
+    "a-sockets.test.ts": `
+      import { test, expect } from "bun:test";
+      import { appendFileSync } from "node:fs";
+      import http from "node:http";
+      import { join } from "node:path";
+
+      const log = join(import.meta.dir, "handlers-ran");
+
+      test("leaves a connected socket pair whose close handlers throw", async () => {
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+          data() {},
+          close() { appendFileSync(log, "listen close\\n"); throw new Error("server close handler threw"); },
+        }});
+        const { promise: opened, resolve } = Promise.withResolvers<void>();
+        await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+          data() {},
+          open() { resolve(); },
+          close() { appendFileSync(log, "connect close\\n"); throw new Error("client close handler threw"); },
+        }});
+        await opened;
+        expect(server.port).toBeGreaterThan(0);
+      });
+
+      test("leaves a node:http request in flight with no error listener", async () => {
+        const { promise: received, resolve } = Promise.withResolvers<void>();
+        const server = http.createServer(() => resolve()); // never responds
+        await new Promise<void>(done => server.listen(0, "127.0.0.1", () => done()));
+        http.get("http://127.0.0.1:" + (server.address() as any).port);
+        await received;
+        expect(server.listening).toBe(true);
+      });
+    `,
+    "b-check.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync } from "node:fs";
+      import { join } from "node:path";
+
+      test("the previous file's close handlers did not run", () => {
+        expect(existsSync(join(import.meta.dir, "handlers-ran"))).toBe(false);
+      });
+    `,
+  };
+  const files = ["./a-sockets.test.ts", "./b-check.test.ts"];
+
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes both files (scale-up gated), so the same swap runs
+    // between files inside a --parallel worker.
+    ["--parallel", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("%s", async (_, args, env) => {
+    using dir = tempDir("isolate-swap-handlers", socketFixtures);
+    const { stderr, exitCode } = await runTests(String(dir), args, files, { ...bunEnv, ...env });
+    expect(stderr).not.toContain("close handler threw");
+    expect(stderr).not.toContain("socket hang up");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Each of these leaked handles used to pin its test file's ENTIRE global
 // object (and therefore the file's module graph) for the rest of a
 // `bun test --isolate` run, growing memory by one full global per file:

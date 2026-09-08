@@ -91,9 +91,7 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
-/// WebIDL `[Clamp] long long` for a value that is already a Number
-/// (https://webidl.spec.whatwg.org/#abstract-opdef-converttoint): NaN is 0,
-/// anything else clamps to ±(2⁵³ − 1) and rounds to nearest, ties to even.
+/// WebIDL `[Clamp] long long` (https://webidl.spec.whatwg.org/#abstract-opdef-converttoint).
 fn clamp_to_long_long(number: f64) -> i64 {
     const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
     if number.is_nan() {

@@ -679,11 +679,7 @@ impl<'a> JSON5Parser<'a> {
                 return Err(ParseError::UnterminatedString);
             }
 
-            // Everything else is copied through as is: a well-formed UTF-8
-            // sequence whole, any other byte on its own. The width comes from
-            // the decoded sequence, not from the lead byte alone, so a lead
-            // byte without its continuation bytes cannot take the closing
-            // quote with it.
+            // Copy one code point as is; an ill-formed byte is copied alone.
             let width = usize::from(self.codepoint_at(self.pos).len);
             buf.extend_from_slice(&self.source[self.pos..][..width]);
             self.pos += width;
@@ -1051,11 +1047,8 @@ impl<'a> JSON5Parser<'a> {
         Some(self.codepoint_at(self.pos))
     }
 
-    /// Decodes the WTF-8 sequence that starts at `pos` (must be in bounds).
-    /// A byte that does not start a well-formed sequence (a stray
-    /// continuation byte, an invalid lead byte, or a lead byte that is not
-    /// followed by its continuation bytes) decodes as U+FFFD with `len == 1`,
-    /// so it is never merged with the bytes after it.
+    /// Decodes the code point at `pos` (in bounds). A byte that does not start
+    /// a well-formed WTF-8 sequence decodes as U+FFFD with `len == 1`.
     fn codepoint_at(&self, pos: usize) -> Codepoint {
         let rest = &self.source[pos..];
         let first = rest[0];

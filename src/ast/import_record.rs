@@ -107,10 +107,8 @@ bitflags::bitflags! {
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
 
-        /// The `with { type }` loader of this record is not the loader its
-        /// path gets by default, so the bundler registered the module under
-        /// the key (path, loader) instead of the path. See
-        /// `bundle_v2::import_record_module_key`.
+        /// The bundler keyed this record's module by (path, loader), not path:
+        /// its `with { type }` loader is not the path's default loader.
         const KEYED_BY_LOADER = 1 << 19;
     }
 }

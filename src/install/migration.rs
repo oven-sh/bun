@@ -437,10 +437,8 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
     }
 }
 
-/// `trustedDependencies` and `patchedDependencies` exist only in package.json and bun.lock, so no
-/// other lockfile carries them. `bun install` copies them from package.json into the lockfile it
-/// saves (`Package::parse` with `Features::MAIN` for the root, `Features::WORKSPACE` for each
-/// workspace); a migrated lockfile gets the same copy so it matches that install.
+/// No other lockfile format carries these two fields; `bun install` takes them from package.json
+/// (`Package::parse`, root plus each workspace for trusted), so a migrated lockfile does the same.
 pub(crate) fn copy_trusted_and_patched_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
@@ -463,8 +461,7 @@ pub(crate) fn copy_trusted_and_patched_dependencies(
         .map(|path| [path.slice(&this.buffers.string_bytes), b"/package.json"].concat())
         .collect();
     for path in &workspace_package_jsons {
-        // A workspace package.json that is missing or broken fails the install itself; here it
-        // only means there is nothing to copy.
+        // Best effort: a missing or broken workspace package.json fails the install itself.
         let mut scratch = bun_ast::Log::init();
         let Ok(contents) = File::read_from(dir, path) else {
             continue;
@@ -515,8 +512,7 @@ fn parse_package_json(
     .map(|parsed| parsed.root)
 }
 
-/// Same rules as `Package::parse`: any `trustedDependencies` array, even an empty one, replaces the
-/// default trusted list, and every package.json that has one adds to the same set.
+/// As in `Package::parse`: any array, even an empty one, replaces the default list; arrays merge.
 fn add_trusted_dependencies(
     trusted: &mut Option<crate::lockfile::TrustedDependenciesSet>,
     json: &bun_ast::Expr,

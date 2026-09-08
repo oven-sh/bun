@@ -150,9 +150,8 @@ impl<'a> Entry<'a> {
         }
     }
 
-    /// yarn writes the tarball URL into `resolved` for registry packages too, so the URL alone
-    /// cannot tell a tarball dependency from a registry one. The spec (`name@https://...`) can,
-    /// and an entry whose `version` is not semver can only install from its URL.
+    /// `resolved` is a tarball URL for registry packages too, so the spec (`name@https://...`)
+    /// decides; the URL only matters when `version` is not semver.
     pub(crate) fn is_tarball_dependency(&self, has_url_spec: bool) -> bool {
         let Some(resolved) = self.resolved.as_deref() else {
             return false;

@@ -447,8 +447,7 @@ impl<'a> LoadResult<'a> {
         self.choose_config_version_with_saved(saved_config_version)
     }
 
-    /// `choose_config_version` for callers that already hold the loaded lockfile as `&mut` and so
-    /// must not read it through `ok.lockfile`; only the scalar `migrated` field is read here.
+    /// `choose_config_version` for a caller that already borrows the lockfile mutably.
     pub(crate) fn choose_config_version_with_saved(
         &self,
         saved_config_version: Option<ConfigVersion>,
@@ -1861,10 +1860,8 @@ impl Lockfile {
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
-        // `bun install` decides this up front; every other command that saves (`bun pm migrate`,
-        // `bun pm trust`) keeps what the lockfile had, or what an install would have picked for it.
-        // `self` is the lockfile inside `load_result`, so read the saved version from `self`: callers
-        // rely on `load_result` being touched only for its scalar fields.
+        // Only `bun install` sets `options.config_version`; other commands keep the lockfile's own.
+        // `self` is `load_result`'s lockfile, so read it here, not through `load_result`.
         let config_version = options.config_version.unwrap_or_else(|| {
             load_result
                 .choose_config_version_with_saved(self.saved_config_version)

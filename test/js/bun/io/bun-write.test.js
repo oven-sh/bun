@@ -1158,7 +1158,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           ctrl = c;
           c.write("first ");
           await c.flush();
-          // Buffered in the sink, never flushed by the stream itself.
+          // A later event loop turn, so that the pipe is pending when pull()
+          // returns, and "second" is still buffered in the sink then.
+          await new Promise(resolve => setImmediate(resolve));
           c.write("second");
         },
         cancel(reason) {

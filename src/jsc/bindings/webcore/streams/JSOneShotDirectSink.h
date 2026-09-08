@@ -35,7 +35,7 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit ALL FOUR barriers: m_stream, m_arrayBufferSink,
-    // m_capabilityPromise, m_closeFunction. No barrier container ⇒ no cellLock needed.
+    // m_capabilityPromise, m_source. No barrier container ⇒ no cellLock needed.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -55,8 +55,8 @@ public:
     // The capability promise consumeDirectStreamToArrayBuffer returned; end()/close() settle
     // it (and the onConsumeDirectToArrayBufferPull* reactions settle it on the pull's promise).
     JSC::WriteBarrier<JSC::JSPromise> m_capabilityPromise;
-    // The underlying source's optional close() method, invoked by end()/close().
-    JSC::WriteBarrier<JSC::Unknown> m_closeFunction;
+    // The stream's source; its close() hook runs from end()/close().
+    JSC::WriteBarrier<JSDirectStreamSource> m_source;
     // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
     bool m_closed : 1 { false };
     // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).

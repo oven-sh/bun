@@ -8,6 +8,7 @@
 #include "BunStreamSource.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSReadRequest.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
@@ -256,7 +257,7 @@ void readableStreamFulfillReadIntoRequest(JSGlobalObject* globalObject, JSReadab
 void readableStreamClearSourceBarriers(JSReadableStream* stream)
 {
     stream->m_asyncContext.clear();
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
 }
 
 // ReadableStreamClose(stream)
@@ -419,7 +420,12 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     case ControllerKind::None:
         if (stream->m_bunMode == BunStreamMode::NativePending)
             sourceCancelPromise = cancelPendingNativeSource(globalObject, stream, reason);
-        else {
+        else if (auto* directSource = stream->m_directSource.get()) {
+            // DirectPending: never pulled, but the source may already hold something to release
+            // (an async-iterable body holds its iterator).
+            stream->m_bunMode = BunStreamMode::Default;
+            sourceCancelPromise = directSource->cancel(globalObject, stream, reason);
+        } else {
             stream->m_bunMode = BunStreamMode::Default;
             sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         }
@@ -430,25 +436,9 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     case ControllerKind::Byte:
         sourceCancelPromise = byteControllerOf(stream)->cancelSteps(globalObject, reason);
         break;
-    case ControllerKind::Direct: {
-        auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        controller->onClose(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        // readableStreamClose above already moved the stream out of Readable, so onClose
-        // early-returned; a direct read still pending on the controller settles as done here
-        // (a canceled read resolves with { value: undefined, done: true }).
-        if (auto* pendingRead = controller->m_pendingRead.get()) {
-            controller->m_pendingRead.clear();
-            JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            pendingRead->fulfill(vm, doneResult);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        controller->m_closed = true;
-        directStreamControllerClearSource(controller);
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+    case ControllerKind::Direct:
+        sourceCancelPromise = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->cancelSteps(globalObject, reason);
         break;
-    }
     case ControllerKind::NativeSink: {
         auto* sinkController = stream->m_controller.get();
         JSValue closeFunction = sinkController->getIfPropertyExists(globalObject, builtinNames(vm).closePublicName());

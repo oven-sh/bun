@@ -17,6 +17,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <wtf/Vector.h>
 
 namespace WebCore {
 
@@ -31,13 +32,14 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pull, m_pendingRead,
-    // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk, and
-    // the barrier container m_textAccumulator.pieces (via
-    // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
-    // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
+    // visitChildrenImpl MUST visit: m_stream, m_source, m_pendingRead, m_deferCloseReason,
+    // m_pendingWrite, m_array, m_closingPromise, m_finalChunk, and — inside ONE
+    // `Locker { cellLock() }` scope taken by THIS visitChildrenImpl (cellLock() is
+    // non-recursive; see StreamQueue.h) — report m_buffer's capacity and visit the barrier
+    // container m_textAccumulator.pieces (m_textAccumulator.visit(locker, visitor)).
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, JSC::VM&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -51,10 +53,8 @@ public:
     // Core state
     // $controlledReadableStream
     JSC::WriteBarrier<JSReadableStream> m_stream;
-    // the USER underlyingSource object and its captured `pull` method (captured once at
-    // setUpDirectStreamController, matching the native-sink path's m_onPull).
-    JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
-    JSC::WriteBarrier<JSC::JSObject> m_pull;
+    // The converted user source (this + pull/cancel/close). Cleared once no hook can run.
+    JSC::WriteBarrier<JSDirectStreamSource> m_source;
     // _pendingRead — the promise the in-flight read()/readMany() is waiting on. Only
     // promise-backed reads register here; pipeTo / tee / for-await reads wait in the
     // reader's [[readRequests]] instead (see onPull). handleError rejects AND CLEARS it.
@@ -81,9 +81,17 @@ public:
     // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
+    // ArrayBuffer sink: the byte length of the write() that armed m_pendingWrite.
+    uint32_t m_pendingWriteLength { 0 };
 
-    // ArrayBuffer sink: a real Bun.ArrayBufferSink cell (ArrayBuffer kind only).
-    JSC::WriteBarrier<JSC::JSObject> m_arrayBufferSink;
+    // ArrayBuffer sink: the bytes written since the reader last took them. Its size is the
+    // backpressure measure: once it reaches the stream's highWaterMark, write() returns
+    // m_pendingWrite (one promise until the next drain) instead of a number, the same contract
+    // as a native sink. Taking the bytes fulfills it with that write's length; error / cancel
+    // fulfill it with `false`. Its storage is replaced/freed only under cellLock() (the visitor
+    // reports its capacity as extra memory).
+    WTF::Vector<uint8_t> m_buffer;
+    JSC::WriteBarrier<JSC::JSPromise> m_pendingWrite;
 
     // Text sink: the ONE shared createTextStream accumulator value type
     // (BunStandaloneTextSink.h), also owned by the standalone JSBunStandaloneTextSink — one
@@ -119,6 +127,15 @@ public:
     // true if a pending read or the stream received the error; false if there was nothing left to error.
     bool handleError(JSC::JSGlobalObject*, JSC::JSValue error);
     void finishClose(JSC::JSGlobalObject*, JSC::JSValue flushed);
+    // [[CancelSteps]](reason): readableStreamCancel already closed the stream; settle what the
+    // controller still holds, then run the source's cancel(reason).
+    JSC::JSPromise* cancelSteps(JSC::JSGlobalObject*, JSC::JSValue reason);
+
+    // ArrayBuffer sink. takeBuffer: the buffered bytes as a Uint8Array (jsNumber(0) when
+    // empty) — this is the drain that settles m_pendingWrite.
+    JSC::JSValue takeBuffer(JSC::JSGlobalObject*);
+    void freeBuffer();
+    void settlePendingWrite(JSC::VM&, JSC::JSValue);
 
 private:
     JSDirectStreamController(JSC::VM&, JSC::Structure*, Bun::WebStreams::DirectSinkKind);

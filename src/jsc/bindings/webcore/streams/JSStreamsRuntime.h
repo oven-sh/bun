@@ -80,7 +80,8 @@ namespace WebCore {
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
-// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement).
+// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement), and
+// onAsyncIterableSourceCancelRejected, whose context is the reason cancel() threw into the iterator.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     V(onAsyncIterableSourceNextFulfilled)                              \
     V(onAsyncIterableSourceFlushFulfilled)                             \
@@ -88,7 +89,8 @@ namespace WebCore {
     V(onAsyncIterableSourceEndFulfilled)                               \
     V(onAsyncIterableSourceCleanupSettled)                             \
     V(onAsyncIterableSourceErrorRethrow)                               \
-    V(onAsyncIterableSourceErrorSwallowed)
+    V(onAsyncIterableSourceErrorSwallowed)                             \
+    V(onAsyncIterableSourceCancelRejected)
 
 // owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,
 // EXCEPT onAsyncIteratorReturnAfterOngoingSettled and onAsyncIteratorCancelFulfilled, whose
@@ -315,6 +317,7 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(crossRealmTransformStateStructure, JSCrossRealmTransformState)         \
     V(fromIterableContextStructure, JSStreamFromIterableContext)             \
     V(directStreamControllerStructure, JSDirectStreamController)             \
+    V(directStreamSourceStructure, JSDirectStreamSource)                     \
     V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)       \
     V(directSinkCloseStateStructure, JSDirectSinkCloseState)                 \
     V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \

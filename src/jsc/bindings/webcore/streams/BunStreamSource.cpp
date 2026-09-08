@@ -11,6 +11,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectSinkCloseState.h"
+#include "JSDirectStreamSource.h"
 #include "JSReadRequest.h"
 #include "JSReadStreamIntoSinkOperation.h"
 #include "JSReadableStream.h"
@@ -123,7 +124,7 @@ void JSDirectSinkCloseState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSDirectSinkCloseState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_underlyingSource);
+    visitor.appendHidden(thisObject->m_source);
     visitor.appendHidden(thisObject->m_sinkController);
     visitor.appendHidden(thisObject->m_closePromise);
 }
@@ -135,7 +136,7 @@ void JSDirectSinkCloseState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSDirectSinkCloseState>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_underlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_source, "source"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_sinkController, "sinkController"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closePromise, "closePromise"_s);
 }
@@ -282,7 +283,7 @@ static void clearStreamControllerSlots(JSReadableStream* stream)
 {
     stream->m_controller.clear();
     stream->m_controllerKind = ControllerKind::None;
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
 }
 
 //                       SourceKind::Native — the lazily materialized native source
@@ -752,8 +753,8 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* sinkController = state->m_sinkController.get();
     state->m_sinkController.clear();
-    JSObject* underlyingSource = state->m_underlyingSource.get();
-    state->m_underlyingSource.clear();
+    auto* source = state->m_source.get();
+    state->m_source.clear();
 
     if (auto* stream = dynamicDowncast<JSReadableStream>(streamValue)) {
         clearStreamControllerSlots(stream);
@@ -783,49 +784,38 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
         invokeMethod(vm, globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
-    if (underlyingSource) {
-        JSValue cancelFunction = underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName());
+    if (source) {
+        JSObject* cancelFunction = source->m_cancel.get();
+        if (!cancelFunction)
+            return;
+        MarkedArgumentBuffer cancelArgs;
+        cancelArgs.append(reason);
+        JSValue cancelResult = call(globalObject, cancelFunction, getCallData(cancelFunction), source->thisValue(), cancelArgs);
         RETURN_IF_EXCEPTION(scope, );
-        if (cancelFunction.isCallable()) {
-            MarkedArgumentBuffer cancelArgs;
-            cancelArgs.append(reason);
-            ASSERT(!cancelArgs.hasOverflowed());
-            JSValue cancelResult = call(globalObject, cancelFunction, getCallData(cancelFunction), underlyingSource, cancelArgs);
-            RETURN_IF_EXCEPTION(scope, );
-            if (auto* cancelPromise = dynamicDowncast<JSPromise>(cancelResult))
-                markPromiseAsHandled(vm, cancelPromise);
-        }
+        if (auto* cancelPromise = dynamicDowncast<JSPromise>(cancelResult))
+            markPromiseAsHandled(vm, cancelPromise);
     }
 }
 
-JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sinkController, JSObject* underlyingSource)
+JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sinkController, JSDirectStreamSource* source)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
 
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
     stream->m_bunMode = BunStreamMode::Default;
 
     auto* state = WebCore::JSDirectSinkCloseState::create(vm, runtime->directSinkCloseStateStructure(domGlobalObject));
-    state->m_underlyingSource.set(vm, state, underlyingSource);
+    state->m_source.set(vm, state, source);
     state->m_sinkController.set(vm, state, sinkController);
 
-    JSValue pull = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-    bool pullIsTruthy = pull.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!pullIsTruthy) {
+    JSObject* pull = source->m_pull.get();
+    if (!pull) {
         readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
-    }
-    if (!pull.isCallable()) {
-        readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
-        RETURN_IF_EXCEPTION(scope, {});
-        throwTypeError(globalObject, scope, "pull is not a function"_s);
-        return {};
     }
 
     stream->m_controller.set(vm, stream, sinkController);
@@ -856,7 +846,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(sinkController);
     ASSERT(!pullArgs.hasOverflowed());
-    JSValue maybePromise = call(globalObject, pull, getCallData(pull), underlyingSource, pullArgs);
+    JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
@@ -881,9 +871,9 @@ JSValue assignToStream(JSGlobalObject* globalObject, JSReadableStream* stream, J
         throwTypeError(globalObject, scope, "Expected a sink controller"_s);
         return {};
     }
-    JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
-    if (stream->m_bunMode == BunStreamMode::DirectPending && underlyingSource)
-        RELEASE_AND_RETURN(scope, readDirectStream(globalObject, stream, sink, underlyingSource));
+    auto* directSource = stream->m_directSource.get();
+    if (stream->m_bunMode == BunStreamMode::DirectPending && directSource)
+        RELEASE_AND_RETURN(scope, readDirectStream(globalObject, stream, sink, directSource));
     RELEASE_AND_RETURN(scope, readStreamIntoSink(globalObject, stream, sink));
 }
 

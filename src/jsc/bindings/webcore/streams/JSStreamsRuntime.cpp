@@ -9,6 +9,7 @@
 #include "JSDirectSinkCloseState.h"
 #include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSPullIntoDescriptor.h"

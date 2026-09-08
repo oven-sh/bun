@@ -12,6 +12,7 @@
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSReadRequest.h"
@@ -148,7 +149,7 @@ void JSOneShotDirectSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_stream);
     visitor.appendHidden(thisObject->m_arrayBufferSink);
     visitor.appendHidden(thisObject->m_capabilityPromise);
-    visitor.appendHidden(thisObject->m_closeFunction);
+    visitor.appendHidden(thisObject->m_source);
 }
 
 void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -159,7 +160,7 @@ void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_stream, "stream"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_arrayBufferSink, "arrayBufferSink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_capabilityPromise, "capabilityPromise"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closeFunction, "closeFunction"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_source, "source"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -268,14 +269,10 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
 }
 
-bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+static bool appendUTF8Sized(const WTF::String& string, size_t byteLength, WTF::Vector<uint8_t>& bytes)
 {
-    size_t byteLength = utf8ByteLengthWithReplacement(string);
-    if (!byteLength)
-        return true;
     size_t oldSize = bytes.size();
-    // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
-    if (exceedsStringLimit(oldSize + byteLength) || !bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
+    if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
         return false;
     size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
     // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
@@ -283,6 +280,25 @@ bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>
     if (written < byteLength) [[unlikely]]
         bytes.shrink(oldSize + written);
     return true;
+}
+
+bool appendUTF8(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+{
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    if (!byteLength)
+        return true;
+    return appendUTF8Sized(string, byteLength, bytes);
+}
+
+bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+{
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    if (!byteLength)
+        return true;
+    // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
+    if (exceedsStringLimit(bytes.size() + byteLength)) [[unlikely]]
+        return false;
+    return appendUTF8Sized(string, byteLength, bytes);
 }
 
 // `obj[name](...args)` with `this` = obj.
@@ -949,7 +965,7 @@ static JSValue directConsumeLoopStep(JSC::VM& vm, JSGlobalObject* globalObject, 
 static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    setUpDirectStreamController(globalObject, stream, kind, stream->m_bunHighWaterMark);
+    setUpDirectStreamController(globalObject, stream, kind);
     RETURN_IF_EXCEPTION(scope, {});
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1018,17 +1034,17 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
 
 // Calls the user's pull(oneShotController) exactly once (its own scope so the caller may
 // catch the abrupt completion).
-static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSValue pullFunction, JSOneShotDirectSink* sink)
+static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto callData = JSC::getCallData(pullFunction);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
+    JSObject* pullFunction = source->m_pull.get();
+    if (!pullFunction) [[unlikely]] {
         throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
         return {};
     }
     MarkedArgumentBuffer arguments;
     arguments.append(sink);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, callData, jsUndefined(), arguments));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, JSC::getCallData(pullFunction), source->thisValue(), arguments));
 }
 
 JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, bool asUint8Array)
@@ -1038,15 +1054,15 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
-    if (!underlyingSource) [[unlikely]]
+    auto* source = stream->m_directSource.get();
+    if (!source) [[unlikely]]
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
 
     MarkedArgumentBuffer noArguments;
     JSObject* arrayBufferSink = JSC::construct(globalObject, domGlobalObject->ArrayBufferSink(), noArguments, "ArrayBufferSink is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
     stream->m_bunMode = BunStreamMode::Default;
     stream->m_lockedWithoutReader = true;
     stream->m_disturbed = true;
@@ -1061,25 +1077,20 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     invokeMethod(vm, globalObject, arrayBufferSink, builtinNames(vm).startPublicName(), startArguments);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue closeFunction = underlyingSource->get(globalObject, builtinNames(vm).closePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* capability = JSPromise::create(vm, globalObject->promiseStructure());
     auto* sink = JSOneShotDirectSink::create(vm, runtime->oneShotDirectSinkStructure(domGlobalObject));
     sink->m_stream.set(vm, sink, stream);
     sink->m_arrayBufferSink.set(vm, sink, arrayBufferSink);
     sink->m_capabilityPromise.set(vm, sink, capability);
     sink->m_asUint8Array = asUint8Array;
-    sink->m_closeFunction.set(vm, sink, closeFunction);
+    sink->m_source.set(vm, sink, source);
     installOneShotMethods(vm, globalObject, sink);
     RETURN_IF_EXCEPTION(scope, {});
 
     // The boundary into the direct source's pull(): its completion is converted here — a synchronous
     // throw errors the stream and rejects the returned promise; a returned promise's rejection is
     // handled by its reaction.
-    JSValue firstPull = oneShotCallPull(vm, globalObject, pullFunction, sink);
+    JSValue firstPull = oneShotCallPull(vm, globalObject, source, sink);
     if (JSC::Exception* exception = scope.exception()) {
         TRY_CLEAR_EXCEPTION(scope, {});
         stream->m_lockedWithoutReader = false;
@@ -1697,15 +1708,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalO
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
     sink->m_closed = true;
-    JSValue closeFunction = sink->m_closeFunction.get();
-    if (closeFunction.toBoolean(globalObject)) {
-        auto callData = JSC::getCallData(closeFunction);
-        if (callData.type == CallData::Type::None) [[unlikely]] {
-            throwTypeError(globalObject, scope, "The 'close' member of a direct ReadableStream's underlying source is not a function"_s);
-            return {};
-        }
-        MarkedArgumentBuffer noArguments;
-        JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+    if (auto* source = sink->m_source.get()) {
+        sink->m_source.clear();
+        source->close(globalObject, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
     MarkedArgumentBuffer noArguments;

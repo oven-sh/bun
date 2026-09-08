@@ -21,7 +21,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit ALL THREE: m_underlyingSource, m_sinkController,
+    // visitChildrenImpl MUST visit ALL THREE: m_source, m_sinkController,
     // m_closePromise. (An unvisited m_closePromise is a premature collection of the
     // promise handed to Rust.)
     DECLARE_VISIT_CHILDREN;
@@ -36,8 +36,8 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the direct stream's user underlyingSource (its `cancel` runs from onClose).
-    JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
+    // the direct stream's source (its `cancel` runs from onClose).
+    JSC::WriteBarrier<JSDirectStreamSource> m_source;
     // the JS sink controller driving the source; onClose must end() it so the cell
     // detaches from the native sink before it can be collected.
     JSC::WriteBarrier<JSC::JSObject> m_sinkController;

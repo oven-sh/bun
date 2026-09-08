@@ -10,6 +10,7 @@
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
+#include "JSDirectStreamSource.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
 #include "ObjectBindings.h"
@@ -411,6 +412,20 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorSwallowed
     return JSValue::encode(jsUndefined());
 }
 
+// context = the reason cancel() threw into the iterator. The iterator letting that reason
+// propagate is the expected outcome of a cancel and resolves it; anything else thrown while
+// unwinding (a throwing `finally`) still rejects it.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceCancelRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue rejection = callFrame->argument(0);
+    if (JSValue::strictEqual(globalObject, rejection, callFrame->argument(1)))
+        return JSValue::encode(jsUndefined());
+    throwException(globalObject, scope, rejection);
+    return {};
+}
+
 // -- [bound-convention] direct-source methods: (opCell, ...callArgs) --
 
 // pull(controller): one drive of the iterator runs at a time; every pull while it runs gets
@@ -460,6 +475,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     if (reason.toBoolean(globalObject)) {
         args.append(reason);
         result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* thrownPromise = asPromise(result)) {
+            auto* settled = JSPromise::create(vm, globalObject->promiseStructure());
+            auto* runtime = JSStreamsRuntime::from(globalObject);
+            thrownPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onAsyncIterableSourceCancelRejected(), settled, reason);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(settled);
+        }
     } else
         result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, args);
     RETURN_IF_EXCEPTION(scope, {});
@@ -505,7 +528,6 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto& names = WebCore::builtinNames(vm);
 
     JSValue target = jsUndefined();
     JSValue iteratorFn = asyncIterableOrGeneratorFn;
@@ -534,22 +556,18 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     auto* op = JSAsyncIteratorSourceOperation::create(vm, runtime->asyncIteratorSourceOperationStructure(zigGlobalObject));
     op->m_iterator.set(vm, op, iterator);
 
-    auto* source = constructEmptyObject(globalObject);
-    source->putDirect(vm, names.typePublicName(), jsString(vm, String("direct"_s)), 0);
     auto* pullFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourcePull(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    source->putDirect(vm, names.pullPublicName(), pullFunction, 0);
     auto* cancelFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceCancel(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    source->putDirect(vm, builtinNames(vm).cancelPublicName(), cancelFunction, 0);
     auto* closeFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceClose(), op);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    source->putDirect(vm, names.closePublicName(), closeFunction, 0);
+    auto* source = WebCore::JSDirectStreamSource::create(vm, runtime->directStreamSourceStructure(zigGlobalObject), jsUndefined(), pullFunction, cancelFunction, closeFunction);
 
     auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *zigGlobalObject));
     initializeReadableStream(stream);
     stream->m_bunMode = WebCore::BunStreamMode::DirectPending;
-    stream->m_directUnderlyingSource.set(vm, stream, source);
+    stream->m_directSource.set(vm, stream, source);
     return stream;
 }
 

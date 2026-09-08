@@ -1235,6 +1235,33 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// A Boolean `.npmrc` option gets the value npm gives it (`@npmcli/config`
+    /// parse-field, then nopt's `validateBoolean`): a bare key or an empty
+    /// value is true, `false`, `null` and a numeric zero are false,
+    /// `undefined` keeps the default, and every other string (`1`, `True`,
+    /// `yes`, even `no`) is true.
+    fn npmrc_bool(expr: &Expr) -> Option<bool> {
+        match &expr.data {
+            ExprData::EBoolean(b) => Some(b.value),
+            ExprData::ENull(_) => Some(false),
+            ExprData::EString(_) => {
+                let str_ = bun_core::trim(expr.as_utf8_string_literal()?, b" \n\r\t");
+                if str_ == b"undefined" {
+                    return None;
+                }
+                if str_ == b"false" || str_ == b"null" {
+                    return Some(false);
+                }
+                let numeric_zero = core::str::from_utf8(str_)
+                    .ok()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .is_some_and(|n| n == 0.0);
+                Some(!numeric_zero)
+            }
+            _ => None,
+        }
+    }
+
     pub fn load_npmrc_config(
         install: &mut BunInstall,
         env: &DotEnvLoader,
@@ -1360,9 +1387,7 @@ mod draft {
         }
 
         if let Some(query) = out.as_property(b"dry-run") {
-            if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.dry_run = Some(str_ == b"true");
-            } else if let Some(b) = query.expr.as_bool() {
+            if let Some(b) = npmrc_bool(&query.expr) {
                 install.dry_run = Some(b);
             }
         }
@@ -1444,19 +1469,19 @@ mod draft {
         }
 
         if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
-            if let Some(ignore) = ignore_scripts.as_bool() {
+            if let Some(ignore) = npmrc_bool(&ignore_scripts) {
                 install.ignore_scripts = Some(ignore);
             }
         }
 
         if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
-            if let Some(link) = link_workspace_packages.as_bool() {
+            if let Some(link) = npmrc_bool(&link_workspace_packages) {
                 install.link_workspace_packages = Some(link);
             }
         }
 
         if let Some(save_exact) = out.get(b"save-exact") {
-            if let Some(exact) = save_exact.as_bool() {
+            if let Some(exact) = npmrc_bool(&save_exact) {
                 install.exact = Some(exact);
             }
         }
@@ -1507,7 +1532,7 @@ mod draft {
         }
 
         if let Some(hoist_expr) = out.get(b"hoist") {
-            if let Some(hoist) = hoist_expr.as_bool() {
+            if let Some(hoist) = npmrc_bool(&hoist_expr) {
                 install.hoist = Some(hoist);
             }
         }

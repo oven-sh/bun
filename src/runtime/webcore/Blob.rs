@@ -4055,14 +4055,28 @@ impl URLSearchParamsConverter {
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Copies a JS `Blob` into the value of a new FormData entry
+/// (`WebCore::Blob::create(JSValue)`, from `append`/`set`). Per
+/// <https://xhr.spec.whatwg.org/#create-an-entry> a value that is not a
+/// `File` becomes a new `File`, so it gets the `new File()` default
+/// `lastModified` of now; a `File` keeps its own. `Blob__setAsFile` applies
+/// the entry's filename.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(value)?;
+pub(crate) extern "C" fn Blob__dupeFromJSForFormData(value: JSValue) -> Option<NonNull<Blob>> {
+    let source = Blob::from_js(value)?;
     // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
-            .expect("Blob__dupe returns a fresh heap allocation"),
-    )
+    let source = unsafe { &*source };
+    let entry =
+        NonNull::new(Blob__dupe(source)).expect("Blob__dupe returns a fresh heap allocation");
+    if !source.is_jsdom_file.get() {
+        // SAFETY: `entry` is a fresh allocation that nothing else references yet.
+        let entry = unsafe { entry.as_ref() };
+        entry.is_jsdom_file.set(true);
+        entry
+            .last_modified
+            .set(bun_core::time::milli_timestamp() as f64);
+    }
+    Some(entry)
 }
 
 #[unsafe(no_mangle)]

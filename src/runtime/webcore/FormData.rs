@@ -163,6 +163,8 @@ pub(crate) fn to_js_from_multipart_data(
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
         form: &'a mut DOMFormData,
+        /// The `new File()` default `lastModified` for every file part.
+        now: f64,
     }
 
     impl<'a> Wrapper<'a> {
@@ -173,7 +175,12 @@ pub(crate) fn to_js_from_multipart_data(
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
+                // > Each part whose `Content-Disposition` header contains a
+                // > `filename` parameter must be parsed into an entry whose
+                // > value is a `File` object
                 let mut blob = Blob::create(value_str, wrap.global, false);
+                blob.is_jsdom_file.set(true);
+                blob.last_modified.set(wrap.now);
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
@@ -227,7 +234,11 @@ pub(crate) fn to_js_from_multipart_data(
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper {
+            global,
+            form,
+            now: bun_core::time::milli_timestamp() as f64,
+        };
 
         if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
             scoped_log!(FormData, "failed to parse multipart data");

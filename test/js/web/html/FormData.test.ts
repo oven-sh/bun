@@ -407,6 +407,42 @@ describe("FormData", () => {
     }
   });
 
+  // https://xhr.spec.whatwg.org/#create-an-entry: a Blob value becomes a *new*
+  // File, so it takes the `new File()` default lastModified (now). A File value
+  // keeps its own lastModified, with or without a filename override.
+  it("gives the Files it creates a lastModified of now", async () => {
+    const lastModified = (form: FormData, name: string) => (form.get(name) as File).lastModified;
+    // Same clock as the default under test.
+    const now = () => new File([], "").lastModified;
+
+    const before = now();
+    const form = new FormData();
+    form.append("blob", new Blob(["x"]));
+    form.append("named", new Blob(["x"]), "n.bin");
+    form.set("set", new Blob(["x"]), "s.bin");
+    form.append("file", new File(["x"], "f.txt", { lastModified: 12345 }));
+    form.append("renamed", new File(["x"], "f.txt", { lastModified: 12345 }), "r.txt");
+    form.append("epoch", new File(["x"], "e.txt", { lastModified: 0 }));
+    const after = now();
+
+    for (const name of ["blob", "named", "set"]) {
+      expect(lastModified(form, name)).toBeWithin(before, after + 1);
+      // Fixed when the entry is created, not read on each get().
+      expect(lastModified(form, name)).toBe(lastModified(form, name));
+    }
+    expect(lastModified(form, "file")).toBe(12345);
+    expect(lastModified(form, "renamed")).toBe(12345);
+    expect(lastModified(form, "epoch")).toBe(0);
+
+    // Every File out of the multipart parser is new.
+    const parsed = await new Response(form).formData();
+    const afterParse = now();
+    for (const name of ["blob", "named", "set", "file", "renamed", "epoch"]) {
+      expect(parsed.get(name)).toBeInstanceOf(File);
+      expect(lastModified(parsed, name)).toBeWithin(before, afterParse + 1);
+    }
+  });
+
   it("file upload on HTTP server (receive)", async () => {
     using server = Bun.serve({
       port: 0,

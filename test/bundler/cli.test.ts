@@ -799,6 +799,137 @@ describe.concurrent("--no-bundle with --outdir", () => {
   });
 });
 
+describe.concurrent("--no-bundle with flags that need the bundler", () => {
+  async function buildNoBundle(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("no-bundle-flags", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, entries: fs.readdirSync(String(dir)).sort() };
+  }
+
+  // These ask for output that transpiling one file at a time cannot produce:
+  // the build fails before anything is written.
+  test.each([
+    [
+      "--format=cjs",
+      "error: --format=cjs is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)\n" +
+        "note: to emit one file in that format, bundle it with every import external: bun build ./file.ts --format=cjs --external '*'\n",
+    ],
+    [
+      "--format=iife",
+      "error: --format=iife is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)\n" +
+        "note: to emit one file in that format, bundle it with every import external: bun build ./file.ts --format=iife --external '*'\n",
+    ],
+    ["--bytecode", "error: --bytecode is not supported with --no-bundle\n"],
+    ["--metafile=meta.json", "error: --metafile is not supported with --no-bundle\n"],
+    ["--metafile-md=meta.md", "error: --metafile-md is not supported with --no-bundle\n"],
+    ["--server-components", "error: --server-components is not supported with --no-bundle\n"],
+  ])("%s fails the build", async (flag, expectedStderr) => {
+    const { stdout, stderr, exitCode, entries } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
+      "./a.ts",
+      "--outdir=dist",
+      flag,
+    ]);
+    expect(stderr).toBe(expectedStderr);
+    expect(stdout).toBe("");
+    expect(entries).toEqual(["a.ts"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--format=esm is the format --no-bundle emits and is accepted", async () => {
+    const { stdout, stderr, exitCode } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
+      "./a.ts",
+      "--format=esm",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("export const a = 1;\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Per-file transforms this mode does not run yet: the build says it ignored
+  // them and carries on.
+  test.each([
+    [[`--banner="use client";`], ["--banner"]],
+    [["--footer=// built with bun"], ["--footer"]],
+    [
+      [`--banner=// top`, "--footer=// bottom"],
+      ["--banner", "--footer"],
+    ],
+  ])("%j is reported as ignored", async (args, reported) => {
+    const { stdout, stderr, exitCode } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
+      "./a.ts",
+      ...args,
+    ]);
+    expect(stderr).toBe(
+      reported.map(flag => `warn: ${flag} is not supported with --no-bundle yet and has been ignored\n`).join(""),
+    );
+    expect(stdout).toBe("export const a = 1;\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["App.jsx", "App.tsx"])("--react-fast-refresh is reported as ignored for %s", async file => {
+    const { stdout, stderr, exitCode } = await buildNoBundle(
+      {
+        [file]: `import { useState } from "react";\nexport function App() {\n  const [n] = useState(0);\n  return <b>{n}</b>;\n}\n`,
+      },
+      [`./${file}`, "--react-fast-refresh"],
+    );
+    expect(stderr).toBe("warn: --react-fast-refresh is not supported with --no-bundle yet and has been ignored\n");
+    expect(stdout).not.toContain("$RefreshReg$");
+    expect(stdout).not.toContain("$RefreshSig$");
+    expect(stdout).toContain("useState(0)");
+    expect(exitCode).toBe(0);
+  });
+
+  // These only tune resolving, chunking or linking, which --no-bundle skips:
+  // the build says so and carries on.
+  test.each([
+    [["--splitting"], ["--splitting"]],
+    [
+      ["--splitting", "--min-chunk-size=1024"],
+      ["--splitting", "--min-chunk-size"],
+    ],
+    [["--external", "react"], ["--external"]],
+    [["--external", "./a.ts"], ["--external"]],
+    [["--packages=external"], ["--packages"]],
+    [["--public-path=/static/"], ["--public-path"]],
+    [["--chunk-naming=[name]-[hash].[ext]"], ["--chunk-naming"]],
+    [["--asset-naming=[name]-[hash].[ext]"], ["--asset-naming"]],
+    [["--css-chunking"], ["--css-chunking"]],
+    [["--no-split-require"], ["--no-split-require"]],
+    [["--no-module-preload"], ["--no-module-preload"]],
+    [["--allow-unresolved", "*"], ["--allow-unresolved"]],
+    [["--reject-unresolved"], ["--reject-unresolved"]],
+    [["--no-deprecated-namespace-object-setters"], ["--no-deprecated-namespace-object-setters"]],
+  ])("%j is reported as having no effect", async (args, reported) => {
+    const { stdout, stderr, exitCode } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
+      "./a.ts",
+      ...args,
+    ]);
+    expect(stderr).toBe(reported.map(flag => `warn: ${flag} has no effect with --no-bundle\n`).join(""));
+    expect(stdout).toBe("export const a = 1;\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["App.jsx", "App.tsx"])("--react-compiler memoizes components in %s", async file => {
+    const { stdout, stderr, exitCode } = await buildNoBundle(
+      {
+        [file]: `export function App({ name }) {\n  return <b>{name.toUpperCase()}</b>;\n}\n`,
+      },
+      [`./${file}`, "--react-compiler"],
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/import \{\s*c as (\w+)\s*\} from "react\/compiler-runtime";/);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.concurrent("bun build names every input that maps to a shared output path", async () => {
   using dir = tempDir("bundle-outdir-collision", {
     "a.ts": `export const a = 1;\n`,

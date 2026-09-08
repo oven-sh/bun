@@ -122,7 +122,12 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--no-bundle" type="boolean">
-  Transpile only — do not bundle
+  Transpile only — do not bundle. Each entry point is emitted as its own file with its imports left as written.
+  <code>--format</code> other than <code>esm</code>, <code>--bytecode</code>, <code>--metafile</code>,
+  <code>--server-components</code> and <code>--compile</code> are rejected in this mode. <code>--banner</code>,
+  <code>--footer</code> and <code>--react-fast-refresh</code> are not supported yet and are ignored with a warning, and
+  flags that only affect resolving or chunking (such as <code>--external</code> or <code>--splitting</code>) have no
+  effect.
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">

@@ -622,6 +622,13 @@ function expectBundled(
       "bundling:false with more than one entry point is not implemented in this harness",
     );
   }
+  // `bun build --no-bundle` emits one ES module per entry and rejects these.
+  if (!ESBUILD && bundling === false && format !== "esm") {
+    throw new UnsupportedOptionError(`format: "${format}" with bundling: false is not implemented in bun build`);
+  }
+  if (!ESBUILD && bundling === false && metafile) {
+    throw new UnsupportedOptionError("metafile with bundling: false is not implemented in bun build");
+  }
 
   if (!ESBUILD && legalComments) {
     throw new UnsupportedOptionError("legalComments not implemented in bun build");

@@ -826,6 +826,8 @@ describe.concurrent("bundler", () => {
       stdout: "c",
     },
   });
+  // esbuild runs these two with format "cjs"; `bun build --no-bundle` only
+  // emits ESM and rejects --format=cjs, and the assertions hold either way.
   itBundled("default/DynamicImportWithExpressionCJS", {
     files: {
       "/a.js": /* js */ `
@@ -833,7 +835,6 @@ describe.concurrent("bundler", () => {
         import(foo())
       `,
     },
-    format: "cjs",
     bundling: false,
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain('import("foo")');
@@ -847,7 +848,6 @@ describe.concurrent("bundler", () => {
         import(foo())
       `,
     },
-    format: "cjs",
     bundling: false,
     minifyWhitespace: true,
     onAfterBundle(api) {
@@ -2064,7 +2064,9 @@ describe.concurrent("bundler", () => {
         })()
       `,
     },
-    format: "iife",
+    // esbuild uses format "iife" to keep `with` out of strict mode; `bun build
+    // --no-bundle` rejects --format=iife, but its output for this file has no
+    // import/export, so node still runs it as a sloppy script.
     minifyIdentifiers: true,
     bundling: false,
     run: {
@@ -2145,7 +2147,6 @@ describe.concurrent("bundler", () => {
     },
     minifyIdentifiers: true,
     bundling: false,
-    format: "cjs",
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");

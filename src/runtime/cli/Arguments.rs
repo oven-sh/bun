@@ -2657,4 +2657,96 @@ fn parse_build_command_options(
         // produces an executable or a standalone HTML file (browsers do read
         // the comment, so standalone HTML keeps the user's choice).
     }
+
+    if ctx.bundler_options.transform_only {
+        check_no_bundle_flags(args, ctx.bundler_options.output_format);
+        // Reported as ignored or without effect above; keep it that way
+        // further down (`--splitting` would otherwise demand --outdir).
+        ctx.bundler_options.code_splitting = false;
+        ctx.bundler_options.react_fast_refresh = false;
+        ctx.bundler_options.banner = Box::default();
+        ctx.bundler_options.footer = Box::default();
+    }
+}
+
+/// `--no-bundle` transpiles each entry point on its own and never resolves or
+/// links its imports. A flag that asks for output this mode cannot produce
+/// fails the build; a per-file transform it does not run yet, or a flag that
+/// only tunes resolving, chunking or linking, is reported and ignored.
+#[cold]
+#[inline(never)]
+fn check_no_bundle_flags(args: &clap::Args<clap::Help>, output_format: options::Format) {
+    let mut failed = false;
+    if let Some(format) = args.option(b"--format") {
+        if output_format != options::Format::Esm {
+            Output::err_generic(
+                "--format={} is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)",
+                (BStr::new(format),),
+            );
+            bun_core::note!(
+                "to emit one file in that format, bundle it with every import external: bun build ./file.ts --format={} --external '*'",
+                BStr::new(format)
+            );
+            failed = true;
+        }
+    }
+    let unsupported: [(&[u8], bool); 4] = [
+        (b"--bytecode", args.flag(b"--bytecode")),
+        (b"--server-components", args.flag(b"--server-components")),
+        (b"--metafile", args.option(b"--metafile").is_some()),
+        (b"--metafile-md", args.option(b"--metafile-md").is_some()),
+    ];
+    for (flag, passed) in unsupported {
+        if passed {
+            Output::err_generic("{} is not supported with --no-bundle", (BStr::new(flag),));
+            failed = true;
+        }
+    }
+    if failed {
+        Global::exit(1);
+    }
+
+    let not_yet: [(&[u8], bool); 3] = [
+        (b"--banner", args.option(b"--banner").is_some()),
+        (b"--footer", args.option(b"--footer").is_some()),
+        (b"--react-fast-refresh", args.flag(b"--react-fast-refresh")),
+    ];
+    for (flag, passed) in not_yet {
+        if passed {
+            bun_core::warn!(
+                "{} is not supported with --no-bundle yet and has been ignored",
+                BStr::new(flag)
+            );
+        }
+    }
+
+    let no_effect: [(&[u8], bool); 13] = [
+        (b"--splitting", args.flag(b"--splitting")),
+        (b"--external", !args.options(b"--external").is_empty()),
+        (b"--packages", args.option(b"--packages").is_some()),
+        (b"--public-path", args.option(b"--public-path").is_some()),
+        (b"--chunk-naming", args.option(b"--chunk-naming").is_some()),
+        (b"--asset-naming", args.option(b"--asset-naming").is_some()),
+        (b"--css-chunking", args.flag(b"--css-chunking")),
+        (b"--no-split-require", args.flag(b"--no-split-require")),
+        (b"--no-module-preload", args.flag(b"--no-module-preload")),
+        (
+            b"--min-chunk-size",
+            args.option(b"--min-chunk-size").is_some(),
+        ),
+        (
+            b"--allow-unresolved",
+            !args.options(b"--allow-unresolved").is_empty(),
+        ),
+        (b"--reject-unresolved", args.flag(b"--reject-unresolved")),
+        (
+            b"--no-deprecated-namespace-object-setters",
+            args.flag(b"--no-deprecated-namespace-object-setters"),
+        ),
+    ];
+    for (flag, passed) in no_effect {
+        if passed {
+            bun_core::warn!("{} has no effect with --no-bundle", BStr::new(flag));
+        }
+    }
 }

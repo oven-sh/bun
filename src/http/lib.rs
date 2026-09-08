@@ -2491,24 +2491,33 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
+                // The producer decided the framing when it created the stream (from
+                // the caller's Content-Length and Transfer-Encoding) and fills the
+                // buffer to match, so announce that decision, not the raw caller
+                // value consumed above.
+                let declared = match &self.state.original_request_body {
+                    HTTPRequestBody::Stream(stream) => stream.content_length,
+                    _ => None,
+                };
+                if let Some(content_length) = declared {
+                    debug_assert!(add_transfer_encoding);
+                    let value: &[u8] = bun_core::fmt::int_as_bytes(
+                        &mut self.request_content_len_buf,
+                        content_length,
+                    );
+                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
+                    let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
+                    request_headers_buf[header_count] =
+                        picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
+                    header_count += 1;
                 } else if add_transfer_encoding
                     && self.flags.upgrade_state == HTTPUpgradeState::None
                 {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }
+                // Otherwise the caller's own Transfer-Encoding row, kept above,
+                // frames the chunk-encoded bytes the producer writes.
             } else {
                 let value: &[u8] =
                     bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);

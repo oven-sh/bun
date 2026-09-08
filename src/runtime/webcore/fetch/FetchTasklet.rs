@@ -115,6 +115,14 @@ pub struct FetchTasklet {
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
     pub(crate) request_headers: Headers,
+    /// The caller `Content-Length` that frames a streaming request body (the same
+    /// value handed to the HTTP thread in `http::http_request_body::Stream`).
+    /// `Some` means the body bytes go on the wire unframed behind this exact
+    /// count, so `write_request_data` counts them against it. JS thread only.
+    pub(crate) declared_request_body_len: Option<u64>,
+    /// Request body bytes handed to the HTTP thread. Only counted while
+    /// `declared_request_body_len` is `Some`. JS thread only.
+    pub(crate) request_body_len_written: u64,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -1862,6 +1870,8 @@ impl FetchTasklet {
             native_response: JsCell::new(None),
             response_stream: Default::default(),
             request_headers: fetch_options.headers,
+            declared_request_body_len: None,
+            request_body_len_written: 0,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2011,6 +2021,26 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
+            // The one framing decision for this body, handed to the HTTP thread
+            // through the `Stream` below: a caller Content-Length it can honor,
+            // with no caller Transfer-Encoding next to it, frames the raw bytes;
+            // anything else goes out chunked. An upgraded connection keeps the
+            // header but tunnels its "body", so those bytes are not counted.
+            let content_length = if fetch_tasklet
+                .request_headers
+                .get(b"transfer-encoding")
+                .is_none()
+            {
+                fetch_tasklet
+                    .request_headers
+                    .get(b"content-length")
+                    .and_then(http::http_request_body::content_length_for_framing)
+            } else {
+                None
+            };
+            if !fetch_tasklet.upgraded_connection {
+                fetch_tasklet.declared_request_body_len = content_length;
+            }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
@@ -2028,6 +2058,7 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
+                    content_length,
                 });
         }
         // TODO is this necessary? the http client already sets the redirect type,
@@ -2118,13 +2149,34 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// True for upgraded connections (e.g. WebSocket), HTTP/2 (DATA frames), or
+    /// when the head carries the caller's Content-Length instead.
     pub(crate) fn skip_chunked_framing(&self) -> bool {
-        self.upgraded_connection
-            || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
-                && self.request_headers.get(b"transfer-encoding").is_none())
+        self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
+    }
+
+    /// Reject the fetch because the request body does not match the
+    /// `Content-Length` the caller declared for it. Mirrors the server side
+    /// (`NodeHTTPResponse` with a strict content length). The reason reaches the
+    /// fetch promise the way an `AbortSignal` reason does, and shutting the
+    /// transport down keeps the connection out of the keep-alive pool. This does
+    /// not touch the sink: on the surplus path the sink is mid-write, and the
+    /// `Writable::Err` that `write_request_data` returns is what stops the body
+    /// stream. On the shortfall path the stream has already ended.
+    fn fail_content_length_mismatch(&mut self, written: u64, declared: u64) {
+        if !self.abort_reason.has() {
+            let global_this = self.global_this;
+            let err = global_this
+                .err(
+                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    format_args!(
+                        "Request body of {written} bytes does not match the Content-Length of {declared}"
+                    ),
+                )
+                .to_js();
+            self.abort_reason.set(&global_this, err);
+        }
+        self.abort_task();
     }
 
     /// Called from `FetchRequestBodySink::write_*`; `high_water_mark` is the
@@ -2148,6 +2200,23 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", utf8_len);
         if utf8_len == 0 {
             return Writable::Owned(0);
+        }
+        // The caller declared the length of a body this client cannot measure, and
+        // the head already announced it. A surplus byte would land on the
+        // connection after the declared end, where a keep-alive peer reads it as
+        // the start of the next request, so fail the request instead of writing it.
+        if let Some(declared) = self.declared_request_body_len {
+            let written = self
+                .request_body_len_written
+                .saturating_add(utf8_len as u64);
+            if written > declared {
+                self.fail_content_length_mismatch(written, declared);
+                return Writable::Err(bun_sys::Error::from_code(
+                    bun_sys::E::ECANCELED,
+                    bun_sys::Tag::write,
+                ));
+            }
+            self.request_body_len_written = written;
         }
         let len = utf8_len as BlobSizeType;
         let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
@@ -2211,6 +2280,18 @@ impl FetchTasklet {
             self.abort_task();
         } else {
             if self.signal_store.aborted.load(Ordering::Relaxed) {
+                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+                FetchTasklet::deref(this_ptr);
+                return;
+            }
+            // The body ended short of the length the head announced. Nothing can
+            // complete the message now, and the peer would wait for the missing
+            // bytes, so fail the request instead of going idle mid-message.
+            let written = self.request_body_len_written;
+            if let Some(declared) = self.declared_request_body_len
+                && written < declared
+            {
+                self.fail_content_length_mismatch(written, declared);
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                 FetchTasklet::deref(this_ptr);
                 return;

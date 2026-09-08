@@ -122,6 +122,172 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/19529
+  // srcset/imagesrcset hold a comma-separated list of "<url> <descriptor>"
+  // candidates; each URL is resolved and hashed on its own.
+  itBundled("html/srcset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="image" href="./small.png" imagesrcset="./small.png 480w, ./big.png 800w">
+  </head>
+  <body>
+    <img srcset="./small.png 1x, ./big.png 2x" src="./small.png">
+    <picture><source srcset="
+      ./small.png 480w,
+      ./big.png   800w
+    "></picture>
+    <img srcset="./small.png, ./big.png">
+    <img srcset="https://example.com/ext.png 1x, ./big.png 2x">
+    <img srcset="./small.png">
+    <img srcset="">
+  </body>
+</html>`,
+      "/small.png": "smallsmall",
+      "/big.png": "bigbigbigbig",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const small = html.match(/src="\.\/(small-[a-z0-9]+\.png)"/)![1];
+      const big = html.match(/(big-[a-z0-9]+\.png)/)![1];
+      api.assertFileExists(`out/${small}`);
+      api.assertFileExists(`out/${big}`);
+      expect([...html.matchAll(/srcset="([^"]*)"/g)].map(m => m[1])).toEqual([
+        `./${small} 480w, ./${big} 800w`,
+        `./${small} 1x, ./${big} 2x`,
+        `./${small} 480w, ./${big} 800w`,
+        `./${small}, ./${big}`,
+        `https://example.com/ext.png 1x, ./${big} 2x`,
+        `./${small}`,
+        ``,
+      ]);
+    },
+  });
+
+  // A ?query/#fragment is not part of the file name: resolve without it and
+  // put it back on the rewritten URL. Protocol-relative URLs are external.
+  itBundled("html/url-suffix", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./app.js?v=3"></script>
+    <link rel="stylesheet" href="./style.css?v=3">
+  </head>
+  <body>
+    <img src="./sprite.svg#icon">
+    <img src="./sprite.svg?v=2#icon">
+    <svg><use href="./sprite.svg#icon"></use></svg>
+    <video src="./clip.mp4#t=1,2"></video>
+    <img src="//cdn.example.com/x.png">
+    <script src="//cdn.example.com/lib.js"></script>
+  </body>
+</html>`,
+      "/app.js": "console.log('app')",
+      "/style.css": "body { color: red }",
+      "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+      "/clip.mp4": "not really a video",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const sprite = html.match(/(sprite-[a-z0-9]+\.svg)/)![1];
+      const clip = html.match(/(clip-[a-z0-9]+\.mp4)/)![1];
+      api.assertFileExists(`out/${sprite}`);
+      api.assertFileExists(`out/${clip}`);
+      expect([...html.matchAll(/(?:src|href)="([^"]*)"/g)].map(m => m[1])).toEqual([
+        expect.stringMatching(/^\.\/index-[a-z0-9]+\.css$/),
+        expect.stringMatching(/^\.\/index-[a-z0-9]+\.js$/),
+        `./${sprite}#icon`,
+        `./${sprite}?v=2#icon`,
+        `./${sprite}#icon`,
+        `./${clip}#t=1,2`,
+        `//cdn.example.com/x.png`,
+        `//cdn.example.com/lib.js`,
+      ]);
+      api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");
+    },
+  });
+
+  // Every element/attribute pair the scanner treats as an asset URL emits a
+  // hashed copy; see TAG_HANDLERS in src/bundler/HTMLScanner.rs.
+  itBundled("html/asset-attributes", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="shortcut icon" href="./a.png">
+    <link rel="apple-touch-icon-precomposed" href="./a.png">
+    <link rel="apple-touch-startup-image" href="./a.png">
+    <link rel="mask-icon" href="./a.svg">
+    <link rel="modulepreload" href="./keep-me.js">
+    <meta property="og:image" content="./a.png">
+    <meta property="og:image:alt" content="./not-a-file.png">
+    <meta name="twitter:image" content="./a.png">
+    <meta name="msapplication-TileImage" content="./a.png">
+    <meta name="description" content="./not-a-file.png">
+  </head>
+  <body>
+    <video><track src="./a.vtt"></video>
+    <object data="./a.pdf"><embed src="./a.pdf"></object>
+    <input type="image" src="./a.png">
+    <svg><image href="./a.png"/><image xlink:href="./a.png"/><use xlink:href="./a.svg#x"/></svg>
+    <iframe src="./page.html"></iframe>
+    <object data="./page.html"></object>
+    <a href="./a.pdf">download</a>
+  </body>
+</html>`,
+      "/a.png": "png",
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      "/a.vtt": "WEBVTT",
+      "/a.pdf": "%PDF-1.4",
+      // A page that another page points at is a link, not an asset: it is not
+      // parsed, so its script must not end up in index.html's bundle.
+      "/page.html": `<!DOCTYPE html><script src="./page.js"></script>`,
+      "/page.js": `console.log("only on page.html")`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const js = api.readFile(`out/${html.match(/index-\w+\.js/)![0]}`);
+      expect(js).not.toContain("only on page.html");
+      const hashed = (ext: string) => {
+        const name = html.match(new RegExp(`"\\./(a-[a-z0-9]+\\.${ext})[?#"]`))![1];
+        api.assertFileExists(`out/${name}`);
+        return `./${name}`;
+      };
+      const [png, svg, vtt, pdf] = ["png", "svg", "vtt", "pdf"].map(hashed);
+      const urls = [...html.matchAll(/(?:src|href|content|data)="([^"]*)"/g)].map(m => m[1]);
+      expect(urls.filter(url => !/^\.\/index-\w+\.js$/.test(url))).toEqual([
+        png, // shortcut icon
+        png, // apple-touch-icon-precomposed
+        png, // apple-touch-startup-image
+        svg, // mask-icon
+        "./keep-me.js", // modulepreload is only dropped in standalone mode
+        png, // og:image
+        "./not-a-file.png", // og:image:alt is text
+        png, // twitter:image
+        png, // msapplication-TileImage
+        "./not-a-file.png", // description is text
+        vtt,
+        pdf, // object
+        pdf, // embed
+        png, // input
+        png, // image href
+        png, // image xlink:href
+        `${svg}#x`, // use xlink:href
+        "./page.html", // iframes are left alone
+        "./page.html", // so are other pages
+        "./a.pdf", // and anchors
+      ]);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

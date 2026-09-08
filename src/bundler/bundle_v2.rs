@@ -6687,6 +6687,22 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                // `<object data="./page.html">` links to another page. That page is
+                // not an asset of this one (its scripts must not join this bundle),
+                // so leave the URL as written.
+                if loader == Loader::Html
+                    && import_record.kind == ImportKind::Url
+                    && import_record
+                        .loader
+                        .or_else(|| path.loader(&transpiler.options.loaders))
+                        == Some(Loader::Html)
+                {
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    continue;
+                }
+
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)

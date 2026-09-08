@@ -455,10 +455,16 @@ await Bun.build({
 Bun automatically handles all common web assets:
 
 - **Scripts** (`<script src>`) are run through Bun's JavaScript/TypeScript/JSX bundler
-- **Stylesheets** (`<link rel="stylesheet">`) are run through Bun's CSS parser & bundler
-- **Images** (`<img>`, `<picture>`) are copied and hashed
-- **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
-- Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
+- **Stylesheets** (`<link rel="stylesheet">`, `<link rel="preload" as="style">`) are run through Bun's CSS parser & bundler
+- **Images** (`<img src>`, `<img srcset>`, `<picture><source srcset>`, `<input type="image" src>`, `<video poster>`, SVG `<image href>` and `<use href>`) are copied and hashed. Each candidate in a `srcset` is rewritten on its own and keeps its descriptor.
+- **Media** (`<video src>`, `<audio src>`, `<source src>`, `<track src>`) are copied and hashed
+- **Embedded documents** (`<object data>`, `<embed src>`) are copied and hashed
+- **`<link href>`** for `rel="icon"` (including `shortcut icon`, `apple-touch-icon`, `apple-touch-startup-image`, `mask-icon`), `rel="manifest"`, and `rel="preload"` with `as="font|image|audio|video"` (plus `imagesrcset`) are copied and hashed
+- **Social images** in `<meta property="og:image|og:audio|og:video" content>` and `<meta name="twitter:image|msapplication-TileImage" content>` are copied and hashed
+
+A `?query` or `#fragment` on the URL is kept on the rewritten path, so `<use href="./icons.svg#menu">` becomes `<use href="./icons-a1b2c3.svg#menu">`. URLs with a scheme (`https://...`, `data:...`) and protocol-relative URLs (`//cdn.example.com/...`) are left as-is.
+
+Not processed: `<iframe src>`, `<a href>`, inline `style="..."` attributes and `<style>` blocks, `import` specifiers inside inline `<script>` blocks, and anything inside `<noscript>`.
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.
 

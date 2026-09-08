@@ -352,6 +352,86 @@ body { color: blue; }`,
     expect(html).toContain('console.log("with image")');
   });
 
+  test("inlines every local URL attribute and keeps #fragments", async () => {
+    const png = Buffer.from("89504e470d0a1a0a78", "hex");
+    using dir = tempDir("compile-browser-url-attrs", {
+      "index.html": `<!DOCTYPE html><html><head>
+<link rel="preload" as="image" href="./i.png" imagesrcset="./h1.png 1x, ./h2.png 2x" imagesizes="100vw">
+<link rel="modulepreload" href="./app.js" integrity="sha384-AAAA">
+<link rel="prefetch" href="./doc.pdf">
+<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>
+<link rel="shortcut icon" href="./i.png">
+<link rel="apple-touch-startup-image" href="./st.png">
+<meta property="og:image" content="./og.png">
+<meta property="og:image:width" content="1200">
+<meta name="twitter:image" content="./og.png">
+<script type="module" src="./app.js"></script></head><body>
+<img src="./i.png"> <img src="./sprite.svg#icon"> <img srcset="./h1.png 1x, ./h2.png 2x">
+<video src="./clip.mp4#t=1,2"></video>
+<video poster="./i.png"><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>
+<object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
+<input type="image" src="./i.png">
+<svg><use href="./sprite.svg#icon"></use><use xlink:href="./sprite.svg#icon"></use><image href="./i.png"/></svg>
+<img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png"> <a href="./doc.pdf">pdf</a>
+</body></html>`,
+      "app.js": `console.log("app");`,
+      "i.png": png,
+      "h1.png": png,
+      "h2.png": png,
+      "st.png": png,
+      "og.png": png,
+      "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></symbol></svg>`,
+      "clip.mp4": Buffer.from("00000018667479706d703432", "hex"),
+      "subs.vtt": "WEBVTT\n\n",
+      "doc.pdf": "%PDF-1.4\n",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+    const html = await result.outputs[0].text();
+
+    // The only relative path left is the <a href>, which is navigation, not an asset.
+    expect([...html.matchAll(/"(\.\/[^"]*)"/g)].map(m => m[1])).toEqual(["./doc.pdf"]);
+    expect(html).toContain('<a href="./doc.pdf">pdf</a>');
+
+    const pngData = "data:image/png;base64," + png.toString("base64");
+    const svgData = /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+#icon$/;
+    const attr = (re: RegExp) => html.match(re)?.[1];
+    expect(attr(/<img src="(data:image\/svg\+xml[^"]*)">/)).toMatch(svgData);
+    expect(attr(/<use href="([^"]*)">/)).toMatch(svgData);
+    expect(attr(/<use xlink:href="([^"]*)">/)).toMatch(svgData);
+    expect(attr(/<video src="([^"]*)">/)).toMatch(/^data:video\/mp4;base64,[A-Za-z0-9+/=]+#t=1,2$/);
+    expect(attr(/<img srcset="([^"]*)">/)).toBe(`${pngData} 1x, ${pngData} 2x`);
+    expect(attr(/<track src="([^"]*)"/)).toStartWith("data:text/vtt");
+    expect(attr(/<object data="([^"]*)"/)).toStartWith("data:application/pdf;base64,");
+    expect(attr(/<embed src="([^"]*)"/)).toStartWith("data:application/pdf;base64,");
+    expect(attr(/<input type="image" src="([^"]*)"/)).toBe(pngData);
+    expect(attr(/<image href="([^"]*)"/)).toBe(pngData);
+    expect(attr(/<link rel="shortcut icon" href="([^"]*)"/)).toBe(pngData);
+    expect(attr(/<link rel="apple-touch-startup-image" href="([^"]*)"/)).toBe(pngData);
+    expect(attr(/<meta property="og:image" content="([^"]*)"/)).toBe(pngData);
+    expect(attr(/<meta name="twitter:image" content="([^"]*)"/)).toBe(pngData);
+    expect(html).toContain('<meta property="og:image:width" content="1200">');
+
+    // Local preload hints point at files that are now inline, so they are dropped;
+    // the external one stays.
+    expect(html).not.toContain("modulepreload");
+    expect(html).not.toContain("imagesrcset");
+    expect(html).not.toContain("prefetch");
+    expect(html).toContain('<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>');
+
+    // External URLs are untouched.
+    expect(html).toContain('<img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png">');
+    expect(html).toContain('<script type="module">');
+    expect(html).toContain('console.log("app")');
+  });
+
   test("handles CSS url() references", async () => {
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",

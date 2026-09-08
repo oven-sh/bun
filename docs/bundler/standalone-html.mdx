@@ -81,26 +81,40 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 
 ### What gets inlined
 
-| In your source                                   | In the output                                                            |
-| ------------------------------------------------ | ------------------------------------------------------------------------ |
-| `<script src="./app.tsx">`                       | `<script type="module">...bundled code...</script>`                      |
-| `<link rel="stylesheet" href="./styles.css">`    | `<style>...bundled CSS...</style>`                                       |
-| `<img src="./logo.png">`                         | `<img src="data:image/png;base64,...">`                                  |
-| `<img src="./icon.svg">`                         | `<img src="data:image/svg+xml;base64,...">`                              |
-| `<video src="./demo.mp4">`                       | `<video src="data:video/mp4;base64,...">`                                |
-| `<audio src="./click.wav">`                      | `<audio src="data:audio/x-wav;base64,...">`                              |
-| `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                              |
-| `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                            |
-| `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                  |
-| `<link rel="manifest" href="./app.webmanifest">` | `<link rel="manifest" href="data:application/manifest+json;base64,...">` |
-| CSS `url("./bg.png")`                            | CSS `url(data:image/png;base64,...)`                                     |
-| CSS `@import "./reset.css"`                      | Flattened into the `<style>` tag                                         |
-| CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                    |
-| JS `import "./styles.css"`                       | Merged into the `<style>` tag                                            |
+| In your source                                               | In the output                                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `<script src="./app.tsx">`                                   | `<script type="module">...bundled code...</script>`                                   |
+| `<link rel="stylesheet" href="./styles.css">`                | `<style>...bundled CSS...</style>`                                                    |
+| `<img src="./logo.png">`                                     | `<img src="data:image/png;base64,...">`                                               |
+| `<img src="./icons.svg#menu">`, `<use href="...">`           | `<img src="data:image/svg+xml;base64,...#menu">`                                      |
+| `<img srcset="./a.png 1x, ./b.png 2x">`                      | `<img srcset="data:image/png;base64,... 1x, data:image/png;base64,... 2x">`           |
+| `<video src="./demo.mp4#t=5">`                               | `<video src="data:video/mp4;base64,...#t=5">`                                         |
+| `<audio src="./click.wav">`                                  | `<audio src="data:audio/x-wav;base64,...">`                                           |
+| `<source src="./clip.webm">`, `<track src="./en.vtt">`       | `<source src="data:video/webm;base64,...">`, `<track src="data:text/vtt;base64,...">` |
+| `<video poster="./thumb.jpg">`                               | `<video poster="data:image/jpeg;base64,...">`                                         |
+| `<object data="./doc.pdf">`, `<embed src="./doc.pdf">`       | `<object data="data:application/pdf;base64,...">`                                     |
+| `<link rel="icon" href="./favicon.ico">`                     | `<link rel="icon" href="data:image/x-icon;base64,...">`                               |
+| `<link rel="manifest" href="./app.webmanifest">`             | `<link rel="manifest" href="data:application/manifest+json;base64,...">`              |
+| `<meta property="og:image" content="./og.png">`              | `<meta property="og:image" content="data:image/png;base64,...">`                      |
+| `<link rel="preload\|modulepreload\|prefetch" href="./...">` | Removed: the file it points at is already inline                                      |
+| CSS `url("./bg.png")`                                        | CSS `url(data:image/png;base64,...)`                                                  |
+| CSS `@import "./reset.css"`                                  | Flattened into the `<style>` tag                                                      |
+| CSS `url("./font.woff2")`                                    | CSS `url(data:font/woff2;base64,...)`                                                 |
+| JS `import "./styles.css"`                                   | Merged into the `<style>` tag                                                         |
 
-Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any file referenced by a relative path into a `data:` URI and embeds it directly in the HTML. Bun detects the MIME type from the file extension.
+Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any file referenced by a relative path into a `data:` URI and embeds it directly in the HTML. Bun detects the MIME type from the file extension. A `#fragment` on the URL is kept after the `data:` URI, so SVG sprite references and media fragments still work. The full list of elements and attributes is the same as for [HTML entrypoints in `bun build`](/bundler/html-static#what-gets-processed).
 
 Bun leaves external URLs (like CDN links or absolute URLs) untouched.
+
+### What is not inlined
+
+These references are left exactly as written. If they point at a local file, that file will not be next to the output:
+
+- `<iframe src>` and `<a href>`
+- `url()` inside a `style="..."` attribute or an inline `<style>` block (put the CSS in a `.css` file and `<link>` it instead)
+- `import` specifiers inside an inline `<script type="module">` block (use `<script src>` instead)
+- Anything inside `<noscript>`
+- URLs built at runtime in JavaScript, such as `fetch("./data.json")` or `new Worker(new URL("./worker.js", import.meta.url))`. Import the file instead (`import data from "./data.json"`) so the bundler can see it.
 
 ## Using with React
 

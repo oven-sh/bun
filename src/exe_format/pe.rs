@@ -978,13 +978,16 @@ fn is_host_import(dll_name: &[u8]) -> bool {
         || (dll_name.len() >= 4 && dll_name[0..4].eq_ignore_ascii_case(b"bun-"))
 }
 
-/// Only the MSVC CRT's empty-template TLS directory (which needs no loader TLS slot) can be merged.
+/// Mergeable only with no TLS directory, or the MSVC CRT's stub one: an empty template (no loader
+/// TLS slot to reserve) and no callback, since `bind()` calls `DllMain` and the loader's TLS
+/// callbacks have no equivalent. `IMAGE_TLS_DIRECTORY64`: raw data start and end (u64 VAs), index,
+/// callbacks (a u64 VA of a null-terminated array of callback VAs), zero fill, characteristics.
 fn tls_directory_is_mergeable(addon: &AddonView) -> bool {
     let tls_dir = addon.dir(IMAGE_DIRECTORY_ENTRY_TLS);
     if tls_dir.size == 0 && tls_dir.virtual_address == 0 {
         return true;
     }
-    const TLS_DIR64_SIZE: u32 = 40; // IMAGE_TLS_DIRECTORY64
+    const TLS_DIR64_SIZE: u32 = 40;
     if tls_dir.size < TLS_DIR64_SIZE {
         return false;
     }
@@ -993,8 +996,24 @@ fn tls_directory_is_mergeable(addon: &AddonView) -> bool {
     };
     let raw_start = read_u64_le(dir, 0);
     let raw_end = read_u64_le(dir, 8);
+    let callbacks = read_u64_le(dir, 24);
     let zero_fill = read_u32_le(dir, 32);
-    raw_end == raw_start && zero_fill == 0
+    if raw_end != raw_start || zero_fill != 0 {
+        return false;
+    }
+    if callbacks == 0 {
+        return true;
+    }
+    let Some(rva) = callbacks
+        .checked_sub(addon.opt.image_base)
+        .and_then(|offset| u32::try_from(offset).ok())
+    else {
+        return false;
+    };
+    // The CRT leaves the array empty unless the addon registers a callback.
+    addon
+        .slice_at_rva(rva, 8)
+        .is_ok_and(|first| read_u64_le(first, 0) == 0)
 }
 
 fn section_final_protect(ch: u32) -> u32 {

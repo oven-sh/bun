@@ -322,9 +322,8 @@ describe("pe.addLinkedAddon adversarial input", () => {
     // every MSVC-built DLL has an IMAGE_TLS_DIRECTORY64 even with no
     // __declspec(thread) data. When StartAddressOfRawData ==
     // EndAddressOfRawData and SizeOfZeroFill == 0 there is no per-
-    // thread storage to install, so no LdrpTlsBitmap slot is needed
-    // and the CRT's __dyn_tls_init/_dtor callbacks are no-ops. Merge
-    // and ignore the directory.
+    // thread storage to install, so no LdrpTlsBitmap slot is needed.
+    // Merge and ignore the directory.
     const r = peLinkAddon(
       makeHost(),
       makeAddon(b => {
@@ -335,6 +334,33 @@ describe("pe.addLinkedAddon adversarial input", () => {
       "x",
     );
     expect(expectSafe(r)).toBe("merged");
+  });
+
+  // The CRT's array is empty unless the addon puts a callback in `.CRT$XLB`..`.CRT$XLY`. The
+  // loader calls those on process and thread attach; a merged addon only gets its DllMain called.
+  const tlsWithCallbacks =
+    (first: bigint, callbacksVa = 0x180001190n): Mutator =>
+    b => {
+      b.writeUInt32LE(SECT_ALIGN + 0x150, DDOFF + 9 * 8);
+      b.writeUInt32LE(40, DDOFF + 9 * 8 + 4);
+      b.writeBigUInt64LE(callbacksVa, FILE_ALIGN + 0x150 + 24); // AddressOfCallBacks
+      b.writeBigUInt64LE(first, FILE_ALIGN + 0x190); // the array at RVA 0x1190
+    };
+
+  test("addon with an empty TLS callback array is merged", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(tlsWithCallbacks(0n)), "x");
+    expect(expectSafe(r)).toBe("merged");
+  });
+
+  test("addon with a TLS callback is skipped (the merge never calls it)", () => {
+    const r = peLinkAddon(makeHost(), makeAddon(tlsWithCallbacks(0x180001000n)), "x");
+    expect(expectSafe(r)).toBe("skipped");
+  });
+
+  test("addon whose TLS callback array lies outside the image is skipped", () => {
+    // Below ImageBase, and past the image: the array cannot be read, so it cannot be cleared.
+    expect(expectSafe(peLinkAddon(makeHost(), makeAddon(tlsWithCallbacks(0n, 0x10n)), "x"))).toBe("skipped");
+    expect(expectSafe(peLinkAddon(makeHost(), makeAddon(tlsWithCallbacks(0n, 0x18fff0000n)), "x"))).toBe("skipped");
   });
 
   test("addon with a nonzero TLS template is skipped (real __declspec(thread))", () => {

@@ -497,6 +497,8 @@ function generateAddon(rng: Rng, hostMachine: number, poisonous: boolean): Gener
   // --- TLS -----------------------------------------------------------------------
   let tlsDirRva = 0;
   let tlsDirSize = 0;
+  // Set once the image base is known: the offset of AddressOfCallBacks and the RVA it names.
+  let tlsCallbacks: { field: number; arrayRva: number } | null = null;
   const tlsKind = poison("real TLS template", 0.08)
     ? "real"
     : poison("truncated TLS directory", 0.03)
@@ -511,8 +513,14 @@ function generateAddon(rng: Rng, hostMachine: number, poisonous: boolean): Gener
     body.writeBigUInt64LE(start, dir);
     body.writeBigUInt64LE(tlsKind === "real" && rng.chance(0.7) ? start + 8n : start, dir + 8);
     body.writeBigUInt64LE(0x1_8000_3000n, dir + 16);
-    body.writeBigUInt64LE(0x1_8000_3008n, dir + 24);
     if (tlsKind === "real" && body.readBigUInt64LE(dir + 8) === start) body.writeUInt32LE(16, dir + 32);
+    // A callback array, usually empty as the CRT leaves it; a registered callback is refused.
+    if (rng.chance(0.5)) {
+      const array = alloc(16, 8);
+      body.fill(0, array, array + 16);
+      if (poison("registered TLS callback", 0.08)) body.writeBigUInt64LE(0x1_8000_1000n, array);
+      tlsCallbacks = { field: dir + 24, arrayRva: rva(array) };
+    }
     tlsDirRva = rva(dir);
     tlsDirSize = tlsKind === "truncated" ? rng.range(1, 39) : 40;
   }
@@ -664,6 +672,8 @@ function generateAddon(rng: Rng, hostMachine: number, poisonous: boolean): Gener
   file.writeUInt32LE(entryPoint, OPTOFF + 16);
   const imageBase = 0x1_8000_0000n + (BigInt(rng.int(0x100)) << 16n);
   file.writeBigUInt64LE(imageBase, OPTOFF + 24);
+  // AddressOfCallBacks is a VA, so it is only known now.
+  if (tlsCallbacks) body.writeBigUInt64LE(imageBase + BigInt(tlsCallbacks.arrayRva), tlsCallbacks.field);
   file.writeUInt32LE(SECT_ALIGN, OPTOFF + 32);
   file.writeUInt32LE(FILE_ALIGN, OPTOFF + 36);
   file.writeUInt32LE(sizeOfImage, OPTOFF + 56);

@@ -650,9 +650,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 },
 
                 stream: false,
-                // The kernel kills the script when bun dies without a chance to
-                // forward a signal (SIGKILL, a crash), so no script outlives
-                // the install.
+                // No script outlives a killed or crashed install.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
                 ..Default::default()
@@ -666,8 +664,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            // Before the spawn, so that no signal can end `bun install` between
-            // the child's start and the handler's installation.
+            // Hooked before the spawn so no signal lands in between.
             #[cfg(unix)]
             crate::lifecycle_signals::on_script_started(manager);
             let spawned = match bun_spawn::spawn_process(
@@ -853,12 +850,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
+        // Draining after a forwarded signal: do not chain or exit on this
+        // script's status; `on_script_exited` ends the process after the last.
         #[cfg(unix)]
         if crate::lifecycle_signals::pending().is_some() {
-            // `bun install` received a signal and forwarded it to this script.
-            // Whatever the script's status, do not chain into its next
-            // script. `on_script_exited` dies by the signal after the last
-            // running script is gone.
             if let Status::Signaled(signal) = status {
                 self.print_terminated_by(signal);
             }
@@ -1118,7 +1113,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
-        // `bun install` is about to die by a forwarded signal. Start nothing new.
         #[cfg(unix)]
         if crate::lifecycle_signals::pending().is_some() {
             return Ok(());

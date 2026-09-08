@@ -99,8 +99,7 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         result
     }
 
-    /// Visit every element in the heap, in no particular order. `f` must not
-    /// insert into or remove from the heap. This is an O(N) operation.
+    /// Visit every element (unordered, O(N)). `f` must not insert or remove.
     pub unsafe fn for_each(&self, mut f: impl FnMut(*mut T)) {
         // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
         Self::for_each_internal(self.root, &mut f);

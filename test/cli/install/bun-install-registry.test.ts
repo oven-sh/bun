@@ -284,62 +284,59 @@ describe("certificate authority", () => {
   });
   // Each higher layer's `ca` must replace a lower layer's `cafile` (the lower
   // file holds an unrelated CA, the registry's certificate is only in `ca`).
-  test.each(["bunfig ca over .npmrc cafile", "project .npmrc ca over user .npmrc cafile"])(
-    "%s",
-    async layers => {
-      using server = Bun.serve({
-        port: 0,
-        fetch: mockRegistryFetch(),
-        ...tls,
-      });
-      const homeDir = join(packageDir, "home_dir");
-      const unrelatedCa = join(packageDir, "unrelated-ca.pem");
-      const npmrcCa = `ca=${JSON.stringify(tls.cert)}\n`;
-      await Promise.all([
-        write(
-          packageJson,
-          JSON.stringify({
-            name: "foo",
-            version: "1.1.1",
-            dependencies: {
-              "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
-            },
-          }),
-        ),
-        write(unrelatedCa, file(join(import.meta.dir, "..", "..", "js", "node", "tls", "fixtures", "ca1-cert.pem"))),
-        write(
-          join(packageDir, "bunfig.toml"),
-          Bun.TOML.stringify({
-            install: {
-              cache: false,
-              registry: `https://localhost:${server.port}/`,
-              ...(layers.startsWith("bunfig") ? { ca: tls.cert } : {}),
-            },
-          }),
-        ),
-        layers.startsWith("bunfig")
-          ? write(join(packageDir, ".npmrc"), `cafile=${unrelatedCa}\n`)
-          : Promise.all([
-              write(join(homeDir, ".npmrc"), `cafile=${unrelatedCa}\n`),
-              write(join(packageDir, ".npmrc"), npmrcCa),
-            ]),
-      ]);
+  test.each(["bunfig ca over .npmrc cafile", "project .npmrc ca over user .npmrc cafile"])("%s", async layers => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    const homeDir = join(packageDir, "home_dir");
+    const unrelatedCa = join(packageDir, "unrelated-ca.pem");
+    const npmrcCa = `ca=${JSON.stringify(tls.cert)}\n`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(unrelatedCa, file(join(import.meta.dir, "..", "..", "js", "node", "tls", "fixtures", "ca1-cert.pem"))),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+            ...(layers.startsWith("bunfig") ? { ca: tls.cert } : {}),
+          },
+        }),
+      ),
+      layers.startsWith("bunfig")
+        ? write(join(packageDir, ".npmrc"), `cafile=${unrelatedCa}\n`)
+        : Promise.all([
+            write(join(homeDir, ".npmrc"), `cafile=${unrelatedCa}\n`),
+            write(join(packageDir, ".npmrc"), npmrcCa),
+          ]),
+    ]);
 
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stderr: "pipe",
-        stdout: "pipe",
-        env: { ...env, XDG_CONFIG_HOME: homeDir },
-      });
-      const out = await stdout.text();
-      const err = await stderr.text();
-      expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
-      expect(err).not.toContain("error:");
-      expect(out).toContain("+ no-deps@");
-      expect(await exited).toBe(0);
-    },
-  );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env: { ...env, XDG_CONFIG_HOME: homeDir },
+    });
+    const out = await stdout.text();
+    const err = await stderr.text();
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(await exited).toBe(0);
+  });
   test(`non-existent --cafile`, async () => {
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 

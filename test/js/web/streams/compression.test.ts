@@ -29,7 +29,8 @@ test.each([
 // for all four; WPT encoding/streams/backpressure.any.js covers the text codecs.
 {
   const helloBytes = new TextEncoder().encode("hello");
-  const helloGzip = zlib.gzipSync(helloBytes);
+  // An ArrayBuffer rather than a view: the codecs take any BufferSource.
+  const helloGzip: ArrayBuffer = new Uint8Array(zlib.gzipSync(helloBytes)).buffer;
   const text = (chunks: unknown[]) => Buffer.concat(chunks as Uint8Array[]).toString();
   test.each([
     ["TransformStream", () => new TransformStream(), "hello", (chunks: unknown[]) => chunks.join("")],

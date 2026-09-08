@@ -180,7 +180,7 @@ impl BodyMixin for Request {
                 .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
-    fn get_blob_content_type(&self) -> Option<crate::webcore::blob::BlobContentType> {
+    fn get_blob_content_type(&self) -> Option<Vec<u8>> {
         // `blob()` can run inside a `Bun.serve` handler before anything has read
         // `request.headers`; until then the headers exist only on the uws request.
         self.load_headers_from_request_context();

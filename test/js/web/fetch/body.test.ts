@@ -400,6 +400,27 @@ for (const { body, fn } of bodyTypes) {
         expect(await typesWith({ "content-type": "" })).toEqual(expectAll(""));
       });
 
+      test("a header value that cannot be a MIME type gives an empty type", async () => {
+        const types: string[] = [];
+        for (const value of ["text/pl\u00ffain", "text/pl\u0001ain"]) {
+          for (const stream of [false, true]) {
+            types.push((await fn(stream ? bodies.ReadableStream() : "a=1", { "content-type": value }).blob()).type);
+          }
+        }
+        expect(types).toEqual(["", "", "", ""]);
+      });
+
+      test("a typed body without an explicit header keeps its type verbatim, headers read or not", async () => {
+        const typed = () => new Blob(["a=1"], { type: "text/html; charset=iso-8859-1" });
+        const untouched = fn(typed());
+        const touched = fn(typed());
+        expect(touched.headers.get("content-type")).toBe("text/html; charset=iso-8859-1");
+        expect([(await untouched.blob()).type, (await touched.blob()).type]).toEqual([
+          "text/html; charset=iso-8859-1",
+          "text/html; charset=iso-8859-1",
+        ]);
+      });
+
       test("a result with an empty type is sent on with no Content-Type header", async () => {
         const blob = await fn("a=1", { "content-type": "" }).blob();
         await using server = Bun.serve({

@@ -1145,3 +1145,120 @@ describe("Response.clone() of a stream body shares chunk references between tee 
     expect(exitCode).toBe(0);
   });
 });
+
+// A `Bun.serve` handler that calls `req.clone()` and responds without reading
+// either body. The server stops feeding the request body once the response
+// ends, so it must also settle the native byte stream behind the tee: an
+// unsettled pull kept its promise GC-protected, and with it both tee branches,
+// the reader, and the controllers of every such request, forever.
+describe("Bun.serve: clone() of an incoming request whose body nobody reads", () => {
+  test("does not leak the teed body streams", async () => {
+    const requests = 100;
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const body = Buffer.alloc(256, "a").toString();
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          // BunRequest has its own native clone entry point.
+          "/bun-request": req => {
+            req.clone();
+            return new Response("k");
+          },
+        },
+        fetch(req) {
+          // Tee through the stream that the body getter already materialized.
+          if (req.url.endsWith("/observed")) req.body;
+          req.clone();
+          return new Response("k");
+        },
+      });
+      const paths = ["/plain", "/observed", "/bun-request"];
+      const hit = async path => {
+        const res = await fetch(new URL(path, server.url), { method: "POST", body });
+        if ((await res.text()) !== "k") throw new Error("bad response for " + path);
+      };
+      const counts = () => {
+        Bun.gc(true);
+        Bun.gc(true);
+        const stats = heapStats();
+        return {
+          ReadableStream: stats.objectTypeCounts.ReadableStream ?? 0,
+          StreamTeeState: stats.objectTypeCounts.StreamTeeState ?? 0,
+          protectedPromise: stats.protectedObjectTypeCounts.Promise ?? 0,
+        };
+      };
+      for (const path of paths) await hit(path);
+      const before = counts();
+      for (const path of paths) for (let i = 0; i < ${requests}; i++) await hit(path);
+      const after = counts();
+      const delta = {};
+      for (const key in before) delta[key] = after[key] - before[key];
+      console.log(JSON.stringify(delta));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Leaking retained 3 ReadableStream + 1 StreamTeeState + 1 protected Promise
+    // per request (x 3 paths x `requests`); a settled tee is collectable at once.
+    const delta = JSON.parse(stdout);
+    expect(delta.ReadableStream).toBeWithin(-10, 10);
+    expect(delta.StreamTeeState).toBeWithin(-4, 4);
+    expect(delta.protectedPromise).toBeWithin(-4, 4);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a read started on the clone rejects once the response ends ahead of the body", async () => {
+    let state = "handler not reached";
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/state") return new Response(state);
+        state = "pending";
+        req
+          .clone()
+          .text()
+          .then(
+            text => (state = `resolved: ${JSON.stringify(text)}`),
+            e => (state = `rejected: ${e?.name}: ${e?.message}`),
+          );
+        return new Response("k");
+      },
+    });
+
+    // Announce a body but never send it, so the response always finishes first.
+    const responded = Promise.withResolvers<string>();
+    let received = "";
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, chunk) {
+          received += chunk.toString();
+          const bodyAt = received.indexOf("\r\n\r\n");
+          if (bodyAt !== -1 && received.length > bodyAt + 4) responded.resolve(received);
+        },
+        close() {
+          responded.reject(new Error(`closed after ${JSON.stringify(received)}`));
+        },
+        error(_socket, err) {
+          responded.reject(err);
+        },
+      },
+    });
+    socket.write("POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\n");
+    const response = await responded.promise;
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(response).toEndWith("\r\n\r\nk");
+
+    const res = await fetch(new URL("/state", server.url));
+    expect(await res.text()).toBe("rejected: AbortError: The connection was closed.");
+    socket.end();
+  });
+});

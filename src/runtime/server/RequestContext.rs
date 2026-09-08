@@ -1528,10 +1528,9 @@ where
                     sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
                 );
             }
-            // End request streaming here, not in deinit: a `Used` body
-            // (textStream) can only be rejected through
-            // request_body_readable_stream_ref, and finalize_without_deinit
-            // drops that ref without erroring it. any_js_calls is already set.
+            // Reject a parked request-body read now, while this abort still
+            // drains microtasks (any_js_calls is already set), rather than from
+            // finalize_without_deinit whenever the last ref happens to drop.
             let _ = this.end_request_streaming();
             this.reclaim_promise_cell();
             return;
@@ -1566,8 +1565,8 @@ where
 
         // Reclaim only after the block above: the claim's ref must still
         // count in `is_dead_request`, so a parked request-body read goes
-        // through `end_request_streaming` and rejects instead of being
-        // silently dropped by `finalize_without_deinit`.
+        // through `end_request_streaming` here, where `any_js_calls` gets its
+        // rejection drained, instead of in `finalize_without_deinit`.
         this.reclaim_promise_cell();
     }
 
@@ -1606,9 +1605,11 @@ where
         }
         self.response_weakref.set(response::WeakRef::EMPTY);
 
+        // `end_request_streaming()` below errors and releases
+        // `request_body_readable_stream_ref`; only cut the producer backref
+        // here so the abort listeners fired first cannot reach this context
+        // through the stream.
         self.detach_request_body_producer();
-        self.request_body_readable_stream_ref
-            .with_mut(|s| s.deinit());
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
@@ -2409,44 +2410,50 @@ where
 
         self.request_body_buf.set(Vec::new());
 
-        // if we cannot, we have to reject pending promises
-        // first, we reject the request body promise
+        let mut any_js_calls = false;
+
+        // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+        // but we received nothing or the connection was aborted: reject that promise.
         if let Some(body) = self.request_body_mut() {
-            // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-            // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
                 let global_this = self.server().global_this();
                 body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
                 )?;
-                return Ok(true);
+                any_js_calls = true;
             }
         }
 
-        // `req.textStream()` transitions the body to `Value::Used`, so the
-        // Locked check above falls through. Error the ByteStream via our own
-        // strong ref instead so a pending read rejects rather than hanging.
-        if self.request_body_readable_stream_ref.with_mut(|s| s.has()) {
-            let global_this = self.server().global_this();
-            let strong = self
-                .request_body_readable_stream_ref
-                .replace(readable_stream::Strong::default());
-            if let Some(readable) = strong.get() {
-                readable.value.ensure_still_alive();
-                if let Some(bytes) = readable.ptr.bytes() {
-                    let mut err =
-                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
-                    bytes.on_data(WebCore::streams::Result::Err(
-                        err.to_stream_error(global_this),
-                    ));
-                    err.reset();
-                    return Ok(true);
-                }
+        // This context is the producer of the body's ByteStream and nothing
+        // feeds it after this point, so settle it here whatever the body
+        // `Value` looks like. The `Value` alone does not reach it once
+        // `req.clone()` re-pointed `Locked.readable` at a tee branch, or
+        // `req.textStream()` made the body `Used`; an unsettled pull keeps its
+        // promise protected (and every tee branch alive) forever. Erroring the
+        // source rejects a pending read on any branch instead of hanging it.
+        let strong = self
+            .request_body_readable_stream_ref
+            .replace(readable_stream::Strong::default());
+        if let Some(readable) = strong.get() {
+            readable.value.ensure_still_alive();
+            if let Some(bytes) = readable.ptr.bytes() {
+                let global_this = self.server().global_this();
+                bytes
+                    .parent_const()
+                    .producer
+                    .set(WebCore::streams::SourceHandle::None);
+                let mut err =
+                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                bytes.on_data(WebCore::streams::Result::Err(
+                    err.to_stream_error(global_this),
+                ));
+                err.reset();
+                any_js_calls = true;
             }
         }
 
-        Ok(false)
+        Ok(any_js_calls)
     }
 
     fn detach_response(&self) {

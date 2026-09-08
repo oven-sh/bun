@@ -516,6 +516,11 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     ASSERT(callFrame->argumentCount() == 2);
     ASSERT(callFrame->uncheckedArgument(0).isString());
+    // A worker's environment is its own env map (Node: a MapKVStore); only the
+    // main thread's process.env writes through to the OS environment block.
+    auto* context = defaultGlobalObject(global)->scriptExecutionContext();
+    if (context && !context->isMainThread())
+        return JSValue::encode(jsUndefined());
     WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue arg2 = callFrame->uncheckedArgument(1);

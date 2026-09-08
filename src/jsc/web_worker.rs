@@ -132,6 +132,25 @@ struct WorkerVmInit {
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
+/// Build the loader for a worker that was given its environment: `pairs` is
+/// `[key, value, key, value, ...]` in the order the worker's `process.env`
+/// should enumerate.
+fn worker_env_loader(
+    parent: &bun_dotenv::Loader,
+    pairs: &[BunString],
+) -> Result<bun_dotenv::Loader, bun_alloc::AllocError> {
+    let mut loader = parent.for_worker_env(pairs.len() / 2)?;
+    for pair in pairs.chunks_exact(2) {
+        let key = pair[0].to_utf8();
+        if key.is_empty() {
+            continue;
+        }
+        let value = pair[1].to_utf8();
+        loader.map.put(&key, &value)?;
+    }
+    Ok(loader)
+}
+
 enum EntryOutcome {
     Continue,
     /// The entry module rejected and no handler took it: the worker exits.
@@ -279,6 +298,11 @@ impl WebWorker {
     /// keep-alive on the parent event loop, register as a child of the parent VM,
     /// and spawn the thread. On any failure returns null with `error_message`
     /// set and nothing to clean up.
+    ///
+    /// `env_ptr` holds `env_pairs_len` key/value pairs, interleaved. With
+    /// `has_env` they become the worker's whole environment (`options.env`, or
+    /// the parent's current `process.env`); without it the worker starts from
+    /// a clone of the parent's env loader.
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
@@ -299,6 +323,9 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
+        has_env: bool,
+        env_ptr: *const BunString,
+        env_pairs_len: usize,
     ) -> *mut WebWorker {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
@@ -370,23 +397,38 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
-        // The worker's `process.env` starts as a copy of the parent's now (as in
-        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
+        // The worker's env loader is what its `process.env`, `fetch()` proxy
+        // resolution, TLS defaults and `Bun.spawn` inheritance read. With an
+        // explicit environment it holds exactly those entries; otherwise it
+        // starts as a copy of the parent's now (as in Node). In the copy case
+        // proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage: snapshot slots + map under its lock so
         // every slice copied is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_loader = {
-            let parent_slots = parent_ref.proxy_env_storage.lock();
-            proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().clone_for_worker() {
+        let env_loader = if has_env {
+            // SAFETY: caller passed `2 * env_pairs_len` valid strings (or `(null,0)`);
+            // slice borrowed from C++ for the duration of this call.
+            let pairs: &[BunString] = unsafe { bun_core::ffi::slice(env_ptr, env_pairs_len * 2) };
+            match worker_env_loader(parent_ref.env_loader(), pairs) {
                 Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
+        } else {
+            let parent_slots = parent_ref.proxy_env_storage.lock();
+            proxy_env_slots.clone_from(&parent_slots);
+            let mut loader = match parent_ref.env_loader().clone_for_worker() {
+                Ok(loader) => loader,
+                Err(_) => {
+                    *error_message = BunString::static_("Out of memory");
+                    return core::ptr::null_mut();
+                }
+            };
+            proxy_env_slots.sync_into(&mut loader.map);
+            loader
         };
-        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
             env_loader,

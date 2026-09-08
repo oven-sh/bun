@@ -571,44 +571,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
             auto& options = worker.options();
 
-            if (options.env.has_value()) {
-                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-                HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
-                auto size = map.size();
-
-                // In theory, a GC could happen before we finish putting all the properties on the object.
-                // So we use a MarkedArgumentBuffer to ensure that the strings are not collected and we immediately put them on the object.
-                MarkedArgumentBuffer strings;
-                strings.ensureCapacity(size);
-                for (const auto& value : map.values()) {
-                    strings.append(jsString(vm, value));
-                }
-
-#if OS(WINDOWS)
-                JSC::JSObject* env = size
-                    ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size)
-                    : JSC::constructEmptyObject(globalObject);
-#else
-                // Same exotic object as the main thread so writes inside the
-                // worker coerce to string, reject symbol keys, and validate
-                // defineProperty like Node's EnvSetter/EnvDefiner.
-                auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-                JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
-#endif
-                size_t i = 0;
-                for (auto k : map) {
-                    // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
-                    // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
-                    // or under a termination already requested for this starting worker.
-                    env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
-                    if (scope.exception()) [[unlikely]]
-                        break;
-                }
-                globalObject->m_processEnvObject.set(vm, globalObject, env);
-            } else if (options.sharedEnvStore) {
+            // An explicit `options.env` (or the parent's process.env snapshot) was
+            // already seeded into this worker VM's env loader by WebWorker__create,
+            // so process.env is built lazily from it by createEnvironmentVariablesMap,
+            // exactly as on the main thread.
+            if (options.sharedEnvStore) {
                 // worker_threads SHARE_ENV: join the env tree the spawning thread
-                // resolved. Consumed like options.env, and published on the context
-                // before the view, which resolves its store through the context.
+                // resolved. Consumed here, and published on the context before the
+                // view, which resolves its store through the context.
                 RefPtr<Bun::SharedEnvStore> store = std::exchange(options.sharedEnvStore, nullptr);
                 globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());

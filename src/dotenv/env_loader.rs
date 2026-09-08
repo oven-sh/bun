@@ -608,6 +608,24 @@ impl Loader {
         })
     }
 
+    /// A `Worker`'s loader when `new Worker(url, { env })` gave it an environment:
+    /// an empty map for the caller to fill with exactly those entries. The process
+    /// environment and every `.env` source count as loaded, so
+    /// `Transpiler::configure_defines` on the worker thread overlays nothing.
+    pub fn for_worker_env(&self, capacity: usize) -> Result<Loader, AllocError> {
+        let mut map = Map::init();
+        map.ensure_unused_capacity(capacity)?;
+        Ok(Loader {
+            map,
+            default_files_loaded: EnumSet::all(),
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: false,
+            did_load_process: true,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());

@@ -581,13 +581,9 @@ class Session extends EventEmitter {
         const interval = (params as any)?.interval;
         if (typeof interval !== "number" || interval <= 0)
           return $ERR_INSPECTOR_COMMAND("-32602: interval must be a positive number");
-        try {
-          setCPUSamplingInterval(interval);
-        } catch {
-          // The native binding rejects non-integers and values above INT_MAX.
-          // Node reports these as a -32602 protocol error via the callback.
+        if (!Number.isInteger(interval) || interval > 2147483647)
           return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
-        }
+        setCPUSamplingInterval(interval);
         return {};
       }
 

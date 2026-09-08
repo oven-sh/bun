@@ -402,13 +402,27 @@ extern "C" X509_STORE *us_get_default_ca_store() {
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for
 // one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
+  {
+    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+    if (us_shared_default_ca_store_cache != nullptr) {
+      X509_STORE_up_ref(us_shared_default_ca_store_cache);
+      return us_shared_default_ca_store_cache;
+    }
+  }
+  // Built outside the lock: us_get_default_ca_store() takes it to read the user set.
+  X509_STORE *built = us_get_default_ca_store();
+  if (built == nullptr) {
+    return nullptr;
+  }
   std::lock_guard<std::mutex> lock(us_default_ca_mutex);
   if (us_shared_default_ca_store_cache == nullptr) {
-    us_shared_default_ca_store_cache = us_get_default_ca_store();
+    us_shared_default_ca_store_cache = built;
+  } else {
+    // Another thread built it first (or a reset landed in between): keep theirs.
+    X509_STORE_free(built);
   }
-  X509_STORE *shared = us_shared_default_ca_store_cache;
-  if (shared) X509_STORE_up_ref(shared);
-  return shared;
+  X509_STORE_up_ref(us_shared_default_ca_store_cache);
+  return us_shared_default_ca_store_cache;
 }
 
 extern "C" const char *us_get_default_ciphers() {

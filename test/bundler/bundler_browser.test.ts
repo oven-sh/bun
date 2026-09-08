@@ -269,7 +269,29 @@ describe("bundler", () => {
       validate(ctx) {},
     },
   });
+  // Bare --external names against node:-prefixed imports. The external check
+  // matches the spelling as given, so this stays todo.
   itBundled("browser/NodePolyfillExternal", {
+    todo: true,
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": NodePolyfills.options.files["/entry.js"],
+    },
+    target: "browser",
+    external: Object.keys(nodePolyfillList),
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual(
+        Object.keys(nodePolyfillList).map(x => ({
+          kind: "import-statement",
+          path: "node:" + x,
+        })),
+      );
+    },
+  });
+  // Same entry file, with the externals spelled the way the imports are.
+  itBundled("browser/NodePolyfillExternalExactSpelling", {
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],

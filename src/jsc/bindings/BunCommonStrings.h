@@ -178,10 +178,10 @@ struct CommonStrings {
     template<typename Visitor>
     void visit(Visitor& visitor);
 
-#if ASSERT_ENABLED
-    // For the assert in Bun::toJS(BunString): is `literal` one of the strings above?
-    static bool isCommonStringLiteral(std::span<const Latin1Character> literal);
-#endif
+    // The cached cell for a static literal that is one of the strings above, else null: a
+    // `String::static_(..).to_js()` from Rust lands on the shared JSString instead of a copy.
+    JSC::JSString* forStaticLiteral(std::span<const Latin1Character> literal);
+    JSC::JSString* get(Index);
 
 private:
     void initialize(JSC::JSString*& slot, Index);

@@ -72,16 +72,31 @@ void CommonStrings::visit(Visitor& visitor)
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
 template void CommonStrings::visit(JSC::SlotVisitor&);
 
-#if ASSERT_ENABLED
-bool CommonStrings::isCommonStringLiteral(std::span<const Latin1Character> literal)
+JSString* CommonStrings::get(Index index)
 {
-    for (const auto& entry : commonStringLiterals) {
-        if (equalSpans(entry.span8(), literal))
-            return true;
+    switch (index) {
+#define BUN_COMMON_STRINGS_GET_CASE(name, ...) \
+    case Index::name:                          \
+        return name##String();
+        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_GET_CASE)
+        BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_GET_CASE)
+        BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_GET_CASE)
+#undef BUN_COMMON_STRINGS_GET_CASE
+    case Index::Count:
+        break;
     }
-    return false;
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
 }
-#endif
+
+JSString* CommonStrings::forStaticLiteral(std::span<const Latin1Character> literal)
+{
+    for (size_t i = 0; i < std::size(commonStringLiterals); ++i) {
+        if (equalSpans(commonStringLiterals[i].span8(), literal))
+            return get(static_cast<Index>(i));
+    }
+    return nullptr;
+}
 
 // Must be kept in sync with src/http_types/Method.rs
 enum class HTTPMethod : uint8_t {

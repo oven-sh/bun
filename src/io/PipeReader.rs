@@ -210,7 +210,20 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// The parent is performing one read off the event loop (`begin_async_read`); the fd must stay open until `complete_async_read`.
+        const ASYNC_READ_IN_FLIGHT     = 1 << 11;
+        /// `close()` landed while a read was in flight; `complete_async_read` finishes it.
+        const DEFER_DONE_CALLBACK      = 1 << 12;
     }
+}
+
+/// One read the parent performs off the event loop: a regular file blocks the calling thread for the duration of the read, so the parent runs it on the work pool and hands the bytes back through [`PosixBufferedReader::complete_async_read`].
+#[derive(Clone, Copy, Debug)]
+pub struct AsyncRead {
+    pub fd: Fd,
+    /// `Some` reads at this offset with `pread`; `None` reads at the fd's own position.
+    pub offset: Option<usize>,
+    pub len: usize,
 }
 
 impl PosixFlags {
@@ -419,6 +432,13 @@ impl PosixBufferedReader {
     /// the struct embedding `*this` — a free must never run under a live
     /// receiver protector.
     unsafe fn close_handle(this: *mut Self) {
+        // A read is out on the pool thread: `complete_async_read` finishes the close.
+        // SAFETY: caller contract; borrow ends at `;`.
+        if unsafe { (*this).flags.contains(PosixFlags::ASYNC_READ_IN_FLIGHT) } {
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe { (*this).flags.insert(PosixFlags::DEFER_DONE_CALLBACK) };
+            return;
+        }
         // SAFETY: caller contract; borrows end at each `;`.
         let deferred_report =
             unsafe { (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) };
@@ -575,13 +595,171 @@ impl PosixBufferedReader {
         self.limit = ReadLimit(len);
     }
 
-    // Exists for consistently with Windows.
+    /// A poll armed for the next wakeup, or a read out on the work pool.
     pub fn has_pending_read(&self) -> bool {
         // `is_watching()` (registered && !needs-rearm) rather than
         // `is_registered()`: a one-shot poll that has fired but not been
         // re-armed will not deliver another callback, so callers that skip
         // `read()` on "pending" must not be told one is in flight.
         matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+            || self.flags.contains(PosixFlags::ASYNC_READ_IN_FLIGHT)
+    }
+
+    /// Reserves one read of up to `max_len` bytes for the parent to perform off the event loop.
+    /// `None` when paused, done, a read is already out, or the budget is used up (this reader's
+    /// EOF, reported through `on_reader_done` here).
+    ///
+    /// # Safety
+    /// `this` is the live reader; the `on_reader_done` dispatch may free the parent.
+    pub unsafe fn begin_async_read(this: *mut Self, max_len: usize) -> Option<AsyncRead> {
+        // SAFETY: caller contract; borrows end at each `;`.
+        unsafe {
+            if (*this).is_done()
+                || (*this)
+                    .flags
+                    .intersects(PosixFlags::IS_PAUSED | PosixFlags::ASYNC_READ_IN_FLIGHT)
+            {
+                return None;
+            }
+            if (*this).limit.reached() {
+                (*this).close_without_reporting();
+                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                    Self::done(this);
+                }
+                return None;
+            }
+            let fd = (*this).get_fd();
+            if fd == Fd::INVALID {
+                return None;
+            }
+            // Never an empty read: that would read as EOF, and a `None` here would park the pull.
+            let len =
+                MaxBuf::clamp_read_len((*this).maxbuf, (*this).limit.clamp_len(max_len.max(1)));
+            (*this).flags.insert(PosixFlags::ASYNC_READ_IN_FLIGHT);
+            let offset = (*this)
+                .flags
+                .contains(PosixFlags::USE_PREAD)
+                .then_some((*this)._offset);
+            Some(AsyncRead { fd, offset, len })
+        }
+    }
+
+    /// Accounts for the read reserved by [`Self::begin_async_read`]: budgets, the offset, EOF
+    /// and errors, and a `close()` that landed while the read was out (finished here, the bytes
+    /// dropped). `Some((len, state))` bytes are the parent's to deliver, followed by a call to
+    /// [`Self::finish_async_read`]. `None`: the reader ended and reported it.
+    ///
+    /// # Safety
+    /// `this` is the live reader; the dispatches may free the parent, so the caller holds its own
+    /// reference across this call.
+    pub unsafe fn account_async_read(
+        this: *mut Self,
+        result: sys::Result<usize>,
+    ) -> Option<(usize, ReadState)> {
+        // SAFETY: caller contract; borrows end at each `;`.
+        let vtable = unsafe {
+            (*this).flags.remove(PosixFlags::ASYNC_READ_IN_FLIGHT);
+            (*this).vtable
+        };
+        let _parent = vtable.ref_parent();
+        // SAFETY: caller contract; borrow ends at `;`.
+        if unsafe { (*this).flags.contains(PosixFlags::DEFER_DONE_CALLBACK) } {
+            // SAFETY: caller contract; `close_handle` is the (maybe-freeing) tail.
+            unsafe {
+                (*this).flags.remove(PosixFlags::DEFER_DONE_CALLBACK);
+                Self::close_handle(this);
+            }
+            return None;
+        }
+        // SAFETY: caller contract; borrow ends at `;`.
+        if unsafe { (*this).is_done() } {
+            return None;
+        }
+        let n = match result {
+            sys::Result::Ok(n) => n,
+            sys::Result::Err(err) => {
+                // SAFETY: caller contract; `on_error` is the tail.
+                unsafe { Self::on_error(this, err) };
+                return None;
+            }
+        };
+        if n == 0 {
+            // SAFETY: caller contract; `done` is the tail.
+            unsafe {
+                (*this).close_without_reporting();
+                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                    Self::done(this);
+                }
+            }
+            return None;
+        }
+        // SAFETY: caller contract; borrows end at the block.
+        let stop = unsafe {
+            (*this)._offset += n;
+            let limit_reached = (*this).limit.charge(n);
+            if (*this).charge_max_buffer(n) {
+                Some(Stop::OverBudget)
+            } else if limit_reached {
+                Some(Stop::Eof)
+            } else {
+                None
+            }
+        };
+        // SAFETY: caller contract; borrow ends at `;`.
+        unsafe { Self::close_if_final(this, stop.as_ref()) };
+        Some((n, Self::read_state(stop.as_ref(), false)))
+    }
+
+    /// After the parent delivered the bytes from [`Self::account_async_read`]: ends the reader on
+    /// EOF. Returns whether the parent wants the next read (`keep_going` from its delivery, and
+    /// the reader neither paused nor done).
+    ///
+    /// # Safety
+    /// As [`Self::account_async_read`].
+    pub unsafe fn finish_async_read(this: *mut Self, state: ReadState, keep_going: bool) -> bool {
+        if state == ReadState::Eof {
+            // SAFETY: caller contract; `done` is the tail.
+            unsafe {
+                if !(*this).flags.contains(PosixFlags::IS_DONE) {
+                    Self::done(this);
+                }
+            }
+            return false;
+        }
+        // SAFETY: caller contract; borrow ends at `;`.
+        keep_going
+            && unsafe { !(*this).is_done() && !(*this).flags.contains(PosixFlags::IS_PAUSED) }
+    }
+
+    /// The owned-buffer form: accounts for the read, delivers `bytes` to the parent the way a
+    /// synchronous read's are delivered, and finishes it.
+    ///
+    /// # Safety
+    /// As [`Self::account_async_read`].
+    pub unsafe fn complete_async_read(this: *mut Self, result: sys::Result<Vec<u8>>) -> bool {
+        let (bytes, counted) = match result {
+            sys::Result::Ok(bytes) => {
+                let n = bytes.len();
+                (bytes, sys::Result::Ok(n))
+            }
+            sys::Result::Err(err) => (Vec::new(), sys::Result::Err(err)),
+        };
+        // SAFETY: caller contract.
+        let Some((_, state)) = (unsafe { Self::account_async_read(this, counted) }) else {
+            return false;
+        };
+        // SAFETY: caller contract; the (Copy) vtable is read before the dispatch.
+        let vtable = unsafe { (*this).vtable };
+        let _parent = vtable.ref_parent();
+        let keep_going = if vtable.is_streaming_enabled() {
+            vtable.on_read_chunk(Chunk::Owned(bytes), state)
+        } else {
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe { (*this)._buffer.extend_from_slice(&bytes) };
+            true
+        };
+        // SAFETY: caller contract.
+        unsafe { Self::finish_async_read(this, state, keep_going) }
     }
 
     pub fn watch(&mut self) {

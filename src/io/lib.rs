@@ -663,7 +663,7 @@ pub use source::Source;
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 
-pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
+pub use pipe_reader::{AsyncRead, BufferedReader, BufferedReaderParent, PosixFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 

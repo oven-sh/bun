@@ -2235,9 +2235,10 @@ describe("streamed input pacing", () => {
     const held = seen();
     expect(held).toBeLessThan(count);
     // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
-    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    // (File reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.
+    // A sink-driven read is 256 KiB: OFFLOADED_READ_SIZE in FileReader.rs, 64 KiB on Windows.)
     expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
-    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
+    expect(seen() - held).toBeLessThanOrEqual((256 * 1024) / piece.length);
     const second = await reader.read();
     expect(seen()).toBeGreaterThan(held);
     expect(seen()).toBeLessThan(count);
@@ -2275,11 +2276,10 @@ describe("streamed input pacing", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The whole document arrives in the first read: it finishes with that read
-  // however large its output — inside `transform()` where regular-file reads
-  // are synchronous (POSIX), on the read's completion otherwise — so the body
-  // is already materialized for consumers that need that (Content-Length,
-  // static routes) without anything reading it.
+  // The whole document arrives in the first read: it finishes on that read's
+  // completion however large its output, so the body is already materialized
+  // for consumers that need that (Content-Length, static routes) without
+  // anything reading it.
   it("a document that arrives in one chunk finishes with that chunk", async () => {
     const small = path.join(dir, "small.html");
     await Bun.write(small, Buffer.alloc(12 * 4000, "<p>hello</p>").toString());
@@ -2288,7 +2288,6 @@ describe("streamed input pacing", () => {
       .on("p", { element: e => void e.setAttribute("x", "1") })
       .onDocument({ end: () => void (ended = true) })
       .transform(new Response(Bun.file(small)));
-    if (!isWindows) expect(ended).toBe(true);
     while (!ended) await setImmediatePromise();
     await using server = Bun.serve({ port: 0, fetch: () => res });
     const served = await fetch(server.url);

@@ -825,3 +825,81 @@ test.each([
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
 });
+
+// Bun.file(path).stream() on a regular file used to read every chunk with a
+// synchronous pread on the JS thread, and the stream re-pulled from
+// microtasks, so the event loop did not turn once until the whole file was
+// read. The reads now run on the work pool, one per pull, and each completion
+// comes back through the event loop.
+describe("Bun.file().stream() reads a regular file off the JS thread", () => {
+  const size = 16 * 1024 * 1024;
+  const fill = Buffer.alloc(size, 97);
+
+  test("the event loop turns while a large file streams", async () => {
+    using dir = tempDir("file-stream-offloaded", { "big.bin": fill });
+    const order: string[] = [];
+    const timer = new Promise<void>(resolve => {
+      setTimeout(() => {
+        order.push("timer");
+        resolve();
+      }, 0);
+    });
+    let total = 0;
+    for await (const chunk of Bun.file(`${dir}/big.bin`).stream()) {
+      total += chunk.byteLength;
+    }
+    order.push("stream");
+    await timer;
+    expect({ total, order }).toEqual({ total: size, order: ["timer", "stream"] });
+  });
+
+  test("cancelling with a read in flight ends the read and lets the process exit", async () => {
+    using dir = tempDir("file-stream-offloaded-cancel", { "big.bin": fill });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const reader = Bun.file(${JSON.stringify(`${dir}/big.bin`)}).stream().getReader();
+         const first = await reader.read();
+         const pending = reader.read();
+         await reader.cancel("stop");
+         const second = await pending;
+         Bun.gc(true);
+         console.log(JSON.stringify({ first: first.value.byteLength > 0, second }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"first":true,"second":{"done":true}}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a native sink drains the offloaded reads to the end", async () => {
+    using dir = tempDir("file-stream-offloaded-sink", { "big.bin": fill });
+    const written = await Bun.write(`${dir}/copy.bin`, Bun.file(`${dir}/big.bin`).stream());
+    const copy = await Bun.file(`${dir}/copy.bin`).bytes();
+    expect({ written, size: copy.byteLength, same: Buffer.from(copy).equals(fill) }).toEqual({
+      written: size,
+      size,
+      same: true,
+    });
+  });
+
+  test("a slice streams exactly its window through pread", async () => {
+    using dir = tempDir("file-stream-offloaded-slice", {
+      "data.bin": Buffer.from(Array.from({ length: 3000 }, (_, i) => i & 255)),
+    });
+    const start = 1000,
+      end = 2500;
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of Bun.file(`${dir}/data.bin`).slice(start, end).stream()) chunks.push(chunk);
+    const got = Buffer.concat(chunks);
+    expect(got.length).toBe(end - start);
+    expect(got.every((byte, i) => byte === ((start + i) & 255))).toBe(true);
+  });
+});

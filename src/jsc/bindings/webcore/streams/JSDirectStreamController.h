@@ -16,10 +16,43 @@
 #include "BunStandaloneTextSink.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
+#include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <wtf/Vector.h>
+#include <span>
 
 namespace WebCore {
+
+// The ArrayBuffer sink's byte buffer. Allocated from the Primitive Gigacage — where
+// ArrayBuffer contents live — so a drained chunk adopts the allocation instead of copying it;
+// size_t extents (a chunk may be anything a Uint8Array can hold, past WTF::Vector's 2^31).
+class DirectByteBuffer {
+    WTF_MAKE_NONCOPYABLE(DirectByteBuffer);
+
+public:
+    DirectByteBuffer() = default;
+    ~DirectByteBuffer() { deallocate(); }
+
+    size_t size() const { return m_size; }
+    size_t capacity() const { return m_capacity; }
+    bool isEmpty() const { return !m_size; }
+    std::span<const uint8_t> span() const { return { m_data, m_size }; }
+
+    // false = allocation failed or the result would not fit a Uint8Array.
+    bool tryReserve(size_t capacity);
+    bool tryAppend(std::span<const uint8_t>);
+    bool tryAppendUTF8(WTF::StringView);
+    void shrinkToEmpty() { m_size = 0; }
+    void deallocate();
+    // The bytes as an exactly-sized ArrayBuffer (no copy); leaves this empty.
+    Ref<JSC::ArrayBuffer> releaseAsArrayBuffer();
+
+private:
+    bool tryGrowTo(size_t size);
+
+    uint8_t* m_data { nullptr };
+    size_t m_size { 0 };
+    size_t m_capacity { 0 };
+};
 
 class JSDirectStreamController final : public JSC::JSDestructibleObject {
 public:
@@ -33,7 +66,7 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_source, m_pendingRead, m_deferCloseReason,
-    // m_pendingWrite, m_array, m_closingPromise, m_finalChunk, and — inside ONE
+    // m_array, m_sinkPromise, m_finalChunk, and — inside ONE
     // `Locker { cellLock() }` scope taken by THIS visitChildrenImpl (cellLock() is
     // non-recursive; see StreamQueue.h) — report m_buffer's capacity and visit the barrier
     // container m_textAccumulator.pieces (m_textAccumulator.visit(locker, visitor)).
@@ -81,17 +114,16 @@ public:
     // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
-    // ArrayBuffer sink: the byte length of the write() that armed m_pendingWrite.
+    // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
 
     // ArrayBuffer sink: the bytes written since the reader last took them. Its size is the
-    // backpressure measure: once it reaches the stream's highWaterMark, write() returns
-    // m_pendingWrite (one promise until the next drain) instead of a number, the same contract
-    // as a native sink. Taking the bytes fulfills it with that write's length; error / cancel
-    // fulfill it with `false`. Its storage is replaced/freed only under cellLock() (the visitor
-    // reports its capacity as extra memory).
-    WTF::Vector<uint8_t> m_buffer;
-    JSC::WriteBarrier<JSC::JSPromise> m_pendingWrite;
+    // backpressure measure: once it reaches the stream's highWaterMark, write() returns the
+    // pending-write promise (m_sinkPromise; one until the next drain) instead of a number, the
+    // same contract as a native sink. Taking the bytes fulfills it with the bytes written
+    // meanwhile; error / cancel fulfill it with `false`. Its storage is replaced/freed only
+    // under cellLock() (the visitor reports its capacity as extra memory).
+    DirectByteBuffer m_buffer;
 
     // Text sink: the ONE shared createTextStream accumulator value type
     // (BunStandaloneTextSink.h), also owned by the standalone JSBunStandaloneTextSink — one
@@ -103,8 +135,10 @@ public:
     // Array sink.
     JSC::WriteBarrier<JSC::JSArray> m_array;
 
-    // Text/Array closing capability.
-    JSC::WriteBarrier<JSC::JSPromise> m_closingPromise;
+    // ArrayBuffer sink: the parked write() promise. Text/Array sinks: the closing capability.
+    JSC::WriteBarrier<JSC::JSPromise> m_sinkPromise;
+    JSC::WriteBarrier<JSC::JSPromise>& pendingWrite() { return m_sinkPromise; }
+    JSC::WriteBarrier<JSC::JSPromise>& closingPromise() { return m_sinkPromise; }
 
     void armEndOfTickFlush(JSC::JSGlobalObject*);
 
@@ -132,7 +166,8 @@ public:
     JSC::JSPromise* cancelSteps(JSC::JSGlobalObject*, JSC::JSValue reason);
 
     // ArrayBuffer sink. takeBuffer: the buffered bytes as a Uint8Array (jsNumber(0) when
-    // empty) — this is the drain that settles m_pendingWrite.
+    // empty) — this is the drain that settles m_pendingWrite. The chunk adopts the buffer's
+    // allocation; only a chunk small enough for JSC's inline typed-array storage is copied.
     JSC::JSValue takeBuffer(JSC::JSGlobalObject*);
     void freeBuffer();
     void settlePendingWrite(JSC::VM&, JSC::JSValue);

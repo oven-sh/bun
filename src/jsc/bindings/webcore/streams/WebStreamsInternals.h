@@ -669,9 +669,11 @@ JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); //
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // Drop ONE leading U+FEFF, and only on the generic toText path.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
-// Appends `string` UTF-8 encoded (lone surrogates become U+FFFD); false = allocation failed.
-bool appendUTF8(const WTF::String&, WTF::Vector<uint8_t>& bytes); // userJS: no — BunStreamConsumers.cpp
-// Same, and also false when the result would exceed the string limit.
+// UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and write) as
+// U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
+size_t utf8ByteLengthWithReplacement(WTF::StringView); // userJS: no — BunStreamConsumers.cpp
+size_t writeUTF8WithReplacement(WTF::StringView, std::span<uint8_t> destination); // userJS: no — BunStreamConsumers.cpp
+// Appends `string` UTF-8 encoded; false = over the string limit or allocation failed.
 bool appendUTF8WithinStringLimit(const WTF::String&, WTF::Vector<uint8_t>& bytes); // userJS: no — BunStreamConsumers.cpp
 
 // The three *Direct conversion paths.

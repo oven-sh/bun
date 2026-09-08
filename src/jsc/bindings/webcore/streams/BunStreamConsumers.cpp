@@ -248,9 +248,7 @@ static WTF::String stripTextResultBOM(const WTF::String& string)
     return withoutUTF8BOM(withoutUTF8BOM(string));
 }
 
-// UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and
-// write) as U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
-static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
+size_t utf8ByteLengthWithReplacement(StringView string)
 {
     if (string.isEmpty())
         return 0;
@@ -259,7 +257,7 @@ static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
     return Bun__encoding__byteLengthUTF16AsUTF8(string.span16().data(), string.span16().size());
 }
 
-static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destination)
+size_t writeUTF8WithReplacement(StringView string, std::span<uint8_t> destination)
 {
     if (string.isEmpty())
         return 0;
@@ -269,36 +267,21 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
 }
 
-static bool appendUTF8Sized(const WTF::String& string, size_t byteLength, WTF::Vector<uint8_t>& bytes)
-{
-    size_t oldSize = bytes.size();
-    if (!bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
-        return false;
-    size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
-    // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
-    ASSERT(written == byteLength);
-    if (written < byteLength) [[unlikely]]
-        bytes.shrink(oldSize + written);
-    return true;
-}
-
-bool appendUTF8(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
-{
-    size_t byteLength = utf8ByteLengthWithReplacement(string);
-    if (!byteLength)
-        return true;
-    return appendUTF8Sized(string, byteLength, bytes);
-}
-
 bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
 {
     size_t byteLength = utf8ByteLengthWithReplacement(string);
     if (!byteLength)
         return true;
+    size_t oldSize = bytes.size();
     // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
-    if (exceedsStringLimit(bytes.size() + byteLength)) [[unlikely]]
+    if (exceedsStringLimit(oldSize + byteLength) || !bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
         return false;
-    return appendUTF8Sized(string, byteLength, bytes);
+    size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
+    // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
+    ASSERT(written == byteLength);
+    if (written < byteLength) [[unlikely]]
+        bytes.shrink(oldSize + written);
+    return true;
 }
 
 // `obj[name](...args)` with `this` = obj.
@@ -330,7 +313,7 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
         return nullptr;
     }
     if (byteLength) {
-        size_t written = writeUTF8(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
+        size_t written = writeUTF8WithReplacement(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
         ASSERT_UNUSED(written, written == byteLength);
     }
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
@@ -429,7 +412,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             if (stringByteLength) {
                 size_t oldSize = bytes.size();
                 bytes.grow(oldSize + stringByteLength);
-                size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
+                size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
                 // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
                 ASSERT(written == stringByteLength);
                 if (written < stringByteLength) [[unlikely]]
@@ -940,9 +923,9 @@ static JSValue finishDirectConsumeLoop(JSC::VM& vm, JSGlobalObject* globalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (stream->m_controllerKind == ControllerKind::Direct) {
-        const auto* controller = uncheckedDowncast<JSDirectStreamController>(stream->m_controller.get());
-        if (controller->m_closingPromise)
-            return controller->m_closingPromise.get();
+        auto* controller = uncheckedDowncast<JSDirectStreamController>(stream->m_controller.get());
+        if (auto* closingPromise = controller->closingPromise().get())
+            return closingPromise;
     }
     return jsUndefined();
 }

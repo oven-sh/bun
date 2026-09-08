@@ -958,6 +958,60 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect(results).toEqual([64 * 1024, false, 0]);
     });
 
+    it("a producer writing outside pull() and parking is drained by the next read", async () => {
+      let ctrl;
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          ctrl ??= c;
+        },
+      });
+      const reader = rs.getReader();
+      const first = reader.read();
+      const results = [];
+      const producer = (async () => {
+        for (let i = 0; i < 10; i++) results.push(await ctrl.write(new Uint8Array(100 * 1024)));
+        ctrl.close();
+      })();
+      let total = (await first).value.byteLength;
+      while (true) {
+        await macrotask();
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+      }
+      await producer;
+      expect(total).toBe(10 * 100 * 1024);
+      expect(results).toEqual(Array(10).fill(100 * 1024));
+    });
+
+    it("writes parked on one drain resolve with the bytes written since it armed", async () => {
+      const { promise: parked, resolve: park } = Promise.withResolvers();
+      let writes;
+      const rs = new ReadableStream(
+        {
+          type: "direct",
+          async pull(c) {
+            await c.write(new Uint8Array(4));
+            writes = [c.write(new Uint8Array(4)), c.write(new Uint8Array(3)), c.write(new Uint8Array(0))];
+            park();
+            await writes[0];
+            c.end();
+          },
+        },
+        // A fractional highWaterMark still counts whole bytes.
+        { highWaterMark: 3.5 },
+      );
+      const reader = rs.getReader();
+      expect((await reader.read()).value.byteLength).toBe(4);
+      await parked;
+      expect(writes[0]).toBe(writes[1]);
+      expect(writes[1]).toBe(writes[2]);
+      expect((await reader.read()).value.byteLength).toBe(7);
+      expect(await Promise.all(writes)).toEqual([7, 7, 7]);
+      expect((await reader.read()).done).toBe(true);
+    });
+
     it("write() validates its chunk like a native sink", async () => {
       const errors = [];
       const rs = new ReadableStream({

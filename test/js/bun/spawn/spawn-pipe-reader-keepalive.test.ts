@@ -11,12 +11,13 @@ async function run(cmd: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-describe("a locked reader that has stopped reading does not keep the process alive", () => {
+describe("a reader that filled its buffer and stopped polling does not keep the process alive", () => {
   // The child reads one chunk, keeps the reader locked, and never reads again while
-  // the writer keeps the pipe full. The reader buffers up to its highWaterMark and
+  // the writer keeps the pipe full. The stream buffers up to its highWaterMark and
   // then stops polling the fd. Nothing can complete in that state, so it must not
-  // hold the event loop open. The writer never finishes, so EOF cannot end the
-  // child either: it exits only if the idle reader lets it.
+  // hold the event loop open. (A reader that is still polling for more data does
+  // hold it; that is not what these test.) The writer never finishes, so EOF cannot
+  // end the child either: it exits only if the idle reader lets it.
   const readOneChunk = `
     const { value } = await reader.read();
     if (!(value?.byteLength > 0)) throw new Error("expected a first chunk");

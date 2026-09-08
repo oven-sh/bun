@@ -984,6 +984,15 @@ describe.concurrent("credentials in the registry url", () => {
       }),
     ],
     [
+      "bunfig registry with userinfo before the scheme",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "pubuser:secret-token@htps://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
       ".npmrc registry",
       port => ({
         files: { ".npmrc": `registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=secret-token\n` },

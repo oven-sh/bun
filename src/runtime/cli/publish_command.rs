@@ -2109,7 +2109,7 @@ impl PublishError {
     }
 }
 
-/// `url.href` without `user:password@` (scheme or not) and with one trailing slash.
+/// `url.href` without anything up to a `@` before the path, and with one trailing slash.
 fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     let href = url.href;
     let authority_start = if !url.protocol.is_empty() {
@@ -2119,16 +2119,21 @@ fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     } else {
         0
     };
-    let rest = &href[authority_start..];
-    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
-    let after_userinfo =
-        strings::last_index_of_char(authority, b'@').map_or(rest, |at| &rest[at + 1..]);
-    let trimmed = strings::without_trailing_slash(after_userinfo);
+    let path_start = authority_start
+        + strings::index_of_any(&href[authority_start..], b"/?#")
+            .unwrap_or(href.len() - authority_start);
+    // `URL::parse` does not validate the scheme, so a `@` can also sit before `://`.
+    let (scheme, host_and_path) = match strings::last_index_of_char(&href[..path_start], b'@') {
+        Some(at) if at < authority_start => (&href[..0], &href[at + 1..]),
+        Some(at) => (&href[..authority_start], &href[at + 1..]),
+        None => (&href[..authority_start], &href[authority_start..]),
+    };
+    let trimmed = strings::without_trailing_slash(host_and_path);
 
-    let mut out = Vec::with_capacity(authority_start + trimmed.len() + 1);
-    out.extend_from_slice(&href[..authority_start]);
+    let mut out = Vec::with_capacity(scheme.len() + trimmed.len() + 1);
+    out.extend_from_slice(scheme);
     out.extend_from_slice(trimmed);
-    if trimmed.len() < after_userinfo.len() {
+    if trimmed.len() < host_and_path.len() {
         out.push(b'/');
     }
     out.into_boxed_slice()

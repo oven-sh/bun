@@ -259,18 +259,24 @@ describe("web worker", () => {
         "worker.cjs": `
           const { parentPort } = require("node:worker_threads");
           const { $ } = require("bun");
-          const cmd = [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"];
+          // Dump the child's environment: "env" on POSIX (a debug bun child is slow), bun on Windows.
+          const win32 = process.platform === "win32";
+          const cmd = win32 ? [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"] : ["/usr/bin/env"];
+          const parse = out =>
+            win32
+              ? JSON.parse(out)
+              : Object.fromEntries(out.split("\\n").filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
           (async () => {
-            const sync = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "inherit" });
             const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" });
+            const sync = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "inherit" });
             const [asyncOut] = await Promise.all([proc.stdout.text(), proc.exited]);
             parentPort.postMessage({
               processEnv: { ...process.env },
-              spawnSyncChildEnv: JSON.parse(sync.stdout.toString()),
-              spawnChildEnv: JSON.parse(asyncOut),
+              spawnSyncChildEnv: parse(sync.stdout.toString()),
+              spawnChildEnv: parse(asyncOut),
               whichLaunchTool: Bun.which("launch-only-tool"),
               // No PATH in this worker's env: the shell must not fall back to the launch PATH.
-              shellRanLaunchTool: ${isWindows} ? false : (await $\`launch-only-tool\`.quiet().nothrow()).exitCode === 0,
+              shellRanLaunchTool: win32 ? false : (await $\`launch-only-tool\`.quiet().nothrow()).exitCode === 0,
             });
           })();
         `,
@@ -325,40 +331,45 @@ describe("web worker", () => {
       });
     });
 
-    const tlsMain = (workerOptions: string) => `
-      import { Worker } from "node:worker_threads";
-      const server = Bun.serve({
-        port: 0,
-        tls: ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })},
-        fetch: () => new Response("hello over tls"),
-      });
-      const url = "https://127.0.0.1:" + server.port + "/";
-      function probe(options) {
-        return new Promise((resolve, reject) => {
-          const worker = new Worker("./probe.cjs", { ...options, workerData: url });
-          worker.on("error", reject);
-          worker.once("message", m => { worker.terminate(); resolve(m); });
+    // Each worker in `probes` fetches a self-signed https origin and reports the
+    // body or the error code, next to its own process.env.NODE_TLS_REJECT_UNAUTHORIZED.
+    const tlsFiles = (probes: string) => ({
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        const server = Bun.serve({
+          port: 0,
+          tls: ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })},
+          fetch: () => new Response("hello over tls"),
         });
-      }
-      const results = {};
-      results.fromOption = await probe(${workerOptions});
-      // A runtime assignment in the parent is part of the env a default worker copies.
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-      results.fromParentRuntime = await probe({});
-      console.log(JSON.stringify(results));
-      server.stop(true);
-    `;
-    const probeWorker = `
-      const { parentPort, workerData } = require("node:worker_threads");
-      fetch(workerData).then(r => r.text()).then(
-        body => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, body }),
-        err => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, error: err.code }),
-      );
-    `;
+        const url = "https://127.0.0.1:" + server.port + "/";
+        function probe(options) {
+          return new Promise((resolve, reject) => {
+            const worker = new Worker("./probe.cjs", { ...options, workerData: url });
+            worker.on("error", reject);
+            worker.once("message", m => { worker.terminate(); resolve(m); });
+          });
+        }
+        const probes = ${probes};
+        const results = await Promise.all(Object.values(probes).map(probe));
+        console.log(JSON.stringify(Object.fromEntries(Object.keys(probes).map((name, i) => [name, results[i]]))));
+        server.stop(true);
+      `,
+      "probe.cjs": `
+        const { parentPort, workerData } = require("node:worker_threads");
+        fetch(workerData).then(r => r.text()).then(
+          body => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, body }),
+          err => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, error: err.code }),
+        );
+      `,
+    });
 
     test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 in the worker's env disables verification in that worker", async () => {
       const { result } = await run(
-        { "main.mjs": tlsMain(`{ env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }`), "probe.cjs": probeWorker },
+        tlsFiles(`(() => {
+          // A runtime assignment in the parent is part of the env a default worker copies.
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+          return { fromOption: { env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }, fromParentRuntime: {} };
+        })()`),
         { NODE_TLS_REJECT_UNAUTHORIZED: undefined },
       );
       expect(result).toEqual({
@@ -368,14 +379,10 @@ describe("web worker", () => {
     });
 
     test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 at launch does not reach a worker whose env omits it", async () => {
-      const { result } = await run(
-        { "main.mjs": tlsMain(`{ env: { PATH: process.env.PATH } }`), "probe.cjs": probeWorker },
-        { NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-      );
-      expect(result).toEqual({
-        fromOption: { env: null, error: "DEPTH_ZERO_SELF_SIGNED_CERT" },
-        fromParentRuntime: { env: "0", body: "hello over tls" },
+      const { result } = await run(tlsFiles(`{ scrubbed: { env: { PATH: process.env.PATH } } }`), {
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
       });
+      expect(result).toEqual({ scrubbed: { env: null, error: "DEPTH_ZERO_SELF_SIGNED_CERT" } });
     });
   });
 

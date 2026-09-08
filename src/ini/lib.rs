@@ -1244,6 +1244,8 @@ mod draft {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
+            // a single-quoted `'1'` is JSON-parsed to a number, as in ini
+            ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
             ExprData::EString(_) => {
                 let str_ = bun_core::trim(expr.as_utf8_string_literal()?, b" \n\r\t");
                 if str_ == b"undefined" {

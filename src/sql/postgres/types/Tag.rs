@@ -179,17 +179,12 @@ pg_tags! {
 }
 
 impl Tag {
-    /// Maps a wire OID to a `Tag`. An OID outside the `Short` range is a
-    /// user-defined type and is handled as text. Every place that derives a
-    /// format code or picks a codec from an OID must go through this, so the
-    /// two sides agree.
+    /// The one OID-to-`Tag` mapping. An OID above `Short::MAX` is a user-defined type: text.
     pub fn from_oid(oid: Int4) -> Tag {
         Short::try_from(oid).map_or(Tag::text, Tag)
     }
 
-    /// Types whose binary wire format `DataCell` can decode, so result columns
-    /// of these types are requested in binary. Bind parameters are encoded by
-    /// a shorter list, `ParamEncoding` in `bun_sql_jsc`.
+    /// Types `DataCell` decodes from binary (result columns). Bind parameters use `ParamEncoding`.
     pub fn is_binary_format_supported(self) -> bool {
         match self {
             // TODO: .int2_array, .float8_array,

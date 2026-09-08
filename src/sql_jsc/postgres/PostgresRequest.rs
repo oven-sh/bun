@@ -49,13 +49,7 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-/// How `write_bind` puts one parameter value on the wire. It is decided once
-/// per parameter, and both the format-code section and the value section of
-/// the Bind message are written from it, so they cannot disagree.
-///
-/// This is the encode side only. `Tag::is_binary_format_supported` is the
-/// decode side (result columns) and is wider: `DataCell` decodes binary
-/// numeric, float4, time, int4[] and float4[], but nothing here encodes them.
+/// How `write_bind` encodes one parameter. Its format code and its value bytes both come from this.
 #[derive(Clone, Copy, Debug)]
 enum ParamEncoding {
     /// `String(value)`, format 0. The server parses it as the parameter's type.
@@ -79,14 +73,12 @@ impl ParamEncoding {
             types::Tag::float8 => ParamEncoding::Float8,
             types::Tag::timestamp | types::Tag::timestamptz => ParamEncoding::Timestamp,
             types::Tag::bytea => ParamEncoding::Bytea,
+            // No binary encoder for the rest (numeric, float4, time, int4[], ...), only a decoder.
             _ => ParamEncoding::Text,
         }
     }
 
-    /// If they pass a value as a string, let's avoid attempting to convert it
-    /// to the binary representation. This minimizes the room for mistakes on
-    /// our end, such as stripping the timezone differently than what Postgres
-    /// does when given a timestamp with timezone.
+    /// A string value is sent as text so that the server parses it (time zones and so on), not Bun.
     fn for_value(self, value: JSValue) -> ParamEncoding {
         if self.is_binary() && value.is_string() {
             ParamEncoding::Text
@@ -142,9 +134,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
     // of parameters.
     writer.short(len)?;
 
-    // Decided once per parameter here and reused for the value section below,
-    // so a getter or `toString()` that runs in between cannot make the bytes
-    // disagree with the declared format code.
+    // Reused by the value section so a `toString()` that runs in between cannot change a decision.
     let mut encodings: Vec<ParamEncoding> = Vec::with_capacity(parameter_fields.len());
     let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
         .map_err(js_error_to_postgres)?;
@@ -170,15 +160,9 @@ pub(crate) fn write_bind<Context: WriterContext>(
     iter.to(0);
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        // parameter in array but not in parameter_fields
-        // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
-        // with will describe better the error saying exactly how many parameters are missing and are expected
-        // Example:
-        // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
-        // errno: "08P01",
-        // code: "ERR_POSTGRES_SERVER_ERROR"
         let index = i;
         i += 1;
+        // More values than parameters: the extras go out as text and the server reports 08P01.
         let encoding = encodings.get(index).copied().unwrap_or(ParamEncoding::Text);
         if value.is_empty_or_undefined_or_null() {
             bun_core::scoped_log!(Postgres, "  -> NULL");

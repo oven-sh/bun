@@ -1198,8 +1198,11 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
+                // fetch spec: "Let inputOrInitBody be initBody if it is non-null;
+                // otherwise inputBody." A `body: null` member does not claim the
+                // field, so a later input Request/Response still supplies its body.
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                    Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1221,7 +1224,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
+                    Ok(_) => {}
                     Err(e) => bail!(Err(e)),
                 }
 

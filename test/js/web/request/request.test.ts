@@ -76,6 +76,76 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+describe("RequestInit body: null", () => {
+  // Fetch spec Request constructor: "Let inputOrInitBody be initBody if it is non-null;
+  // otherwise inputBody." A present-but-null `init.body` keeps the input Request's body,
+  // the same as an absent or undefined one. (Contrast with `signal: null` below, which
+  // is `AbortSignal?` in WebIDL and does detach.)
+  test.each([
+    ["{ body: null }", { body: null }],
+    ["{ body: undefined }", { body: undefined }],
+    ["{}", {}],
+  ])("new Request(request, %s) keeps the input's body", async (_label, init) => {
+    const input = new Request("http://example.com/", { method: "POST", body: "keep-me" });
+    const derived = new Request(input, init as RequestInit);
+    expect(derived.method).toBe("POST");
+    expect(derived.body).not.toBeNull();
+    expect(await derived.text()).toBe("keep-me");
+  });
+
+  test("new Request(request, { body: null }) keeps a ReadableStream body", async () => {
+    const input = new Request("http://example.com/", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("streamed"));
+          controller.close();
+        },
+      }),
+      // @ts-ignore
+      duplex: "half",
+    });
+    const derived = new Request(input, { body: null });
+    expect(derived.body).not.toBeNull();
+    expect(await derived.text()).toBe("streamed");
+  });
+
+  test("a non-null init.body still replaces the input's body", async () => {
+    const input = new Request("http://example.com/", { method: "POST", body: "original" });
+    expect(await new Request(input, { body: "replaced" }).text()).toBe("replaced");
+    expect(await new Request(input, { body: "" }).text()).toBe("");
+  });
+
+  test("new Request(url, { body: null }) has a null body", async () => {
+    const req = new Request("http://example.com/", { method: "POST", body: null });
+    expect(req.body).toBeNull();
+    expect(await req.text()).toBe("");
+  });
+
+  test("fetch(request, { body: null }) sends the request's body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => Response.json({ method: req.method, body: await req.text() }),
+    });
+    const results: Record<string, unknown> = {};
+    for (const [label, init] of [
+      ["null", { body: null }],
+      ["undefined", { body: undefined }],
+      ["absent", {}],
+      ["replaced", { body: "replaced" }],
+    ] as const) {
+      const res = await fetch(new Request(server.url, { method: "POST", body: "keep-me" }), init as RequestInit);
+      results[label] = await res.json();
+    }
+    expect(results).toEqual({
+      null: { method: "POST", body: "keep-me" },
+      undefined: { method: "POST", body: "keep-me" },
+      absent: { method: "POST", body: "keep-me" },
+      replaced: { method: "POST", body: "replaced" },
+    });
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

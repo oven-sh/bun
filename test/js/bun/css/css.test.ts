@@ -464,6 +464,44 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        border-top: 0;
+        border-right: 0;
+        border-bottom: 1px solid #cacaca;
+        border-left: 0;
+      }
+    `,
+      `
+      .foo {
+        border-top: 0;
+        border-bottom: 1px solid #cacaca;
+        border-left: 0;
+        border-right: 0;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top: 1px solid red;
+        border-right: 2px dashed blue;
+        border-bottom: 3px dotted green;
+        border-left: 4px double white;
+      }
+    `,
+      `
+      .foo {
+        border-top: 1px solid red;
+        border-bottom: 3px dotted green;
+        border-left: 4px double #fff;
+        border-right: 2px dashed #00f;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
         border-block: 2px solid red;
         border-inline: 2px solid red;
       }

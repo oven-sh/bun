@@ -1148,6 +1148,14 @@ mod border_handler_body {
                     fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
                 }, false);
             }
+        } else if all_valid && !$is_logical && !(is_eq!(width) || is_eq!(style) || is_eq!(color)) {
+            // Without `border`, and with no component that repeats on all four
+            // sides, the four sides as written beat three multi-value shorthands
+            // (`border-top: 0; ...; border-bottom: 1px solid` stays as is).
+            fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
+            fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
+            fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
+            fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
         } else {
             // Four complete but unequal logical sides are shorter as the
             // `border-block` / `border-inline` properties below than as what

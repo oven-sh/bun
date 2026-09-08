@@ -191,6 +191,8 @@ struct HttpResponseData;
         } headers[UWS_HTTP_MAX_HEADERS_COUNT];
         bool ancientHttp;
         bool didYield;
+        /* Written right before the request handler runs; see getHasTransferEncoding(). */
+        bool hasTransferEncoding;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
@@ -211,6 +213,18 @@ struct HttpResponseData;
         bool getYield()
         {
             return didYield;
+        }
+
+        /* The parser's verdict on the Transfer-Encoding header: the same one that
+         * selects chunked body framing, taken from every field of that name (in
+         * node:http mode a header whose values are all empty counts as absent).
+         * getHeader("transfer-encoding") returns only the first field's value,
+         * which is empty for "Transfer-Encoding:" followed by
+         * "Transfer-Encoding: chunked", so a has-body test on that value drops
+         * the chunked body. */
+        bool getHasTransferEncoding()
+        {
+            return hasTransferEncoding;
         }
 
         /* Iteration over headers (key, value) */
@@ -1283,6 +1297,9 @@ struct HttpResponseData;
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
             req->head = std::span<const char>(data, length);
+            /* Same verdict that selects chunked framing below, so the handler's
+             * has-body decision cannot disagree with how the body is consumed. */
+            req->hasTransferEncoding = transferEncoding.has;
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

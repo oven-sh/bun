@@ -182,6 +182,124 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
+// literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
+// with its parameters stripped: `Response.json()` and most servers send `application/json;charset=utf-8`.
+test("a macro that returns a JSON or text Response or Blob is inlined by its content type", async () => {
+  await using server = Bun.serve({ port: 0, fetch: () => Response.json({ from: "server" }) });
+  using dir = tempDir("macro-response-content-type", {
+    "m.ts": [
+      `export function json() {`,
+      `  return Response.json({ a: 1, b: [true, null, "x"] });`,
+      `}`,
+      `export function jsonHeader() {`,
+      `  return new Response('{"b":2}', { headers: { "content-type": "application/json" } });`,
+      `}`,
+      `export function fetched() {`,
+      `  return fetch(process.env.MACRO_TEST_URL!);`,
+      `}`,
+      `export function text() {`,
+      `  return new Response("hello", { headers: { "content-type": "text/plain; charset=utf-8" } });`,
+      `}`,
+      `export function blobJson() {`,
+      `  return new Blob(['{"c":3}'], { type: "application/json; charset=utf-8" });`,
+      `}`,
+      `export function binary() {`,
+      `  return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/octet-stream" } });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { json, jsonHeader, fetched, text, blobJson, binary } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([json(), jsonHeader(), fetched(), text(), blobJson(), binary()]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, MACRO_TEST_URL: server.url.href },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([
+      { a: 1, b: [true, null, "x"] },
+      { b: 2 },
+      { from: "server" },
+      "hello",
+      { c: 3 },
+      "data:application/octet-stream;base64,AQID",
+    ]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The classification follows the MIME essence, not the category table the runtime uses for blob types:
+// any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
+// The data URL keeps the raw content type, parameters included.
+test("a Response or Blob returned from a macro is classified by its MIME essence", async () => {
+  const json = '{"a":1}';
+  const cases: [type: string, body: string, expected: unknown][] = [
+    ["application/json", json, { a: 1 }],
+    ["application/json; charset=utf-8", json, { a: 1 }],
+    ["application/vnd.api+json", json, { a: 1 }],
+    ["application/ld+json", json, { a: 1 }],
+    ["application/ld+json; charset=utf-8", json, { a: 1 }],
+    ["application/manifest+json", json, { a: 1 }],
+    ["application/geo+json", json, { a: 1 }],
+    ["text/json", json, { a: 1 }],
+    ["application/javascript", "1+1", "1+1"],
+    ["application/javascript; charset=utf-8", "1+1", "1+1"],
+    ["application/x-javascript", "1+1", "1+1"],
+    ["application/ecmascript", "1+1", "1+1"],
+    ["application/xml", "<a/>", "<a/>"],
+    ["text/plain", "hi", "hi"],
+    ["text/html", "<b>hi</b>", "<b>hi</b>"],
+    ["text/javascript", "1+1", "1+1"],
+    ["text/xml", "<a/>", "<a/>"],
+    ["image/png", "png", "data:image/png;base64,cG5n"],
+    ["application/octet-stream", "bin", "data:application/octet-stream;base64,Ymlu"],
+    ["application/wasm", "wasm", "data:application/wasm;base64,d2FzbQ=="],
+    ["application/x-ndjson", '{"a":1}\n{"a":2}\n', "data:application/x-ndjson;base64,eyJhIjoxfQp7ImEiOjJ9Cg=="],
+  ];
+  using dir = tempDir("macro-mime-essence", {
+    "m.ts": [
+      `export function resp(type: string, body: string) {`,
+      `  return new Response(body, { headers: { "content-type": type } });`,
+      `}`,
+      `export function blob(type: string, body: string) {`,
+      `  return new Blob([body], { type });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { resp, blob } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([`,
+      ...cases.map(([type, body]) => `  resp(${JSON.stringify(type)}, ${JSON.stringify(body)}),`),
+      ...cases.map(([type, body]) => `  blob(${JSON.stringify(type)}, ${JSON.stringify(body)}),`),
+      `]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = cases.map(([, , expected]) => expected);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([...expected, ...expected]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
@@ -324,6 +442,65 @@ describe("event loop routing around macros", () => {
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
   });
+});
+
+// A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The
+// macro VM created there has to take the CLI's transform options, or the macro module never sees
+// `--define`.
+test("a macro in a module transpiled off the main thread sees --define", async () => {
+  using dir = tempDir("macro-off-thread-define", {
+    "m.ts": `export function mode() {\n  return process.env.MODE ?? "none";\n}\n`,
+    "lib.ts": `import { mode } from "./m.ts" with { type: "macro" };\nexport const x = mode();\n`,
+    "index.ts": `import { x } from "./lib.ts";\nconsole.log(x);\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--define", 'process.env.MODE:"prod"', "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "prod", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the
+// options of the build that creates it and lives on after that build, so this runs in its own
+// process: an earlier build in the same process would otherwise decide what the macro sees.
+test("Bun.build() passes define and loader to the macro VM", async () => {
+  using dir = tempDir("macro-build-api-options", {
+    "entry.ts": `import { mode, banner } from "./macro.ts" with { type: "macro" };\nconsole.log(mode(), banner());\n`,
+    "macro.ts": [
+      `import banner_ from "./banner.dat";`,
+      `export function mode() {\n  return process.env.MODE ?? "none";\n}`,
+      `export function banner() {\n  return banner_;\n}`,
+      ``,
+    ].join("\n"),
+    "banner.dat": "hello from a text loader",
+    "build.ts": `
+      const result = await Bun.build({
+        entrypoints: ["./entry.ts"],
+        target: "bun",
+        define: { "process.env.MODE": '"prod"' },
+        loader: { ".dat": "text" },
+      });
+      console.log(await result.outputs[0].text());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: `console.log("prod", "hello from a text loader");`,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 describe("--no-macros", () => {

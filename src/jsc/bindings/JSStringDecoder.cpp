@@ -566,12 +566,14 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     auto jsEncoding = callFrame->argument(0);
     if (!jsEncoding.isUndefinedOrNull()) {
         std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
             auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
             const auto& view = encodingString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
         }
     }

@@ -17,6 +17,7 @@ import { expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlAuthMoreData,
   mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
@@ -198,7 +199,7 @@ test.each([
     socket.write(mysqlHandshakeV10({ authPlugin: handshake }));
     socket.on("error", () => {});
     socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (phase === 0) {
           phase = 1;
           socket.write(mysqlAuthSwitchRequest(seq + 1, switchTo, Buffer.alloc(20, 0x62)));
@@ -206,6 +207,8 @@ test.each([
           phase = 2;
           responses++;
           socket.write(mysqlOkPacket(seq + 1));
+        } else {
+          mysqlAckSessionSetup(socket, payload);
         }
       });
     });

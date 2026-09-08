@@ -38,7 +38,6 @@ pub mod js_bundler {
             options::JSX::Runtime::_None => api::JsxRuntime::_none,
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
         }
     }
 
@@ -51,8 +50,8 @@ pub mod js_bundler {
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
-    /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
-    /// the bundler runs on a separate thread and must not borrow JS heap memory.
+    /// The bytes are copied: the bundler runs on a separate thread and must not
+    /// borrow JS heap memory.
     fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
@@ -76,23 +75,17 @@ pub mod js_bundler {
         this.map.reserve(files_iter.len);
 
         while let Some((prop, property_value)) = files_iter.next()? {
-            // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
-            // Async mode `protect()`s any JS-backed buffer; adopt into a
-            // `ThreadSafe` so the guard unprotects + drops at end of iteration.
-            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
+            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js(
                 global_this,
                 property_value,
             )? {
-                Some(v) => bun_jsc::ThreadSafe::adopt(v),
+                Some(v) => v,
                 None => {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }
             };
-            // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
-            // copied, JS strings are decoded). Extract them into the lower-tier
-            // map and release the wrapper immediately so no JSC handle crosses
-            // threads.
-            let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
+            // Copy the bytes into the lower-tier map so no JSC handle crosses threads.
+            let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
             // Clone the key since we need to own it.
@@ -126,10 +119,12 @@ pub mod js_bundler {
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
+        pub(crate) split_require: bool,
         pub(crate) minify: Minify,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
+        pub(crate) deprecated_namespace_object_setters: bool,
         pub(crate) tree_shaking: Option<bool>,
         pub(crate) names: Names,
         pub(crate) external: StringSet,
@@ -140,6 +135,7 @@ pub mod js_bundler {
         pub(crate) packages: options::PackagesOption,
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
+        pub(crate) bytecode_depth: u32,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -147,6 +143,9 @@ pub mod js_bundler {
         /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
         pub(crate) metafile_markdown_path: OwnedString,
         pub(crate) css_chunking: bool,
+        /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
+        pub(crate) min_chunk_size: Option<u64>,
+        pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -188,10 +187,12 @@ pub mod js_bundler {
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
+                split_require: true,
                 minify: Minify::default(),
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                deprecated_namespace_object_setters: true,
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
@@ -202,11 +203,14 @@ pub mod js_bundler {
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
+                bytecode_depth: u32::MAX,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
+                min_chunk_size: None,
+                module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -596,6 +600,26 @@ pub mod js_bundler {
                 }
             }
 
+            if let Some(value) = config.get(global_this, "bytecodeDepth")? {
+                if value.is_number() && value.as_number().is_nan() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"bytecodeDepth",
+                        b"integer",
+                        value,
+                    ));
+                }
+                this.bytecode_depth = global_this.validate_integer_range::<u32>(
+                    value,
+                    u32::MAX,
+                    bun_jsc::IntegerRange {
+                        min: 0,
+                        max: i128::from(u32::MAX),
+                        field_name: b"bytecodeDepth",
+                        always_allow_zero: false,
+                    },
+                )?;
+            }
+
             if let Some(react_fast_refresh) =
                 config.get_boolean_loose(global_this, "reactFastRefresh")?
             {
@@ -779,6 +803,24 @@ pub mod js_bundler {
                 this.code_splitting = hot;
             }
 
+            if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
+                this.split_require = split_require;
+            }
+            if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
+                this.module_preload = module_preload;
+            }
+
+            if let Some(min_chunk_size) =
+                config.get_optional_int::<u64>(global_this, "minChunkSize")?
+            {
+                if min_chunk_size > 0 && !this.code_splitting {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "minChunkSize requires splitting to be true."
+                    )));
+                }
+                this.min_chunk_size = Some(min_chunk_size);
+            }
+
             if let Some(minify) = config.get_truthy(global_this, "minify")? {
                 if minify.is_boolean() {
                     let value = minify.to_boolean();
@@ -827,6 +869,11 @@ pub mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
+            if let Some(flag) =
+                config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
+            {
+                this.deprecated_namespace_object_setters = flag;
+            }
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);
             }
@@ -909,7 +956,7 @@ pub mod js_bundler {
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1239,30 +1286,6 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // NOTE: when no `outdir`/`outfile` was given, place the
-                        // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied. Resolving the
-                        // basename against the process-wide cwd instead would
-                        // make every `Bun.build({compile: true, entrypoints:
-                        // [tmp + "/app.js"]})` from any test process write the
-                        // *same* `<cwd>/app`, so concurrently-running test files
-                        // would race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). This keeps each
-                        // build's output inside its own (temp) directory and is
-                        // also the more intuitive default for a programmatic API.
-                        // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if this.outdir.is_empty()
-                            && !entry_dir.is_empty()
-                            && bun_paths::is_absolute(entry_dir)
-                        {
-                            compile.outfile.append_slice_exact(entry_dir)?;
-                            compile
-                                .outfile
-                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
-                        }
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
@@ -1885,7 +1908,7 @@ pub struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
-    pub(crate) hash: u64,
+    pub(crate) hash: bun_core::fmt::ContentHash,
     pub(crate) output_kind: OutputKind,
 }
 
@@ -1966,7 +1989,10 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
+        match this.loader {
+            bun_ast::Loader::Base64 => Ok(global_this.common_strings().base64()),
+            loader => BunString::static_(<&'static str>::from(loader)).to_js(global_this),
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1974,7 +2000,7 @@ impl BuildArtifact {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
+        write!(cursor, "{}", this.hash).expect("Unexpected");
         let written = 512 - cursor.len();
         bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
@@ -2070,7 +2096,7 @@ impl BuildArtifact {
                 <&'static str>::from(self.output_kind),
             )?;
 
-            if self.hash != 0 {
+            if self.hash.value != 0 {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
@@ -2081,7 +2107,7 @@ impl BuildArtifact {
                     writer,
                     ENABLE_ANSI_COLORS,
                     "<r>hash<r>: <green>\"{f}\"<r>",
-                    bun_core::fmt::truncated_hash32(self.hash),
+                    self.hash,
                 )?;
             }
 

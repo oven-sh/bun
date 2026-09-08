@@ -429,6 +429,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 

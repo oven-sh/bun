@@ -180,6 +180,10 @@ private:
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
+
+            if (httpContextData->onHttp2 && !us_socket_is_closed(s) && us_socket_alpn_is_h2(s)) {
+                httpContextData->onHttp2(httpContextData->http2Context, s, nullptr, 0, 0);
+            }
         }
     }
 
@@ -287,6 +291,14 @@ private:
         return s;
     }
 
+    /* http1: false with HTTP/2 attached: an HTTP/1.x client gets one 505. */
+    static us_socket_t *rejectHttp1(us_socket_t *s) {
+        static const char response[] = "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        us_socket_write(s, response, sizeof(response) - 1);
+        us_socket_shutdown(s);
+        return us_socket_close(s, 0, nullptr);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -309,6 +321,54 @@ private:
         }
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+
+        /* HTTP/2: a cleartext connection that opens with the prior-knowledge
+         * preface (RFC 9113 §3.3) moves to the Http2Context before the
+         * HTTP/1 parser ever sees "PRI * HTTP/2.0". Decided on the first
+         * bytes; a read too short to decide (< 4 bytes of matching prefix) is
+         * held back and counted in h2PrefaceMatched until one can. */
+        std::string replay;
+        if constexpr (!SSL && !IsNodeHttp) {
+            unsigned char matched = httpResponseData->h2PrefaceMatched;
+            if (httpContextData->onHttp2 && matched != HttpResponseData<SSL>::PROTOCOL_DECIDED) {
+                static const char preface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+                unsigned int n = (unsigned int) length < 24u - matched ? (unsigned int) length : 24u - matched;
+                bool isPrefix = memcmp(data, preface + matched, n) == 0;
+                if (isPrefix && matched + n >= 4) {
+                    us_socket_unref(s);
+                    return httpContextData->onHttp2(httpContextData->http2Context, s, data, length, matched);
+                }
+                if (isPrefix) {
+                    httpResponseData->h2PrefaceMatched = (unsigned char) (matched + n);
+                    us_socket_unref(s);
+                    return s;
+                }
+                httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
+                if (!httpContextData->allowHttp1) {
+                    us_socket_unref(s);
+                    return rejectHttp1(s);
+                }
+                if (matched) {
+                    /* Not HTTP/2 after all: give the HTTP/1 parser the bytes we held back. */
+                    replay.reserve(LIBUS_RECV_BUFFER_PADDING * 2 + matched + (size_t) length);
+                    replay.assign(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    replay.append(preface, matched);
+                    replay.append(data, (size_t) length);
+                    replay.append(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    data = replay.data() + LIBUS_RECV_BUFFER_PADDING;
+                    length += matched;
+                }
+            }
+        }
+        if constexpr (SSL && !IsNodeHttp) {
+            if (httpContextData->onHttp2 && httpResponseData->h2PrefaceMatched != HttpResponseData<SSL>::PROTOCOL_DECIDED) {
+                httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
+                if (!httpContextData->allowHttp1) {
+                    us_socket_unref(s);
+                    return rejectHttp1(s);
+                }
+            }
+        }
 
         /* node:http compat: HTTP parsing stopped on this connection (a parse error
          * was already delivered to 'clientError', or the JS layer freed the

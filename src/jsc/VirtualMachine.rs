@@ -370,6 +370,17 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    /// The time zone the test runner applied at startup (`TZ`, default
+    /// `Etc/UTC`). Empty means no override (local time). Re-applied after
+    /// every file so a `process.env.TZ` write stays with the file that made it.
+    /// `Option` keeps the zero-initialized VM valid (a `Box` has no null niche).
+    pub time_zone: Option<Box<[u8]>>,
+    /// The proxy env keys as the env map held them at startup, restored after
+    /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
+    pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
+    /// The synthetic allocation limit at startup, restored after every file.
+    /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
+    pub synthetic_allocation_limit: Option<usize>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -441,6 +452,52 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
         *size = found.len();
     }
     true
+}
+
+/// Module loader resolve hook: whether `onResolve` plugins could claim a specifier before the builtin/standalone fast paths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__hasPluginRunner(vm: *mut VirtualMachine) -> bool {
+    // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
+    unsafe { (*vm).plugin_runner.is_some() }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
+    standalone_module_graph().is_some()
+}
+
+/// `StandaloneGlobalObject::moduleLoaderResolve`: an embedded import specifier names its file directly, so it resolves
+/// without entering the resolver. Returns the graph's own spelling of the key (the same bytes on POSIX; on Windows the
+/// canonical separator form) so every importer lands on one registry entry, or null if `name` is not an embedded file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleKey(
+    name: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return core::ptr::null();
+    }
+    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+        Some(canonical) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = canonical.len() };
+            canonical.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
+}
+
+/// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.
+/// one the loader can register ahead of JSC's graph walk (CommonJS, JSON, assets take the normal path).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len: usize) -> bool {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    bun_options_types::standalone_path::is_bun_standalone_file_path(name)
+        && standalone_module_graph().is_some_and(|graph| graph.has_module_info(name))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -561,8 +618,6 @@ impl VMHolder {
     }
 }
 
-#[thread_local]
-pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
@@ -825,6 +880,8 @@ impl VirtualMachine {
         VM.get()
     }
 
+    /// The signal handler path (unix only) reaches the main VM through this.
+    #[cfg(unix)]
     pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
@@ -953,17 +1010,38 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
+    /// while it loads is live, so collections before it finishes only re-mark it. The budget is what loading the graph
+    /// reads (bytecode, records, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
+    /// keep the default.
+    fn let_heap_take_initial_module_graph(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        unsafe extern "C" {
+            safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
+        }
+        const MIN_BUDGET: usize = 8 * 1024 * 1024;
+        const MAX_BUDGET: usize = 128 * 1024 * 1024;
+        let budget = graph
+            .module_graph_load_bytes()
+            .clamp(MIN_BUDGET, MAX_BUDGET);
+        if budget > MIN_BUDGET {
+            JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
+        }
+    }
+
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
     fn install_bytecode_string_table(
         &self,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ) {
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
         let table = graph.bytecode_string_table();
         if table.is_empty() {
             return;
-        }
-        unsafe extern "C" {
-            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
         }
         // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
@@ -1325,7 +1403,7 @@ impl VirtualMachine {
         if sync {
             return vm.run_gc(true);
         }
-        vm.collect_async();
+        vm.collect_async(false);
         vm.heap_size()
     }
 
@@ -2102,6 +2180,15 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
+/// Runtime flags a Worker's `execArgv` can set. `true` means allowed.
+#[derive(Copy, Clone, Debug)]
+pub struct WorkerExecArgvFlags {
+    /// `!--no-addons`
+    pub allow_addons: bool,
+    /// `!--no-ffi-cc`
+    pub allow_ffi_cc: bool,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -2222,16 +2309,10 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand`
-    /// param table and return the resulting `allow_addons` value
-    /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
-    /// The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned bool back into
-    /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match.
-    pub parse_worker_exec_argv_allow_addons:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
+    /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
+    /// `None` if parsing failed.
+    pub parse_worker_exec_argv_flags:
+        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -2657,7 +2738,7 @@ impl VirtualMachine {
             opts.eval_mode,
             opts.worker_ptr,
         );
-        // JSC may mess with the stack size.
+        // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same
@@ -2851,7 +2932,12 @@ impl VirtualMachine {
                     if let Some(stored) = self.pending_internal_promise {
                         return Ok(stored);
                     }
-                    let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
+                    // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
+                    // which may throw.
+                    let resolved = jsc::call_check_slow(global_ref, || {
+                        JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                    })
+                    .map_err(|_| crate::CrateError::JSError)?;
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);
@@ -2958,6 +3044,15 @@ pub fn process_fetch_log(
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
+    let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+        take(match msg.metadata {
+            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Resolve(_) => {
+                ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+            }
+        })
+    };
+
     match log.msgs.len() {
         0 => {
             let msg = if err == crate::CrateError::UnexpectedPendingResolution {
@@ -2995,14 +3090,7 @@ pub fn process_fetch_log(
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            match msg.metadata {
-                bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                    global_this,
-                    &msg,
-                    referrer_utf8.slice(),
-                )),
-            }
+            msg_to_js(msg)
         }
 
         _ => {
@@ -3015,14 +3103,7 @@ pub fn process_fetch_log(
             let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
-                errors_stack[i] = match msg.metadata {
-                    bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                    bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                        global_this,
-                        &msg,
-                        referrer_utf8.slice(),
-                    )),
-                };
+                errors_stack[i] = msg_to_js(msg);
             }
 
             take(global_this.create_aggregate_error(
@@ -3493,6 +3574,12 @@ impl VirtualMachine {
             .transform_options
             .allow_addons
             .unwrap_or(true)
+    }
+
+    /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
+    pub fn allow_ffi_cc(&self) -> bool {
+        let opts = &self.transpiler.options.transform_options;
+        opts.allow_ffi_cc.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
     }
 
     /// Whether to warn when a previously-unhandled rejection later gains a handler.
@@ -4012,6 +4099,7 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.install_bytecode_string_table(graph);
+        vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -4580,6 +4668,25 @@ impl VirtualMachine {
         let jsc_vm_ptr = global.bun_vm_ptr();
         // SAFETY: per-thread VM is live (caller is on the JS thread).
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
+
+        // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
+        // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
+        if jsc_vm.plugin_runner.is_none() && specifier.is_8bit() {
+            if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
+                specifier.latin1(),
+                bun_ast::Target::Bun,
+                Default::default(),
+            ) {
+                return Ok(Ok(
+                    if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
+                        specifier.clone()
+                    } else {
+                        bun_core::String::from_bytes(hardcoded.path.as_bytes())
+                    },
+                ));
+            }
+        }
+
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
@@ -4629,8 +4736,10 @@ impl VirtualMachine {
         // so the `Option` is purely a
         // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
+        let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.log;
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
+        jsc_vm.transpiler.log = &raw mut log;
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         jsc_vm.transpiler.linker.log = &raw mut log;
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
@@ -4647,6 +4756,7 @@ impl VirtualMachine {
         struct RestoreLog {
             vm: bun_ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
+            old_transpiler_log: *mut bun_ast::Log,
         }
         impl Drop for RestoreLog {
             fn drop(&mut self) {
@@ -4654,6 +4764,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
+                jsc_vm.transpiler.log = self.old_transpiler_log;
                 jsc_vm.transpiler.resolver.log = self.old_log;
                 jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
                 // `_resolve` may have lazily created the PM with
@@ -4671,6 +4782,7 @@ impl VirtualMachine {
         let _restore = RestoreLog {
             vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
+            old_transpiler_log,
         };
         // Note: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
@@ -4967,11 +5079,11 @@ impl VirtualMachine {
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
         bun_sys::chdir(to)?;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::PathBuffer::uninit();
+                let mut rollback = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
                 return bun_sys::Result::Err(err);
             }
@@ -5011,7 +5123,7 @@ impl VirtualMachine {
         Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let z = bun_paths::resolve_path::z(&cwd, &mut buf);
             let _ = self.set_process_cwd(z);
         }
@@ -5127,6 +5239,38 @@ impl VirtualMachine {
                     hook.global_this = new_global;
                 }
             }
+        }
+
+        self.undo_process_env_side_effects();
+        self.undo_synthetic_allocation_limit();
+    }
+
+    /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.
+    /// Put the startup value back so a file's limit stays with that file.
+    fn undo_synthetic_allocation_limit(&mut self) {
+        if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
+            SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+            STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`
+    /// in JSEnvironmentVariableMap.cpp) write past the env object: TZ into the
+    /// WTF time zone override, NODE_TLS_REJECT_UNAUTHORIZED and
+    /// BUN_CONFIG_VERBOSE_FETCH into per-VM caches, and the proxy keys into the
+    /// env map that seeds the next global's `process.env`. Put each back to
+    /// its startup state so a file's write does not reach the files after it.
+    fn undo_process_env_side_effects(&mut self) {
+        self.default_tls_reject_unauthorized = None;
+        self.default_verbose_fetch.set(None);
+        if let Some(tz) = self.test_isolation_state.time_zone.as_deref() {
+            let _ = self
+                .global()
+                .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+        }
+        if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
+            let mut slots = self.proxy_env_storage.lock();
+            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
         }
     }
 

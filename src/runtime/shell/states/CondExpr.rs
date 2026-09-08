@@ -66,7 +66,7 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),

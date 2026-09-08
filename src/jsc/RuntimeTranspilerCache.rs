@@ -51,7 +51,13 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-const EXPECTED_VERSION: u32 = 25;
+/// Version 26: ModuleInfo wire format is a string table (u8/u16/u32
+/// offsets picked by a header byte) plus a body of tagged records with
+/// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
+/// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
+/// Version 28: the define table and `--drop` entries participate in the features hash.
+/// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
+const EXPECTED_VERSION: u32 = 29;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -219,10 +225,6 @@ impl Metadata {
     }
 }
 
-// Static assert that `encode()` writes exactly `Metadata::SIZE` bytes — guards
-// against the hand-summed constant drifting from the field list.
-const _: () = assert!(Metadata::SIZE == 4 + 1 + 1 + 12 * 8);
-
 #[derive(Default)]
 pub struct Entry {
     pub metadata: Metadata,
@@ -246,7 +248,7 @@ impl Entry {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
         // atomically write to a tmpfile and then move it to the final destination
-        let mut tmpname_buf = PathBuffer::uninit();
+        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let tmpfilename = FileSystem::tmpname(
             paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
@@ -262,13 +264,11 @@ impl Entry {
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
-                if !using_tmpfile {
-                    let _ = sys::unlinkat(destination_dir, tmpfilename);
-                }
+            let errdefer = scopeguard::guard((), |()| {
+                let _ = sys::unlinkat(destination_dir, tmpfilename);
             });
 
-            let mut metadata_buf = [0u8; Metadata::SIZE * 2];
+            let mut metadata_buf = [0u8; Metadata::SIZE];
             let metadata_bytes_len: usize = {
                 let mut metadata = Metadata {
                     input_byte_length,
@@ -381,13 +381,12 @@ impl Entry {
         Ok(())
     }
 
-    pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
-        let stat_size = file.get_end_pos()? as u64;
-        if stat_size
-            < (Metadata::SIZE as u64)
-                + self.metadata.output_byte_length
-                + self.metadata.sourcemap_byte_length
-        {
+    pub(crate) fn load(&mut self, file: &sys::File, stat_size: u64) -> crate::CrateResult<()> {
+        let required = (Metadata::SIZE as u64)
+            .saturating_add(self.metadata.output_byte_length)
+            .saturating_add(self.metadata.sourcemap_byte_length)
+            .saturating_add(self.metadata.esm_record_byte_length);
+        if stat_size < required {
             return Err(crate::CrateError::MissingData);
         }
 
@@ -455,15 +454,12 @@ impl Entry {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
+                    }
+
+                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     latin1
@@ -501,11 +497,18 @@ impl Entry {
         };
 
         if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
+            let sourcemap = pread_box(
                 file,
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+
+            // `InternalSourceMap::find` trusts these header offsets.
+            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+                return Err(crate::CrateError::InvalidSourceMap);
+            }
+
+            self.sourcemap = sourcemap;
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -715,7 +718,7 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
-        let mut cache_file_path_buf = PathBuffer::uninit();
+        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
@@ -732,13 +735,25 @@ impl RuntimeTranspilerCache {
         feature_hash: u64,
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
-        let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
-        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY, 0)?;
+        let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
+        // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
+        #[cfg(unix)]
+        let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
+        #[cfg(not(unix))]
+        let open_flags = sys::O::RDONLY;
+        let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
             let _ = sys::unlink(p);
         });
+
+        let stat = file.stat()?;
+        if !sys::S::ISREG(stat.st_mode as _) {
+            return Err(crate::CrateError::NotARegularFile);
+        }
+        let stat_size = u64::try_from(stat.st_size).map_err(|_| crate::CrateError::MissingData)?;
+
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]
         {
@@ -760,7 +775,7 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
-        entry.load(&file)?;
+        entry.load(&file, stat_size)?;
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
         Ok(entry)
@@ -777,7 +792,7 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
-        let mut cache_file_path_buf = PathBuffer::uninit();
+        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         bun_core::scoped_log!(
             cache,

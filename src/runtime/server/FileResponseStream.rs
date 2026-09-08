@@ -18,6 +18,7 @@ use bun_io::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_jsc::JsCell;
+use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
@@ -116,9 +117,9 @@ pub(crate) struct StartOptions {
 /// error is delivered, exactly once.
 pub(crate) enum StreamOwner {
     /// The ref `FileRoute::on` took for this response; released on delivery.
-    FileRoute(bun_ptr::RefPtr<FileRoute>),
+    FileRoute(RefPtr<FileRoute>),
     /// Likewise for `DirectoryRoute::on`.
-    DirectoryRoute(bun_ptr::RefPtr<DirectoryRoute>),
+    DirectoryRoute(RefPtr<DirectoryRoute>),
     Ctx {
         ctx: *mut c_void,
         on_complete: fn(*mut c_void, AnyResponse),
@@ -138,14 +139,8 @@ enum StreamEnd {
 impl StreamOwner {
     fn deliver(self, resp: AnyResponse, end: StreamEnd) {
         match self {
-            StreamOwner::FileRoute(route) => {
-                route.on_response_complete(resp);
-                route.deref();
-            }
-            StreamOwner::DirectoryRoute(route) => {
-                route.on_response_complete(resp);
-                route.deref();
-            }
+            StreamOwner::FileRoute(route) => route.on_response_complete(resp),
+            StreamOwner::DirectoryRoute(route) => route.on_response_complete(resp),
             StreamOwner::Ctx {
                 ctx,
                 on_complete,
@@ -189,7 +184,7 @@ impl FileResponseStream {
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
         // any free until after `this_ref` is dead at the end of this frame.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
+        let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: `this` is live for at least as long as `_guard`.
         let this_ref = unsafe { &*this };
 
@@ -200,7 +195,7 @@ impl FileResponseStream {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
-                    let _guard = bun_ptr::ScopedRef::<Self>::new(p);
+                    let _guard = RefPtr::init_ref(p);
                     (*p).on_aborted(r);
                 }
             },
@@ -338,13 +333,12 @@ impl FileResponseStream {
                         // SAFETY: uWS hands back the userdata pointer set below;
                         // the guard keeps `*p` alive across the handler.
                         unsafe {
-                            let _guard = bun_ptr::ScopedRef::<Self>::new(p);
+                            let _guard = RefPtr::init_ref(p);
                             (*p).on_writable(off, r)
                         }
                     },
                     self.as_ptr(),
                 );
-                #[cfg(not(unix))]
                 // SAFETY: reader entry point; `pause()` does not call back into
                 // this object.
                 self.reader_mut().pause();
@@ -374,7 +368,7 @@ impl FileResponseStream {
         self.ref_();
     }
 
-    fn take_read_ref(&self) -> Option<bun_ptr::ScopedRef<Self>> {
+    fn take_read_ref(&self) -> Option<RefPtr<Self>> {
         if !self.state.get().contains(State::READ_REF_HELD) {
             return None;
         }
@@ -382,7 +376,7 @@ impl FileResponseStream {
             .set(self.state.get().difference(State::READ_REF_HELD));
         // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
         // witnesses exactly one outstanding ref taken in `hold_read_ref`.
-        Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) })
+        Some(unsafe { RefPtr::from_raw(self.as_ptr()) })
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
@@ -398,6 +392,8 @@ impl FileResponseStream {
         }
         self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
+        // A paused POSIX reader ignores `read()`.
+        self.reader_mut().unpause();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
         // spans it.
@@ -477,7 +473,7 @@ impl FileResponseStream {
                     // SAFETY: uWS hands back the userdata pointer set below; the
                     // guard keeps `*p` alive across the handler.
                     unsafe {
-                        let _guard = bun_ptr::ScopedRef::<Self>::new(p);
+                        let _guard = RefPtr::init_ref(p);
                         (*p).on_writable(off, r)
                     }
                 },
@@ -601,10 +597,6 @@ impl FileResponseStream {
             self.event_loop().r#loop()
         }
     }
-
-    // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
-    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; the former
-    // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
 }
 
 // BufferedReader vtable parent.
@@ -615,15 +607,15 @@ bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
+        let _guard = RefPtr::init_ref(this);
         (*this).on_read_chunk(&chunk, state)
     };
     on_reader_done  = |this| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
+        let _guard = RefPtr::init_ref(this);
         (*this).on_reader_done()
     };
     on_reader_error = |this, err| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
+        let _guard = RefPtr::init_ref(this);
         (*this).on_reader_error(err)
     };
     loop_           = |this| (*this).r#loop();

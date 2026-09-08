@@ -43,7 +43,7 @@ pub(crate) fn to_have_nth_returned_with(
 
     if index < calls_count {
         nth_call_exists = true;
-        let nth_result = returns.get_direct_index(global, index);
+        let nth_result = returns.get_direct_index(global, index)?;
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
@@ -107,14 +107,7 @@ pub(crate) fn to_have_nth_returned_with(
 
     // Diff if possible
     if expected.is_string() && nth_return_value.is_string() {
-        let diff_format = DiffFormatter {
-            expected: Some(expected),
-            received: Some(nth_return_value),
-            expected_string: None,
-            received_string: None,
-            global_this: Some(global),
-            not: false,
-        };
+        let diff_format = DiffFormatter::new(global, nth_return_value, expected, false)?;
         return throw!(
             this,
             global,

@@ -306,9 +306,6 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         };
-        // No explicit store ref bump: the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
-        // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
         Ok(write_file)
     }
 
@@ -368,13 +365,6 @@ impl WriteFile {
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
         let total_written = this.total_written;
-        // Cleanup is RAII: dropping the `Box` runs `WriteFile`'s field-drop
-        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-        // StoreRef>` → `Store::deref()` — exactly one deref each.
-        // (An earlier explicit `detach()` here was a no-op; the
-        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-        // not an unbalanced ref.)
         drop(this);
 
         if let Some(err) = system_error {
@@ -656,10 +646,6 @@ mod windows_impl {
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
-            // No explicit store ref bumps — the caller passes `+1` Blobs via
-            // `borrowed_view()` and `deinit` releases them via
-            // `heap::take → StoreRef::drop`.
-            //
             // `open`/`do_write_loop` may free `*write_file` on the `Err` path,
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
@@ -790,22 +776,10 @@ mod windows_impl {
             };
 
             // libuv always returns 0 when a callback is specified
-            if let Some(err) = rc.err_enum_e() {
-                debug_assert!(err != sys::E::NOENT);
-
-                let path = path.into();
+            if let Some(err) = rc.to_error(sys::Tag::open) {
+                debug_assert!(err.get_errno() != sys::E::NOENT);
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            path,
-                            syscall: sys::Tag::open,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err.with_path(path)) });
             } else {
                 // SAFETY: caller contract — `this` is live on the Ok path.
                 unsafe { (*this).owned_fd = true };
@@ -846,7 +820,7 @@ mod windows_impl {
                 rc
             );
 
-            if let Some(err) = rc.err_enum_e() {
+            if let Some(err) = rc.errno() {
                 // SAFETY: `this` is live.
                 if err == sys::E::NOENT && unsafe { (*this).mkdirp_if_not_exists } {
                     // cleanup the request so we can reuse it later.
@@ -1006,18 +980,9 @@ mod windows_impl {
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
             let rc = unsafe { (*this).io_request.result };
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: `this` is live; `throw` consumes it.
-                match unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                } {
+                match unsafe { Self::throw(this, err) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
@@ -1160,18 +1125,9 @@ mod windows_impl {
                 return Ok(());
             }
 
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err) });
             }
 
             if rc.int() != 0 {
@@ -1203,8 +1159,6 @@ mod windows_impl {
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
-                // The store derefs happen via `StoreRef::drop` when the Box is
-                // reclaimed below (paired with the RAII note in `create_with_ctx`).
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.

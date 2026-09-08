@@ -12,6 +12,7 @@ use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
+use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
@@ -34,12 +35,11 @@ use bun_jsc::js_error_to_write_error;
 // field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
 // chaining getters) is `Cell`-wrapped so the codegen shim can hand out a shared
 // `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
-// read-only after `call()` constructs the wrapper; `finalize()` owns `Box<Self>`
-// so it may still tear them down by value.
+// read-only after `call()` constructs the wrapper.
 #[bun_jsc::JsClass]
 pub struct Expect {
     pub(crate) flags: Cell<Flags>,
-    pub(crate) parent: Option<bun_test::RefDataPtr>,
+    pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
 }
 
@@ -678,18 +678,6 @@ impl Expect {
         Ok(buf)
     }
 
-    // Codegen's `host_fn_finalize` calls this via `|b| Expect::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(mut self: Box<Self>) {
-        // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
-        // so the Box drop below would leak the +1 — release explicitly.
-        if let Some(parent) = self.parent.take() {
-            parent.deref();
-        }
-    }
-
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
@@ -709,10 +697,9 @@ impl Expect {
         } else {
             None
         };
-        // The ref
-        // moves into `Expect` below and `to_js()` is infallible, so there is no
-        // error path between ref creation and the wrapper taking ownership; from
-        // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
+        // The ref moves into `Expect` below and `to_js()` is infallible, so
+        // there is no error path between ref creation and the wrapper taking
+        // ownership.
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
@@ -1074,12 +1061,7 @@ impl Expect {
             } else {
                 runner.snapshots.failed += 1;
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-                let diff_format = DiffFormatter {
-                    received_string: Some(&pretty_value),
-                    expected_string: Some(trim_res.trimmed),
-                    global_this: Some(global_this),
-                    ..Default::default()
-                };
+                let diff_format = DiffFormatter::from_strings(&pretty_value, trim_res.trimmed, false);
                 return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
             }
         } else {
@@ -1167,14 +1149,7 @@ impl Expect {
             }
         }
 
-        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
-            let mut formatter = ConsoleObject::Formatter::new(global_this);
-            return Err(global_this.throw(format_args!(
-                "Failed to pretty format value: {}",
-                value.to_fmt(&mut formatter),
-            )));
-        }
-        Ok(())
+        value.jest_snapshot_pretty_format(pretty_value, global_this)
     }
 
     pub(crate) fn snapshot(
@@ -1253,12 +1228,7 @@ impl Expect {
 
             runner.snapshots.failed += 1;
             let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-            let diff_format = DiffFormatter {
-                received_string: Some(&pretty_value),
-                expected_string: Some(&saved_value),
-                global_this: Some(global_this),
-                ..Default::default()
-            };
+            let diff_format = DiffFormatter::from_strings(&pretty_value, &saved_value, false);
             return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
         }
 
@@ -2848,14 +2818,7 @@ impl ExpectMatcherUtils {
         }
         let _ = (comment, promise, second_argument);
 
-        let diff_formatter = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            received: Some(received),
-            expected: Some(expected),
-            global_this: Some(global_this),
-            not: is_not,
-        };
+        let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
 
         // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
         // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`

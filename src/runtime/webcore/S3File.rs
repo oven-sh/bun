@@ -1,5 +1,5 @@
 use crate::node::{PathLike, PathOrBlob};
-use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
+use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
@@ -8,6 +8,7 @@ use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -142,6 +143,7 @@ fn resolve_s3_blob(
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
             }
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }
@@ -277,11 +279,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     let credentials = if aws_options.changed_credentials {
         std::mem::take(&mut aws_options.credentials)
     } else {
-        // The `Store::S3` field is `Rc<S3Credentials>` (separate rc
-        // layer), so we can't share the existing intrusive allocation —
-        // deep-clone the value instead and let `init_s3` `Rc::new` it.
-        // PERF: profile if hot once Store.rs migrates
-        // `Rc<S3Credentials>` → `IntrusiveRc`.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
@@ -313,15 +310,15 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 /// Unlike the write path, a non-string or invalid `type` is ignored here.
 fn finish_s3_blob(
     global: &JSGlobalObject,
-    mut store: Box<blob::Store>,
+    store: RefPtr<Store>,
     aws_options: &s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
-    // store cleanup on early return is handled by Drop
-    store.data.as_s3_mut().options = aws_options.options;
-    store.data.as_s3_mut().acl = aws_options.acl;
-    store.data.as_s3_mut().storage_class = aws_options.storage_class;
-    store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    let s3 = Store::data_mut(&store).as_s3_mut();
+    s3.options = aws_options.options;
+    s3.acl = aws_options.acl;
+    s3.storage_class = aws_options.storage_class;
+    s3.request_payer = aws_options.request_payer;
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
@@ -360,7 +357,7 @@ pub(crate) struct S3BlobStatTask {
     // LIFETIMES.tsv: JSC_BORROW (&JSGlobalObject). `BackRef` so the heap task
     // can outlive the constructing frame while reads stay safe.
     global: bun_ptr::BackRef<JSGlobalObject>,
-    store: StoreRef,
+    store: RefPtr<Store>,
 }
 
 impl S3BlobStatTask {

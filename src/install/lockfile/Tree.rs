@@ -2,7 +2,7 @@ use core::marker::ConstParamTy;
 use core::mem::MaybeUninit;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
+use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, MultiArrayList, index_sort};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
@@ -127,8 +127,9 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
-    /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
-    Rebind(PackageID),
+    /// `Hoisted`, for a peer: nothing is placed and the dependent resolves this other package,
+    /// already on its path, instead of the one the edge is bound to.
+    Dedupe(PackageID),
     Placement(Placement),
 }
 
@@ -436,6 +437,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
+    /// `(peer edge, package it is served by)` pairs already checked by `report_peer`, so a
+    /// dependent placed at several paths is reported once per distinct outcome.
+    pub(crate) reported_peers: HashMap<(DependencyID, PackageID), ()>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
@@ -481,6 +485,23 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    }
+
+    /// The tree being installed decided which package `dependent` resolves for its peer edge
+    /// `dep_id`; warn if that package is outside the peer's range. The saved (`Resolvable`) tree
+    /// is built on every load and is not what ends up on disk, so it stays quiet, as does the
+    /// partial tree built to install a security scanner ahead of the real install.
+    fn report_peer(&mut self, dependent: PackageID, dep_id: DependencyID, served: PackageID) {
+        if METHOD != BuilderMethod::Filter || self.packages_to_install.is_some() {
+            return;
+        }
+        if self.reported_peers.insert((dep_id, served), ()).is_some() {
+            return;
+        }
+        let lockfile = self.lockfile;
+        lockfile
+            .get()
+            .warn_if_peer_out_of_range(self.log, dependent, dep_id, served);
     }
 
     fn buf(&self) -> &[u8] {
@@ -792,20 +813,21 @@ impl Tree {
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
                     // A peer an ancestor edge already provides dedupes instead of nesting
                     // a second copy of the folder (#40561).
-                    if dependency.behavior.is_peer()
-                        && matches!(
-                            Tree::hoist_dependency::<true, METHOD>(
-                                next_id,
-                                hoist_root_id,
-                                pkg_id,
-                                dep_id,
-                                resolution_list,
-                                builder,
-                            ),
-                            HoistDependencyResult::Hoisted
-                        )
-                    {
-                        break 'hoisted HoistDependencyResult::Hoisted;
+                    if dependency.behavior.is_peer() {
+                        let probe = Tree::hoist_dependency::<true, METHOD>(
+                            next_id,
+                            hoist_root_id,
+                            pkg_id,
+                            dep_id,
+                            resolution_list,
+                            builder,
+                        );
+                        if matches!(
+                            probe,
+                            HoistDependencyResult::Hoisted | HoistDependencyResult::Dedupe(_)
+                        ) {
+                            break 'hoisted probe;
+                        }
                     }
 
                     // Folder packages never hoist, so a cycle between them would nest forever.
@@ -839,7 +861,12 @@ impl Tree {
             };
 
             match hoisted {
-                HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
+                HoistDependencyResult::DependencyLoop => continue,
+                HoistDependencyResult::Hoisted => {
+                    if dependency.behavior.is_peer() && !dependency.behavior.is_optional_peer() {
+                        builder.report_peer(parent_pkg_id, dep_id, pkg_id);
+                    }
+                }
 
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
@@ -906,9 +933,17 @@ impl Tree {
                         })?;
                     }
                 }
-                HoistDependencyResult::Rebind(res_id) => {
-                    debug_assert!(dependency.behavior.is_optional_peer());
-                    builder.resolutions[dep_id as usize] = res_id;
+                HoistDependencyResult::Dedupe(res_id) => {
+                    debug_assert!(dependency.behavior.is_peer());
+                    if dependency.behavior.is_optional_peer() {
+                        // An optional peer's binding follows the dedupe, but only in the tree
+                        // being saved.
+                        if METHOD == BuilderMethod::Resolvable {
+                            builder.resolutions[dep_id as usize] = res_id;
+                        }
+                    } else {
+                        builder.report_peer(parent_pkg_id, dep_id, res_id);
+                    }
                 }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
@@ -931,6 +966,9 @@ impl Tree {
                         builder.list.items_tree_mut()[dest.id as usize]
                             .dependencies
                             .len += 1;
+                    }
+                    if dependency.behavior.is_peer() && !dependency.behavior.is_optional_peer() {
+                        builder.report_peer(parent_pkg_id, dep_id, pkg_id);
                     }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
@@ -1027,6 +1065,9 @@ impl Tree {
 
             if input_dep_range.contains(dep_id) {
                 // same package lists this name in another dependency group
+                if dependency.behavior.is_peer() && !dependency.behavior.is_optional_peer() {
+                    return HoistDependencyResult::Dedupe(res_id); // 1
+                }
                 return HoistDependencyResult::Hoisted; // 1
             }
 
@@ -1034,16 +1075,6 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // An optional peer's binding follows the dedupe, but only in the tree being saved.
-                let dedupe = || {
-                    if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
-                    {
-                        HoistDependencyResult::Rebind(res_id)
-                    } else {
-                        HoistDependencyResult::Hoisted
-                    }
-                };
-
                 let peer_range: &crate::dependency::Version = builder
                     .lockfile()
                     .catalogs
@@ -1055,15 +1086,15 @@ impl Tree {
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {
-                        return dedupe(); // 1
+                        return HoistDependencyResult::Dedupe(res_id); // 1
                     }
                 }
 
                 // Root dependencies are manually chosen by the user. Allow them
-                // to hoist other peers even if they don't satisfy the version
+                // to hoist other peers even if they don't satisfy the version;
+                // the tree being installed reports the mismatch (`Builder::report_peer`).
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
-                    // TODO: warning about peer dependency version mismatch
-                    return dedupe(); // 1
+                    return HoistDependencyResult::Dedupe(res_id); // 1
                 }
             }
 

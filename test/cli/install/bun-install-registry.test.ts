@@ -1,8 +1,9 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { copyFileSync, mkdirSync, realpathSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { createRequire } from "module";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -65,6 +66,14 @@ beforeEach(async () => {
 
 function registryUrl() {
   return registry.registryUrl();
+}
+
+/** The `incorrect peer dependency` lines of an install's stderr, sorted (their order follows the tree walk). */
+function peerWarnings(stderr: string): string[] {
+  return stderr
+    .split(/\r?\n/)
+    .filter(line => line.includes("incorrect peer dependency"))
+    .sort();
 }
 
 /**
@@ -4256,6 +4265,11 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
+    // The resolver does not run again for peer-deps-fixed, but the tree now serves its peer from
+    // the root's 2.0.0, and the linker reports that.
+    expect(peerWarnings(err)).toEqual([
+      `warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`,
+    ]);
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -4380,7 +4394,11 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).toContain("incorrect peer dependency");
+    // One line, naming the dependent and its range (the resolver alone used to print
+    // `incorrect peer dependency "no-deps@2.0.0"` with neither).
+    expect(peerWarnings(err)).toEqual([
+      `warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`,
+    ]);
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -4432,6 +4450,7 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
+    expect(peerWarnings(err)).toEqual([]);
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -4456,6 +4475,150 @@ describe("hoisting", async () => {
       },
     } as any);
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+  });
+
+  // The linker that lays out node_modules decides which copy of a peer a package resolves, so it
+  // is the one that checks the peer's range: on every install, for both linkers, naming the
+  // dependent (#7403). The cases below get the same report from either linker.
+  describe.each(["hoisted", "isolated"] as const)("peer a dependent cannot resolve in range (%s linker)", linker => {
+    async function install(dir: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker", linker, ...args],
+        cwd: dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return { out, err };
+    }
+
+    /** The version of `no-deps` that `dependent` loads at runtime, resolved from its real directory. */
+    async function noDepsSeenBy(dir: string, dependent: string): Promise<string> {
+      const from = realpathSync(join(dir, "node_modules", dependent, "package.json"));
+      return (await file(createRequire(from).resolve("no-deps/package.json")).json()).version;
+    }
+
+    test("a satisfying copy nested elsewhere does not hide that the dependent gets the root's copy", async () => {
+      // one-fixed-dep nests no-deps@1.0.0, which satisfies peer-deps-fixed's `^1.0.0`, but
+      // peer-deps-fixed sits next to the root's no-deps@2.0.0 and that is what it loads. The
+      // resolver bound the peer to the nested 1.0.0 and said nothing.
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+        }),
+      );
+
+      const expected = [`warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`];
+      expect(peerWarnings((await install(packageDir)).err)).toEqual(expected);
+      expect(await noDepsSeenBy(packageDir, "peer-deps-fixed")).toBe("2.0.0");
+      expect(await noDepsSeenBy(packageDir, "one-fixed-dep")).toBe("1.0.0");
+
+      // Nothing is re-resolved on a warm install; the report comes from the layout, every time.
+      expect(peerWarnings((await install(packageDir)).err)).toEqual(expected);
+      expect(peerWarnings((await install(packageDir, "--frozen-lockfile")).err)).toEqual(expected);
+    });
+
+    test("no report when the copy the dependent resolves is in range", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" } }),
+      );
+
+      expect(peerWarnings((await install(packageDir)).err)).toEqual([]);
+      expect(await noDepsSeenBy(packageDir, "peer-deps-fixed")).toBe("1.0.0");
+    });
+
+    test("one line per dependent, not one anonymous line per edge", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "no-deps": "2.0.0", "1-peer-dep-a": "1.0.0", "1-peer-dep-b": "1.0.0" },
+        }),
+      );
+
+      expect(peerWarnings((await install(packageDir)).err)).toEqual([
+        `warn: incorrect peer dependency "no-deps@2.0.0" (1-peer-dep-a@1.0.0 requires "1.0.0")`,
+        `warn: incorrect peer dependency "no-deps@2.0.0" (1-peer-dep-b@1.0.0 requires "1.0.0")`,
+      ]);
+    });
+
+    test("the range an override sets is the one enforced", async () => {
+      // A flat override rewrites every `no-deps` edge, the peer included, so it is satisfied...
+      {
+        const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+        await write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+            overrides: { "no-deps": "2.0.0" },
+          }),
+        );
+        expect(peerWarnings((await install(packageDir)).err)).toEqual([]);
+        expect(await noDepsSeenBy(packageDir, "peer-deps-fixed")).toBe("2.0.0");
+      }
+      // ...and a scoped one that narrows the peer is reported against the narrowed range.
+      {
+        const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+        await write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: { "no-deps": "1.1.0", "peer-deps-fixed": "1.0.0" },
+            overrides: { "peer-deps-fixed": { "no-deps": "1.0.0" } },
+          }),
+        );
+        expect(peerWarnings((await install(packageDir)).err)).toEqual([
+          `warn: incorrect peer dependency "no-deps@1.1.0" (peer-deps-fixed@1.0.0 requires "1.0.0" by override)`,
+        ]);
+        expect(await noDepsSeenBy(packageDir, "peer-deps-fixed")).toBe("1.1.0");
+      }
+    });
+
+    test("workspace and root dependents are named by what they are", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "mono",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "2.0.0" },
+            peerDependencies: { "no-deps": "^1.0.0" },
+          }),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            version: "1.0.0",
+            dependencies: { "peer-deps-fixed": "1.0.0" },
+            peerDependencies: { "no-deps": "1.0.0" },
+          }),
+        },
+      });
+
+      expect(peerWarnings((await install(packageDir)).err)).toEqual([
+        `warn: incorrect peer dependency "no-deps@2.0.0" (mono requires "^1.0.0")`,
+        `warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`,
+        `warn: incorrect peer dependency "no-deps@2.0.0" (pkg1@workspace:packages/pkg1 requires "1.0.0")`,
+      ]);
+    });
+
+    test("--omit=peer leaves peer edges out of the install, so they are not checked", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } }),
+      );
+      expect(peerWarnings((await install(packageDir, "--omit=peer")).err)).toEqual([]);
+    });
   });
 
   describe("devDependencies", () => {

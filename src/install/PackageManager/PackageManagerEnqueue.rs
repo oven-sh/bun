@@ -2538,30 +2538,13 @@ fn get_or_put_resolved_package(
                             }));
                         }
 
-                        let res_tag = resolutions[existing_id as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package = this.lockfile.packages.get(existing_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
+                        // Nothing satisfies the range: bind the copy that exists anyway. The
+                        // linker reports the mismatch against the copy it actually serves
+                        // (`Lockfile::warn_if_peer_out_of_range`), which may be a different one.
+                        if peer_binds_out_of_range(
+                            resolutions[existing_id as usize].tag,
+                            version.tag,
+                        ) {
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -2587,32 +2570,8 @@ fn get_or_put_resolved_package(
                     }
 
                     if (list[0] as usize) < resolutions.len() {
-                        let res_tag = resolutions[list[0] as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
+                        if peer_binds_out_of_range(resolutions[list[0] as usize].tag, version.tag) {
                             let existing_package_id = list[0];
-                            let existing_package =
-                                this.lockfile.packages.get(existing_package_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
                             success_fn(this, dependency_id, list[0]);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -3145,6 +3104,17 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     resolution.satisfies_dependency_version(dependency, buf, buf)
+}
+
+/// A peer nothing in the lockfile satisfies still binds to an existing copy of the same kind
+/// instead of pulling in its own version.
+fn peer_binds_out_of_range(existing: ResolutionTag, range: dependency::version::Tag) -> bool {
+    matches!(
+        (existing, range),
+        (ResolutionTag::Npm, dependency::version::Tag::Npm)
+            | (ResolutionTag::Git, dependency::version::Tag::Git)
+            | (ResolutionTag::Github, dependency::version::Tag::Github)
+    )
 }
 
 fn patched_package_satisfying(

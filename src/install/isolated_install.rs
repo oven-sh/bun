@@ -398,6 +398,10 @@ pub(crate) fn build_store(
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
+    // A package is visited once per peer context, so the same edge can resolve the same way many
+    // times; each distinct `(peer edge, resolved package)` is range-checked once.
+    let mut reported_peers: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
         'check_cycle: {
@@ -745,24 +749,8 @@ pub(crate) fn build_store(
                             continue;
                         }
 
-                        let res = &pkg_resolutions[ids.pkg_id as usize];
-
-                        if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
-                        {
-                            // TODO: print warning for this? we don't have a version
-                            // to compare to say if this satisfies or not.
-                            break 'resolved_pkg_id (ids.pkg_id, false);
-                        }
-
-                        // SAFETY: tag was checked == .Npm directly above for both
-                        // `peer_dep.version` and `res`.
-                        let peer_dep_version = &peer_dep.version.npm().version;
-                        let res_version = &res.npm().version;
-
-                        if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
-                            // TODO: add warning!
-                        }
-
+                        // The nearest ancestor that provides the name wins whether or not its
+                        // version is in range; the range is checked once the peer is resolved.
                         break 'resolved_pkg_id (ids.pkg_id, false);
                     }
 
@@ -780,8 +768,6 @@ pub(crate) fn build_store(
                         if !ids.auto_installed {
                             // The resolution was found here or above. Choose the same
                             // peer resolution. No need to mark this node or above.
-
-                            // TODO: add warning if not satisfies()!
                             break 'resolved_pkg_id (ids.pkg_id, false);
                         }
 
@@ -825,6 +811,22 @@ pub(crate) fn build_store(
                 // these are optional peers that failed to find any dependency with a matching
                 // name. they are completely excluded
                 continue;
+            }
+
+            if packages_to_install.is_none()
+                && !dependencies[peer_dep_id as usize]
+                    .behavior
+                    .is_optional_peer()
+                && reported_peers
+                    .insert((peer_dep_id, resolved_pkg_id), ())
+                    .is_none()
+            {
+                lockfile.warn_if_peer_out_of_range(
+                    manager.log_mut(),
+                    entry.pkg_id,
+                    peer_dep_id,
+                    resolved_pkg_id,
+                );
             }
 
             for &visited_parent_id in &visited_parent_node_ids {

@@ -865,7 +865,8 @@ describe("@types/bun integration test", () => {
         {
           code: 2741,
           line: "24154.ts:11:3",
-          message: "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
+          message:
+            "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
         },
         {
           code: 2769,

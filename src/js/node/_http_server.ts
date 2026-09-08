@@ -234,9 +234,8 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
-// Node's https.Server coerces `requestCert` to a boolean and defaults
-// `rejectUnauthorized` to true; unlike a client it never falls back to
-// $NODE_TLS_REJECT_UNAUTHORIZED. Neither is read unless `requestCert` is set.
+// Node's https.Server defaults `rejectUnauthorized` to true and never reads
+// $NODE_TLS_REJECT_UNAUTHORIZED, so set it explicitly before the native default kicks in.
 function normalizeServerTls(tls) {
   tls.requestCert = !!tls.requestCert;
   tls.rejectUnauthorized = tls.rejectUnauthorized !== false;

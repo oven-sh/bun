@@ -559,10 +559,11 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
-/* 1 when this SSL_CTX's verification store holds user-provided CAs (the
- * ca/caFile options or a later addCACert). A client attach must not replace
- * such a store with the process-shared default roots. */
-int us_ssl_ctx_has_user_ca(struct ssl_ctx_st *ctx);
+/* Client-side per-SSL verify setup for a CTX whose verify mode is NONE:
+ * VERIFY_PEER on this SSL only, plus the shared default roots unless the CTX
+ * holds user CAs. Called by us_internal_ssl_attach and by SSL owners without
+ * a us_socket_t (TLS over a duplex). */
+void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
  * the parked new-session/keylog queues, then drain them with the pop calls
  * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry

@@ -5369,6 +5369,10 @@ impl NodeFS {
 
             if args.mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
+                if !args.mode.shouldnt_overwrite() {
+                    // clonefile() will fail if it already exists
+                    let _ = Syscall::unlink(dest);
+                }
                 return Maybe::<ret::CopyFile>::errno_sys_p(
                     bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::copyfile,
@@ -8981,6 +8985,10 @@ impl NodeFS {
         {
             if mode.is_force_clone() {
                 // https://www.manpagez.com/man/2/clonefile/
+                if !mode.shouldnt_overwrite() {
+                    // clonefile() will fail if it already exists
+                    let _ = Syscall::unlink(dest);
+                }
                 return Maybe::<ret::CopyFile>::errno_sys_p(
                     bun_sys::c::clonefile_rc(src, dest, 0),
                     sys::Tag::clonefile,

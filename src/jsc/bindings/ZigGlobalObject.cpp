@@ -928,6 +928,9 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
+    // A node:vm context is not a Zig::GlobalObject; defaultGlobalObject() maps it to
+    // the thread's global, the same one promiseRejectionTrackerForNodeVM reports to.
+    shadow->m_shadowRealmHost.set(vm, shadow, defaultGlobalObject(globalObject)->hostGlobal());
 
     return shadow;
 }
@@ -1089,7 +1092,9 @@ extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
-    auto* globalObj = static_cast<GlobalObject*>(obj);
+    // JSC reports a promise to its own realm's global. A ShadowRealm's promises go on
+    // the list of the global that created the realm, the one the event loop drains.
+    auto* globalObj = static_cast<GlobalObject*>(obj)->hostGlobal();
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:

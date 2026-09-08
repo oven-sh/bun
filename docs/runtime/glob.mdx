@@ -33,8 +33,8 @@ The `Glob` class implements the following interface:
 
 ```ts
 class Glob {
-  scan(root: string | URL | ScanOptions): AsyncIterable<string>;
-  scanSync(root: string | URL | ScanOptions): Iterable<string>;
+  scan(root?: string | URL | ScanOptions): AsyncIterable<string>;
+  scanSync(root?: string | URL | ScanOptions): Iterable<string>;
 
   match(path: string): boolean;
 }

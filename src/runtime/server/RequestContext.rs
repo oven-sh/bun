@@ -2564,10 +2564,13 @@ where
         let body_decides_framing = {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
-            !matches!(
-                body_value,
-                Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
-            )
+            // A used or errored body reaches `error()`, as it does for GET.
+            if matches!(body_value, Body::Value::Used | Body::Value::Error(_)) {
+                let js_err = Self::take_unsendable_body_error(body_value, global_this);
+                this.run_error_handler(js_err);
+                return;
+            }
+            !matches!(body_value, Body::Value::Null | Body::Value::Empty)
         };
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
         // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
@@ -2687,7 +2690,8 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+            // `Used` and `Error` went to `error()` above.
+            Body::Value::Null | Body::Value::Empty | Body::Value::Used | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
@@ -3099,6 +3103,29 @@ where
         true
     }
 
+    /// The `error()` argument for a body that cannot be sent. An errored body
+    /// yields its own error. A used one, usually the same Response object
+    /// returned for a second request, is an error too, not a silent empty 200.
+    fn take_unsendable_body_error(
+        value: &mut Body::Value,
+        global_this: &JSGlobalObject,
+    ) -> JSValue {
+        debug_assert!(matches!(value, Body::Value::Error(_) | Body::Value::Used));
+        if let Body::Value::Error(err_ref) = value {
+            let js_err = err_ref.to_js(global_this);
+            let _ = value.use_();
+            return js_err;
+        }
+        global_this
+            .err(
+                jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!(
+                    "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                ),
+            )
+            .to_js()
+    }
+
     pub(crate) fn do_render_with_body(
         &self,
         value: *mut Body::Value,
@@ -3116,30 +3143,11 @@ where
         value.to_blob_if_possible();
         let global_this = this.server().global_this();
         match value {
-            Body::Value::Error(err_ref) => {
-                let js_err = err_ref.to_js(global_this);
-                let _ = value.use_();
+            Body::Value::Error(_) | Body::Value::Used => {
+                let js_err = Self::take_unsendable_body_error(value, global_this);
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                this.run_error_handler(js_err);
-                return;
-            }
-            // The handler returned a Response whose body was already used,
-            // usually the same Response object returned for a second request.
-            // A disturbed body is an error, not a silent empty 200.
-            Body::Value::Used => {
-                if this.is_aborted_or_ended() {
-                    return;
-                }
-                let js_err = global_this
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!(
-                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
-                        ),
-                    )
-                    .to_js();
                 this.run_error_handler(js_err);
                 return;
             }

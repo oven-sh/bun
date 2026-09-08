@@ -16,10 +16,8 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
-    /// Reject the JavaScript lexical forms that `JSON.parse` rejects: single-quoted strings,
-    /// `0x10` / `010` / `1_000` / `.5` / `5.` / `- 5` numbers, `\x41` / `\v` escapes,
-    /// `\u`-escaped keywords, and whitespace other than space, tab, `\n` and `\r`.
-    /// Comments and trailing commas keep their own flags.
+    /// `JSON.parse` token grammar: no single quotes, JS-only number forms (`0x10`, `010`, `1_000`,
+    /// `.5`, `5.`, `- 5`) or escapes, escaped keywords, or Unicode whitespace. Comments keep their flag.
     pub strict: bool,
     pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
@@ -336,9 +334,8 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
-/// Parse exactly what `JSON.parse` accepts into the classic `E::Object` / `E::Array` AST.
-/// Unlike [`parse_utf8`], this rejects single-quoted strings, JavaScript number forms,
-/// content after the root value, and an empty document.
+/// Exactly what `JSON.parse` accepts ([`JSONOptions::strict`], nothing after the root value, not
+/// empty) into the classic `E::Object` / `E::Array` AST.
 pub fn parse_strict(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

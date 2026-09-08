@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {
@@ -1415,4 +1416,95 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
     for (let i = 0; i < 200 && state === "pending"; i++) state = await readState();
     expect(state).toBe("rejected: AbortError: The connection was closed.");
   });
+});
+
+// After `clone()` the body points at a tee branch instead of the native byte
+// stream. When the peer goes away mid-body, a read parked on either branch must
+// reject like a read on an un-cloned body does. The original's branch used to be
+// cancelled instead of errored, so its reader ended with `{ done: true }` on a
+// truncated body.
+describe("clone() of a body whose peer disconnects mid-stream", () => {
+  const announced = 64 * 1024;
+  const sent = 16 * 1024;
+  const payload = Buffer.alloc(sent, "a");
+
+  async function drain(body: ReadableStream<Uint8Array>, onBytes: (received: number) => void) {
+    const reader = body.getReader();
+    let received = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return { received, outcome: "done" };
+        received += value.byteLength;
+        onBytes(received);
+      }
+    } catch (e: any) {
+      return { received, outcome: "rejected", error: `${e?.name}: ${e?.message}` };
+    }
+  }
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects instead of ending early",
+    async side => {
+      const partial = Promise.withResolvers<void>();
+      const result = Promise.withResolvers<Awaited<ReturnType<typeof drain>>>();
+      await using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        async fetch(req) {
+          const clone = req.clone();
+          const body = (side === "original" ? req : clone).body!;
+          result.resolve(await drain(body, received => received >= sent && partial.resolve()));
+          return new Response("k");
+        },
+      });
+      const client = net.connect(server.port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write(
+        `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\nContent-Length: ${announced}\r\n\r\n`,
+      );
+      client.write(payload);
+      // The handler holds every byte that was sent; now the client goes away.
+      await partial.promise;
+      client.destroy();
+      expect(await result.promise).toEqual({
+        received: sent,
+        outcome: "rejected",
+        error: "AbortError: The connection was closed.",
+      });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "fetch(): a reader on the %s response rejects instead of ending early",
+    async side => {
+      const hangup = Promise.withResolvers<void>();
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${announced}\r\n\r\n`,
+          );
+          socket.write(payload);
+          hangup.promise.then(() => socket.destroy());
+        });
+      });
+      const listening = Promise.withResolvers<void>();
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      try {
+        const res = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+        const clone = res.clone();
+        const body = (side === "original" ? res : clone).body!;
+        const result = await drain(body, received => received >= sent && hangup.resolve());
+        expect(result).toEqual({
+          received: sent,
+          outcome: "rejected",
+          error: expect.stringContaining("The socket connection was closed unexpectedly"),
+        });
+      } finally {
+        server.close();
+      }
+    },
+  );
 });

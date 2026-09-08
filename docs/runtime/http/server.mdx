@@ -46,6 +46,46 @@ const server = Bun.serve({
 console.log(`Server running at ${server.url}`);
 ```
 
+### Splitting routes across files
+
+The `routes` object is just a plain object, so define route groups in separate modules and spread them together:
+
+```ts title="users.ts" icon="/icons/typescript.svg"
+export const userRoutes = {
+  "/users/:id": (req: BunRequest<"/users/:id">) => {
+    return new Response(`Hello User ${req.params.id}!`);
+  },
+};
+```
+
+```ts title="posts.ts" icon="/icons/typescript.svg"
+export const postRoutes = {
+  "/api/posts": {
+    GET: () => new Response("List posts"),
+    POST: async (req: Request) => {
+      const body = await req.json();
+      return Response.json({ created: true, ...body });
+    },
+  },
+};
+```
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { userRoutes } from "./users";
+import { postRoutes } from "./posts";
+
+const server = Bun.serve({
+  routes: {
+    ...userRoutes,
+    ...postRoutes,
+  },
+
+  fetch(req) {
+    return new Response("Not Found", { status: 404 });
+  },
+});
+```
+
 ---
 
 ## HTML imports

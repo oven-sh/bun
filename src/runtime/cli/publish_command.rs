@@ -2109,7 +2109,7 @@ impl PublishError {
     }
 }
 
-/// `url.href` with nothing before its last `@`, no `?query` or `#fragment`, and one trailing slash.
+/// `url.href` without userinfo, `?query` or `#fragment`, and with one trailing slash.
 fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     fn after_last_at(s: &[u8]) -> &[u8] {
         strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
@@ -2123,14 +2123,13 @@ fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     } else {
         0
     };
-    let rest = after_last_at(href);
-    // When the last `@` sits inside the unvalidated scheme, `rest` starts at the real `scheme://`.
-    let at_was_in_authority = href.len() - rest.len() > authority_start;
-    let scheme: &[u8] = if at_was_in_authority {
-        after_last_at(&href[..authority_start])
-    } else {
-        b""
-    };
+    let authority_end = authority_start
+        + strings::index_of_char_usize(&href[authority_start..], b'/')
+            .unwrap_or(href.len() - authority_start);
+    // `URL::parse` does not validate the scheme, so that slice can hold a `user:password@` too.
+    let scheme = after_last_at(&href[..authority_start]);
+    let host = after_last_at(&href[authority_start..authority_end]);
+    let rest = &href[authority_end - host.len()..];
     let rest = &rest[..strings::index_of_any(rest, b"?#").unwrap_or(rest.len())];
     let trimmed = strings::without_trailing_slash(rest);
 

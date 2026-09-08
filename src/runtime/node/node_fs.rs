@@ -5,7 +5,7 @@
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
@@ -3554,7 +3554,8 @@ pub mod args {
                 // One isatty() per distinct fd while the window is open (<= BUN_STARTUP_JIT_DEFERRAL_MS), none after.
                 #[cfg(unix)]
                 {
-                    static LAST_NON_TTY_FD: AtomicI32 = AtomicI32::new(-1);
+                    static LAST_NON_TTY_FD: core::sync::atomic::AtomicI32 =
+                        core::sync::atomic::AtomicI32::new(-1);
                     let native = fd.native();
                     if LAST_NON_TTY_FD.load(Ordering::Relaxed) != native {
                         if sys::isatty(fd) {

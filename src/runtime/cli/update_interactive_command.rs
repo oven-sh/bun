@@ -863,9 +863,7 @@ impl UpdateInteractiveCommand {
                 manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
 
             let scope = manager.options.scope_for_package_name(package_name).clone();
-            // Snapshot for `OutdatedPackage.uses_default_registry` (see
-            // field comment) — cannot be deferred to render time, since a
-            // stored manager back-pointer cannot be soundly aliased.
+            // Snapshot now; see the `uses_default_registry` field comment.
             let uses_default_registry = global_uses_default_registry
                 && manager.options.scope_for_package_name(name_slice).url_hash == default_url_hash;
             let mut expired = false;
@@ -886,15 +884,13 @@ impl UpdateInteractiveCommand {
                 continue;
             };
 
-            // In interactive mode, show the constrained update version as "Target"
-            // but always include packages (don't filter out breaking changes)
+            // "Target" is the in-range update; a row whose only newer version is "Latest" still shows.
             let update_version = declared
                 .find_update(row, manifest, min_age_ms, excludes)
                 .unwrap()
                 .unwrap_or(latest);
 
-            // Skip only if both the constrained update AND the latest version are the same as current
-            // This ensures we show packages where latest is newer even if constrained update isn't
+            // Skip only when both "Target" and "Latest" are the installed version.
             let current_ver = resolution.npm().version;
             let update_ver = update_version.version;
             let latest_ver = latest.version;

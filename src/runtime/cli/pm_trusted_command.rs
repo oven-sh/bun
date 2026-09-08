@@ -594,8 +594,7 @@ impl TrustCommand {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
 
-        // Save what bun.lock recorded plus the names whose scripts just ran. A name that
-        // package.json lists but whose scripts never ran stays unrecorded.
+        // Record only what bun.lock had plus the scripts that just ran.
         // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
         unsafe {
             (*pm_raw).lockfile.trusted_dependencies = Some(recorded.unwrap_or_default());

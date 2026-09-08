@@ -38,8 +38,9 @@ test.concurrent("long `+` chain of inlined enum members folds in linear memory",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: expect.stringMatching(/^\{"delta_mb":/),
+    stderr: "",
     exitCode: 0,
   });
   const { delta_mb } = JSON.parse(stdout);
@@ -84,8 +85,9 @@ test.concurrent("folding onto an inlined enum member leaves the member's own val
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: expect.stringMatching(/^\{"out":/),
+    stderr: "",
     exitCode: 0,
   });
   const { out, captured } = JSON.parse(stdout) as { out: string; captured: unknown[][] };

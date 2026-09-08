@@ -2146,6 +2146,33 @@ export default class {
 })(E ||= {})`,
       );
 
+      // A value named like the enum (tsc keeps `foo` here, esbuild prints `_foo`).
+      ts.expectPrinted_(
+        `enum foo { foo = 123, bar = foo }`,
+        `var foo;
+((_foo) => {
+  _foo[_foo["foo"] = 123] = "foo";
+  _foo[_foo["bar"] = 123] = "bar";
+})(foo ||= {})`,
+      );
+
+      // A renamed inner argument takes `_E`, so the outer one takes `__E`.
+      ts.expectPrinted_(
+        `namespace E {
+  export let v = a;
+  export enum E { A = v, B = ((E) => E + 4)(1) }
+}`,
+        `var E;
+((__E) => {
+  __E.v = a;
+  let E;
+  ((_E) => {
+    _E[_E["A"] = __E.v] = "A";
+    _E[_E["B"] = ((E) => E + 4)(1)] = "B";
+  })(E = __E.E ||= {});
+})(E ||= {})`,
+      );
+
       // No shadowing binding: the argument keeps the namespace's name.
       ts.expectPrinted_(
         `namespace N {
@@ -2178,7 +2205,8 @@ export default class {
             export const arrow = (N: any) => v;
           }
           enum E { A = one(), B = ((E: any) => A + 1)({ A: 100 }) }
-          console.log(JSON.stringify([N.param({ v: 9 }), N.local(), N.caught(), N.klass(), N.arrow({ v: 6 }), E.B]));`,
+          namespace O { export let v = one(); export enum O { A = v, B = ((O: any) => O + 4)(1) } }
+          console.log(JSON.stringify([N.param({ v: 9 }), N.local(), N.caught(), N.klass(), N.arrow({ v: 6 }), E.B, O.O.A, O.O.B]));`,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -2188,7 +2216,7 @@ export default class {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
-      expect(stdout).toBe("[1,1,1,1,1,2]\n");
+      expect(stdout).toBe("[1,1,1,1,1,2,1,5]\n");
       expect(exitCode).toBe(0);
     });
 

@@ -16,7 +16,6 @@ use bun_ast::{
     self as js_ast, B, E, EnumValue, Expr, ExprNodeIndex, ExprNodeList, G, LocRef, S, Stmt,
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
-use bun_core::strings;
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
@@ -639,50 +638,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
-            // Avoid a collision with the enum closure argument variable if the
-            // enum exports a symbol with the same name as the enum itself:
+            // The enum's name inside the body resolves to the closure argument:
             //
-            //   enum foo {
-            //     foo = 123,
-            //     bar = foo,
-            //   }
+            //   enum foo { bar = foo as any }
             //
-            // TypeScript generates the following code in this case:
+            // unless a value has that name, which then wins, as in tsc:
             //
-            //   var foo;
-            //   (function (foo) {
-            //     foo[foo["foo"] = 123] = "foo";
-            //     foo[foo["bar"] = 123] = "bar";
-            //   })(foo || (foo = {}));
+            //   enum foo { foo = 123, bar = foo }
             //
-            // Whereas in this case:
-            //
-            //   enum foo {
-            //     bar = foo as any,
-            //   }
-            //
-            // TypeScript generates the following code:
-            //
-            //   var foo;
-            //   (function (foo) {
-            //     foo[foo["bar"] = foo] = "bar";
-            //   })(foo || (foo = {}));
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. For external-facing things the renamer will avoid
-                // collisions automatically so this isn't important for correctness.
-                // PERF: strings::cat heap-allocates — could allocate into p.arena.
-                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-                // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
+            arg_ref = if p.current_scope().members.contains_key(name_text) {
+                p.new_symbol(SymbolKind::Hoisted, name_text)
             } else {
-                arg_ref = p
-                    .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
-                    .expect("unreachable");
-            }
+                p.declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
+                    .expect("unreachable")
+            };
+            // Listed in `generated` either way, like the namespace closure
+            // argument, so that `rename_namespace_arg_to_avoid_collisions`
+            // finds it by its current name. That pass renames it to `_foo` in
+            // the second case above.
+            VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             p.ref_to_ts_namespace_member
                 .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));
             ts_namespace.arg_ref = arg_ref;

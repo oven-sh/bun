@@ -381,6 +381,32 @@ for (const { body, fn } of bodyTypes) {
           expect(fn(file).body).toBeInstanceOf(ReadableStream);
           expect(await file.text()).toBe(expected);
         });
+
+        // clone() stats the file to learn whether it can be read twice. That
+        // cached stat (a regular file, st_size 0) must not turn the buffered
+        // read of either copy, or of the Bun.file() itself, into "".
+        test("clone() reads the whole file on both copies", async () => {
+          const expected = await Bun.file(path).text();
+          const file = Bun.file(path);
+          const original = fn(file);
+          const clone = original.clone();
+          const streamed = fn(Bun.file(path));
+          expect(streamed.body).toBeInstanceOf(ReadableStream);
+          const streamedClone = streamed.clone();
+          expect({
+            clone: await clone.text(),
+            original: await original.text(),
+            "clone after .body": await streamedClone.text(),
+            "original after .body": await streamed.text(),
+            "Bun.file() afterwards": await file.text(),
+          }).toEqual({
+            clone: expected,
+            original: expected,
+            "clone after .body": expected,
+            "original after .body": expected,
+            "Bun.file() afterwards": expected,
+          });
+        });
       });
 
       // An S3 object has no local size either, so the body stream must fetch

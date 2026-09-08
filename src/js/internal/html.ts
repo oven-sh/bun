@@ -221,10 +221,7 @@ yourself with Bun.serve().
   );
   const enableANSIColors = Bun.enableANSIColors;
 
-  // A port named by a flag or an environment variable stays fixed: a proxy,
-  // a test runner or a container mapping may have been given the same number.
-  // Only a default port (3000, or `serve.port` in bunfig.toml) moves to the
-  // next free one when it is taken.
+  // A port somebody asked for stays fixed. Only a default (3000, bunfig `serve.port`) may move.
   function portIsPinned(refusedPort: number) {
     return (
       // --port, --host=<host>:<port> after the entry point
@@ -249,8 +246,7 @@ yourself with Bun.serve().
 
       hostname,
 
-      // When undefined, Bun.serve() picks the port: BUN_PORT/PORT/NODE_PORT,
-      // `bun --port`, `serve.port` in bunfig.toml, else 3000.
+      // undefined: Bun.serve() resolves BUN_PORT/PORT/NODE_PORT, `bun --port`, bunfig `serve.port`, else 3000
       port,
 
       fetch(_req: Request) {
@@ -287,8 +283,7 @@ yourself with Bun.serve().
       }
 
       console.error(enableANSIColors ? `\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m ${message}` : `error: ${message}`);
-      // Not process.exit(): under --watch/--hot the process stays up and the
-      // next reload tries again, like any other entry point that fails.
+      // No process.exit(): --watch/--hot keep the process up for the next reload.
       process.exitCode = 1;
       return undefined;
     }

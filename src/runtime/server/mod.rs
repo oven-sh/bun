@@ -1991,8 +1991,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 port,
                 hostname: _hostname,
             } => {
-                // Same own property as node's listen errors, so a caller that let
-                // Bun.serve() pick the port can tell which one was refused.
+                // `err.port`, as on node's listen errors.
                 let with_port = |error_instance: JSValue| {
                     if *port != 0 {
                         error_instance.put(

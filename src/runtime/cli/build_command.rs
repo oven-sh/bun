@@ -82,6 +82,24 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
+        // The single-file transpiler behind --no-bundle can only print ESM. For
+        // cjs (also implied by --bytecode), convert each entry point with the
+        // linker instead and mark every import external: one output per input,
+        // nothing inlined, every statement kept. esbuild converts the format of
+        // unbundled files the same way.
+        let no_bundle = ctx.bundler_options.transform_only;
+        let convert_format_only =
+            no_bundle && ctx.bundler_options.output_format == options::Format::Cjs;
+        if convert_format_only {
+            ctx.bundler_options.transform_only = false;
+            ctx.args.external.push(Box::from(b"*".as_slice()));
+        } else if no_bundle && ctx.bundler_options.output_format == options::Format::Iife {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> --format=iife does not support --no-bundle"
+            );
+            Global::exit(1);
+        }
+
         let compile_target = &ctx.bundler_options.compile_target;
 
         if ctx.bundler_options.compile {
@@ -252,13 +270,16 @@ impl BuildCommand {
         if ctx.bundler_options.output_format == options::OutputFormat::InternalBakeDev {
             this_transpiler.options.tree_shaking = false;
         }
+        if convert_format_only {
+            this_transpiler.options.tree_shaking_override = Some(false);
+        }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
-            if ctx.bundler_options.transform_only {
+            if no_bundle {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> --compile does not support --no-bundle"
                 );
@@ -364,7 +385,7 @@ impl BuildCommand {
             }
         }
 
-        if ctx.bundler_options.transform_only {
+        if no_bundle {
             // Check if any entry point is an HTML file
             for entry_point in this_transpiler.options.entry_points.iter() {
                 if strings::has_suffix_comptime(entry_point, b".html") {
@@ -616,7 +637,6 @@ impl BuildCommand {
         let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
-        let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
@@ -1056,7 +1076,7 @@ impl BuildCommand {
             }
 
             if log_ref.errors == 0 {
-                if opt_transform_only {
+                if no_bundle {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",
                         (bun_core::time::nano_timestamp() - cli_start_time())

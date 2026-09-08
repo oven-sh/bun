@@ -799,6 +799,126 @@ describe.concurrent("--no-bundle with --outdir", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/29187
+describe.concurrent("--no-bundle with --format", () => {
+  test("cjs converts each file on its own and keeps every import external", async () => {
+    using dir = tempDir("no-bundle-format-cjs", {
+      "entry.ts": [
+        `import { dep } from "./dep";`,
+        `import { basename } from "node:path";`,
+        `function unused(): number { return 1; }`,
+        `export const x: string = dep + "!";`,
+        `export default function base(p: string) { return basename(p); }`,
+        ``,
+      ].join("\n"),
+      "dep.ts": `export const dep: string = "from-dep-module";\n`,
+      "check.cjs": [
+        `const m = require("./out/entry.js");`,
+        `console.log(JSON.stringify({ x: m.x, base: m.default("/a/b.txt"), esm: m.__esModule }));`,
+        ``,
+      ].join("\n"),
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--format=cjs", "./entry.ts", "./dep.ts", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect(buildStderr).toBe("");
+    expect(buildStdout).toContain("entry.js");
+    expect(buildStdout).toContain("dep.js");
+    expect(buildExitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toContain('require("./dep")');
+    expect(out).toContain('require("node:path")');
+    expect(out).toContain("module.exports");
+    expect(out).toContain("function unused()");
+    // dep.ts is a separate output, not inlined into entry.js
+    expect(out).not.toContain("from-dep-module");
+    expect(out).not.toMatch(/^\s*(import|export)\b/m);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "check.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ x: "from-dep-module!", base: "b.txt", esm: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("--bytecode writes a cjs module and a bytecode cache per entry point", async () => {
+    using dir = tempDir("no-bundle-format-bytecode", {
+      "entry.ts": `import { dep } from "./dep";\nexport const x: string = dep + "!";\nconsole.log(x);\n`,
+      "dep.ts": `export const dep: string = "from-dep-module";\n`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--bytecode", "./entry.ts", "./dep.ts", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "out")).sort()).toEqual([
+      "dep.js",
+      "dep.js.jsc",
+      "entry.js",
+      "entry.js.jsc",
+    ]);
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toStartWith("// @bun @bytecode @bun-cjs");
+    expect(out).toContain('require("./dep")');
+    expect(out).not.toContain("from-dep-module");
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "./out/entry.js"],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stdout).toBe("from-dep-module!\n");
+    expect(stderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+    expect(exitCode).toBe(0);
+  });
+
+  test("iife is rejected instead of printing esm", async () => {
+    using dir = tempDir("no-bundle-format-iife", {
+      "entry.ts": `export const x: number = 1;\n`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--format=iife", "./entry.ts", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).toContain("error: --format=iife does not support --no-bundle");
+    expect(stdout).toBe("");
+    expect(fs.existsSync(path.join(String(dir), "out.js"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+});
+
 test.concurrent("bun build names every input that maps to a shared output path", async () => {
   using dir = tempDir("bundle-outdir-collision", {
     "a.ts": `export const a = 1;\n`,

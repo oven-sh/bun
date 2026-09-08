@@ -2999,8 +2999,9 @@ pub mod bv2_impl {
             this.transpiler.log_mut().clone_line_text = true;
 
             // Bake forbids tree-shaking since every export must always exist in
-            // case a future module starts depending on it. The override is only
-            // set by `Bun.build({ treeShaking })` for tests/debugging.
+            // case a future module starts depending on it. The override is set
+            // by `Bun.build({ treeShaking })` and by `bun build --no-bundle
+            // --format=cjs`, which must keep every statement of the file.
             let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
                 this.transpiler.options.output_format != options::Format::InternalBakeDev,
             );

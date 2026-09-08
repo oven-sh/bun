@@ -489,6 +489,75 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
   });
 });
 
+// An upstream that answers a request and then writes a whole second response
+// that nobody asked for has desynchronized the connection: its count of
+// messages and ours no longer agree. The next request written onto that
+// connection reads the extra response as its own answer. Behind a reverse proxy
+// that is one user's response body delivered to another user, so the connection
+// has to go.
+//
+// The extra response goes out in its own write, after `res.text()` resolved,
+// which means bun read the real response and parked the connection. That order
+// makes the case deterministic. The race where the extra response and the next
+// request cross on the wire is a different case, and it is not testable: the
+// client writes its request while the connection is still clean, and no
+// HTTP/1.1 client can tell the answer that comes back from its own.
+//
+// `second` says whether bun dialed again: "2" means a new connection, "1" means
+// it reused the poisoned one.
+test("fetch drops a pooled connection that received an unsolicited extra response", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      let connections = 0;
+      let idle;
+      const server = net.createServer(sock => {
+        const id = String(++connections);
+        idle = sock;
+        sock.on("error", () => {});
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          let i;
+          while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+            buf = buf.slice(i + 4);
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + id.length + "\\r\\n\\r\\n" + id);
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      const first = await (await fetch(url)).text();
+      idle.write("HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\n\\r\\nEXTRA");
+      // The close is the condition. The deadline only bounds the failing case,
+      // where bun keeps the connection and no close ever arrives.
+      const dropped = await Promise.race([
+        new Promise(r => idle.once("close", () => r(true))),
+        Bun.sleep(3000).then(() => false),
+      ]);
+      const second = await (await fetch(url)).text();
+      console.log(JSON.stringify({ first, dropped, second, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { first: "1", dropped: true, second: "2", connections: 2 },
+    exitCode: 0,
+  });
+});
+
 // Raw HTTP/1.1 server for the redirect tests below, bound to 127.0.0.1 (the
 // address fetch() dials). Every request is answered on the connection it came
 // in on, so `connections` is exactly how many times bun dialed.

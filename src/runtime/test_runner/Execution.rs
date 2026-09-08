@@ -803,8 +803,7 @@ impl Execution {
                 HandleUncaughtExceptionResult::ShowHandledError // todo tests with --todo will still display the error
             }
             (ScopeMode::Failing | ScopeMode::Todo, ErrorSource::Unhandled) => {
-                // Not the callback's outcome, so not inverted, and it overrides a
-                // verdict the inversion already produced.
+                // Never inverted, and it overrides a verdict the inversion already produced.
                 if matches!(sequence.result, Result::Pending | Result::Pass | Result::Todo) {
                     sequence.result = Result::Fail;
                 }

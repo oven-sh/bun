@@ -809,11 +809,9 @@ impl BunTest {
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
         let first_call = !unsafe { core::mem::replace(&mut (*this).called, true) };
-        // Only the first done() reports its error. A repeated call is a no-op (Jest
-        // reports "Expected done to be called once"; Vitest has no done callbacks).
+        // A repeated done() is a no-op (Jest: "Expected done to be called once"; Vitest: no done callbacks).
         if first_call && was_error {
-            // Keyed by the entry this `done` was created for, like a throw or a rejection
-            // from the same callback, rather than by whatever happens to be running now.
+            // Charged to the entry this `done` was created for, like a throw from the same callback.
             // SAFETY: see above; both fields are read before any JS can run.
             let (buntest, owner) = unsafe { ((*this).buntest_weak.upgrade(), (*this).owner) };
             match buntest {
@@ -1554,12 +1552,9 @@ impl RunTestsTask {
 /// `test.failing` / `test.todo` only invert a `Callback` error.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ErrorSource {
-    /// The outcome of the entry's own callback: it threw, the promise it
-    /// returned rejected, or it called `done(err)`.
+    /// The entry's own callback threw, the promise it returned rejected, or it called `done(err)`.
     Callback,
-    /// An uncaught exception or unhandled rejection that landed while the
-    /// entry was active (a timer, a floating promise, something an earlier
-    /// test leaked), or an error from the runner itself.
+    /// An uncaught exception or unhandled rejection while the entry was active, or a runner error.
     Unhandled,
 }
 

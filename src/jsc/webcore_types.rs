@@ -955,16 +955,6 @@ pub mod store {
             &[]
         }
 
-        /// Bump the intrusive refcount.
-        #[inline]
-        pub fn ref_(&self) {
-            // SAFETY: `self` is live; `ref_` only touches the interior-mutable
-            // atomic counter, never mutates through the pointer.
-            unsafe {
-                bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())
-            };
-        }
-
         #[inline]
         pub fn has_one_ref(&self) -> bool {
             self.ref_count.has_one_ref()

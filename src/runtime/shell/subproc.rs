@@ -923,11 +923,15 @@ impl ShellSubprocess {
     /// next to `Bun.spawn` children; `on_process_exit` takes it off again.
     fn register_with_auto_killer(&self) {
         let Some(vm) = self.js_vm() else { return };
-        let Some(handle) = self.process.as_ref() else { return };
+        let Some(handle) = self.process.as_ref() else {
+            return;
+        };
         if handle.has_exited() {
             return;
         }
-        let Some(process) = NonNull::new(handle.as_ptr()) else { return };
+        let Some(process) = NonNull::new(handle.as_ptr()) else {
+            return;
+        };
         // SAFETY: `vm` is the live VM that owns `event_loop`; JS thread only.
         unsafe { (*vm.as_ptr()).on_subprocess_spawn(process) };
     }

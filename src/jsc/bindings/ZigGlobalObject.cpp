@@ -280,9 +280,7 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-// The one JSC::Options::assertOptionsAreCoherent() rule that BUN_JSC_* variables can
-// reach (notifyOptionsChanged() repairs the others). Checked first so it exits as a
-// configuration error instead of CRASH()ing.
+// The assertOptionsAreCoherent() rule that BUN_JSC_* variables can reach; notifyOptionsChanged() repairs the others.
 static ASCIILiteral incoherentJSCOptions()
 {
     using JSC::Options;

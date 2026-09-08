@@ -1370,8 +1370,11 @@ it("addContext() without a servername throws ERR_TLS_REQUIRED_SERVER_NAME synchr
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
   const server: Server = createServer(COMMON_CERT);
   for (const servername of ["", undefined, null]) {
+    // A plain Error, not a TypeError: node registers this code with `Error`.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1850-L1851
     expect(() => server.addContext(servername as any, COMMON_CERT)).toThrow(
       expect.objectContaining({
+        name: "Error",
         code: "ERR_TLS_REQUIRED_SERVER_NAME",
         message: '"servername" is required parameter for Server.addContext',
       }),

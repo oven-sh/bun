@@ -1274,9 +1274,10 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
   test("a read started on the clone rejects when the client disconnects before sending the body", async () => {
     const { server, socket, readState } = await serveCloneReader(true);
     await using _server = server;
+    using _socket = socket;
     // The handler is parked; wait until it has run, then drop the connection.
     let state = await readState();
-    while (state === "handler not reached") state = await readState();
+    for (let i = 0; i < 200 && state === "handler not reached"; i++) state = await readState();
     expect(state).toBe("pending");
     socket.end();
     // The abort is processed on the server's next loop turn; poll with a bound

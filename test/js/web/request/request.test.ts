@@ -112,7 +112,7 @@ describe("RequestInit has no url member", () => {
       "http://a.example/x",
     );
     // An empty-string input does not fall back to init.url.
-    expect(() => new Request("", { url: "http://b.example/y" } as RequestInit)).toThrow();
+    expect(() => new Request("", { url: "http://b.example/y" } as RequestInit)).toThrow("url is required");
   });
 
   test("new Request({ url }, { url }) takes the url from input only", () => {

@@ -959,6 +959,45 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it("is skipped after a fatal unhandled rejection from the last timer", async () => {
+      // The rejection is processed when the timers phase ends (Node's
+      // processTicksAndRejections), so the run is already failing when the loop
+      // is found drained: no 'beforeExit', and 'exit' listeners see code 1.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", c => console.log("exit", c, process.exitCode));
+           setTimeout(() => Promise.reject(new Error("boom")), 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("an async listener's continuation runs, and a throw from it is fatal", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let n = 0;
+           process.on("beforeExit", async () => { if (n++) return; await null; console.log("continued"); throw new Error("late"); });
+           process.on("exit", c => console.log("exit", c));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("continued\nexit 1\n");
+      expect(stderr).toInclude("error: late");
+      expect(exitCode).toBe(1);
+    });
+
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [

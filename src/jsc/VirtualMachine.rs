@@ -405,6 +405,7 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__Process__isExiting(global: &JSGlobalObject) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -702,6 +703,10 @@ impl ExitHandler {
         let _ = jsc::from_js_host_call_generic(global, || {
             Process__dispatchOnBeforeExit(global, exit_code)
         });
+        // Ticks-and-rejections checkpoint for the listeners, before the caller's loop-alive check.
+        if vm.event_loop_mut().drain_microtasks().is_ok() {
+            let _ = global.handle_rejected_promises();
+        }
     }
 }
 
@@ -1675,7 +1680,7 @@ impl VirtualMachine {
                 // code 7). Report it to the parent + arm termination via the
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
-                self.exit_handler.exit_code = 1;
+                self.fail_exit_code();
                 (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
@@ -1709,7 +1714,7 @@ impl VirtualMachine {
             }
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
-            self.exit_handler.exit_code = 1;
+            self.fail_exit_code();
             (self.on_unhandled_rejection)(self, global_object, err);
         }
         // Note: this reset must cover BOTH the FFI call and the
@@ -2224,9 +2229,9 @@ pub struct RuntimeHooks {
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// Separate slot because the body skips `runImminentGCTimer` and falls
+    /// through to `tickWithoutIdle` when idle — folding it into `auto_tick`
+    /// would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
@@ -3863,7 +3868,16 @@ impl VirtualMachine {
             }
         }
         self.unhandled_error_counter += 1;
+        self.fail_exit_code();
         (self.on_unhandled_rejection)(self, global_object, reason);
+    }
+
+    /// Exit code 1, unless 'exit' is already being emitted (Node's `process._exiting` check).
+    fn fail_exit_code(&mut self) {
+        // The VM's own global: the reporting global may be a node:vm context's.
+        if !Bun__Process__isExiting(self.global()) {
+            self.exit_handler.exit_code = 1;
+        }
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

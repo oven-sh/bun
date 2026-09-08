@@ -84,6 +84,28 @@ impl HeadersRef {
             .clone_this(global)?
             .map(|p| unsafe { Self::adopt(p) }))
     }
+
+    /// The `headers` member of a `RequestInit` / `ResponseInit` dictionary: a
+    /// `Headers` object is deep-copied, anything else goes through
+    /// `createFromJS`. Empty headers yield `None` on both paths.
+    pub(crate) fn from_init_value(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
+        if let Some(existing) = FetchHeaders::cast(value) {
+            // `existing` is a live `WebCore::FetchHeaders*` borrowed from the JS
+            // wrapper; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+            let existing = bun_opaque::opaque_deref_mut(existing.as_ptr());
+            if existing.is_empty() {
+                return Ok(None);
+            }
+            // SAFETY: C++ returns a +1 ref or null.
+            return Ok(existing
+                .clone_this(global)?
+                .map(|p| unsafe { Self::adopt(p) }));
+        }
+        Self::create_from_js(global, value)
+    }
 }
 
 impl core::ops::Deref for HeadersRef {
@@ -1190,8 +1212,7 @@ impl Response {
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
 // syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
-// (e.g. Request::construct_into reading `response_init.headers`) keep working;
-// the fields' own drop glue releases `headers` and `status_text`.
+// keep working; the fields' own drop glue releases `headers` and `status_text`.
 pub struct Init {
     pub(crate) headers: Option<HeadersRef>,
     pub(crate) status_code: u16,
@@ -1272,23 +1293,7 @@ impl Init {
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-            // FetchHeaders is a hand-bound opaque, so use its dedicated
-            // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-            if let Some(orig) = FetchHeaders::cast(headers) {
-                // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-                if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
-                }
-            } else {
-                result.headers = HeadersRef::create_from_js(global_this, headers)?;
-            }
+            result.headers = HeadersRef::from_init_value(global_this, headers)?;
         }
 
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {

@@ -1079,9 +1079,6 @@ impl Request {
 
         for &value in values_to_try {
             let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
@@ -1123,11 +1120,10 @@ impl Request {
 
                     if !fields.contains(Fields::Headers) {
                         match request.clone_headers(global_this) {
-                            Ok(Some(headers)) => {
-                                req.headers.set(Some(headers));
+                            Ok(headers) => {
+                                req.headers.set(headers);
                                 fields.insert(Fields::Headers);
                             }
-                            Ok(None) => {}
                             Err(e) => bail!(Err(e)),
                         }
                     }
@@ -1158,18 +1154,15 @@ impl Request {
 
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
                             match headers.clone_this(global_this) {
                                 Ok(h) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.
                                     req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
-                                    fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),
                             }
                         }
+                        fields.insert(Fields::Headers);
                     }
 
                     if !fields.contains(Fields::Url) {
@@ -1297,39 +1290,32 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
-                    Ok(Some(response_init)) => {
-                        let header_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Headers)
-                                {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if header_check {
-                            if let Some(headers) = response_init.headers {
-                                if !fields.contains(Fields::Headers) {
-                                    req.headers.set(Some(headers));
-                                    fields.insert(Fields::Headers);
-                                } else {
-                                    drop(headers); // headers.deref()
-                                }
+            if !fields.contains(Fields::Headers) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::Headers) {
+                    Ok(Some(headers_value)) => {
+                        match HeadersRef::from_init_value(global_this, headers_value) {
+                            Ok(Some(headers)) => {
+                                req.headers.set(Some(headers));
+                                fields.insert(Fields::Headers);
                             }
+                            Ok(None) => {}
+                            Err(e) => bail!(Err(e)),
                         }
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
 
-                        let method_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if method_check {
-                            if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
-                                fields.insert(Fields::Method);
-                            }
+            if !fields.contains(Fields::Method) {
+                match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
+                    Ok(Some(method_value)) => {
+                        match bun_http_jsc::method_jsc::from_js(global_this, method_value) {
+                            Ok(Some(method)) => req.method = method,
+                            Ok(None) => {}
+                            Err(e) => bail!(Err(e)),
                         }
+                        fields.insert(Fields::Method);
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),

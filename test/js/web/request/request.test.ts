@@ -13,6 +13,63 @@ test("undefined args don't throw", () => {
   expect(request.method).toBe("GET");
 });
 
+describe("RequestInit has no ResponseInit members", () => {
+  // `status` / `statusText` belong to ResponseInit. The Request constructor must
+  // not read, coerce, or range-check them.
+  test.each([0, 600, "not a number", Symbol("status")])("status: %p is ignored", status => {
+    const init = { status, statusText: status, method: "POST" } as unknown as RequestInit;
+    const fromUrl = new Request("http://example.com/", init);
+    expect(fromUrl.method).toBe("POST");
+    const fromRequest = new Request(fromUrl, { status, statusText: status } as unknown as RequestInit);
+    expect(fromRequest.method).toBe("POST");
+    const fromObject = new Request({ url: "http://example.com/", status, statusText: status, method: "PUT" } as any);
+    expect(fromObject.method).toBe("PUT");
+  });
+
+  test("init getters: status and statusText are never read, headers and method are read once", () => {
+    const seen: string[] = [];
+    const init = {
+      get status() {
+        seen.push("status");
+        return 0;
+      },
+      get statusText() {
+        seen.push("statusText");
+        return "Nope";
+      },
+      get headers() {
+        seen.push("headers");
+        return { "x-a": "1" };
+      },
+      get method() {
+        seen.push("method");
+        return "PUT";
+      },
+    } as unknown as RequestInit;
+
+    const fromUrl = new Request("http://example.com/", init);
+    expect(fromUrl.method).toBe("PUT");
+    expect([...fromUrl.headers]).toEqual([["x-a", "1"]]);
+    expect(seen.toSorted()).toEqual(["headers", "method"]);
+
+    seen.length = 0;
+    const input = new Request("http://example.com/", { method: "POST", headers: { "x-b": "2" } });
+    const fromRequest = new Request(input, init);
+    expect(fromRequest.method).toBe("PUT");
+    expect([...fromRequest.headers]).toEqual([["x-a", "1"]]);
+    expect(seen.toSorted()).toEqual(["headers", "method"]);
+  });
+
+  test("an init with no method member keeps the input Request's method", () => {
+    const input = new Request("http://example.com/", { method: "POST", headers: { "x-b": "2" } });
+    for (const init of [{}, { method: undefined }, Object.create(null), new Proxy({}, {}), new (class Init {})()]) {
+      const request = new Request(input, init);
+      expect(request.method).toBe("POST");
+      expect([...request.headers]).toEqual([["x-b", "2"]]);
+    }
+  });
+});
+
 test("request can receive undefined signal", async () => {
   const request = new Request("http://example.com/", {
     method: "POST",

@@ -89,6 +89,18 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
 
+void JSNativeStreamSourceAdapter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Handle), "handle"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::PendingView), "pendingView"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Closer), "closer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::DrainValue), "drainValue"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Controller), "controller"_s);
+}
+
 const ClassInfo JSDirectSinkCloseState::s_info = { "DirectSinkCloseState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectSinkCloseState) };
 
 JSDirectSinkCloseState::JSDirectSinkCloseState(VM& vm, Structure* structure)

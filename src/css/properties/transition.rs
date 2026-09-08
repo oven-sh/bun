@@ -337,10 +337,11 @@ mod transition_handler_body {
                     }
                 }
                 Property::Custom(x) => {
-                    // `transition-behavior` has no typed `Property` variant but is
-                    // reset by the `transition` shorthand, so anything buffered must
-                    // be emitted before it to keep it after the shorthand, as written.
-                    if x.name.is_unknown_with_prefix(b"transition-") {
+                    // `transition-behavior` (css-transitions-2) has no typed `Property`
+                    // variant but is reset by the `transition` shorthand, so anything
+                    // buffered must be emitted before it to keep it after a shorthand
+                    // it was written after.
+                    if x.name.is_unknown_any_of(&[b"transition-behavior"]) {
                         self.flush(dest, context);
                     }
                     return false;

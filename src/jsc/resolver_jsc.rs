@@ -29,10 +29,10 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(&BunString::static_("."), global, false)
 }
 
-/// The `<path>` of a `<path>?query` module key. A Windows `\\?\` or `\\.\` device
-/// prefix is path. Keep in sync with `moduleKeyPathLength` (PathInlines.h).
+/// The `<path>` of a `<path>?query` module key. Twin of `moduleKeyPathLength` (PathInlines.h).
 pub fn module_key_without_query(key: &[u8]) -> &[u8] {
-    let start = if cfg!(windows)
+    // `\\?\C:\...` and `\\.\...` are paths, not queries.
+    let device_prefix_len = if cfg!(windows)
         && key.len() >= 4
         && bun_paths::is_sep_any(key[0])
         && bun_paths::is_sep_any(key[1])
@@ -43,8 +43,8 @@ pub fn module_key_without_query(key: &[u8]) -> &[u8] {
     } else {
         0
     };
-    match strings::index_of_char_usize(&key[start..], b'?') {
-        Some(query_start) => &key[..start + query_start],
+    match strings::index_of_char_usize(&key[device_prefix_len..], b'?') {
+        Some(query_start) => &key[..device_prefix_len + query_start],
         None => key,
     }
 }

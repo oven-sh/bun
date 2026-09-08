@@ -30,8 +30,7 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
 /// the C++ heap and is opaque here).
 ///
-/// Intentionally not `Clone`: `new_ref()` shares the C++ object, `clone_this()`
-/// deep-copies it. Transferring ownership is by-move.
+/// Not `Clone`: share with `new_ref()`, deep-copy with `clone_this()`, move to transfer.
 #[repr(transparent)]
 pub struct HeadersRef(NonNull<FetchHeaders>);
 

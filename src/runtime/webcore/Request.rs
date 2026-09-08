@@ -234,8 +234,7 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// `req.headers`, built from the live uWS request if not built yet. Native
-    /// header reads go through here so they match what JS sees, edits included.
+    /// `req.headers`, built from the uWS request if not built yet: the one path for native reads.
     #[allow(clippy::mut_from_ref)]
     fn materialized_headers(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {

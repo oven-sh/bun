@@ -78,10 +78,7 @@ fn components_to_ms_utc(
         .ok()
 }
 
-/// `ms` is a non-NaN JS time value in milliseconds: a valid `Date`'s, or a
-/// number bound to a timestamp parameter. ±Infinity round-trip the ±Infinity
-/// the decoder produces back to DT_NOEND / DT_NOBEGIN (`f64::INFINITY as i64`
-/// would saturate to i64::MAX and the arithmetic below would overflow).
+/// A non-NaN JS time value to Postgres microseconds; ±Infinity become DT_NOEND / DT_NOBEGIN.
 pub(crate) fn from_unix_ms(ms: f64) -> i64 {
     debug_assert!(!ms.is_nan());
     if ms == f64::INFINITY {

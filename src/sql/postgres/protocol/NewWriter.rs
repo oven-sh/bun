@@ -34,9 +34,7 @@ impl<C: WriterContext> LengthWriter<C> {
     }
 }
 
-/// A run of Int16 format codes written as text (0) up front and flipped to
-/// binary (1) per slot afterwards, so Bind can decide each parameter's format
-/// while encoding its value instead of in a separate earlier pass.
+/// A run of Int16 format codes, written as text (0); `set_binary` flips one slot to binary (1).
 #[derive(Copy, Clone)]
 pub struct FormatCodes<C: WriterContext> {
     index: usize,

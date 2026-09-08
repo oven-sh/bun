@@ -72,9 +72,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
 
     let len: u16 = u16::try_from(parameter_fields.len()).expect("int cast");
 
-    // One format code per parameter. Each starts as text and is flipped to
-    // binary below by the same branch that writes the binary bytes, so the
-    // code always describes what was actually sent.
+    // One format code per parameter, all text until a binary write below flips its slot.
     writer.short(len)?;
     let format_codes = writer.format_codes(len)?;
 
@@ -88,12 +86,9 @@ pub(crate) fn write_bind<Context: WriterContext>(
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
         let tag = match parameter_fields.get(i) {
-            // More values than the statement has parameters. Send it as text;
-            // the server then reports the count mismatch (08P01 "bind message
-            // supplies N parameters, but prepared statement ... requires M").
+            // An extra value goes as text; the server reports the count mismatch (08P01).
             None => types::Tag::text,
-            // OIDs above `Short::MAX` are user-defined types, which only have
-            // a text representation here anyway.
+            // OIDs above `Short::MAX` are user-defined types and are bound as text.
             Some(&oid) => Short::try_from(oid).map_or(types::Tag::text, types::Tag),
         };
         if value.is_empty_or_undefined_or_null() {
@@ -112,8 +107,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 format_codes.set_binary(i)?;
             }
         } else if tag == types::Tag::bytea && !value.is_string() {
-            // No text fallback here: bytea's text input accepts any string, so
-            // `String(value)` would store unrelated bytes instead of rejecting.
+            // No text fallback: bytea's input accepts any string, so `String(value)` would be stored.
             let received = JSGlobalObject::determine_specific_type(global, value)
                 .map_err(js_error_to_postgres)?;
             return Err(js_error_to_postgres(global.throw_value(
@@ -129,9 +123,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 .map_err(js_error_to_postgres)?;
             writer.write(str.to_utf8().slice())?;
         } else {
-            // Text format: the server parses it by the parameter's type, the
-            // same as a literal from any text-protocol client, and rejects
-            // what it cannot parse.
+            // Text format: the server's input parser for the type accepts or rejects it.
             let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
             if str.tag() == bun_core::Tag::Dead {
                 return Err(AnyPostgresError::OutOfMemory);
@@ -170,11 +162,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
     Ok(())
 }
 
-/// Writes `value` in PostgreSQL's binary format and returns `true` when the
-/// value is the JS class that the binary encoder for `tag` represents exactly.
-/// Writes nothing and returns `false` for every other pairing (a Date bound to
-/// an `int4` parameter, a string bound to anything, a type with no encoder
-/// here); the caller decides between text and an error for those.
+/// Writes `value` in binary and returns `true` only when its JS class is what `tag`'s encoder represents exactly.
 fn write_binary_parameter<Context: WriterContext>(
     global: &JSGlobalObject,
     tag: types::Tag,

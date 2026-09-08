@@ -20,6 +20,8 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "Bindgen/IDLConvert.h"
+#include "JSDOMConvertSequences.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -349,32 +351,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
-            WTF::Vector<BunString> paths;
+            auto pathsCtx = Bun::Bindgen::LiteralConversionContext { "options.paths"_s };
+            Vector<WTF::String> paths = Bun::convertIDL<WebCore::IDLSequence<Bun::IDLStrictString>>(*globalObject, pathsValue, pathsCtx);
+            RETURN_IF_EXCEPTION(scope, {});
 
-            // Iterate through the array using forEachInIterable
-            forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
-                if (scope.exception())
-                    return;
+            WTF::Vector<BunString> bunPaths;
+            bunPaths.reserveInitialCapacity(paths.size());
+            for (auto& path : paths)
+                bunPaths.append(Bun::toStringRef(path));
 
-                WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
-                if (scope.exception())
-                    return;
-
-                paths.append(Bun::toStringRef(pathStr));
-            });
-
-            if (scope.exception()) {
-                // Clean up on exception
-                for (auto& path : paths) {
-                    path.deref();
-                }
-                return {};
-            }
-
-            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, bunPaths.begin(), bunPaths.size());
 
             // Clean up BunStrings to avoid leaking
-            for (auto& path : paths) {
+            for (auto& path : bunPaths) {
                 path.deref();
             }
 

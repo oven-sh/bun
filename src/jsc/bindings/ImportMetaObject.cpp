@@ -4,6 +4,7 @@
 
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
+#include "Bindgen/IDLConvert.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -13,6 +14,7 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
@@ -275,36 +277,27 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return {};
                 }
 
-                JSC::EncodedJSValue result = {};
-                WTF::Vector<BunString> paths;
-                for (size_t i = 0; i < userPathListArray->length(); ++i) {
-                    JSValue path = userPathListArray->getIndex(globalObject, i);
-                    if (scope.exception()) [[unlikely]]
-                        goto cleanup;
-                    if (!path.isString()) {
-                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
-                        goto cleanup;
-                    }
-                    WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) [[unlikely]]
-                        goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
-                }
+                auto pathsCtx = Bun::Bindgen::LiteralConversionContext { "options.paths"_s };
+                Vector<WTF::String> paths = Bun::convertIDL<IDLSequence<Bun::IDLStrictString>>(*globalObject, userPathListArray, pathsCtx);
+                RETURN_IF_EXCEPTION(scope, {});
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
-                if (scope.exception()) [[unlikely]]
-                    goto cleanup;
+                WTF::Vector<BunString> bunPaths;
+                bunPaths.reserveInitialCapacity(paths.size());
+                for (auto& path : paths)
+                    bunPaths.append(Bun::toStringRef(path));
+
+                JSC::EncodedJSValue result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, bunPaths.begin(), bunPaths.size());
+
+                for (auto& path : bunPaths) {
+                    path.deref();
+                }
+                RETURN_IF_EXCEPTION(scope, {});
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
-                    result = {};
-                    goto cleanup;
+                    return {};
                 }
 
-            cleanup:
-                for (auto& path : paths) {
-                    path.deref();
-                }
                 RELEASE_AND_RETURN(scope, result);
             } else {
                 Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, userPathList);

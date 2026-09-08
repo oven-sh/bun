@@ -199,3 +199,73 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a non-string", () => {
+  const codeOf = fn => {
+    let err;
+    try {
+      fn();
+    } catch (e) {
+      err = e;
+    }
+    return err && err.code;
+  };
+
+  // A non-string entry is rejected at the boundary rather than coerced into a
+  // directory name. The original Fuzzilli input (a number) hit this path.
+  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: [512] }))).toBe("ERR_INVALID_ARG_TYPE");
+  expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] }))).toBe(
+    "ERR_INVALID_ARG_TYPE",
+  );
+});
+
+test("require.resolve does not crash when options.paths contains a non-absolute path", () => {
+  // A non-absolute entry that does not exist relative to cwd simply cannot be
+  // found. Previously this crashed the process.
+  expect(() => {
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: ["this_dir_does_not_exist", "./nope"] });
+  }).toThrow();
+
+  // createRequire().resolve goes through the same resolver path.
+  let caught;
+  try {
+    Module.createRequire(join(realpathSync(tmpdir()), "x.js")).resolve("this-pkg-does-not-exist-zzz", {
+      paths: ["./rel"],
+    });
+  } catch (e) {
+    caught = e.code;
+  }
+  expect(caught).toBe("MODULE_NOT_FOUND");
+
+  // A Windows-style drive path is not absolute on POSIX (it is a relative
+  // segment there), so it must be anchored at cwd rather than tripping the
+  // resolver's absolute-path assertion.
+  expect(() => {
+    require.resolve("this-pkg-does-not-exist-zzz", { paths: ["C:/Users/nope", "C:\\Users\\nope"] });
+  }).toThrow();
+
+  // Relative specifiers take the relative-resolution path, which is a separate
+  // consumer of options.paths; the same non-absolute entries must not crash it.
+  expect(() => {
+    require.resolve("./does-not-exist", { paths: ["this_dir_does_not_exist", "C:/Users/nope", "C:\\Users\\nope"] });
+  }).toThrow();
+});
+
+test("require.resolve resolves relative options.paths entries against cwd (Node compat)", () => {
+  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
+    "rel_dir/node_modules/rel-pkg/package.json": JSON.stringify({ name: "rel-pkg", main: "index.js" }),
+    "rel_dir/node_modules/rel-pkg/index.js": "module.exports = 'rel-pkg';",
+  });
+
+  const prevCwd = process.cwd();
+  try {
+    // Node's Module._nodeModulePaths does path.resolve(from), so a relative
+    // paths entry is anchored at process.cwd().
+    process.chdir(dir);
+    const resolved = require.resolve("rel-pkg", { paths: ["rel_dir"] });
+    expect(resolved).toBe(resolve(dir, "rel_dir/node_modules/rel-pkg/index.js"));
+  } finally {
+    process.chdir(prevCwd);
+    cleanup();
+  }
+});

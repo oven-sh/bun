@@ -31,16 +31,14 @@ namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch
 static thread_local double s_profilingStartTime = 0.0;
-// The monotonic instant that s_profilingStartTime names. A sample's timestamp is a MonotonicTime, so
-// its place on the profile's timeline is its distance from this instant. Reading the wall clock again
-// for each sample would break the timeline when the system clock is set: a backward step of N seconds
-// puts every later sample N seconds before the start.
+// The same instant on the monotonic clock; samples are placed on the timeline by their distance from it.
 static thread_local MonotonicTime s_profilingStartMonotonicTime;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
 
-// Where a sample sits on the profile's timeline, in microseconds since the Unix epoch.
+// Microseconds since the Unix epoch, like s_profilingStartTime. Not read off the wall clock per sample:
+// that clock can be set while the profile runs.
 static double profileTimestamp(MonotonicTime timestamp)
 {
     return s_profilingStartTime + (timestamp - s_profilingStartMonotonicTime).microseconds();

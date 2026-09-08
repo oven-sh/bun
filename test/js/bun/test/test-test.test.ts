@@ -767,9 +767,10 @@ test("my-test", () => {
       "b.test.js": /*js*/ `
         import { test, expect } from "bun:test";
         // stands for a top-level \`await startServer()\` or fixture import
-        do {
+        for (let waited = 0; !globalThis.__aTimerFired; waited += 5) {
+          if (waited > 2000) throw new Error("a.test.js's timer did not fire within 2s");
           await Bun.sleep(5);
-        } while (!globalThis.__aTimerFired);
+        }
         test("b1 failing", () => { expect(1).toBe(2); });
         test("b2", () => { expect(2).toBe(2); });
       `,
@@ -815,9 +816,10 @@ test("my-test", () => {
       "b.test.js": /*js*/ `
         import { test, expect, describe } from "bun:test";
         describe("waits", async () => {
-          do {
+          for (let waited = 0; !globalThis.__aTimerFired; waited += 5) {
+            if (waited > 2000) throw new Error("a.test.js's timer did not fire within 2s");
             await Bun.sleep(5);
-          } while (!globalThis.__aTimerFired);
+          }
           test("b1 failing", () => { expect(1).toBe(2); });
           test("b2", () => { expect(2).toBe(2); });
         });

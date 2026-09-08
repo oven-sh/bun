@@ -208,6 +208,89 @@ test("closeAllConnections() after close() force-drains the withheld callback", a
   }
 });
 
+// Node frees the parser when it hands a socket to 'upgrade'/'connect', which
+// takes it off the list closeIdleConnections()/closeAllConnections() walk. After
+// close() those two must reap a plain keep-alive socket but leave an upgraded
+// one alone, while 'close' itself still waits for the upgraded socket to end.
+test("closeIdleConnections()/closeAllConnections() after close() leave an upgraded socket open", async () => {
+  const inHandler = Promise.withResolvers<void>();
+  let releaseResponse!: () => void;
+  let upgradedServerSocket!: import("node:net").Socket;
+  const server = createServer((req, res) => {
+    inHandler.resolve();
+    releaseResponse = () => res.end("ok");
+  });
+  server.on("upgrade", (req, socket) => {
+    upgradedServerSocket = socket;
+    socket.on("error", () => {});
+    socket.on("data", chunk => socket.write(chunk));
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const upgraded = connect(port, "127.0.0.1");
+  const plain = connect(port, "127.0.0.1");
+  try {
+    await Promise.all([once(upgraded, "connect"), once(plain, "connect")]);
+    upgraded.on("error", () => {});
+    plain.on("error", () => {});
+    let upgradedData = "";
+    upgraded.on("data", chunk => (upgradedData += chunk));
+    const upgradedClosed = Promise.withResolvers<void>();
+    upgraded.on("close", () => upgradedClosed.resolve());
+    let plainData = "";
+    plain.on("data", chunk => (plainData += chunk));
+    const plainClosed = Promise.withResolvers<void>();
+    plain.on("close", () => plainClosed.resolve());
+    // Round-trips a token through the upgraded connection; false if it closed instead.
+    const echo = async (token: string) => {
+      upgraded.write(token);
+      while (!upgradedData.includes(token) && !upgraded.destroyed) {
+        await Promise.race([once(upgraded, "data"), upgradedClosed.promise]);
+      }
+      return upgradedData.includes(token);
+    };
+
+    upgraded.write("GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");
+    while (!upgradedData.includes("101 Switching Protocols")) await once(upgraded, "data");
+    plain.write("GET /slow HTTP/1.1\r\nHost: x\r\n\r\n");
+    await inHandler.promise;
+
+    let closeCbFired = false;
+    const closed = Promise.withResolvers<void>();
+    server.close(() => {
+      closeCbFired = true;
+      closed.resolve();
+    });
+    releaseResponse();
+    while (!plainData.includes("ok")) await once(plain, "data");
+    for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+    expect(closeCbFired).toBe(false);
+
+    server.closeIdleConnections();
+    expect(upgradedServerSocket.destroyed).toBe(false);
+    await plainClosed.promise;
+    expect(await echo("ping1")).toBe(true);
+    expect(closeCbFired).toBe(false);
+
+    server.closeAllConnections();
+    expect(upgradedServerSocket.destroyed).toBe(false);
+    expect(await echo("ping2")).toBe(true);
+    expect(closeCbFired).toBe(false);
+
+    upgradedServerSocket.destroy();
+    await closed.promise;
+    expect(closeCbFired).toBe(true);
+  } finally {
+    upgraded.destroy();
+    plain.destroy();
+    server.closeAllConnections();
+  }
+});
+
 // Re-listening after close() while a keep-alive connection from the previous
 // cycle is still open must not fire 'close' on the new (listening) server
 // when that old connection finally ends.

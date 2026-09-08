@@ -71,6 +71,10 @@ let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
+// Set once a socket is handed to 'connect'/'upgrade'. Node frees the parser
+// there, which takes the socket off the list that closeAllConnections() and
+// closeIdleConnections() iterate; it still counts as a connection for 'close'.
+const kHandedOff = Symbol("http.server.socketHandedOff");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -464,7 +468,9 @@ Server.prototype.closeAllConnections = function () {
   // close() already dropped the native handle; destroy what is still tracked.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of $Array.from(tracked)) socket.destroy();
+    for (const socket of $Array.from(tracked)) {
+      if (!socket[kHandedOff]) socket.destroy();
+    }
   }
 };
 
@@ -488,7 +494,7 @@ Server.prototype.closeIdleConnections = function () {
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked)) {
-      if (!socket._httpMessage) socket.destroy();
+      if (!socket[kHandedOff] && !socket._httpMessage) socket.destroy();
     }
   }
 };
@@ -1347,6 +1353,7 @@ function clearUpgradeIncoming(socket) {
 // close/drain/error/timeout listeners) and only net.Socket's own 'end' listener
 // left in place.
 function detachSocketListenersForHandoff(socket) {
+  socket[kHandedOff] = true;
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
@@ -1508,6 +1515,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
+    [kHandedOff] = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;

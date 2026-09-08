@@ -2438,18 +2438,22 @@ where
         if let Some(readable) = strong.get() {
             readable.value.ensure_still_alive();
             if let Some(bytes) = readable.ptr.bytes() {
-                let global_this = self.server().global_this();
                 bytes
                     .parent_const()
                     .producer
                     .set(WebCore::streams::SourceHandle::None);
-                let mut err =
-                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
-                bytes.on_data(WebCore::streams::Result::Err(
-                    err.to_stream_error(global_this),
-                ));
-                err.reset();
-                any_js_calls = true;
+                // `to_error_instance` above already delivered the terminal
+                // error when the body still pointed at this same stream.
+                if !bytes.has_received_last_chunk.get() {
+                    let global_this = self.server().global_this();
+                    let mut err =
+                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                    bytes.on_data(WebCore::streams::Result::Err(
+                        err.to_stream_error(global_this),
+                    ));
+                    err.reset();
+                    any_js_calls = true;
+                }
             }
         }
 

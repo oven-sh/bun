@@ -1104,8 +1104,7 @@ fn expr_from_blob(
         );
 
     if is_text_like {
-        // `E.String` data is the unescaped text (the printer escapes it),
-        // copied into `bump` so it does not borrow the blob's store.
+        // The text itself (the printer escapes it), copied out of the blob's store.
         return Ok(Expr::init(
             E::String::init_re_encode_utf8(bump.alloc_slice_copy(bytes), bump),
             loc,

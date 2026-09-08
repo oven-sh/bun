@@ -2151,10 +2151,8 @@ impl Data {
         }
     }
 
-    /// [`E::EString::init_re_encode_utf8`] applied to every string of a
-    /// literal tree that an interchange parser built (a JSON `--define`
-    /// value, a macro's JSON `Response` body), so the tree can be handed to
-    /// the visit pass. Only the node kinds JSON produces are walked.
+    /// [`E::EString::init_re_encode_utf8`] over every string of a JSON-shaped
+    /// literal tree (object, array, string) before the visit pass sees it.
     pub fn re_encode_utf8_strings(&mut self, bump: &Bump) {
         match self {
             Data::EString(s) => {

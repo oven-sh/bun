@@ -51,12 +51,9 @@ fn env_string_store_put(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // The `E.String` slab must NOT live in the thread-local
-    // `Expr.Data.Store` — `configureDefines` resets that store on return, so
-    // the env-define payloads must outlive it. Allocate from `bump` (the
-    // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. The value bytes are copied too:
-    // the env map frees an entry that a later `process.env` write replaces.
+    // Node and bytes live in `bump` (freed with the `Define` table): the Expr
+    // store is reset after `configure_defines`, and the env map frees an entry
+    // that a later `process.env` write replaces.
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(bump.alloc(
         bun_ast::E::EString::init_re_encode_utf8(bump.alloc_slice_copy(value), bump),
     )));

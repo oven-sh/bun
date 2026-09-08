@@ -1807,13 +1807,8 @@ impl EString {
             ..Default::default()
         }
     }
-    /// For string values that enter the JS AST from outside the lexer (enum
-    /// member names, TOML, `--define`/env values, macro `Response` bodies,
-    /// inlined `import.meta.dir`/`module.filename` paths).
-    /// The visit pass folds `"x"[0]`, `` `${x}`.length ``, `+x`, ... on an
-    /// 8-bit string one byte per character. The lexer makes that correct by
-    /// storing every non-ASCII literal as UTF-16, so do the same here.
-    /// WTF-8 surrogates in `wtf8` (JSON `"\ud800"`) are kept as code units.
+    /// For a string that enters the AST without the lexer: like the lexer, store
+    /// non-ASCII text as UTF-16, because folding reads 8-bit strings bytewise.
     pub fn init_re_encode_utf8(wtf8: &[u8], bump: &Bump) -> EString {
         match strings::wtf8_to_utf16_alloc(wtf8) {
             Some(utf16) => Self::init_utf16(bump.alloc_slice_copy(&utf16)),
@@ -2069,24 +2064,18 @@ impl EString {
         }
     }
 
-    /// Longest result, in UTF-16 code units, that [`EString::append`] builds
-    /// by copying. Two 8-bit strings join as a rope in O(1), but ropes are
-    /// 8-bit only, so a UTF-16 operand makes the join copy both sides. The
-    /// visit pass joins `a + b + c + ...` one literal at a time, so without
-    /// a bound a long chain of non-ASCII literals copies quadratically.
+    /// A join with a UTF-16 operand copies (ropes are 8-bit only); the cap keeps
+    /// a long `a + b + ...` chain of non-ASCII literals from copying quadratically.
     pub const MAX_COPIED_JOIN_LEN: usize = 4096;
 
-    /// Whether [`EString::append`] can join `strings`: always when all are
-    /// 8-bit (a rope), else only up to [`MAX_COPIED_JOIN_LEN`](Self::MAX_COPIED_JOIN_LEN).
+    /// Always for 8-bit strings (a rope), else up to [`Self::MAX_COPIED_JOIN_LEN`] units.
     pub fn can_join(strings: &[&EString]) -> bool {
         strings.iter().all(|s| s.is_utf8())
             || strings.iter().map(|s| s.len()).sum::<usize>() <= Self::MAX_COPIED_JOIN_LEN
     }
 
-    /// Make `self` the string `self + other`. Two 8-bit strings link into a
-    /// rope, so `other` has the same Store/arena requirement as
-    /// [`EString::push`]. With a UTF-16 operand both sides are copied into
-    /// one flat UTF-16 buffer in `bump`; check [`EString::can_join`] first.
+    /// `self += other`: a rope link for two 8-bit strings (`other` must live in
+    /// the Store, see [`Self::push`]), else one UTF-16 copy in `bump`. See [`Self::can_join`].
     pub fn append(&mut self, other: &mut EString, bump: &Bump) {
         if self.is_utf8() && other.is_utf8() {
             self.push(other);
@@ -2274,8 +2263,7 @@ impl Template {
                 _ => {}
             }
 
-            // "`${'b'}c`": append the value and then the tail to the string
-            // before them (the head, or the previous part's tail).
+            // "`a${'b'}c`": join 'b' and then "c" onto the string before them.
             if let crate::expr::Data::EString(value) = part.value.data {
                 let prev: &mut EString = match parts.last_mut() {
                     None => head

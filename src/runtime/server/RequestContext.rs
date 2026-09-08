@@ -153,10 +153,12 @@ pub struct RequestContext<
     pub(crate) blob: JsCell<AnyBlob>,
 
     pub(crate) sendfile: Cell<SendfileContext>,
-    /// A ref on the `Request`'s own `FetchHeaders`, taken when the request
-    /// goes async, so that header reads at render time (`Range`) see what the
-    /// handler sees through `req.headers` even if the JS `Request` has been
-    /// collected by then. Released in `finalize_without_deinit`.
+    /// The request's `Range`, read from `req.headers` when the response is
+    /// rendered (after the handler may have set or deleted it).
+    pub(crate) range: Cell<RangeRequest::Raw>,
+    /// A ref on the `Request`'s own `FetchHeaders`, held from the moment the
+    /// request goes async until the response is rendered, so that the `Range`
+    /// read above does not depend on the JS `Request` staying alive.
     pub(crate) request_headers: JsCell<Option<response::HeadersRef>>,
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
@@ -1420,6 +1422,7 @@ where
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
+                range: Cell::new(RangeRequest::Raw::None),
                 request_headers: JsCell::new(None),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
                 signal: Cell::new(None),
@@ -1900,9 +1903,7 @@ where
         // sentinel or, if JS already read `.size`, the stat'd size; a
         // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
         // already set Content-Range or a non-200 status — they're
-        // managing partial responses themselves. The Range value is read
-        // here, not when the request arrived, so that it is the one the
-        // handler sees (and may have set or deleted) through `req.headers`.
+        // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_mut() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
@@ -1915,15 +1916,13 @@ where
             && (original_size == crate::webcore::blob::MAX_SIZE || original_size == stat_size);
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
-        let range = if is_regular && method_allows_range && !user_handles_range && is_whole_file {
-            self.request_header(jsc::HTTPHeaderName::Range, b"range")
-                .map_or(RangeRequest::Raw::None, |value| {
-                    RangeRequest::parse_raw(value.slice())
-                })
-        } else {
-            RangeRequest::Raw::None
-        };
-        if range != RangeRequest::Raw::None {
+        let range = self.range.get();
+        if is_regular
+            && method_allows_range
+            && !user_handles_range
+            && is_whole_file
+            && range != RangeRequest::Raw::None
+        {
             match range.resolve(stat_size) {
                 RangeRequest::Result::None => {}
                 RangeRequest::Result::Satisfiable { start, end } => {
@@ -2394,21 +2393,26 @@ where
         request_object.request_context.detach_request();
     }
 
-    /// One request header, as the handler sees it through `req.headers`.
-    fn request_header(
-        &self,
-        name: jsc::HTTPHeaderName,
-        wire_name: &[u8],
-    ) -> Option<bun_core::Utf8Bytes<'static>> {
-        if let Some(headers) = self.request_headers.get() {
-            let headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
-            return Some(headers.fast_get(name)?.to_utf8().into_owned());
+    /// Reads `Range` as the handler sees it through `req.headers`, for
+    /// `do_sendfile`, and releases the ref taken in `to_async`: nothing after
+    /// render reads request headers.
+    fn capture_request_range(&self) {
+        let parse = |value: Option<bun_core::Utf8Bytes<'_>>| {
+            value.map_or(RangeRequest::Raw::None, |value| {
+                RangeRequest::parse_raw(value.slice())
+            })
+        };
+        if let Some(headers) = self.request_headers.replace(None) {
+            let fetch_headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
+            let value = fetch_headers
+                .fast_get(jsc::HTTPHeaderName::Range)
+                .map(|value| value.to_utf8());
+            self.range.set(parse(value));
+        } else if let Some(request) = self.request_mut() {
+            self.range.set(parse(
+                request.get_header(jsc::HTTPHeaderName::Range, b"range"),
+            ));
         }
-        Some(
-            self.request_mut()?
-                .get_header(name, wire_name)?
-                .into_owned(),
-        )
     }
 
     pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {
@@ -4018,6 +4022,7 @@ where
     /// Same contract as [`Self::set_response`].
     pub(crate) unsafe fn render(&self, response: *mut Response) {
         ctx_log!("render");
+        self.capture_request_range();
 
         // A HEAD response never carries content (RFC 9110 §9.3.2). The normal
         // handler path branches to `do_render_head_response` before reaching

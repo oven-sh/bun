@@ -2172,9 +2172,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        let mime_type = match self.get_body_value() {
-            Value::Blob(blob) if !blob.content_type_slice().is_empty() => None,
-            _ => self.get_blob_mime_type()?,
+        // A body Blob that carries its own type keeps it; otherwise the owner's
+        // Content-Type applies. Decided before `use_()` empties the body.
+        let has_own_type = matches!(self.get_body_value(), Value::Blob(blob) if !blob.content_type_slice().is_empty());
+        let mime_type = if has_own_type {
+            None
+        } else {
+            self.get_blob_mime_type()?
         };
         let value = self.get_body_value();
         let blob_ptr = Blob::new(value.use_());

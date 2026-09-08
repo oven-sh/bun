@@ -2365,37 +2365,46 @@ setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
 });
 
 it("delete process.env.TZ invalidates existing Date instances", async () => {
+  // TZ is unset at launch so `delete` reverts to the host zone whatever the
+  // host is; the target zone is picked to differ from it.
+  const { TZ: _, ...envWithoutTZ } = bunEnv;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const d = new Date("2024-01-15T12:00:00Z");
-       process.env.TZ = "America/New_York";
-       const ny = d.getHours();
+       const host = d.getHours();
+       const target = host === 21 ? "America/New_York" : "Asia/Tokyo";
+       process.env.TZ = target;
+       const set = d.getHours();
        delete process.env.TZ;
        const afterDelete = d.getHours();
        const has = "TZ" in process.env;
        // set-after-delete must still fire the timezone side effect: Node's
        // RealEnvStore::Set name-matches TZ on every write, not via a
        // once-installed accessor.
-       process.env.TZ = "America/New_York";
+       process.env.TZ = target;
        const afterReSet = d.getHours();
-       console.log(JSON.stringify({ ny, afterDelete, has, afterReSet }));`,
+       console.log(JSON.stringify({ host, target, set, afterDelete, has, afterReSet }));`,
     ],
-    env: { ...bunEnv, TZ: "UTC" },
+    env: envWithoutTZ,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // NY is UTC-5 in January; after delete the override is cleared so getHours
-  // reverts to the UTC start value (12) and the property is gone.
-  expect({ ...JSON.parse(stdout), exitCode }).toEqual({
-    ny: 7,
-    afterDelete: 12,
+  const out = stdout ? JSON.parse(stdout) : { stderr };
+  // 12:00Z on 2024-01-15 is 21:00 in Asia/Tokyo (UTC+9) and 07:00 in America/New_York (UTC-5).
+  const targetHours = out.target === "Asia/Tokyo" ? 21 : 7;
+  expect({ ...out, exitCode }).toEqual({
+    host: out.host,
+    target: out.target,
+    set: targetHours,
+    afterDelete: out.host,
     has: false,
-    afterReSet: 7,
+    afterReSet: targetHours,
     exitCode: 0,
   });
+  expect(out.set).not.toBe(out.host);
 });
 
 it("process.traceDeprecation set at runtime prints a stack", async () => {

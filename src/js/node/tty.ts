@@ -16,11 +16,16 @@ function ReadStream(fd, options): void {
     throw $ERR_INVALID_FD(fd);
   }
 
-  const ctx: { code?: string; syscall?: string; message?: string } = {};
+  const ctx: { code?: string; syscall?: string; message?: string; errno?: number } = {};
   const tty = new TTY(fd, ctx);
-  const { code } = ctx;
-  if (code !== undefined) {
-    throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${code} (${ctx.message})`);
+  if (ctx.code !== undefined) {
+    // Node's ERR_TTY_INIT_FAILED is a SystemError: it carries the uv context.
+    const err = $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${ctx.code} (${ctx.message})`);
+    err.name = "SystemError";
+    err.info = ctx;
+    err.errno = ctx.errno;
+    err.syscall = ctx.syscall;
+    throw err;
   }
 
   net.Socket.$call(this, {

@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, WriteStream } from "node:tty";
 
@@ -150,6 +151,7 @@ describe("ReadStream.prototype.setRawMode", () => {
 
     // A child that dies early must reject the phase waits rather than hang them.
     const exitedEarly = proc.exited.then(code => {
+      if (code === 0) return new Promise<never>(() => {});
       throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
     });
     exitedEarly.catch(() => {});
@@ -225,7 +227,11 @@ async function runInPty(
   });
   await using spawnedTerminal = ownTerminal ? null : proc.terminal!;
   const terminal = (ownTerminal ?? spawnedTerminal)!;
+  // A failing child rejects the marker waits instead of hanging them. A clean
+  // exit can land before the PTY delivers the child's last output, so it does
+  // not end the wait: the marker still arrives through `data`.
   const exitedEarly = proc.exited.then(code => {
+    if (code === 0) return new Promise<never>(() => {});
     throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
   });
   exitedEarly.catch(() => {});
@@ -552,6 +558,37 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
 });
 
 describe("ReadStream constructor", () => {
+  // Node's ERR_TTY_INIT_FAILED is a SystemError carrying the uv_tty_init context.
+  test("a regular file fails with the SystemError shape Node uses", () => {
+    using dir = tempDir("tty-init-failed", { "file.txt": "x" });
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    try {
+      let err: any;
+      try {
+        new ReadStream(fd);
+      } catch (e) {
+        err = e;
+      }
+      expect({
+        name: err?.name,
+        code: err?.code,
+        message: err?.message,
+        errno: err?.errno,
+        syscall: err?.syscall,
+        info: err?.info,
+      }).toEqual({
+        name: "SystemError",
+        code: "ERR_TTY_INIT_FAILED",
+        message: "TTY initialization failed: uv_tty_init returned EINVAL (invalid argument)",
+        errno: isWindows ? -4071 : -22,
+        syscall: "uv_tty_init",
+        info: { errno: isWindows ? -4071 : -22, code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" },
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   test("rejects a negative or non-integer fd like Node", () => {
     for (const fd of [-1, 1.5]) {
       expect(() => new ReadStream(fd)).toThrow(
@@ -600,6 +637,55 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
     const result = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1]);
     expect(result.seen.join("")).toBe("abc\n");
     expect(result).toMatchObject({ pushed: 0, bytesRead: 4 });
+  });
+
+  // A callback that returns false parks the rest of the chunk as a tail. EOF
+  // must wait until resume() has delivered that tail, as on the usockets path.
+  test("EOF after a paused onread callback is delivered after the buffered tail", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const { TTY } = process.binding("tty_wrap");
+        const events = [];
+        const s = new net.Socket({
+          handle: new TTY(0, {}),
+          onread: {
+            buffer: Buffer.alloc(2),
+            callback(nread, buf) {
+              events.push("data:" + buf.toString("utf8", 0, nread));
+              if (events.length === 1) {
+                setImmediate(() => { events.push("resume"); s.resume(); });
+                return false;
+              }
+            },
+          },
+        });
+        s.on("end", () => {
+          events.push("end");
+          process.stdout.write("RESULT " + JSON.stringify(events) + "\\n");
+        });
+        process.stdout.write("P1\\n");
+      `,
+      [
+        terminal => {
+          // One cooked line then ^D: a 5-byte read split over a 2-byte onread buffer, then EOF.
+          terminal.write("abcd\n");
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["P1"] },
+    );
+    expect(code).toBe(0);
+    const events = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\[.*\])/)![1]);
+    expect(events[0]).toBe("data:ab");
+    expect(events[1]).toBe("resume");
+    expect(events.at(-1)).toBe("end");
+    expect(
+      events
+        .filter((e: string) => e.startsWith("data:"))
+        .map((e: string) => e.slice(5))
+        .join(""),
+    ).toBe("abcd\n");
   });
 
   // The handle does not count writes (they go through write(2) on the JS

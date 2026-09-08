@@ -616,7 +616,7 @@ function onStreamRead(nread, buffer) {
     self.destroy(new ErrnoException(nread, "read"));
     return;
   }
-  finishSocketEnd(self);
+  if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
 }
 // The handle has no writer: write(2) to its fd, as fdSyncWrite does.
 function streamWrapSyncWrite(chunk, encoding, callback) {

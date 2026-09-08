@@ -214,24 +214,12 @@ impl TTY {
         this.reader.with_mut(|r| r.set_parent(tty.cast::<c_void>()));
 
         if !uv_tty_init_accepts(fd) {
-            if ctx.is_object() {
-                ctx.put(
-                    global_object,
-                    b"code",
-                    bun_core::String::static_("EINVAL").to_js(global_object)?,
-                );
-                ctx.put(
-                    global_object,
-                    b"syscall",
-                    bun_core::String::static_("uv_tty_init").to_js(global_object)?,
-                );
-                ctx.put(
-                    global_object,
-                    b"message",
-                    bun_core::String::static_("invalid argument").to_js(global_object)?,
-                );
-            }
             this.update_flags(|f| f.insert(Flags::CLOSED));
+            Self::fill_init_error(
+                global_object,
+                ctx,
+                &sys::Error::from_code(sys::E::EINVAL, sys::Tag::open),
+            )?;
             return Ok(tty);
         }
 
@@ -240,16 +228,43 @@ impl TTY {
             Err(StartError::Unpollable) => {
                 this.update_flags(|f| f.insert(Flags::UNPOLLABLE));
             }
+            // Like a `uv_tty_init` failure in Node: report through `ctx`, hand
+            // back a closed handle, and let `tty.ReadStream` throw ERR_TTY_INIT_FAILED.
             Err(StartError::Sys(err)) => {
                 this.update_flags(|f| f.insert(Flags::CLOSED));
-                this.this_value.with_mut(|v| v.finalize());
-                this.deref_();
-                let value = bun_sys_jsc::ErrorJsc::to_js(&err, global_object)?;
-                return Err(global_object.throw_value(value));
+                Self::fill_init_error(global_object, ctx, &err)?;
             }
         }
 
         Ok(tty)
+    }
+
+    fn fill_init_error(global: &JSGlobalObject, ctx: JSValue, err: &sys::Error) -> JsResult<()> {
+        if !ctx.is_object() {
+            return Ok(());
+        }
+        let (code, label) = err.uv_code_label().unwrap_or(("UNKNOWN", "unknown error"));
+        ctx.put(
+            global,
+            b"errno",
+            JSValue::js_number_from_int32(uv_errno(err.errno)),
+        );
+        ctx.put(
+            global,
+            b"code",
+            bun_core::String::static_(code).to_js(global)?,
+        );
+        ctx.put(
+            global,
+            b"syscall",
+            bun_core::String::static_("uv_tty_init").to_js(global)?,
+        );
+        ctx.put(
+            global,
+            b"message",
+            bun_core::String::static_(label).to_js(global)?,
+        );
+        Ok(())
     }
 
     /// Opens the reader on its own fd and parks it paused: the poll is only
@@ -514,9 +529,8 @@ impl TTY {
         if chunk.is_empty() {
             return self.flags.get().contains(Flags::READING);
         }
-        if !self.flags.get().contains(Flags::READING) {
-            return false;
-        }
+        // A chunk can still arrive after `readStop()` (the reader drains a hung-up
+        // pipe to EOF): deliver it, the socket buffers it, as libuv would.
         self.bytes_read
             .set(self.bytes_read.get().wrapping_add(chunk.len() as u64));
 

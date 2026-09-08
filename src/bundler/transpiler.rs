@@ -469,9 +469,8 @@ impl<'a> Transpiler<'a> {
         self.resolve_entry_point_from(top_level_dir, entry_point)
     }
 
-    /// [`Self::resolve_entry_point`] with a relative or bare `entry_point`
-    /// resolved from the absolute directory `source_dir` instead of the
-    /// current working directory.
+    /// [`Self::resolve_entry_point`], but a relative or bare `entry_point`
+    /// resolves from the absolute `source_dir` instead of the cwd.
     pub fn resolve_entry_point_from(
         &mut self,
         source_dir: &[u8],

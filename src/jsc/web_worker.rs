@@ -83,9 +83,8 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
-    /// The working directory when `new Worker()` ran. `spin()` resolves
-    /// `unresolved_specifier` from it, so a `process.chdir()` between
-    /// construction and thread start does not change which module loads.
+    /// The cwd when `new Worker()` ran; `unresolved_specifier` resolves from
+    /// it, not from wherever a later `process.chdir()` went.
     cwd: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
@@ -817,10 +816,8 @@ impl WebWorker {
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
 
-        // Resolve the entry point on the worker thread (the parent only stored
-        // the raw specifier and its cwd). The returned slice is BORROWED — every
-        // exit from spin() goes through shutdown() which is noreturn, so a
-        // `defer free` here would never run anyway.
+        // Resolve the entry point here, from the cwd `create()` captured. The
+        // returned slice is BORROWED; every exit below ends in `shutdown()`.
         let mut resolve_error = BunString::EMPTY;
         let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.

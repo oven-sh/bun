@@ -362,7 +362,10 @@ describe("WebSocketServer", () => {
           resolve(buf.split("\r\n\r\n", 1)[0].split("\r\n"));
         }
       });
+      // Settle on every terminal event so a short or missing head fails the
+      // assertions below instead of hanging.
       sock.on("error", () => resolve(buf.split("\r\n")));
+      sock.on("close", () => resolve(buf.split("\r\n")));
       const lines = await raw;
       expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
       expect(lines.filter(l => l.toLowerCase().startsWith("sec-websocket-protocol:"))).toEqual([

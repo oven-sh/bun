@@ -4,6 +4,17 @@ When using `bun build --target=browser`, if you attempt to import a Node.js modu
 
 For example, if you import `zlib`, the `node-fallbacks/zlib.js` file will be loaded.
 
+## `require()` shape
+
+The polyfills are ES modules. `require("events")` in bundled CommonJS code must still be what it is in Node.js (the `EventEmitter` class, not a namespace object), so each polyfill whose Node.js `module.exports` is not just its set of named exports names that value with the `require(esm)` interop export:
+
+```js
+export default EventEmitter;
+export { EventEmitter as "module.exports" };
+```
+
+The bundler returns that export from `require()`, as Node.js and Bun's runtime do. Keep it the same value as the default export.
+
 ## Not used by Bun's runtime
 
 These files are _not_ used by Bun's runtime. They are only used for the `bun build --target=browser` command.

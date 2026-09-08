@@ -859,11 +859,15 @@ class AsyncImportError extends Error {
   }
 }
 
-/** See `runtime.js`'s `__toCommonJS`. This omits the cache. */
+/** See `runtime.js`'s `__toCommonJS`. This omits the cache. An ES module that
+ * exports the name `module.exports` chose what `require()` returns. */
 function toCommonJS(from: any) {
   var desc,
     entry = Object.defineProperty({}, "__esModule", { value: true });
-  if ((from && typeof from === "object") || typeof from === "function")
+  if ((from && typeof from === "object") || typeof from === "function") {
+    if (Object.prototype.hasOwnProperty.call(from, "module.exports") && from["module.exports"] != null) {
+      return from["module.exports"];
+    }
     Object.getOwnPropertyNames(from).map(
       key =>
         !Object.prototype.hasOwnProperty.call(entry, key) &&
@@ -872,6 +876,7 @@ function toCommonJS(from: any) {
           enumerable: !(desc = Object.getOwnPropertyDescriptor(from, key)) || desc.enumerable,
         }),
     );
+  }
   return entry;
 }
 

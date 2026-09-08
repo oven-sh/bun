@@ -1235,4 +1235,127 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // `require()` of an ES module that exports the name `module.exports`
+  //
+  // Node.js (nodejs/node#54563) and `bun run` return that export from
+  // `require()` instead of the namespace object. The bundle does the same:
+  // the call evaluates to `exports_foo["module.exports"]` rather than
+  // `__toCommonJS(exports_foo)`. `import()` and `import` statements still see
+  // the namespace.
+  // ============================================================================
+
+  const moduleExportsExportFiles = {
+    "/point.mjs": /* js */ `
+      export default class Point {
+        constructor(x, y) { this.x = x; this.y = y; }
+        static distance(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+      }
+      export function midpoint(a, b) { return new Point((a.x + b.x) / 2, (a.y + b.y) / 2); }
+      export { Point as "module.exports" };
+    `,
+    "/star.mjs": /* js */ `
+      export * from "./point.mjs";
+    `,
+    "/falsy.mjs": /* js */ `
+      const value = false;
+      export const other = 1;
+      export { value as "module.exports" };
+    `,
+    "/entry.cjs": /* js */ `
+      const Point = require("./point.mjs");
+      const { distance, midpoint } = require("./point.mjs");
+      class Point3D extends Point {
+        constructor(x, y, z) { super(x, y); this.z = z; }
+      }
+      console.log(typeof Point, new Point3D(1, 2, 3) instanceof Point, distance(new Point(0, 0), new Point(3, 4)), typeof midpoint);
+      console.log(require("./point.mjs") === Point, Object.prototype.hasOwnProperty.call(Point, "__esModule"));
+      const star = require("./star.mjs");
+      console.log("star:", typeof star, star === Point);
+      console.log("falsy:", JSON.stringify(require("./falsy.mjs")));
+      import("./point.mjs").then(ns => console.log("import():", ns.default === Point, typeof ns.midpoint, Object.keys(ns).join(",")));
+    `,
+  };
+  // The same lines that `node entry.cjs` and `bun entry.cjs` print.
+  const moduleExportsExportStdout = [
+    "function true 5 undefined",
+    "true false",
+    "star: function true",
+    "falsy: false",
+    "import(): true function default,midpoint,module.exports",
+  ].join("\n");
+
+  itBundled("cjs/require_esm_module_exports_export", {
+    files: moduleExportsExportFiles,
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: moduleExportsExportStdout,
+    },
+  });
+
+  itBundled("cjs/require_esm_module_exports_export_minified", {
+    files: moduleExportsExportFiles,
+    entryPoints: ["/entry.cjs"],
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: moduleExportsExportStdout,
+    },
+  });
+
+  itBundled("cjs/require_esm_module_exports_export_target_browser", {
+    files: moduleExportsExportFiles,
+    entryPoints: ["/entry.cjs"],
+    target: "browser",
+    run: {
+      stdout: moduleExportsExportStdout,
+    },
+  });
+
+  // A module without that export keeps the `__toCommonJS` wrapper.
+  itBundled("cjs/require_esm_without_module_exports_export", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const lib = require("./lib.mjs");
+        console.log(typeof lib, lib.__esModule, typeof lib.default, lib.named);
+      `,
+      "/lib.mjs": /* js */ `
+        export default function lib() {}
+        export const named = "named";
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: "object true function named",
+    },
+  });
+
+  // Inside a `require()` cycle the export is not assigned yet. The early
+  // `require()` gets the namespace copy, as it did before, and a later one gets
+  // the export. (Node throws ERR_REQUIRE_CYCLE_MODULE here; `bun run` hands out
+  // its partial `module.exports` object.)
+  itBundled("cjs/require_esm_module_exports_export_cycle", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const api = require("./api.mjs");
+        console.log(JSON.stringify(api), JSON.stringify(require("./plugin.cjs").early));
+      `,
+      "/api.mjs": /* js */ `
+        import { early } from "./plugin.cjs";
+        const api = { name: "api", early: typeof early };
+        export const version = 2;
+        export { api as "module.exports" };
+      `,
+      "/plugin.cjs": /* js */ `
+        const api = require("./api.mjs");
+        exports.early = { type: typeof api, version: api.version, esModule: api.__esModule };
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: '{"name":"api","early":"object"} {"type":"object","version":2,"esModule":true}',
+    },
+  });
 });

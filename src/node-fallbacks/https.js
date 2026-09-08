@@ -1,4 +1,4 @@
-import * as https from "https-browserify";
+import https from "https-browserify";
 export var {
   Agent,
   ClientRequest,
@@ -19,3 +19,4 @@ export var {
 } = https;
 
 export default https;
+export { https as "module.exports" };

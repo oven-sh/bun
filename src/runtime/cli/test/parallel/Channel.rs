@@ -269,11 +269,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. On failure the caller still owns `pipe`.
-    ///
-    /// The pipe stays ref'd: until the peer's first frame it is the only
-    /// handle keeping `uv_loop_alive()` true, so autoTick() would otherwise
-    /// take the NOWAIT path and never block. `Drop` closes it.
+    /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
+    /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
     pub(crate) fn adopt_pipe(
         this: *mut Self,

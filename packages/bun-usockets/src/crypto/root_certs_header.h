@@ -22,3 +22,4 @@ const us_system_certs_t &us_get_root_system_certs();
 
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
+CPPDECL int us_set_default_ca_certs(const char *const *pem, size_t count);

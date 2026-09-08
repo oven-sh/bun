@@ -291,12 +291,63 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
+// tls.setDefaultCACertificates(): the process-wide user root set that replaces
+// the bundled/system/extra roots for every store built afterwards, and the
+// shared store cache it invalidates.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1064-L1076
+static std::mutex us_default_ca_mutex;
+static STACK_OF(X509) *us_root_certs_from_users = nullptr;
+static X509_STORE *us_shared_default_ca_store_cache = nullptr;
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1261-L1310
+extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
+  STACK_OF(X509) *certs = sk_X509_new_null();
+  if (certs == NULL) {
+    return 0;
+  }
+  for (size_t i = 0; i < count; i++) {
+    BIO *in = BIO_new_mem_buf(pem[i], -1);
+    if (in == NULL) {
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    X509 *x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
+    BIO_free(in);
+    if (x == NULL) {
+      // The OpenSSL error stays queued: the caller reports it like node's ThrowCryptoError.
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    sk_X509_push(certs, x);
+  }
+  std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+  if (us_root_certs_from_users != nullptr) {
+    sk_X509_pop_free(us_root_certs_from_users, X509_free);
+  }
+  us_root_certs_from_users = certs;
+  if (us_shared_default_ca_store_cache != nullptr) {
+    X509_STORE_free(us_shared_default_ca_store_cache);
+    us_shared_default_ca_store_cache = nullptr;
+  }
+  return 1;
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
   X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+
+  {
+    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+    if (us_root_certs_from_users != nullptr) {
+      for (size_t i = 0; i < sk_X509_num(us_root_certs_from_users); i++) {
+        X509_STORE_add_cert(store, sk_X509_value(us_root_certs_from_users, i));
+      }
+      return store;
+    }
+  }
 
   X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
   if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
@@ -351,9 +402,11 @@ extern "C" X509_STORE *us_get_default_ca_store() {
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for
 // one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
-  static X509_STORE *shared = nullptr;
-  static std::once_flag once;
-  std::call_once(once, []() { shared = us_get_default_ca_store(); });
+  std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+  if (us_shared_default_ca_store_cache == nullptr) {
+    us_shared_default_ca_store_cache = us_get_default_ca_store();
+  }
+  X509_STORE *shared = us_shared_default_ca_store_cache;
   if (shared) X509_STORE_up_ref(shared);
   return shared;
 }

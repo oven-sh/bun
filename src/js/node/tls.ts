@@ -622,14 +622,6 @@ var InternalSecureContext = class SecureContext {
   servername;
 
   constructor(options, cached = false) {
-    // When tls.setDefaultCACertificates() has installed an override and no
-    // explicit `ca` was given, use the override as the default CA set so the
-    // process-wide default applies on every construction path (the public
-    // createSecureContext(), the connect/TLSSocket path, addContext and
-    // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
-    }
     if (options) {
       validateSecureContextOptions(options);
       const cert = options.cert;
@@ -1313,15 +1305,6 @@ function Server(options, secureConnectionListener): void {
       }
 
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
       // PKCS#12-embedded CAs are stashed separately so createSecureContext can
       // extend (not replace) the default trust set via addCACert. The server
       // path hands raw {key, cert, ca} to the native listener and has no
@@ -1815,8 +1798,9 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
-  // The native call throws for a certificate BoringSSL rejects; keep the JS
-  // override and the fetch() override in step by storing only after it returns.
+  // Resets the process-wide root store (node's resetRootCertStore); throws for a
+  // certificate BoringSSL rejects, so the cache below is set only after it returns.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L215
   setDefaultCACertificatesNative(normalized);
   _defaultCACertificatesOverride = normalized;
 }

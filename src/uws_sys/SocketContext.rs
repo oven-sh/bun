@@ -334,7 +334,10 @@ pub mod c {
         ) -> core::ffi::c_int;
         /// Replaces `ctx`'s trust store with an empty one that the default
         /// roots never seed; returns 0 on allocation failure.
-        pub fn us_ssl_ctx_use_empty_ca_store(ctx: *mut SSL_CTX) -> core::ffi::c_int;
+        pub fn us_set_default_ca_certs(
+            pem: *const *const core::ffi::c_char,
+            count: usize,
+        ) -> core::ffi::c_int;
         /// Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (the
         /// caller frees them with libc free); returns 0 with a static
         /// `err_reason` tag on failure.

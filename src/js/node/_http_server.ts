@@ -2003,6 +2003,28 @@ function getNodeHTTPServerSocket() {
 
     // SNI hostname the client sent in its ClientHello, or false when the TLS
     // client sent none (matches Node's server-side TLSSocket.servername).
+    // TLSSocket.prototype reads these off socket._handle (node's TLSWrap); the
+    // native handle lives in kHandle here, so answer from it directly.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_wrap.js#L1000-L1080
+    getCipher() {
+      return this[kHandle]?.getCipher?.();
+    }
+
+    getPeerCertificate(detailed) {
+      const handle = this[kHandle];
+      if (!handle) return null;
+      const cert = arguments.length < 1 ? handle.getPeerCertificate?.() : handle.getPeerCertificate?.(!detailed);
+      return cert ?? {};
+    }
+
+    getTLSVersion() {
+      return this[kHandle]?.getTLSVersion?.() ?? null;
+    }
+
+    getProtocol() {
+      return this.getTLSVersion();
+    }
+
     get servername() {
       if (!this.encrypted) return undefined;
       const name = this[kHandle]?.servername;

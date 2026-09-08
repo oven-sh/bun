@@ -377,13 +377,14 @@ impl WebWorker {
         // The worker VM's env map must hold what the worker's `process.env`
         // starts with, because native readers (`Bun.spawn` without `env`,
         // `Bun.which`, the TLS and proxy defaults) read the map, not the JS
-        // object. With an `env` option (or once the parent's `process.env`
-        // exists) that is the snapshot C++ took for the JS object; otherwise
-        // the parent's map, which its untouched `process.env` would mirror.
+        // object. That is the snapshot C++ builds the JS object from (the `env`
+        // option, the parent's current `process.env`, or the SHARE_ENV store);
+        // with none of those, the parent's map, which its untouched
+        // `process.env` would mirror.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
         let env_loader = if has_env_snapshot {
             // SAFETY: caller passed valid (ptr,len) pairs (or `(null,0)`)
-            // borrowed from the C++ WorkerOptions for the duration of this call.
+            // that stay alive for the duration of this call.
             let (keys, values) = unsafe {
                 (
                     bun_core::ffi::slice(env_keys_ptr, env_len),
@@ -1282,10 +1283,9 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
-/// Builds the worker's env map from the `process.env` snapshot C++ took for
-/// it (`WorkerOptions::env`). An entry with a NUL byte could not reach a child
-/// process intact (`Bun.spawn` rejects one in an explicit `env`), so it is
-/// left out of the map as well.
+/// Builds the worker's env map from the entries its `process.env` starts
+/// with. An entry with a NUL byte could not reach a child process intact
+/// (`Bun.spawn` rejects one in an explicit `env`), so it is left out.
 fn env_map_from_snapshot(
     keys: &[BunString],
     values: &[BunString],

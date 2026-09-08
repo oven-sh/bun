@@ -245,6 +245,16 @@ describe("web worker", () => {
       worker.on("error", e => { console.error(e); process.exit(1); });
       worker.once("message", m => { console.log(JSON.stringify(m)); worker.terminate(); });
     `;
+    // Worker-side helpers to dump the environment a child receives: "env" on POSIX
+    // (a debug bun child is slow), bun itself on Windows.
+    const childEnvHelpers = `
+      const win32 = process.platform === "win32";
+      const dumpCmd = win32 ? [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"] : ["/usr/bin/env"];
+      const parseEnv = out =>
+        win32
+          ? JSON.parse(out)
+          : Object.fromEntries(out.split("\\n").filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+    `;
 
     test.concurrent("Bun.spawn, Bun.spawnSync, Bun.which and Bun.$ (worker_threads, env without PATH)", async () => {
       // The worker's whole environment. A Windows child needs SystemRoot to start.
@@ -259,21 +269,15 @@ describe("web worker", () => {
         "worker.cjs": `
           const { parentPort } = require("node:worker_threads");
           const { $ } = require("bun");
-          // Dump the child's environment: "env" on POSIX (a debug bun child is slow), bun on Windows.
-          const win32 = process.platform === "win32";
-          const cmd = win32 ? [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"] : ["/usr/bin/env"];
-          const parse = out =>
-            win32
-              ? JSON.parse(out)
-              : Object.fromEntries(out.split("\\n").filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+          ${childEnvHelpers}
           (async () => {
-            const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" });
-            const sync = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "inherit" });
+            const proc = Bun.spawn({ cmd: dumpCmd, stdout: "pipe", stderr: "inherit" });
+            const sync = Bun.spawnSync({ cmd: dumpCmd, stdout: "pipe", stderr: "inherit" });
             const [asyncOut] = await Promise.all([proc.stdout.text(), proc.exited]);
             parentPort.postMessage({
               processEnv: { ...process.env },
-              spawnSyncChildEnv: parse(sync.stdout.toString()),
-              spawnChildEnv: parse(asyncOut),
+              spawnSyncChildEnv: parseEnv(sync.stdout.toString()),
+              spawnChildEnv: parseEnv(asyncOut),
               whichLaunchTool: Bun.which("launch-only-tool"),
               // No PATH in this worker's env: the shell must not fall back to the launch PATH.
               shellRanLaunchTool: win32 ? false : (await $\`launch-only-tool\`.quiet().nothrow()).exitCode === 0,
@@ -289,6 +293,34 @@ describe("web worker", () => {
         shellRanLaunchTool: false,
       });
     });
+
+    test.concurrent(
+      "a SHARE_ENV worker's children see the shared environment as it was when the worker started",
+      async () => {
+        const result = await run({
+          "main.mjs": `
+          import { SHARE_ENV, Worker } from "node:worker_threads";
+          delete process.env.LAUNCH_SECRET;
+          process.env.SET_AT_RUNTIME = "1";
+          const worker = new Worker("./worker.cjs", { env: SHARE_ENV });
+          ${report}
+        `,
+          "worker.cjs": `
+          const { parentPort } = require("node:worker_threads");
+          ${childEnvHelpers}
+          const pick = env => ({ LAUNCH_SECRET: env.LAUNCH_SECRET ?? null, SET_AT_RUNTIME: env.SET_AT_RUNTIME ?? null });
+          parentPort.postMessage({
+            own: pick(process.env),
+            child: pick(parseEnv(Bun.spawnSync({ cmd: dumpCmd, stdout: "pipe", stderr: "inherit" }).stdout.toString())),
+          });
+        `,
+        });
+        expect(result).toEqual({
+          own: { LAUNCH_SECRET: null, SET_AT_RUNTIME: "1" },
+          child: { LAUNCH_SECRET: null, SET_AT_RUNTIME: "1" },
+        });
+      },
+    );
 
     test.concurrent("Bun.which and Bun.spawnSync resolve argv[0] on the worker's PATH (Web Worker)", async () => {
       const result = await run({

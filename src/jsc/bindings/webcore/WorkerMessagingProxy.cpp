@@ -69,8 +69,9 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen,
-    // The env snapshot (WorkerOptions::env) the worker's process.env is built from, so the worker
-    // VM's native env map starts from the same entries. hasEnvSnapshot=false: copy the parent's map.
+    // The entries the worker's process.env starts with (WorkerOptions::env, or the SHARE_ENV store
+    // as it is now), so the worker VM's native env map starts from the same environment.
+    // hasEnvSnapshot=false: copy the parent VM's map.
     bool hasEnvSnapshot,
     const BunString* envKeysPtr,
     const BunString* envValuesPtr,
@@ -146,16 +147,26 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
-    // Borrowed views; m_options.env keeps the strings alive until the worker thread consumes it.
+    // The environment the worker's process.env starts with, as borrowed views: m_options.env keeps
+    // its strings alive until the worker thread consumes it, sharedEnv until this call returns.
     Vector<BunString> envKeys;
     Vector<BunString> envValues;
-    const bool hasEnvSnapshot = m_options.env.has_value();
-    if (hasEnvSnapshot) {
+    Vector<std::pair<String, String>> sharedEnv;
+    const bool hasEnvSnapshot = m_options.env.has_value() || m_options.sharedEnvStore;
+    if (m_options.env.has_value()) {
         envKeys.reserveInitialCapacity(m_options.env->size());
         envValues.reserveInitialCapacity(m_options.env->size());
         for (const auto& entry : *m_options.env) {
             envKeys.append(Bun::toString(entry.key));
             envValues.append(Bun::toString(entry.value));
+        }
+    } else if (m_options.sharedEnvStore) {
+        sharedEnv = m_options.sharedEnvStore->entries();
+        envKeys.reserveInitialCapacity(sharedEnv.size());
+        envValues.reserveInitialCapacity(sharedEnv.size());
+        for (const auto& entry : sharedEnv) {
+            envKeys.append(Bun::toString(entry.first));
+            envValues.append(Bun::toString(entry.second));
         }
     }
 

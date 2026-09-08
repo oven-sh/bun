@@ -62,6 +62,17 @@ public:
         return out;
     }
 
+    // Every (name, value) as it is now, e.g. to seed a joining worker's native env map.
+    Vector<std::pair<String, String>> entries()
+    {
+        Locker locker { m_lock };
+        Vector<std::pair<String, String>> out;
+        out.reserveInitialCapacity(m_map.size());
+        for (const auto& entry : m_map.values())
+            out.append({ entry.name.isolatedCopy(), entry.value.isolatedCopy() });
+        return out;
+    }
+
     // Windows env keys are case-insensitive. This follows bun's own Windows env
     // object, not node: node only folds case for a main-rooted tree (RealEnvStore),
     // and is case-sensitive for one rooted at a snapshot worker (MapKVStore).

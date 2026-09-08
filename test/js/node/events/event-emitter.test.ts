@@ -842,8 +842,11 @@ describe("EventEmitter captureRejections", () => {
     let returned;
     plain.on("something", () => (returned = Promise.reject(new Error("not captured"))));
     plain.emit("something");
+    // Capture would run as: rejection reaction (a microtask queued before this
+    // .catch()) -> process.nextTick -> emit('error'); so it would have fired by
+    // the time a nextTick queued after that microtask runs.
     await returned.catch(() => {});
-    await sleep(5);
+    await new Promise(resolve => process.nextTick(resolve));
     expect(onError).not.toHaveBeenCalled();
   });
 

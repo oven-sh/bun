@@ -1093,6 +1093,96 @@ describe("bundler", () => {
         `);
       },
     });
+
+    // `--jsx-side-effects` on its own, with no other `--jsx-*` flag. The bunfig
+    // rows go through the arm of Arguments.rs that merges CLI flags into the
+    // `jsx` options bunfig.toml already created.
+    describe.each([
+      ["tsconfig {}", { "tsconfig.json": "{}" }, "react/jsx-dev-runtime"],
+      [
+        'tsconfig "react-jsx"',
+        { "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }) },
+        "react/jsx-runtime",
+      ],
+      [
+        "bunfig (no jsx keys)",
+        { "tsconfig.json": "{}", "bunfig.toml": 'logLevel = "error"\n' },
+        "react/jsx-dev-runtime",
+      ],
+      [
+        'bunfig jsx = "react-jsx"',
+        { "tsconfig.json": "{}", "bunfig.toml": 'jsx = "react-jsx"\n' },
+        "react/jsx-runtime",
+      ],
+    ] as const)("cli: --jsx-side-effects alone [%s]", (_label, config, expectedRuntime) => {
+      for (const mode of [["--no-bundle"], ["--external", "react"]]) {
+        test.concurrent(`${mode[0]}: drops the pure annotation without changing the runtime`, async () => {
+          using dir = tempDir("jsx-cli-side-effects", { "a.jsx": "export const a = <div />;\n", ...config });
+          const build = async (args: readonly string[]) => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "build", ...mode, ...args, "a.jsx"],
+              env: bunEnv,
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect(stderr).toBe("");
+            return { stdout, exitCode };
+          };
+
+          const baseline = await build([]);
+          expect(baseline.stdout).toContain("/* @__PURE__ */");
+          expect(baseline.stdout).toContain(expectedRuntime);
+          expect(baseline.exitCode).toBe(0);
+
+          const withFlag = await build(["--jsx-side-effects"]);
+          expect(withFlag.stdout).not.toContain("@__PURE__");
+          expect(withFlag.stdout).toContain(expectedRuntime);
+          expect(withFlag.exitCode).toBe(0);
+        });
+      }
+    });
+
+    test.concurrent("cli: --jsx-side-effects alone keeps an unused JSX element under --minify-syntax", async () => {
+      using dir = tempDir("jsx-cli-side-effects-bundle", {
+        "sx.jsx": `
+          function Boom() { globalThis.__hit = (globalThis.__hit || 0) + 1; return null; }
+          const h = (t, p, ...c) => { if (typeof t === "function") t(p); return { t, p, c }; };
+          const unused = <Boom />;
+          console.log("hit=" + (globalThis.__hit || 0));
+        `,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+      });
+      const buildAndRun = async (args: readonly string[], outfile: string) => {
+        {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "sx.jsx", "--minify-syntax", ...args, "--outfile", outfile],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+        }
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        return { stdout: stdout.trim(), exitCode };
+      };
+
+      // JSX calls are pure by default, so the unused element is removed.
+      expect(await buildAndRun([], "a.js")).toEqual({ stdout: "hit=0", exitCode: 0 });
+      expect(await buildAndRun(["--jsx-side-effects"], "b.js")).toEqual({ stdout: "hit=1", exitCode: 0 });
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/6858

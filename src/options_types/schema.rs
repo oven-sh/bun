@@ -373,7 +373,8 @@ pub mod api {
         pub factory: Box<[u8]>,
         pub runtime: JsxRuntime,
         pub fragment: Box<[u8]>,
-        pub development: bool,
+        /// `None`: not chosen here, the root tsconfig.json and `NODE_ENV` decide.
+        pub development: Option<bool>,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
     }

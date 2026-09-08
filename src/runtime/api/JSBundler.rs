@@ -182,7 +182,7 @@ pub mod js_bundler {
                     fragment: Box::default(),
                     runtime: api::JsxRuntime::Automatic,
                     import_source: Box::default(),
-                    development: true, // Default to development mode like old Pragma
+                    development: Some(true), // Default to development mode like old Pragma
                     ..Default::default()
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
@@ -748,7 +748,7 @@ pub mod js_bundler {
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
-                            this.jsx.development = dev;
+                            this.jsx.development = Some(dev);
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -775,7 +775,7 @@ pub mod js_bundler {
                 }
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
-                    this.jsx.development = dev;
+                    this.jsx.development = Some(dev);
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

@@ -319,6 +319,49 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+  test("--jsx-side-effects invalidates cache", () => {
+    // Without the flag a bare `<div />;` statement is a pure call and is
+    // dropped. With it the call stays. So the flag must be part of the key.
+    mkdirSync(join(temp_dir, "node_modules", "react"), { recursive: true });
+    writeFileSync(
+      join(temp_dir, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", exports: { "./jsx-dev-runtime": "./r.js", "./jsx-runtime": "./r.js" } }),
+    );
+    writeFileSync(
+      join(temp_dir, "node_modules", "react", "r.js"),
+      'let n=0;exports.jsxDEV=exports.jsx=exports.jsxs=()=>{n++};exports.Fragment={};process.on("exit",()=>console.log("calls="+n));',
+    );
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+    writeFileSync(join(temp_dir, "a.jsx"), "<div />;\n<div />;\n<div />;\n//" + filler + "\n");
+
+    const run = (extra: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...extra, "a.jsx"], cwd: temp_dir, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    expect(run([])).toBe("calls=0");
+    expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+    const withoutFlag = readFileSync(entry);
+    expect(run([])).toBe("calls=0");
+    expect(newCacheCount()).toBe(0); // cache hit
+    expect(readFileSync(entry).equals(withoutFlag)).toBeTrue();
+
+    // features_hash differs -> the entry for this source is rewritten in place
+    expect(run(["--jsx-side-effects"])).toBe("calls=3");
+    expect(newCacheCount()).toBe(0);
+    const withFlag = readFileSync(entry);
+    expect(withFlag.equals(withoutFlag)).toBeFalse();
+    expect(run(["--jsx-side-effects"])).toBe("calls=3");
+    expect(newCacheCount()).toBe(0); // cache hit
+    expect(readFileSync(entry).equals(withFlag)).toBeTrue();
+
+    expect(run([])).toBe("calls=0");
+    expect(newCacheCount()).toBe(0);
+    expect(readFileSync(entry).equals(withFlag)).toBeFalse();
+  });
 
   // A define replaces an identifier at parse time, so the define table is part
   // of the cache key. The cache is shared by every project of the user, and

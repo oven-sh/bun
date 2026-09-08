@@ -195,19 +195,29 @@ impl Pragma {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Uses `bun_wyhash::Wyhash` (the algorithm behind `bun.hash`) — distinct
         // from `Wyhash11`, which would yield a different cache key.
-        for factory in self.factory.iter() {
+        // Exhaustive, so a new field has to be hashed or skipped here.
+        let Pragma {
+            factory,
+            fragment,
+            runtime,
+            import_source,
+            classic_import_source,
+            package_name,
+            development,
+            parse: _,
+            side_effects,
+        } = self;
+        for factory in factory.iter() {
             hasher.update(factory);
         }
-        for fragment in self.fragment.iter() {
+        for fragment in fragment.iter() {
             hasher.update(fragment);
         }
-        hasher.update(&self.import_source.development);
-        hasher.update(&self.import_source.production);
-        hasher.update(&self.classic_import_source);
-        hasher.update(&self.package_name);
-        // `runtime` selects classic vs automatic emission; `development`
-        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
-        hasher.update(&[self.runtime as u8, self.development as u8]);
+        hasher.update(&import_source.development);
+        hasher.update(&import_source.production);
+        hasher.update(classic_import_source);
+        hasher.update(package_name);
+        hasher.update(&[*runtime as u8, *development as u8, *side_effects as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {
@@ -290,7 +300,9 @@ impl Pragma {
             pragma.classic_import_source = pragma.package_name.clone();
         }
 
-        pragma.development = jsx.development;
+        if let Some(development) = jsx.development {
+            pragma.development = development;
+        }
         pragma.parse = true;
         pragma
     }

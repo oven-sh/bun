@@ -2649,8 +2649,7 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
-                // `render_metadata` reads `this.blob`, as GET does. A Blob body
-                // stays on the Response: a view of it is enough for the headers.
+                // `render_metadata` reads `this.blob`; a Blob body stays on the Response.
                 let body = match body_value {
                     Body::Value::Blob(blob) => AnyBlob::Blob(blob.dupe()),
                     _ => body_value.use_as_any_blob_allow_non_utf8_string(),
@@ -3103,9 +3102,7 @@ where
         true
     }
 
-    /// The `error()` argument for a body that cannot be sent. An errored body
-    /// yields its own error. A used one, usually the same Response object
-    /// returned for a second request, is an error too, not a silent empty 200.
+    /// The `error()` argument for an errored or already-used body.
     fn take_unsendable_body_error(
         value: &mut Body::Value,
         global_this: &JSGlobalObject,

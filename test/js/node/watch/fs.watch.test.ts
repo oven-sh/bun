@@ -236,7 +236,8 @@ describe("fs.watch", () => {
     // `a/b` does not exist, so a watcher that split on `\` throws ENOENT here.
     const watcher = fs.watch(literal);
     try {
-      const { promise, resolve } = Promise.withResolvers<[string, string | Buffer | null]>();
+      const { promise, resolve, reject } = Promise.withResolvers<[string, string | Buffer | null]>();
+      watcher.once("error", reject);
       watcher.once("change", (event, filename) => resolve([event, filename]));
       const interval = repeat(() => fs.writeFileSync(literal, "changed"));
       const [event, filename] = await promise.finally(() => clearInterval(interval));
@@ -255,7 +256,8 @@ describe("fs.watch", () => {
     // d/link/.. is other/, not d/. (path.join would fold the `..` away.)
     const watcher = fs.watch(`${dir}/d/link/..`);
     try {
-      const { promise, resolve } = Promise.withResolvers<string | Buffer | null>();
+      const { promise, resolve, reject } = Promise.withResolvers<string | Buffer | null>();
+      watcher.once("error", reject);
       watcher.on("change", (event, filename) => {
         if (filename === "in-other.txt" || filename === "in-d.txt") resolve(filename);
       });

@@ -2293,6 +2293,29 @@ fn shell_get_path<'a>(
     >(&mut buf[..], &[&dirpath, to.as_bytes()]))
 }
 
+/// Operand `path` for a path-only syscall: prefixed with the shell `cwd` when relative, never normalized (`a/link/../b` is not `a/b` to the kernel).
+pub(crate) fn shell_join_cwd(cwd: &[u8], path: &[u8]) -> bun_core::ZBox {
+    if path.is_empty() || bun_paths::Platform::AUTO.is_absolute(path) {
+        return bun_core::ZBox::from_bytes(path);
+    }
+    #[cfg(windows)]
+    {
+        // Win32 resolves `.`/`..` textually itself, and the NT calls below it reject them.
+        let mut spill = Vec::new();
+        let joined = bun_paths::resolve_path::join_z_spill::<bun_paths::platform::Auto>(
+            &mut spill,
+            &[cwd, path],
+        );
+        bun_core::ZBox::from_bytes(joined.as_bytes())
+    }
+    #[cfg(not(windows))]
+    {
+        bun_core::ZBox::from_vec_with_nul(
+            bun_paths::join_sep_maybe_z::<true>(&[cwd, path]).into_vec(),
+        )
+    }
+}
+
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.

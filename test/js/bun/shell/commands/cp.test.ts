@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { linkSync, readFileSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +173,120 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The cp builtin hands both operands to the node:fs copy as paths from the
+// shell cwd. They reach the kernel as written: folding `link/..` out of the
+// string first copied from (or into) a different directory than the one every
+// other program sees. POSIX needs the builtin enabled explicitly; Windows
+// resolves `..` in the path string itself, before any symlink, so it has only
+// one view.
+test.skipIf(isWindows)("operands are copied from and to where the kernel resolves them", async () => {
+  using dir = tempDir("cp-kernel-path", {
+    "d/c.txt": "in d",
+    "other/c.txt": "in other",
+    "other/sub/.keep": "",
+  });
+  const base = String(dir);
+  // d/link/.. is other/, not d/
+  symlinkSync("../other/sub", join(base, "d", "link"));
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    $.nothrow();
+    const run = async (...args: string[]) => {
+      const { exitCode, stderr } = await $\`cp \${args}\`.quiet();
+      return { exitCode, stderr: stderr.toString() };
+    };
+    console.log(JSON.stringify({
+      from: await run("d/link/../c.txt", "out.txt"),
+      into: await run("d/c.txt", "d/link/.."),
+      intoRenamed: await run("d/c.txt", "d/link/../renamed.txt"),
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: base,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const ok = { exitCode: 0, stderr: "" };
+  expect(JSON.parse(stdout)).toEqual({ from: ok, into: ok, intoRenamed: ok });
+  expect({
+    out: readFileSync(join(base, "out.txt"), "utf8"),
+    d: readdirSync(join(base, "d")).sort(),
+    other: readdirSync(join(base, "other")).sort(),
+    otherC: readFileSync(join(base, "other", "c.txt"), "utf8"),
+    renamed: readFileSync(join(base, "other", "renamed.txt"), "utf8"),
+  }).toEqual({
+    out: "in other",
+    d: ["c.txt", "link"],
+    other: ["c.txt", "renamed.txt", "sub"],
+    otherC: "in d",
+    renamed: "in d",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The builtin refuses to copy a file onto itself. With operands no longer
+// normalized, two spellings of one path differ as strings, so the check
+// compares the files (device and inode) the way BSD and GNU cp do, which also
+// covers hard links and a directory reached through a symlink.
+test.skipIf(isWindows)("a file is not copied onto itself however the operands spell it", async () => {
+  using dir = tempDir("cp-same-file", {
+    "d/c.txt": "content",
+    "other/sub/s.txt": "sub content",
+    // past the size where the macOS copy path unlinks the destination first
+    "big.bin": Buffer.alloc(200 * 1024, "x").toString(),
+  });
+  const base = String(dir);
+  symlinkSync("../other/sub", join(base, "d", "link"));
+  linkSync(join(base, "d", "c.txt"), join(base, "hard.txt"));
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    $.nothrow();
+    const run = async (...args: string[]) => {
+      const { exitCode, stderr } = await $\`cp \${args}\`.quiet();
+      return { exitCode, stderr: stderr.toString() };
+    };
+    console.log(JSON.stringify({
+      dotSlash: await run("d/c.txt", "./d/c.txt"),
+      intoOwnDir: await run("d/c.txt", "d"),
+      throughLink: await run("other/sub/s.txt", "d/link/s.txt"),
+      hardLink: await run("d/c.txt", "hard.txt"),
+      big: await run("big.bin", "./big.bin"),
+      absolute: await run("big.bin", process.cwd() + "/big.bin"),
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: base,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const refused = (tgt: string, src: string) => ({
+    exitCode: 1,
+    stderr: `cp: ${tgt} and ${src} are identical (not copied)\n`,
+  });
+  expect(JSON.parse(stdout)).toEqual({
+    dotSlash: refused("./d/c.txt", "d/c.txt"),
+    intoOwnDir: refused("d/c.txt", "d/c.txt"),
+    throughLink: refused("d/link/s.txt", "other/sub/s.txt"),
+    hardLink: refused("hard.txt", "d/c.txt"),
+    big: refused("./big.bin", "big.bin"),
+    absolute: refused(`${realpathSync(base)}/big.bin`, "big.bin"),
+  });
+  expect({
+    c: readFileSync(join(base, "d", "c.txt"), "utf8"),
+    s: readFileSync(join(base, "other", "sub", "s.txt"), "utf8"),
+    big: readFileSync(join(base, "big.bin"), "utf8").length,
+  }).toEqual({ c: "content", s: "sub content", big: 200 * 1024 });
+  expect(exitCode).toBe(0);
 });
 
 function expectSortedOutput(expected: string) {

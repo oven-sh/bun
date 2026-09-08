@@ -37,6 +37,9 @@
 "generic_body_not_generic:src/install/lockfile/printer/tree_printer.rs" = 4
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 
+[bun_io]
+"generic_body_not_generic:src/io/pipes.rs" = 1
+
 [bun_js_parser]
 "generic_body_not_generic:src/js_parser/fold.rs" = 1
 "generic_body_not_generic:src/js_parser/lower/lower_decorators.rs" = 1
@@ -211,9 +214,6 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-
-[bun_io]
-"generic_body_not_generic:src/io/pipes.rs" = 1
 
 [bun_watcher]
 "generic_body_not_generic:src/watcher/Watcher.rs" = 1

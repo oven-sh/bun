@@ -277,6 +277,23 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/42060
+  it("Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
+    using dir = tempDir("bun-write-existing-dest", {
+      "existing.bin": "placeholder",
+    });
+    const size = 1024 * 1024 + 7;
+    const src = join(String(dir), "src.bin");
+    await Bun.write(src, new Uint8Array(size).fill(7));
+    const existing = join(String(dir), "existing.bin");
+
+    expect(await Bun.write(existing, Bun.file(src))).toBe(size);
+    expect(fs.statSync(existing).size).toBe(size);
+
+    expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(src))).toBe(1000);
+    expect(fs.statSync(existing).size).toBe(1000);
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();

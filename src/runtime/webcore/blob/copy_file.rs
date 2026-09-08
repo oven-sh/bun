@@ -519,10 +519,13 @@ impl CopyFile {
         }
     }
 
+    /// Returns the number of bytes copied. `fcopyfile` copies the whole
+    /// source, so on that path the count is `source_size`.
     #[cfg(target_os = "macos")]
     pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
         &mut self,
-    ) -> Result<(), crate::Error> {
+        source_size: u64,
+    ) -> Result<u64, crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
@@ -553,20 +556,19 @@ impl CopyFile {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
+                                Err(bun_errno::from_errno(err.errno as i32).into())
                             }
-                            bun_sys::Result::Ok(()) => {}
+                            bun_sys::Result::Ok(()) => Ok(total_written),
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_errno::from_errno(errno.errno as i32).into());
+                        Err(bun_errno::from_errno(errno.errno as i32).into())
                     }
                 }
             }
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => Ok(source_size),
         }
-        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -871,10 +873,15 @@ impl CopyFile {
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
                 ) {
-                    if self.do_fcopy_file_with_read_write_loop_fallback().is_err() {
-                        self.do_close();
-                        return;
-                    }
+                    let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
+                        u64::try_from(stat.st_size).expect("int cast"),
+                    ) {
+                        Ok(copied) => copied,
+                        Err(_) => {
+                            self.do_close();
+                            return;
+                        }
+                    };
                     if stat.st_size != 0
                         && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                     {
@@ -882,6 +889,9 @@ impl CopyFile {
                             self.destination_fd,
                             i64::try_from(self.max_length).expect("int cast"),
                         );
+                        self.read_len = copied.min(self.max_length as u64) as SizeType;
+                    } else {
+                        self.read_len = copied as SizeType;
                     }
                 } else if self.do_read_write_loop_capped(self.max_length).is_err() {
                     self.do_close();

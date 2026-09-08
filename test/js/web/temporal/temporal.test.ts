@@ -152,7 +152,8 @@ describe("Temporal non-ISO calendars before their epoch", () => {
       untilMonths: muharram30.until(newYearMinus5, { largestUnit: "months" }).toString(),
       sinceMonths: muharram30.since(newYearMinus5, { largestUnit: "months" }).toString(),
       roundTrip: muharram30.add("P1Y11M1D").equals(newYearMinus5),
-      yearMonthPlusOneYear: Temporal.PlainYearMonth.from({ year: -4, month: 12, calendar }).add({ years: 1 }).daysInMonth,
+      yearMonthPlusOneYear: Temporal.PlainYearMonth.from({ year: -4, month: 12, calendar }).add({ years: 1 })
+        .daysInMonth,
     }).toEqual({
       plusOneYear: "-3-M12-29",
       minusThreeYears: "-7-M12-29",

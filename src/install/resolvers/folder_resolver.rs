@@ -265,8 +265,7 @@ fn package_json_paths<'a>(
     non_normalized_path: &[u8],
 ) -> (&'a ZStr, &'a [u8]) {
     let paths = normalize_package_json_path(global_or_relative, joined, non_normalized_path);
-    // `paths` borrows `joined` read-only and `rel` is FileSystem's thread-local buffer: take the
-    // lengths, drop the borrows, then mutate `joined` and our own copy of `rel`.
+    // Take the lengths, drop the read-only borrows, then mutate `joined` and our own copy of the thread-local `rel`.
     let abs_len = paths.abs.len();
     let rel_len = paths.rel.len();
     rel_buf[..rel_len].copy_from_slice(paths.rel);
@@ -306,8 +305,7 @@ fn parse_package_json_file<R: ResolverContext>(
     Ok(package)
 }
 
-/// Parses the package.json of the `file:` directory at `folder_path` (absolute, or relative to the
-/// top level directory) into `lockfile` the way `get_or_put` does, without caching or appending it.
+/// Parses the package.json of the `file:` directory at `folder_path` into `lockfile` like `get_or_put`, appending nothing.
 pub(crate) fn parse_folder_dependency_package_json(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,

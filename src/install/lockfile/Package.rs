@@ -916,8 +916,7 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
-    /// A `file:` directory package's `bin` changed. Its entry is overwritten in place, which
-    /// `Lockfile::eql` cannot see, so `--frozen-lockfile` checks this (also counted in `update`).
+    /// A `file:` package's `bin` changed in place (`Lockfile::eql` cannot see it); fails `--frozen-lockfile`.
     pub(crate) bins_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
@@ -981,8 +980,7 @@ impl Diff {
         )
     }
 
-    /// Diffs the package.json of the `file:` directory package that a root or workspace dependency
-    /// is locked to against its lockfile entry, like a workspace. `None` for other dependencies.
+    /// Diffs the package.json of the `file:` directory a root or workspace dependency is locked to, like a workspace.
     fn generate_folder_dependency(
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
@@ -1074,10 +1072,7 @@ impl Diff {
                 ),
             _ => true,
         };
-        // Raw fat pointers so the `&mut` reborrows of both lockfiles below don't conflict with
-        // these read views. Every parse below (directly or in a recursive call) can grow
-        // `to_lockfile.buffers.dependencies`, so `to_deps` is re-derived after each; nothing grows
-        // `from_lockfile`'s buffers.
+        // Raw fat pointer so the `&mut to_lockfile` reborrows below don't conflict; re-derived after every parse.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1095,8 +1090,7 @@ impl Diff {
             .resolutions
             .get(from_lockfile.buffers.resolutions.as_slice())
             .into();
-        // See note above — `from_lockfile.buffers` is not reallocated for
-        // the lifetime of these references.
+        // Nothing below grows `from_lockfile.buffers`, so these stay valid for the whole loop.
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 

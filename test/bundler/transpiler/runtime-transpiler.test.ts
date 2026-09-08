@@ -252,3 +252,48 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32167
+describe.concurrent("top-level this", () => {
+  const files = {
+    // the issue's repro: an import-only entry point, `this` captured by an arrow
+    "import-only.js": `import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("event", () => {
+  console.log(typeof this, this === undefined);
+});
+emitter.emit("event");
+`,
+    "export-only.mjs": `export {};\nconsole.log(typeof this, this === undefined);\n`,
+    // an imported (not entry point) ES module goes through the async transpiler path
+    "imports-esm.js": `import { kind, isUndefined } from "./dep.mjs";\nconsole.log(kind, isUndefined);\n`,
+    "dep.mjs": `export const kind = typeof this;\nexport const isUndefined = this === undefined;\n`,
+    // CommonJS keeps `this === module.exports`, also when imported from an ES module
+    // in a "type": "module" package
+    "package.json": `{ "type": "module" }`,
+    "cjs.cjs": `console.log(typeof this, this === module.exports);\n`,
+    "imports-cjs.js": `import dep from "./dep.cjs";\nconsole.log(dep.kind, dep.isExports);\n`,
+    "dep.cjs": `var self = this;\nmodule.exports = { kind: typeof self, isExports: self === exports };\n`,
+  };
+
+  for (const [file, expected] of [
+    ["import-only.js", "undefined true\n"],
+    ["export-only.mjs", "undefined true\n"],
+    ["imports-esm.js", "undefined true\n"],
+    ["cjs.cjs", "object true\n"],
+    ["imports-cjs.js", "object true\n"],
+  ]) {
+    test(file, async () => {
+      using dir = tempDir("top-level-this", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  }
+});

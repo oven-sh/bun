@@ -265,6 +265,11 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        // `exports_kind` for a file with no module syntax is decided by
+        // `module_type`, so byte-identical sources in an ESM package and a
+        // CommonJS package are different cache entries.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 

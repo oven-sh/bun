@@ -3722,6 +3722,22 @@ class Foo {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/32167
+  it("top-level this is undefined in an ES module and exports in CommonJS", () => {
+    expectPrinted_("export {}; console.log(this)", "export {};\nconsole.log(undefined)");
+    expectPrinted_('import "foo"; console.log(this)', 'import"foo";\nconsole.log(undefined)');
+    expectPrinted_(
+      "export {}; console.log(typeof this, this === undefined)",
+      'export {};\nconsole.log("undefined", true)',
+    );
+    expectPrinted_("export {}; const f = () => [this]", "export {};\nconst f = () => [undefined]");
+    // bare `delete undefined` is a SyntaxError in strict mode code
+    expectPrinted_("export {}; delete this", "export {};\ndelete (0, undefined)");
+    expectPrinted_("export {}; function f() { return this }", "export {};\nfunction f() {\n  return this;\n}");
+
+    expectPrinted_("console.log(this)", "console.log(exports)");
+  });
+
   it("declarations named eval or arguments, and reserved words, in strict mode", () => {
     expectParseError(
       '"use strict"; var arguments = 1',

@@ -1285,7 +1285,9 @@ impl EventLoop {
 
         self.process_gc_timer();
         // Nothing at all to do: the startup burst is certainly over.
-        self.vm_ref().jsc_vm().end_startup_jit_deferral();
+        self.vm_ref()
+            .jsc_vm()
+            .end_startup_jit_deferral_because(c"idle event loop with nothing scheduled");
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.

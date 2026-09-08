@@ -49,6 +49,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
+    global.vm().end_startup_jit_deferral_because(c"alert()");
     let mut reader = Output::stdin_reader();
     loop {
         let Ok(byte) = reader.take_byte() else { break };
@@ -103,6 +104,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
+    global.vm().end_startup_jit_deferral_because(c"confirm()");
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
@@ -303,6 +305,7 @@ pub mod prompt {
             });
 
         // 7. Pause while waiting for the user's response.
+        global.vm().end_startup_jit_deferral_because(c"prompt()");
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
         // SAFETY: process-global static; prompt() runs single-threaded on the JS
         // main thread, so the exclusive borrow is sound for this scope.

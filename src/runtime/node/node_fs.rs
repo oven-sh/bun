@@ -5,7 +5,7 @@
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
@@ -3538,9 +3538,40 @@ pub mod args {
             }
         }
     }
+    /// `fs.write`/`fs.writeSync` to the terminal (fd 1/2, or any tty fd: a TUI may write through its own O_NONBLOCK
+    /// descriptor on the tty) marks the program interactive: end the startup JIT deferral window. JS thread.
+    fn note_write_for_startup_jit_deferral(ctx: &JSGlobalObject, fd: FD) {
+        let vm = ctx.vm();
+        if !vm.startup_jit_deferral_active() {
+            return;
+        }
+        match fd.stdio_tag() {
+            Some(bun_core::Stdio::StdOut | bun_core::Stdio::StdErr) => {
+                vm.end_startup_jit_deferral_because(c"first fs.write to stdout/stderr")
+            }
+            Some(bun_core::Stdio::StdIn) => {}
+            None => {
+                // One isatty() per distinct fd while the window is open (<= BUN_STARTUP_JIT_DEFERRAL_MS), none after.
+                #[cfg(unix)]
+                {
+                    static LAST_NON_TTY_FD: AtomicI32 = AtomicI32::new(-1);
+                    let native = fd.native();
+                    if LAST_NON_TTY_FD.load(Ordering::Relaxed) != native {
+                        if sys::isatty(fd) {
+                            vm.end_startup_jit_deferral_because(c"first fs.write to a tty");
+                        } else {
+                            LAST_NON_TTY_FD.store(native, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     impl Write<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
+            note_write_for_startup_jit_deferral(ctx, fd);
             let buffer_value = arguments.next();
             let bv = buffer_value
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;

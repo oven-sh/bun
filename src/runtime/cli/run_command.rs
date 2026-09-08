@@ -1122,9 +1122,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
-            startup_jit_deferral: bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL
+            startup_jit_deferral_max_ms: bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL
                 .get()
-                .unwrap_or(true),
+                .unwrap_or(true)
+                .then(|| bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL_MS.get().unwrap_or(1500))
+                .map(|ms| u32::try_from(ms).unwrap_or(u32::MAX)),
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

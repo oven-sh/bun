@@ -310,6 +310,10 @@ The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that erro
 
 The `--bytecode` argument enables bytecode compilation. Every time you run JavaScript code in Bun, JavaScriptCore (the engine) compiles your source code into bytecode. `--bytecode` moves that parsing work from runtime to bundle time, which shortens startup.
 
+### JIT during startup
+
+A standalone executable keeps the JIT reluctant to compile while it starts up: code that only runs during startup rarely pays back its compile time, and the JIT threads compete with initialization. The window ends as soon as the main thread becomes interactive — the first stdin data it reads, its first write to the terminal or to stdout/stderr (`process.stdout`/`process.stderr`, `console`, `Bun.stdout.writer()`, `fs.writeSync`), the first time the event loop sits idle for 100ms — or after `BUN_STARTUP_JIT_DEFERRAL_MS` milliseconds (default `1500`). `BUN_STARTUP_JIT_DEFERRAL=0` (or `_MS=0`) disables it; `BUN_JSC_verboseOSR=1` logs which event ended it.
+
 ---
 
 ## Embedding runtime arguments

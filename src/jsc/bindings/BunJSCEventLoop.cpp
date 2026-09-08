@@ -1,5 +1,6 @@
 #include "root.h"
 #include "BunClientData.h"
+#include "headers.h"
 
 #include <atomic>
 
@@ -26,7 +27,7 @@ extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 // The event loop just blocked in the kernel for >=100ms with nothing runnable (epoll_kqueue.c).
 extern "C" void Bun__JSC_onLongIdleWait(JSC::VM* _Nonnull vm)
 {
-    vm->endStartupJITDeferral();
+    JSC__VM__endStartupJITDeferral(vm, "first idle event-loop park of >=100ms");
 }
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)

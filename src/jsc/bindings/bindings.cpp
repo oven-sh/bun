@@ -3192,10 +3192,21 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
-// First idle park of the event loop: the startup burst is over, so stop scaling tier-up thresholds (Options::startupJITDeferralScale).
-void JSC__VM__endStartupJITDeferral(JSC::VM* vm)
+bool JSC__VM__startupJITDeferralActive(JSC::VM* vm)
 {
-    vm->endStartupJITDeferral();
+    return vm->startupJITDeferralScale() != 1; // observes (and logs) a passed deadline
+}
+
+extern "C" uint64_t Bun__readOriginTimer(void*);
+// The program became interactive (`reason`), so stop scaling tier-up thresholds (Options::startupJITDeferralScale).
+// Mutator thread of `vm` only. BUN_JSC_verboseOSR=1 logs "Ending startup JIT deferral window: <reason>" (JSC) and the uptime.
+void JSC__VM__endStartupJITDeferral(JSC::VM* vm, const char* reason)
+{
+    if (!JSC__VM__startupJITDeferralActive(vm)) [[likely]]
+        return;
+    if (JSC::Options::verboseOSR() && vm->clientData) [[unlikely]]
+        dataLogLn("Startup JIT deferral: ", reason, " at ", static_cast<double>(Bun__readOriginTimer(bunVM(*vm))) / 1e6, " ms");
+    vm->endStartupJITDeferral(reason);
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)
@@ -5065,11 +5076,7 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    {
-        auto* moduleLoader = globalObject->moduleLoader();
-        WTF::Locker cellLocker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    globalObject->moduleLoader()->clearAll(); // takes the loader's cellLock itself
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }

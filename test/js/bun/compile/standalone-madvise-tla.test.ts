@@ -5,7 +5,7 @@
 // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, read by the compiled binary at
 // runtime, skips the hint.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 // Relies on the StandaloneModuleGraph scoped logger which is compiled out in
@@ -94,7 +94,19 @@ test.concurrent.skipIf(isWindows || !isDebug)(
   async () => {
     const literalBytes = 64 * 1024;
     using dir = tempDir("standalone-madvise-range", {
-      "entry.ts": `const s = "${Buffer.alloc(literalBytes, "a").toString()}";\nconsole.log("len=" + s.length);\n`,
+      "entry.ts":
+        `const s = "${Buffer.alloc(literalBytes, "a").toString()}";\nconsole.log("len=" + s.length);\n` +
+        // Linux: report whether some VMA of this executable carries the uffd-wp
+        // flag ("uw"), i.e. the no-fault-around registration took.
+        `if (process.platform === "linux") {\n` +
+        `  let file = "", uw = false;\n` +
+        `  for (const line of require("fs").readFileSync("/proc/self/smaps", "utf8").split("\\n")) {\n` +
+        `    const m = line.match(/^[0-9a-f]+-[0-9a-f]+ \\S+ \\S+ \\S+ \\S+\\s*(.*)$/);\n` +
+        `    if (m) file = m[1];\n` +
+        `    else if (line.startsWith("VmFlags:") && file.endsWith("/compiled") && / uw( |$)/.test(line)) uw = true;\n` +
+        `  }\n` +
+        `  console.log("uffd-wp-vma=" + uw);\n` +
+        `}\n`,
     });
 
     const out = path.join(String(dir), "compiled");
@@ -125,6 +137,45 @@ test.concurrent.skipIf(isWindows || !isDebug)(
     expect(bytes).toBeGreaterThan(literalBytes / 2);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+
+    // Linux: the same payload's post-startup run (here: source map + source
+    // text, the bytecode being the startup prefetch run) is registered with a
+    // never-armed userfaultfd so kernel fault-around stays off for it. When the
+    // kernel takes it (>= 6.7, userfaultfd permitted) the executable's VMA must
+    // carry the uffd-wp flag; otherwise one of the named skip/errno lines must
+    // say why. Either way the bytecode (mutated in place by JSC = COW faults in
+    // or next to the range) still runs. =0 keeps kernel fault-around.
+    if (isLinux) {
+      for (const mode of [undefined, "1", "2", "0"] as const) {
+        await using proc = Bun.spawn({
+          cmd: [out],
+          env: { ...bunEnv, BUN_DEBUG_StandaloneModuleGraph: "1", BUN_STANDALONE_NO_FAULTAROUND: mode },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stdout).toContain(`len=${literalBytes}`);
+        const registered = stdout.match(/noFaultAround: fault-around off for (\d+) bytes/);
+        if (mode === "0") {
+          expect(stdout).not.toContain("noFaultAround:");
+          expect(stdout).toContain("uffd-wp-vma=false");
+        } else if (registered) {
+          const n = Number(registered[1]);
+          expect(n).toBeGreaterThan(literalBytes / 2);
+          // mode 2 also covers the bytecode (which holds the literal again).
+          if (mode === "2") expect(n).toBeGreaterThan(literalBytes + bytes);
+          expect(stdout).toContain("uffd-wp-vma=true");
+        } else {
+          expect(stdout).toMatch(
+            /noFaultAround: (skipped, kernel|no whole page|userfaultfd failed errno=|UFFDIO_API rc=|UFFDIO_REGISTER failed errno=)/,
+          );
+          expect(stdout).toContain("uffd-wp-vma=false");
+        }
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      }
+    }
   },
   30_000,
 );

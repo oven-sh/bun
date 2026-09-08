@@ -1,6 +1,11 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsError};
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Set by `bun_jsc::initialize` when JSC's startup JIT deferral window is enabled for the main VM; cleared once it has
+/// closed, so the "became interactive" hooks (stdio, console, node:fs) cost one relaxed load afterwards.
+pub(crate) static STARTUP_JIT_DEFERRAL_ARMED: AtomicBool = AtomicBool::new(false);
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
@@ -30,7 +35,9 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
-    safe fn JSC__VM__endStartupJITDeferral(vm: &VM);
+    safe fn JSC__VM__startupJITDeferralActive(vm: &VM) -> bool;
+    // safe: `reason` is only ever a `&'static CStr` (see `end_startup_jit_deferral_because`); C++ reads it as a C string.
+    safe fn JSC__VM__endStartupJITDeferral(vm: &VM, reason: *const core::ffi::c_char);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -106,9 +113,27 @@ impl VM {
         JSC__VM__collectAsyncIdle(self)
     }
 
-    /// Ends JSC's startup JIT deferral window (`startupJITDeferralScale`); a no-op once ended or if never enabled.
-    pub fn end_startup_jit_deferral(&self) {
-        JSC__VM__endStartupJITDeferral(self)
+    /// Whether this VM's startup JIT deferral window (`startupJITDeferralScale`) is still open. Mutator thread of this
+    /// VM only. One relaxed load once the main VM's window has closed (or was never armed); observes the deadline.
+    pub fn startup_jit_deferral_active(&self) -> bool {
+        if !STARTUP_JIT_DEFERRAL_ARMED.load(Ordering::Relaxed) {
+            return false;
+        }
+        let active = JSC__VM__startupJITDeferralActive(self);
+        if !active && crate::virtual_machine::IS_MAIN_THREAD_VM.get() {
+            STARTUP_JIT_DEFERRAL_ARMED.store(false, Ordering::Relaxed);
+        }
+        active
+    }
+
+    /// The program became interactive: end the startup JIT deferral window. `reason` is logged under `BUN_JSC_verboseOSR=1`.
+    pub fn end_startup_jit_deferral_because(&self, reason: &'static core::ffi::CStr) {
+        if self.startup_jit_deferral_active() {
+            JSC__VM__endStartupJITDeferral(self, reason.as_ptr());
+            if crate::virtual_machine::IS_MAIN_THREAD_VM.get() {
+                STARTUP_JIT_DEFERRAL_ARMED.store(false, Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn execution_forbidden(&self) -> bool {

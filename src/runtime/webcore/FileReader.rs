@@ -66,6 +66,8 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// Reads the process's stdin: its first data marks the program interactive (`note_first_stdin_data`).
+    pub(crate) ends_startup_jit_deferral: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -90,6 +92,7 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            ends_startup_jit_deferral: Cell::new(false),
         }
     }
 }
@@ -321,6 +324,10 @@ impl FileReader {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
+                    self.ends_startup_jit_deferral.set(matches!(
+                        &file.pathlike,
+                        PathOrFileDescriptor::Fd(fd) if fd.stdio_tag() == Some(bun_core::Stdio::StdIn)
+                    ));
                     let open_result = Lazy::open_file_blob(file);
                     // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
@@ -634,6 +641,9 @@ impl FileReader {
             self.reader().close();
             return false;
         }
+        if !chunk.is_empty() {
+            self.note_first_stdin_data();
+        }
         let has_more = state != ReadState::Eof;
 
         let sink = *self.sink.get();
@@ -761,6 +771,13 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
+    fn note_first_stdin_data(&self) {
+        if self.ends_startup_jit_deferral.get() {
+            self.ends_startup_jit_deferral.set(false);
+            self.parent_global().vm().end_startup_jit_deferral_because(c"first stdin data");
+        }
+    }
+
     pub(crate) fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
@@ -815,6 +832,7 @@ impl FileReader {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
+                self.note_first_stdin_data();
                 let into = streams::IntoArray {
                     value: array,
                     len: amount_read as u64,

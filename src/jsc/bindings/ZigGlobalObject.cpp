@@ -281,11 +281,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool startupJITDeferral)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, int32_t startupJITDeferralMaxMs)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, startupJITDeferral, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, startupJITDeferralMaxMs, envp, envc, onCrash]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -361,14 +361,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
-            // `bun build --compile` executables: almost none of the Baseline/DFG code compiled during the startup burst
-            // pays for itself before the process first goes idle, so make tier-up 8x more reluctant on the main VM until
-            // the event loop first parks for >=100ms with nothing runnable (VM::endStartupJITDeferral) or 3s pass.
-            // BUN_STARTUP_JIT_DEFERRAL=0 or BUN_JSC_startupJITDeferralScale=1 opts out; BUN_JSC_startupJITDeferralScale=N
-            // alone opts any `bun` invocation in (MaxMs=0 then means "until first idle").
-            if (startupJITDeferral) {
+            // `bun build --compile` executables: tier-up is 8x more reluctant on the main VM until the program becomes
+            // interactive (VM::end_startup_jit_deferral_because) or `startupJITDeferralMaxMs` pass; <=0 = off.
+            // BUN_JSC_startupJITDeferralScale=1 (below) also opts out; =N alone opts any `bun` invocation in.
+            if (startupJITDeferralMaxMs > 0) {
                 JSC::Options::startupJITDeferralScale() = 8;
-                JSC::Options::startupJITDeferralMaxMs() = 3000;
+                JSC::Options::startupJITDeferralMaxMs() = static_cast<unsigned>(startupJITDeferralMaxMs);
             }
 
             if (envc > 0) [[likely]] {
@@ -485,7 +483,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     if (worker_ptr)
-        vm.endStartupJITDeferral(); // the startup window is for the main VM; a Worker may be created at any time and never park
+        vm.endStartupJITDeferral("worker VM created"); // the startup window is for the main VM only
 
     {
         const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
@@ -3372,12 +3370,7 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 void GlobalObject::clearModuleRegistry()
 {
-    {
-        auto* moduleLoader = this->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    this->moduleLoader()->clearAll(); // takes the loader's cellLock itself (visitChildren iterates the maps under it)
     this->requireMap()->clear(this);
 }
 
@@ -3839,6 +3832,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
     BitVector createdIndices;
     createdIndices.ensureSize(graph.moduleCount());
     createdIndices.quickSet(root->prelinkedIndex());
+    Vector<AbstractModuleRecord*, 16> builtinRecords; // by builtin alias index: the loaded record, once looked up (all are registered, hence GC-reachable)
     bool complete = true;
 
     for (size_t n = 0; n < created.size(); ++n) {
@@ -3856,7 +3850,9 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                         complete = false; // registered by an earlier, incomplete batch JSC is still loading
                 } else {
                     Identifier key = prelinkedModuleKey(vm, graph, request.moduleIndex);
-                    if (auto* entry = loader->registryEntry(key)) {
+                    // Typed probe: graph modules and builtins are registered as JavaScript (here); a same-key entry of
+                    // another type (`with { type: "text" }`) is a different module and gets a JavaScript sibling.
+                    if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
                         // Registered some other way (before the graph was set up, or re-imported after a registry delete).
                         if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
                             complete = false;
@@ -3888,8 +3884,12 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     complete = false;
                     continue;
                 }
+                if (static_cast<unsigned>(alias) < builtinRecords.size() && builtinRecords[alias]) {
+                    record->setPrelinkedRequestedModule(vm, i, builtinRecords[alias]);
+                    continue;
+                }
                 Identifier key = Identifier::fromString(vm, Bun::builtinModuleKeys[alias]);
-                if (auto* entry = loader->registryEntry(key)) {
+                if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
                     if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
                         complete = false;
                         continue;
@@ -3914,6 +3914,9 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     entry->markLoaded(); // a synthetic record requests nothing
                     target = builtin;
                 }
+                while (builtinRecords.size() <= static_cast<unsigned>(alias))
+                    builtinRecords.append(nullptr);
+                builtinRecords[alias] = target;
             } else {
                 complete = false; // a typed import: JSC's pipeline makes that record
                 continue;
@@ -4115,7 +4118,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
             loader->setPrelinkedModuleGraph(*graph);
             // When HostLoadImportedModule already created the root's entry it drives fetch -> makeModule itself once this
             // hook returns; makeModule (Bun__analyzeTranspiledModule) then builds the root prelinked and registers its subgraph.
-            if (!loader->registryEntry(rootKey) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
+            if (!loader->getRegisteredMayBeNull(rootKey, ScriptFetchParameters::Type::JavaScript) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
                 JSModuleRecord* rootRecord = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), rootKey, rootSource->sourceCode(), *graph, rootIndex);
                 auto* rootEntry = loader->ensureRegistered(globalObject, rootKey, ScriptFetchParameters::Type::JavaScript);
                 rootEntry->provideModule(vm, rootRecord);

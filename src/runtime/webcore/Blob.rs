@@ -1795,6 +1795,7 @@ impl BlobExt for Blob {
             // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
             sink.writer
                 .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
+            sink.ends_startup_jit_deferral.set(is_stdout_or_stderr);
 
             let start_result = sink.writer.with_mut(|w| {
                 if is_stdout_or_stderr {
@@ -1827,7 +1828,13 @@ impl BlobExt for Blob {
             );
             // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
-                PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+                PathOrFileDescriptor::Fd(fd) => {
+                    sink.ends_startup_jit_deferral.set(matches!(
+                        fd.stdio_tag(),
+                        Some(bun_core::Stdio::StdOut | bun_core::Stdio::StdErr)
+                    ));
+                    webcore::PathOrFileDescriptor::Fd(*fd)
+                }
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
                     bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
                 ),

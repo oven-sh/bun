@@ -410,6 +410,7 @@ fn message_with_type_and_level_(
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    global.vm().end_startup_jit_deferral_because(c"first console write");
 
     if message_type == MessageType::Clear {
         Output::reset_terminal();

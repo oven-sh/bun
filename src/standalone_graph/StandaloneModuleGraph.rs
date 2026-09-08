@@ -625,6 +625,143 @@ mod elf {
             hi - lo
         );
     }
+
+    /// Registers the page-aligned `[lo, hi)` of the payload mapping with a
+    /// `userfaultfd` in write-protect mode and never write-protects anything:
+    /// the VMA gets `VM_UFFD_WP`, which turns kernel fault-around off for it
+    /// (Linux >= 6.7, `UFFD_FEATURE_WP_ASYNC`; `MADV_RANDOM` does not do this
+    /// for file mappings) while faults are still served by the page cache. No
+    /// thread reads the descriptor; it stays open for the life of the process
+    /// because closing it drops the registration. Any failure (older kernel,
+    /// seccomp EPERM, gVisor ENOSYS) leaves the mapping as it was.
+    #[cfg(target_os = "linux")]
+    pub(super) fn disable_fault_around(lo: usize, hi: usize) {
+        use bun_sys::FdExt as _;
+        #[repr(C)]
+        struct UffdioApi {
+            api: u64,
+            features: u64,
+            ioctls: u64,
+        }
+        #[repr(C)]
+        struct UffdioRegister {
+            start: u64,
+            len: u64,
+            mode: u64,
+            ioctls: u64,
+        }
+        const UFFD_API: u64 = 0xAA;
+        const UFFD_USER_MODE_ONLY: libc::c_long = 1;
+        const UFFD_FEATURE_WP_UNPOPULATED: u64 = 1 << 13;
+        const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
+        const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
+        // _IOWR(0xAA, 0x3F, struct uffdio_api) / _IOWR(0xAA, 0x00, struct uffdio_register)
+        const UFFDIO_API: libc::c_ulong = 0xC018_AA3F;
+        const UFFDIO_REGISTER: libc::c_ulong = 0xC020_AA00;
+        const UFFDIO_REGISTER_BIT: u64 = 1; // 1 << _UFFDIO_REGISTER
+
+        // WP registration of a private file mapping needs WP_ASYNC: 6.7 (x86-64), 6.10 (arm64);
+        // not issuing the syscall on older kernels also keeps it out of audit/EDR logs there.
+        let min_minor = if cfg!(target_arch = "aarch64") { 10 } else { 7 };
+        let kernel = bun_core::linux_kernel_version();
+        if (kernel.major, kernel.minor) < (6, min_minor) {
+            bun_core::scoped_log!(
+                super::StandaloneModuleGraph,
+                "noFaultAround: skipped, kernel {}.{} is older than 6.{}",
+                kernel.major,
+                kernel.minor,
+                min_minor
+            );
+            return;
+        }
+        let page = bun_alloc::page_size();
+        let lo = (lo + page - 1) & !(page - 1);
+        let hi = hi & !(page - 1);
+        if hi <= lo {
+            bun_core::scoped_log!(super::StandaloneModuleGraph, "noFaultAround: no whole page");
+            return;
+        }
+        // SAFETY: raw `userfaultfd(2)`; no pointer arguments.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_userfaultfd,
+                libc::O_CLOEXEC as libc::c_long | UFFD_USER_MODE_ONLY,
+            )
+        };
+        if rc < 0 {
+            bun_core::scoped_log!(
+                super::StandaloneModuleGraph,
+                "noFaultAround: userfaultfd failed errno={}",
+                bun_sys::last_errno()
+            );
+            return;
+        }
+        let fd = bun_sys::Fd::from_native(rc as libc::c_int);
+        // Never add EVENT_FORK/REMAP/REMOVE/UNMAP here: nothing reads the descriptor, so
+        // the MADV_DONTNEED/munmap/fork that queue those events would block forever.
+        let mut api = UffdioApi {
+            api: UFFD_API,
+            features: UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED,
+            ioctls: 0,
+        };
+        // SAFETY: `api` is a valid `struct uffdio_api` for the duration of the call.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_ioctl,
+                fd.native() as libc::c_long,
+                UFFDIO_API,
+                &mut api as *mut UffdioApi,
+            )
+        };
+        let wanted = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
+        if rc != 0
+            || (api.features & wanted) != wanted
+            || (api.ioctls & UFFDIO_REGISTER_BIT) == 0
+        {
+            bun_core::scoped_log!(
+                super::StandaloneModuleGraph,
+                "noFaultAround: UFFDIO_API rc={} errno={} features={:#x} ioctls={:#x}",
+                rc,
+                if rc != 0 { bun_sys::last_errno() } else { 0 },
+                api.features,
+                api.ioctls
+            );
+            fd.close();
+            return;
+        }
+        let mut reg = UffdioRegister {
+            start: lo as u64,
+            len: (hi - lo) as u64,
+            mode: UFFDIO_REGISTER_MODE_WP,
+            ioctls: 0,
+        };
+        // SAFETY: `reg` is a valid `struct uffdio_register`; `[lo, hi)` is a
+        // page-aligned range inside the mapped executable image.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_ioctl,
+                fd.native() as libc::c_long,
+                UFFDIO_REGISTER,
+                &mut reg as *mut UffdioRegister,
+            )
+        };
+        if rc != 0 {
+            bun_core::scoped_log!(
+                super::StandaloneModuleGraph,
+                "noFaultAround: UFFDIO_REGISTER failed errno={}",
+                bun_sys::last_errno()
+            );
+            fd.close();
+            return;
+        }
+        // `fd` deliberately stays open: the registration lives as long as the descriptor.
+        bun_core::scoped_log!(
+            super::StandaloneModuleGraph,
+            "noFaultAround: fault-around off for {} bytes at {:#x}",
+            hi - lo,
+            lo
+        );
+    }
 }
 
 pub struct File {
@@ -2866,8 +3003,87 @@ impl StandaloneModuleGraph {
         let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
         let graph = from_bytes_alloc(base, len, offsets)?;
         // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
-        unsafe { &*graph }.prefetch_startup_pages();
+        let graph_ref = unsafe { &*graph };
+        graph_ref.disable_payload_fault_around();
+        graph_ref.prefetch_startup_pages();
         Ok(Some(graph))
+    }
+
+    /// `--bytecode` payloads, Linux: the bytecode / module-info / source-map /
+    /// source-text run is read sparsely (function bodies decode on first call,
+    /// source text only for `Function#toString` and stack traces), so kernel
+    /// fault-around there maps ~16 pages per page read. Turn it off for that
+    /// run before anything faults it in. Kept at kernel default: the startup
+    /// prefetch run (`prefetch_startup_pages`: densely read at every boot, so
+    /// fault-around there saves traps and maps little extra) unless
+    /// `BUN_STANDALONE_NO_FAULTAROUND=2`, the names / module table at the tail,
+    /// and everything outside the payload.
+    fn disable_payload_fault_around(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let mode = bun_core::env_var::BUN_STANDALONE_NO_FAULTAROUND.get().unwrap_or(1);
+            if mode == 0
+                || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+                    .unwrap_or(false)
+            {
+                return;
+            }
+            let files = self.files.values();
+            if self.builtin_bytecode.is_empty() && files.iter().all(|f| f.bytecode.is_empty()) {
+                return;
+            }
+            // Only regions inside the payload mapping: registering a stray heap
+            // region would silently turn fault-around off for unrelated memory.
+            let payload_lo = self.bytes.cast::<u8>() as usize;
+            let payload_hi = payload_lo + self.bytes.len();
+            let in_payload = |&(ptr, len): &(*const u8, usize)| {
+                payload_lo <= ptr as usize && ptr as usize + len <= payload_hi
+            };
+            let span = address_span(
+                files
+                    .iter()
+                    .flat_map(|f| {
+                        [
+                            (f.bytecode.cast::<u8>().cast_const(), f.bytecode.len()),
+                            (f.module_info.cast::<u8>().cast_const(), f.module_info.len()),
+                            (f.contents.as_bytes().as_ptr(), f.contents.len()),
+                        ]
+                    })
+                    .chain(
+                        self.builtin_bytecode
+                            .iter()
+                            .map(|&(_, bytes)| (bytes.cast::<u8>().cast_const(), bytes.len())),
+                    )
+                    .chain(
+                        [
+                            self.bytecode_string_table,
+                            self.module_info_string_table,
+                            self.prelinked_module_graph,
+                        ]
+                        .map(|t| (t.as_ptr(), t.len())),
+                    )
+                    .filter(in_payload),
+            );
+            let Some((mut lo, hi)) = span else {
+                return;
+            };
+            if mode == 1
+                && let Some((_, startup_hi)) = self.startup_prefetch_span()
+            {
+                // The shared block written right after the startup modules also holds the
+                // module-info string table and the prelinked graph, both read whole at boot.
+                let shared_hi = address_span(
+                    [self.module_info_string_table, self.prelinked_module_graph]
+                        .iter()
+                        .map(|t| (t.as_ptr(), t.len())),
+                )
+                .map_or(0, |(_, hi)| hi);
+                lo = lo.max(startup_hi).max(shared_hi);
+            }
+            if lo < hi {
+                elf::disable_fault_around(lo, hi);
+            }
+        }
     }
 
     /// Starts reading the payload pages the entry point's static import closure
@@ -2878,14 +3094,31 @@ impl StandaloneModuleGraph {
     /// bytecode decodes. Pages already cached cost nothing; errors are ignored.
     /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` skips it.
     fn prefetch_startup_pages(&self) {
-        if self.startup_module_count == 0
-            || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
-                .unwrap_or(false)
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+            .unwrap_or(false)
         {
             return;
         }
+        let Some((lo, hi)) = self.startup_prefetch_span() else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        macho::read_ahead(lo, hi);
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        elf::read_ahead(lo, hi);
+        #[cfg(windows)]
+        let _ = (lo, hi);
+    }
+
+    /// The run `prefetch_startup_pages` reads ahead: the startup modules'
+    /// bytecode + module info, the internal-module bytecode and the string
+    /// table (or the startup modules' source text when there is no bytecode).
+    fn startup_prefetch_span(&self) -> Option<(usize, usize)> {
+        if self.startup_module_count == 0 {
+            return None;
+        }
         let startup = &self.files.values()[..self.startup_module_count as usize];
-        let span = if startup.iter().any(|f| !f.bytecode.is_empty()) {
+        if startup.iter().any(|f| !f.bytecode.is_empty()) {
             address_span(
                 startup
                     .iter()
@@ -2903,16 +3136,7 @@ impl StandaloneModuleGraph {
                     .iter()
                     .map(|f| (f.contents.as_bytes().as_ptr(), f.contents.len())),
             )
-        };
-        let Some((lo, hi)) = span else {
-            return;
-        };
-        #[cfg(target_os = "macos")]
-        macho::read_ahead(lo, hi);
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        elf::read_ahead(lo, hi);
-        #[cfg(windows)]
-        let _ = (lo, hi);
+        }
     }
 
     /// Hint to the kernel that the embedded source text is unlikely to be

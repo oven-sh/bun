@@ -191,24 +191,22 @@ describe("Bun.serve tls material given both inline and as a *File path", () => {
   const ca1 = readFileSync(join(tlsFixtures, "ca1-cert.pem"), "utf8");
   const ca5File = join(tlsFixtures, "ca5-cert.pem");
 
-  for (const order of ["ca first", "caFile first"]) {
-    test(`ca and caFile are one trust list (${order})`, async () => {
-      const material = order === "ca first" ? { ca: ca1, caFile: ca5File } : { caFile: ca5File, ca: ca1 };
-      using server = Bun.serve({
-        port: 0,
-        tls: { key: serverKey, cert: serverCert, ...material, requestCert: true, rejectUnauthorized: true },
-        fetch: () => new Response("ok"),
-      });
-      const { status: viaInlineCa } = await request(server.port, "localhost", untrustedClient);
-      const { status: viaCaFile } = await request(server.port, "localhost", trustedClient);
-      const { status: noCert } = await request(server.port, "localhost");
-      expect({ viaInlineCa, viaCaFile, noCert }).toEqual({
-        viaInlineCa: "HTTP/1.1 200 OK",
-        viaCaFile: "HTTP/1.1 200 OK",
-        noCert: "connection closed without a response",
-      });
+  test.each(["ca first", "caFile first"])("ca and caFile are one trust list (%s)", async order => {
+    const material = order === "ca first" ? { ca: ca1, caFile: ca5File } : { caFile: ca5File, ca: ca1 };
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: serverKey, cert: serverCert, ...material, requestCert: true, rejectUnauthorized: true },
+      fetch: () => new Response("ok"),
     });
-  }
+    const { status: viaInlineCa } = await request(server.port, "localhost", untrustedClient);
+    const { status: viaCaFile } = await request(server.port, "localhost", trustedClient);
+    const { status: noCert } = await request(server.port, "localhost");
+    expect({ viaInlineCa, viaCaFile, noCert }).toEqual({
+      viaInlineCa: "HTTP/1.1 200 OK",
+      viaCaFile: "HTTP/1.1 200 OK",
+      noCert: "connection closed without a response",
+    });
+  });
 
   test("an invalid inline ca is still rejected when caFile is set", () => {
     const tls = {

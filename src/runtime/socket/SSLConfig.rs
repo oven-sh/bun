@@ -219,9 +219,7 @@ impl SSLConfigFromJs for SSLConfig {
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 
-        // The SSL_CTX holds one identity per key type, so a file and an inline
-        // value for the same slot cannot both be used; refuse instead of
-        // serving whichever one the builder happens to load.
+        // One identity per key type: a file and an inline value for the same slot cannot both be used.
         if let Some(key_file) = generated.key_file.as_ref() {
             if result.key.is_some() {
                 return Err(global.throw_invalid_arguments(format_args!(

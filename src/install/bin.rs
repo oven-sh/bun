@@ -827,6 +827,10 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
+    /// `node_modules/.bin` (or the global bin directory), opened by the first
+    /// link this `Linker` writes and reused for the package's other bins.
+    pub bin_dir: Option<sys::Dir>,
+
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 }
@@ -1307,15 +1311,24 @@ impl<'a> Linker<'a> {
         // cannot capture `&mut self.err` without conflicting with the body's writes,
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
-        let bin_dir = match Self::open_bin_dir(self.node_modules_path, self.global_bin_path, global)
-        {
-            Ok(dir) => dir,
-            Err(err) => {
-                self.err = Some(err.into());
-                Self::chmod_on_ok(self.err, abs_target);
-                return;
+        let bin_fd = match self.bin_dir.as_ref().map(sys::Dir::fd) {
+            Some(fd) => fd,
+            None => {
+                match Self::open_bin_dir(self.node_modules_path, self.global_bin_path, global) {
+                    Ok(dir) => {
+                        let fd = dir.fd();
+                        self.bin_dir = Some(dir);
+                        fd
+                    }
+                    Err(err) => {
+                        self.err = Some(err.into());
+                        Self::chmod_on_ok(self.err, abs_target);
+                        return;
+                    }
+                }
             }
         };
+        let bin_dir = sys::Dir::borrow(&bin_fd);
 
         // `build_destination_dir` put the name directly inside `bin_dir`.
         let name = ZStr::from_slice_with_nul(
@@ -1329,12 +1342,12 @@ impl<'a> Linker<'a> {
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
-        match Self::symlink_bin(&bin_dir, rel_target, name) {
+        match Self::symlink_bin(bin_dir, rel_target, name) {
             Ok(()) => {}
             Err(err) if err.get_errno() == sys::Errno::EEXIST => {
                 // delete and try again
                 let _ = bin_dir.delete_tree(name.as_bytes());
-                if let Err(err) = Self::symlink_bin(&bin_dir, rel_target, name) {
+                if let Err(err) = Self::symlink_bin(bin_dir, rel_target, name) {
                     self.err = Some(err.into());
                 }
             }

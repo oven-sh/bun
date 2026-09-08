@@ -892,12 +892,11 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
 /// `name`. Creates the directory when it is missing, and replaces a symlink
 /// with an empty directory.
 ///
-/// The install creates the directory levels of a `node_modules` tree (`.bin`,
-/// `@scope`), and the steps that write into them resolve those levels by path
-/// again. A symlink at one of the levels sends the write into the symlink's
-/// target directory, outside the tree, where it deletes and replaces files the
-/// user owns. `node_modules` belongs to the install, so a symlink at a level it
-/// creates is replaced.
+/// For the levels of a `node_modules` tree that the install creates (`.bin`,
+/// `@scope`) and that later steps resolve by path again. A symlink at one of
+/// them sends those steps into the symlink's target directory, outside the
+/// tree, where they delete and replace files the user owns. Concurrent
+/// callers for the same `name` all end up with the one real directory.
 #[cfg(not(windows))]
 pub(crate) fn make_open_real_dir(
     parent: &bun_sys::Dir,
@@ -931,7 +930,11 @@ pub(crate) fn make_open_real_dir(
                 bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == EntryKind::SymLink
             }) =>
         {
-            bun_sys::unlinkat(parent.fd(), name_z)?;
+            if let Err(err) = bun_sys::unlinkat(parent.fd(), name_z) {
+                if err.get_errno() != E::ENOENT {
+                    return Err(err);
+                }
+            }
         }
         _ => return Err(err),
     }

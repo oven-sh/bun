@@ -685,6 +685,7 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    bin_dir: None,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };

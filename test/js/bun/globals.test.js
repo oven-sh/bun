@@ -2,9 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 
-it("ERR_INVALID_THIS", () => {
+// formData() returns a promise, so a wrong `this` rejects instead of throwing.
+it("ERR_INVALID_THIS", async () => {
   try {
-    Request.prototype.formData.call(undefined);
+    await Request.prototype.formData.call(undefined);
     expect.unreachable();
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
@@ -13,7 +14,7 @@ it("ERR_INVALID_THIS", () => {
   }
 
   try {
-    Request.prototype.formData.call(null);
+    await Request.prototype.formData.call(null);
     expect.unreachable();
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
@@ -22,7 +23,7 @@ it("ERR_INVALID_THIS", () => {
   }
 
   try {
-    Request.prototype.formData.call(new (class Boop {})());
+    await Request.prototype.formData.call(new (class Boop {})());
     expect.unreachable();
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
@@ -31,7 +32,7 @@ it("ERR_INVALID_THIS", () => {
   }
 
   try {
-    Request.prototype.formData.call("hellooo");
+    await Request.prototype.formData.call("hellooo");
     expect.unreachable();
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");
@@ -46,7 +47,7 @@ it("ERR_INVALID_THIS", () => {
     return formData;
   }
   try {
-    formData();
+    await formData();
     expect.unreachable();
   } catch (e) {
     expect(e.code).toBe("ERR_INVALID_THIS");

@@ -879,6 +879,27 @@ describe("Bun.Image", () => {
     );
   });
 
+  test.each(["bytes", "buffer", "toBuffer", "blob", "toBase64", "dataurl", "placeholder", "metadata", "write"])(
+    "%s() rejects instead of throwing when `this` is not an Image",
+    async method => {
+      const result: unknown = (Bun.Image.prototype as any)[method].call({ width: 1, height: 1 }, "out.png");
+      expect(result).toBeInstanceOf(Promise);
+      const reason = await (result as Promise<unknown>).then(
+        value => ({ resolved: value }),
+        error => error,
+      );
+      expect(reason).toBeInstanceOf(TypeError);
+      expect(reason.code).toBe("ERR_INVALID_THIS");
+      expect(reason.message).toStartWith("Expected this to be instanceof Image");
+    },
+  );
+
+  test("a method that does not return a promise still throws synchronously when `this` is not an Image", () => {
+    expect(() => (Bun.Image.prototype as any).png.call({})).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+    );
+  });
+
   test("rotate rejects non-90° multiples", () => {
     expect(() => new Bun.Image(cornersPng).rotate(45)).toThrow();
   });

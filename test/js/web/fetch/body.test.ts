@@ -1277,6 +1277,24 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+
+    // WebIDL: an operation that returns a promise never throws. A wrong `this`
+    // rejects the promise, like node (undici) and browsers do.
+    describe("called with a `this` that is not a " + body.name, () => {
+      test.each(["text", "json", "arrayBuffer", "bytes", "blob", "formData"] as const)("%s() rejects", async method => {
+        for (const thisValue of [undefined, null, "string", { bodyUsed: false }, new Blob(["{}"])]) {
+          const result: unknown = body.prototype[method].call(thisValue);
+          expect(result).toBeInstanceOf(Promise);
+          const reason = await (result as Promise<unknown>).then(
+            value => ({ resolved: value }),
+            error => error,
+          );
+          expect(reason).toBeInstanceOf(TypeError);
+          expect(reason.code).toBe("ERR_INVALID_THIS");
+          expect(reason.message).toStartWith(`Expected this to be instanceof ${body.name}`);
+        }
+      });
+    });
   });
 }
 

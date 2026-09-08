@@ -239,7 +239,7 @@ describe("web worker", () => {
         throw new Error(`fixture printed no JSON (exit code ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
       }
       expect(exitCode).toBe(0);
-      return { result, dir: String(dir) };
+      return result;
     }
     const report = `
       worker.on("error", e => { console.error(e); process.exit(1); });
@@ -250,7 +250,7 @@ describe("web worker", () => {
       // The worker's whole environment. A Windows child needs SystemRoot to start.
       const only: Record<string, string> = { ONLY: "1", BUN_DEBUG_QUIET_LOGS: "1" };
       if (isWindows) only.SystemRoot = process.env.SystemRoot!;
-      const { result } = await run({
+      const result = await run({
         "main.mjs": `
           import { Worker } from "node:worker_threads";
           const worker = new Worker("./worker.cjs", { env: ${JSON.stringify(only)} });
@@ -291,7 +291,7 @@ describe("web worker", () => {
     });
 
     test.concurrent("Bun.which and Bun.spawnSync resolve argv[0] on the worker's PATH (Web Worker)", async () => {
-      const { result, dir } = await run({
+      const result = await run({
         ...(isWindows
           ? { "worker-bin/worker-only-tool.cmd": "@echo worker\r\n" }
           : { "worker-bin/worker-only-tool": "#!/bin/sh\necho worker\n" }),
@@ -306,6 +306,9 @@ describe("web worker", () => {
           worker.onmessage = e => { console.log(JSON.stringify(e.data)); worker.terminate(); };
         `,
         "worker.mjs": `
+          import { basename, dirname } from "node:path";
+          // "<dir>/<file>" of a Bun.which() hit, so the assertion does not depend on temp path spelling.
+          const where = p => (p == null ? p : basename(dirname(p)) + "/" + basename(p));
           // stdout of the tool, or the error code when it cannot be spawned.
           function trySpawn(tool) {
             try {
@@ -315,8 +318,8 @@ describe("web worker", () => {
             }
           }
           postMessage({
-            whichWorkerTool: Bun.which("worker-only-tool"),
-            whichLaunchTool: Bun.which("launch-only-tool"),
+            whichWorkerTool: where(Bun.which("worker-only-tool")),
+            whichLaunchTool: where(Bun.which("launch-only-tool")),
             // .cmd files do not spawn without a shell, so only the lookup is checked on Windows.
             spawnWorkerTool: process.platform === "win32" ? "worker" : trySpawn("worker-only-tool"),
             spawnLaunchTool: process.platform === "win32" ? "ENOENT" : trySpawn("launch-only-tool"),
@@ -324,7 +327,7 @@ describe("web worker", () => {
         `,
       });
       expect(result).toEqual({
-        whichWorkerTool: path.join(dir, "worker-bin", isWindows ? "worker-only-tool.cmd" : "worker-only-tool"),
+        whichWorkerTool: isWindows ? "worker-bin/worker-only-tool.cmd" : "worker-bin/worker-only-tool",
         whichLaunchTool: null,
         spawnWorkerTool: "worker",
         spawnLaunchTool: "ENOENT",
@@ -363,23 +366,26 @@ describe("web worker", () => {
       `,
     });
 
-    test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 in the worker's env disables verification in that worker", async () => {
-      const { result } = await run(
-        tlsFiles(`(() => {
+    test.concurrent(
+      "NODE_TLS_REJECT_UNAUTHORIZED=0 in the worker's env disables verification in that worker",
+      async () => {
+        const result = await run(
+          tlsFiles(`(() => {
           // A runtime assignment in the parent is part of the env a default worker copies.
           process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
           return { fromOption: { env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }, fromParentRuntime: {} };
         })()`),
-        { NODE_TLS_REJECT_UNAUTHORIZED: undefined },
-      );
-      expect(result).toEqual({
-        fromOption: { env: "0", body: "hello over tls" },
-        fromParentRuntime: { env: "0", body: "hello over tls" },
-      });
-    });
+          { NODE_TLS_REJECT_UNAUTHORIZED: undefined },
+        );
+        expect(result).toEqual({
+          fromOption: { env: "0", body: "hello over tls" },
+          fromParentRuntime: { env: "0", body: "hello over tls" },
+        });
+      },
+    );
 
     test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 at launch does not reach a worker whose env omits it", async () => {
-      const { result } = await run(tlsFiles(`{ scrubbed: { env: { PATH: process.env.PATH } } }`), {
+      const result = await run(tlsFiles(`{ scrubbed: { env: { PATH: process.env.PATH } } }`), {
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
       });
       expect(result).toEqual({ scrubbed: { env: null, error: "DEPTH_ZERO_SELF_SIGNED_CERT" } });

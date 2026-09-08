@@ -274,7 +274,7 @@ impl NodeModulesFolder {
     /// before a `node_modules`. Every other component is a directory the
     /// installer creates, and a symlink there is replaced with a real
     /// directory: it must not redirect the install out of the project.
-    fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
+    pub(crate) fn make_and_open_dir(&self, root: &Dir) -> crate::Result<Dir> {
         let Some(below_root) = self.path_below_root_node_modules() else {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
@@ -586,6 +586,18 @@ impl<'a> PackageInstaller<'a> {
         link_rel_buf: &mut [u8],
         log_level: Options::LogLevel,
     ) {
+        // `.bin` is the installer's directory. Open this tree's `node_modules`
+        // and the `.bin` below it without following symlinks before
+        // `bin::Linker` writes there by absolute path: a symlink planted at
+        // either one would redirect the links, and the delete-and-retry of an
+        // existing entry, out of the project.
+        if let Ok(tree_node_modules) = self
+            .node_modules
+            .make_and_open_dir(&self.root_node_modules_folder)
+        {
+            let _ = tree_node_modules.make_open_real_dir(b".bin");
+        }
+
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();

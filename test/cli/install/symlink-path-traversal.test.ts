@@ -1051,11 +1051,11 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
   }
 
   // A `file:` tarball dependency, so no test reaches the network.
-  async function writeTarball(path: string, name: string, version: string, content: string) {
+  async function writeTarball(path: string, name: string, version: string, content: string, extra: object = {}) {
     await writeFile(
       path,
       createTarball([
-        { name: "package/package.json", type: "file", content: JSON.stringify({ name, version }) },
+        { name: "package/package.json", type: "file", content: JSON.stringify({ name, version, ...extra }) },
         { name: "package/index.js", type: "file", content },
       ]),
     );
@@ -1201,6 +1201,39 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
 
     // `bun remove @x/name` used to recursively delete `<link target>/name`.
     await expectVictimUntouched(victim, "name");
+    expect(exitCode).toBe(0);
+  });
+
+  // The bin linker writes `node_modules/.bin/<name>` by absolute path, and on
+  // EEXIST it deletes whatever is there and links again. Through a symlinked
+  // `.bin` that deleted `<link target>/<name>`, a directory included. The
+  // isolated linker sweeps a `node_modules` without `.bun` aside whole, so its
+  // plant goes into a warm tree, where a no-op install still relinks bins.
+  it.each(["hoisted", "isolated"])("does not link bins through a symlinked node_modules/.bin (%s)", async linker => {
+    using root = tempDir("nm-bin", {});
+    // The victim has an entry with the same name as the bin.
+    const victim = await plantVictim(String(root), "greet");
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "greeter", "1.0.0", "#!/usr/bin/env node\nconsole.log('hi')", {
+      bin: { greet: "index.js" },
+    });
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { greeter: "file:./pkg.tgz" } }),
+    );
+    if (linker === "isolated") {
+      expect((await install(repo, "--linker", linker)).exitCode).toBe(0);
+      await rm(join(repo, "node_modules", ".bin"), { recursive: true, force: true });
+    }
+    await symlink("../../victim", join(repo, "node_modules", ".bin"));
+
+    const { exitCode } = await install(repo, "--linker", linker);
+
+    await expectVictimUntouched(victim, "greet");
+    expect(await readdir(victim)).toEqual(["greet"]);
+    expect((await lstat(join(repo, "node_modules", ".bin"))).isSymbolicLink()).toBe(false);
+    expect((await lstat(join(repo, "node_modules", ".bin", "greet"))).isSymbolicLink()).toBe(true);
     expect(exitCode).toBe(0);
   });
 

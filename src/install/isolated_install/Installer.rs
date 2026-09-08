@@ -2354,6 +2354,7 @@ impl<'a> Installer<'a> {
             parent_entry_id,
             Which::Staging,
         );
+        let mut bin_dir_is_real = false;
 
         for dep in entry_deps[parent_entry_id.get() as usize].slice() {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
@@ -2362,6 +2363,15 @@ impl<'a> Installer<'a> {
             let bin = pkg_bins[pkg_id as usize];
             if bin.tag == bin::Tag::None {
                 continue;
+            }
+            if !bin_dir_is_real {
+                // `.bin` is the installer's directory. Open the entry's
+                // `node_modules` and the `.bin` below it without following
+                // symlinks before `bin::Linker` writes there by absolute path.
+                if let Ok(dir) = crate::isolated_install::make_store_path(node_modules_path.slice()) {
+                    let _ = dir.make_open_real_dir(b".bin");
+                }
+                bin_dir_is_real = true;
             }
             let alias = lockfile.buffers.dependencies[dep_id as usize].name;
 

@@ -1,15 +1,8 @@
-//! SIGTERM / SIGHUP for a process acting as the shell of a script (`bun run
-//! --shell=bun`, `bun exec`, `bun x.sh`). A supervisor (`kill`, `docker stop`,
-//! systemd) signals the runner's pid alone, so the commands it is running
-//! never see the signal. The handler records it and wakes the mini event loop.
-//! The interpreter then forwards it to every live subprocess, waits for them,
-//! and runs no further command (`Interpreter::interrupted`). That is what the
-//! system-shell path of `bun run` gives: its `sh -c` execs a single command,
-//! so the signal lands on the command itself. With no subprocess alive the
-//! handler lets the signal end the process, as it did before the hook.
-//!
-//! Ctrl+C stays with `bun_spawn::ctrl_c`: the terminal delivers it to the
-//! whole process group, so nothing needs forwarding there.
+//! SIGTERM / SIGHUP sent to the pid of a bun-shell script runner (`bun run
+//! --shell=bun`, `bun exec`, `bun x.sh`): recorded here, forwarded to the live
+//! subprocesses by the interpreter between ticks, which then waits for them and
+//! starts no further command. SIGINT is `bun_spawn::ctrl_c`'s (the terminal
+//! signals the whole process group, so there is nothing to forward).
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
@@ -25,12 +18,10 @@ static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
 #[cfg(unix)]
 const SIGNALS: [i32; 2] = [libc::SIGTERM, libc::SIGHUP];
 
-/// Bit `i` is set when `SIGNALS[i]` was hooked. An inherited `SIG_IGN`
-/// (`nohup`) is left alone: the children inherit it too.
+/// Bit `i`: `SIGNALS[i]` is hooked. A signal inherited as `SIG_IGN` (`nohup`) is not.
 #[cfg(unix)]
 static HOOKED: AtomicU8 = AtomicU8::new(0);
-/// The disposition each hooked signal had before [`install`]. `uninstall` puts
-/// it back (the TTY exit handler from `bun_initialize_process`, usually).
+/// Dispositions replaced by [`install`] and restored by [`uninstall`].
 #[cfg(unix)]
 static PREVIOUS: bun_core::RacyCell<core::mem::MaybeUninit<[libc::sigaction; 2]>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
@@ -38,14 +29,11 @@ static PREVIOUS: bun_core::RacyCell<core::mem::MaybeUninit<[libc::sigaction; 2]>
 #[cfg(unix)]
 extern "C" fn handler(sig: core::ffi::c_int) {
     if bun_spawn::ctrl_c::Child::alive() == 0 {
-        // No subprocess to forward to: a builtin is running, or nothing is.
-        // End the way the signal would have without the hook. A builtin can
-        // hold the main thread for a long time (`yes > /dev/null` never
-        // returns to the event loop), so this cannot wait for a tick.
-        // SAFETY: SIG_DFL is a valid disposition. The handler runs with `sig`
-        // blocked, so unblock it for the raise to be fatal before we return.
-        // If the raise returns, the process is PID 1 of a pid namespace and
-        // the kernel discarded the signal; exit with its status instead.
+        // Nothing to forward to (a builtin runs, or nothing): die from `sig`
+        // now. A builtin may never yield to the loop (`yes > /dev/null`).
+        // SAFETY: SIG_DFL is a valid disposition; `sig` is blocked while the
+        // handler runs, so unblock it for the raise to be fatal here. `raise`
+        // only returns for PID 1 of a pid namespace (signal discarded).
         unsafe {
             let mut action: libc::sigaction = bun_core::ffi::zeroed();
             action.sa_sigaction = libc::SIG_DFL;
@@ -75,8 +63,7 @@ extern "C" fn handler(sig: core::ffi::c_int) {
     unsafe { *errno_ptr = saved };
 }
 
-/// `loop_` is the uws loop the interpreter ticks. No `SA_RESETHAND`: a repeat
-/// delivery is forwarded again, for a command that ignored the first one.
+/// `loop_` is the uws loop to wake. No `SA_RESETHAND`: a repeated signal is forwarded again.
 pub(crate) fn install(loop_: *mut bun_uws::Loop) {
     PENDING.store(0, Ordering::Release);
     RECEIVED.store(0, Ordering::Release);

@@ -1606,6 +1606,21 @@ impl CustomPropertyName {
         unsafe { crate::arena_str(self.as_ptr()) }
     }
 
+    /// Whether this is an unknown (non-dashed) property whose name, with any
+    /// vendor prefix removed, starts with `prefix` (ASCII case-insensitive),
+    /// e.g. `font-kerning` / `-webkit-font-feature-settings` for `b"font-"`.
+    /// Shorthand handlers use this to recognize longhands of their group that
+    /// the parser has no typed representation for.
+    pub(crate) fn is_unknown_with_prefix(&self, prefix: &[u8]) -> bool {
+        match self {
+            CustomPropertyName::Unknown(_) => {
+                let (_, name) = crate::VendorPrefix::strip_from(self.as_str());
+                strings::starts_with_case_insensitive_ascii(name, prefix)
+            }
+            CustomPropertyName::Custom(_) => false,
+        }
+    }
+
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.
 }
 

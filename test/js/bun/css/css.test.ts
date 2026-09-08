@@ -4995,6 +4995,47 @@ describe("css tests", () => {
     minify_test(".foo { font-family: 'revert', foo, sans-serif; }", '.foo{font-family:"revert",foo,sans-serif}');
     minify_test(".foo { font-family: ''; }", '.foo{font-family:""}');
 
+    // `font` resets longhands it cannot set (font-kerning, font-feature-settings,
+    // font-variant-*, ...). They have no typed Property, but must stay on the side
+    // of the shorthand they were written on.
+    minify_test(".foo { font: 12px serif; font-kerning: none; }", ".foo{font:12px serif;font-kerning:none}");
+    minify_test(".foo { font-kerning: none; font: 12px serif; }", ".foo{font-kerning:none;font:12px serif}");
+    minify_test(
+      ".foo { font-kerning: none; font: 12px serif; font-kerning: normal; }",
+      ".foo{font-kerning:none;font:12px serif;font-kerning:normal}",
+    );
+    minify_test(
+      `.foo { font: 12px serif; font-size-adjust: .5; font-optical-sizing: none; font-variation-settings: "wght" 700; font-feature-settings: "liga" 0; font-variant-ligatures: none; font-variant: small-caps; font-language-override: "TRK"; font-palette: --x; }`,
+      `.foo{font:12px serif;font-size-adjust:.5;font-optical-sizing:none;font-variation-settings:"wght" 700;font-feature-settings:"liga" 0;font-variant-ligatures:none;font-variant:small-caps;font-language-override:"TRK";font-palette:--x}`,
+    );
+    minify_test(".foo { FONT: 12px serif; Font-Kerning: none; }", ".foo{font:12px serif;Font-Kerning:none}");
+    minify_test(
+      ".foo { font: 12px serif; -webkit-font-feature-settings: 'liga' 0; }",
+      '.foo{font:12px serif;-webkit-font-feature-settings:"liga" 0}',
+    );
+    // A longhand the handler does absorb still folds into the shorthand across the unknown one.
+    minify_test(
+      ".foo { font: 12px serif; font-kerning: none; font-weight: bold; }",
+      ".foo{font:12px serif;font-kerning:none;font-weight:700}",
+    );
+    minify_test(
+      ".foo { font: 12px serif; font-weight: bold; font-kerning: none; }",
+      ".foo{font:700 12px serif;font-kerning:none}",
+    );
+    minify_test(
+      ".foo { font-family: serif; line-height: 1.5; font-feature-settings: 'liga' 0; font-size: 12px; }",
+      '.foo{font-family:serif;line-height:1.5;font-feature-settings:"liga" 0;font-size:12px}',
+    );
+    minify_test(
+      ".foo { font: 12px serif !important; font-kerning: none !important; }",
+      ".foo{font:12px serif!important;font-kerning:none!important}",
+    );
+    // Custom properties and unrelated unknown properties do not flush the handler.
+    minify_test(
+      ".foo { font-family: serif; --font-x: 1; fonts: 2; font-size: 12px; font-style: normal; font-weight: normal; font-stretch: normal; line-height: normal; font-variant-caps: normal; }",
+      ".foo{--font-x:1;fonts:2;font:12px serif}",
+    );
+
     // fonTfamily in @font-face
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
@@ -6575,6 +6616,24 @@ describe("css tests", () => {
     minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
     minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
     minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    // `transition-behavior` has no typed Property but is reset by the shorthand,
+    // so it must stay on the side of the shorthand it was written on.
+    minify_test(
+      ".foo { transition: all 1s; transition-behavior: allow-discrete }",
+      ".foo{transition:all 1s;transition-behavior:allow-discrete}",
+    );
+    minify_test(
+      ".foo { transition-behavior: allow-discrete; transition: all 1s }",
+      ".foo{transition-behavior:allow-discrete;transition:all 1s}",
+    );
+    minify_test(
+      ".foo { transition-property: opacity; transition-behavior: allow-discrete; transition-duration: 1s }",
+      ".foo{transition-property:opacity;transition-behavior:allow-discrete;transition-duration:1s}",
+    );
+    minify_test(
+      ".foo { -webkit-transition: all 1s; transition: all 1s; transition-behavior: allow-discrete }",
+      ".foo{-webkit-transition:all 1s;transition:all 1s;transition-behavior:allow-discrete}",
+    );
     cssTest(
       `
       .foo {

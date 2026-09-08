@@ -940,6 +940,16 @@ impl FontHandler {
                     return false;
                 }
             }
+            Property::Custom(val) => {
+                // The `font` shorthand also resets longhands it cannot set and that
+                // have no typed `Property` variant (font-kerning, font-feature-settings,
+                // font-variant-*, font-optical-sizing, ...). Emit anything buffered
+                // before such a longhand so it stays after the shorthand, as written.
+                if val.name.is_unknown_with_prefix(b"font-") {
+                    self.flush(dest, context);
+                }
+                return false;
+            }
             _ => return false,
         }
 

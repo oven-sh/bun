@@ -336,6 +336,15 @@ mod transition_handler_body {
                         return false;
                     }
                 }
+                Property::Custom(x) => {
+                    // `transition-behavior` has no typed `Property` variant but is
+                    // reset by the `transition` shorthand, so anything buffered must
+                    // be emitted before it to keep it after the shorthand, as written.
+                    if x.name.is_unknown_with_prefix(b"transition-") {
+                        self.flush(dest, context);
+                    }
+                    return false;
+                }
                 _ => return false,
             }
 

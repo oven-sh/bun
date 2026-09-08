@@ -368,6 +368,22 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("css-module-script/NamedImportIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet, { rules } from "./widget.css" with { type: "css" };
+        console.log(sheet, rules);
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": ['This loader type only supports the "default" import'],
+    },
+  });
+
   // Bun and Node have no `CSSStyleSheet`: those targets keep the old behavior,
   // which is also what `bun run` does with this import.
   for (const target of ["bun", "node"] as const) {

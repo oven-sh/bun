@@ -136,10 +136,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
   if (ciphers !== undefined && ciphers !== null) {
     validateString(ciphers, `${name}.ciphers`);
 
-    // The cipher list reaches BoringSSL only once a context is built, and
-    // tls.DEFAULT_CIPHERS has no context of its own, so the grammar is checked
-    // here. The server and socket paths now build their context in the same
-    // call, so they could let BoringSSL report these instead.
+    // Checked in JS because the tls.DEFAULT_CIPHERS setter builds no SSL_CTX.
     const ciphersSet = getValidCiphersSet();
     const requested = StringPrototypeSplit.$call(ciphers, ":");
     let sawLegacyEntry = false;
@@ -1140,18 +1137,9 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-// `fields` is the processed per-server option set (pfx already split into
-// key/cert, PKCS#12 CAs folded into `ca`, honorCipherOrder folded into
-// secureOptions): the same material the listen path hands to the native
-// listener, so whatever this build rejects the listener would reject too.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1520-L1542
-// requestCert/rejectUnauthorized come from the server, not from `fields`: the
-// native context bakes the client-certificate policy into its verify mode, and
-// the cache interns by a digest of these options. Two servers that share key
-// material but not that policy must not collapse onto one SSL_CTX - they would
-// then share a session cache, and a session from the permissive one would
-// resume on the mTLS one, where a resumed handshake skips client
-// authentication.
+// requestCert/rejectUnauthorized are part of the interned context on purpose:
+// one SSL_CTX is one session cache, and a resumed session skips client auth.
 function buildSharedCreds(fields, server) {
   return new InternalSecureContext(
     {
@@ -1293,12 +1281,8 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: the listen path
-      // hands raw {key, cert, ca} to the native listener rather than the
-      // shared InternalSecureContext, so without this an mTLS server would
-      // verify client certificates against the bundled roots instead of the
-      // overridden defaults.
+      // The listen path hands raw {key, cert, ca} to the native listener, so
+      // the tls.setDefaultCACertificates() override has to be applied here.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
@@ -1376,10 +1360,8 @@ function Server(options, secureConnectionListener): void {
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
-    // Node builds the SecureContext inside setSecureContext, so key/cert
-    // material the native loader rejects throws from here (and from
-    // tls.createServer()), not from a later listen(). Build before assigning
-    // so a throwing call leaves the previous credentials in place.
+    // Built before the fields are assigned: bad key/cert material throws from
+    // here, like Node, and the previous credentials stay in place.
     const sharedCreds =
       serverTLSOptions instanceof InternalSecureContext
         ? serverTLSOptions

@@ -104,6 +104,7 @@ pub mod linker_graph;
 // const without a cross-crate hook. Re-export for existing callers.
 pub use bun_js_parser::defines_table;
 pub mod bundle_v2;
+pub(crate) mod input_source_map;
 #[path = "LinkerContext.rs"]
 pub mod linker_context_mod;
 #[path = "options.rs"]

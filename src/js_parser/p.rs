@@ -9414,6 +9414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
+            source_mapping_url: self.lexer.source_mapping_url,
             export_default_alias_of_import: self.export_default_alias_of_import,
             // TODO: cross-module constant inlining
             // const_values: self.const_values,

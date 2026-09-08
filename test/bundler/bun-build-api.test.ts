@@ -903,6 +903,27 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toEqual(null);
   });
 
+  // The location of a pragma comment's argument had the comment's own offset
+  // added twice, so a warning about a pragma that was not in the file's first
+  // comment pointed somewhere past it.
+  test.concurrent("a pragma warning points at the pragma", async () => {
+    using dir = tempDir("build-api-pragma-location", {
+      "a.jsx": `// a first comment, so the pragma below is not at offset 0\n// @jsxRuntime bogus\nexport const x = <div />;\n`,
+      "b.jsx": `"some code";\n/* a block comment\n   @jsxRuntime fake */\nexport const x = <div />;\n`,
+    });
+    const logs = [];
+    for (const file of ["a.jsx", "b.jsx"]) {
+      const build = await Bun.build({ entrypoints: [join(String(dir), file)], external: ["*"] });
+      logs.push(
+        ...build.logs.map(log => [log.message, log.position?.line, log.position?.column, log.position?.length]),
+      );
+    }
+    expect(logs).toEqual([
+      [`Unsupported JSX runtime: "bogus"`, 2, 16, 5],
+      [`Unsupported JSX runtime: "fake"`, 3, 16, 4],
+    ]);
+  });
+
   test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
     // A TOML dotted header builds an object nested arbitrarily deep without
     // recursing in the parser, so the printer's recursion guard is the first

@@ -1202,10 +1202,10 @@ function foo() {}
       });
 
       it("leaves alone what TypeScript does not fold", () => {
-        // declared after the enum, not const, or not a constant expression
+        // declared after the enum, not const, not a constant expression, or declared with a type annotation
         exp(
-          "let x = 1;\nconst y = Math.PI;\nenum E { A = later, B = x, C = y }\nconst later = 5;",
-          'let x = 1;\nconst y = Math.PI;\nvar E;\n((E) => {\n  E[E["A"] = later] = "A";\n  E[E["B"] = x] = "B";\n  E[E["C"] = y] = "C";\n})(E ||= {});\nconst later = 5',
+          "let x = 1;\nconst y = Math.PI;\nconst z: number = 3;\nenum E { A = later, B = x, C = y, D = z, F }\nconst later = 5;",
+          'let x = 1;\nconst y = Math.PI;\nconst z = 3;\nvar E;\n((E) => {\n  E[E["A"] = later] = "A";\n  E[E["B"] = x] = "B";\n  E[E["C"] = y] = "C";\n  E[E["D"] = z] = "D";\n  E[E["F"] = undefined] = "F";\n})(E ||= {});\nconst later = 5',
         );
         // shadowed by a hoisted variable in the enum's scope
         exp(

@@ -1302,6 +1302,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_definite_assignment_assertion || p.lexer.token == T::TColon {
                     p.lexer.expect(T::TColon)?;
                     p.skip_type_script_type(Level::Lowest)?;
+                    if kind == js_ast::symbol::Kind::Constant
+                        && let js_ast::binding::Data::BIdentifier(id) = local.data
+                    {
+                        p.ts_annotated_constants.insert(id.r#ref, ());
+                    }
                 }
             }
 

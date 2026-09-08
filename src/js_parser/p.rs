@@ -704,6 +704,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `const` values an enum initializer can fold (TS 5.0), see `record_ts_enum_constants`.
     pub(crate) ts_enum_constants: HashMap<Ref, TSConstantValue>,
     pub(crate) is_visiting_ts_enum_initializer: bool,
+    /// `const x: T = ...`: tsc does not fold a const with a type annotation.
+    pub(crate) ts_annotated_constants: RefMap,
 
     // Value is a shared `&'a [ScopeOrder<'a>]`. The visit pass never writes
     // through these slices — it only reads
@@ -7273,6 +7275,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
+/// Drops the entries keyed by symbols at index `symbols_len` and above.
+fn forget_symbols_from<V>(map: &mut HashMap<Ref, V>, symbols_len: usize) {
+    let stale: Vec<Ref> = map
+        .keys()
+        .filter(|ref_| ref_.inner_index() as usize >= symbols_len)
+        .copied()
+        .collect();
+    for ref_ in stale {
+        map.remove(&ref_);
+    }
+}
+
 /// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     let (name_to_use, separators): (&[u8], &[u8]) =
@@ -8357,15 +8371,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if TYPESCRIPT {
                 self.ts_use_counts.truncate(snapshot.symbols_len);
             }
-            let stale: Vec<Ref> = self
-                .ref_to_ts_namespace_member
-                .keys()
-                .filter(|ref_| ref_.inner_index() as usize >= snapshot.symbols_len)
-                .copied()
-                .collect();
-            for ref_ in stale {
-                self.ref_to_ts_namespace_member.remove(&ref_);
-            }
+            forget_symbols_from(&mut self.ref_to_ts_namespace_member, snapshot.symbols_len);
+            forget_symbols_from(&mut self.ts_annotated_constants, snapshot.symbols_len);
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
@@ -9857,6 +9864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_enums: BumpVec::new_in(arena),
             ts_enum_constants: Default::default(),
             is_visiting_ts_enum_initializer: false,
+            ts_annotated_constants: Default::default(),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,

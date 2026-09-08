@@ -2213,7 +2213,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             };
             // With tree shaking a top-level declaration comes through twice (module, own part).
-            if self.ts_enum_constants.contains_key(&id.r#ref) {
+            if self.ts_enum_constants.contains_key(&id.r#ref)
+                || self.ts_annotated_constants.contains_key(&id.r#ref)
+            {
                 continue;
             }
             if let Some(value) = self.eval_ts_constant_expression(&value) {

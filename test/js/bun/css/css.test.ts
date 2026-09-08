@@ -5483,6 +5483,126 @@ describe("css tests", () => {
       },
     );
 
+    // `:-webkit-any()` is still parsed by Blink and WebKit, with the specificity
+    // of one pseudo-class whatever its arguments are. When the most specific
+    // `:is()` argument is below that (type selectors, `*`), the prefixed copy
+    // would outrank the `:is()` rule in current browsers, so it is not emitted.
+    prefix_test(
+      "a:is(span, p) {color:red}",
+      `
+      a:is(span, p) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+    prefix_test(
+      ".a:is(*) {color:red}",
+      `
+      .a:is(*) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+    prefix_test(
+      ":is(section, div) .a {color:red}",
+      `
+      :is(section, div) .a {
+        color: red;
+      }
+      `,
+      {
+        chrome: 80 << 16,
+      },
+    );
+    prefix_test(
+      ".a:not(span, p) {color:red}",
+      `
+      .a:not(:is(span, p)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+    // One class-level argument is enough: the prefixed copy is then at most as
+    // specific as the `:is()` copy and cannot change which rule wins.
+    prefix_test(
+      "a:is(.foo, p) {color:red}",
+      `
+      a:-webkit-any(.foo, p) {
+        color: red;
+      }
+
+      a:-moz-any(.foo, p) {
+        color: red;
+      }
+
+      a:is(.foo, p) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+    prefix_test(
+      "a:is([href], p) {color:red}",
+      `
+      a:-webkit-any([href], p) {
+        color: red;
+      }
+
+      a:is([href], p) {
+        color: red;
+      }
+      `,
+      {
+        chrome: 80 << 16,
+      },
+    );
+    // A prefix pass requested by another component in the selector does not
+    // turn such an `:is()` into `:-webkit-any()` either.
+    prefix_test(
+      ":is(span, p) input::placeholder {color:red}",
+      `
+      :is(span, p) input::-webkit-input-placeholder {
+        color: red;
+      }
+
+      :is(span, p) input::placeholder {
+        color: red;
+      }
+      `,
+      {
+        chrome: 50 << 16,
+      },
+    );
+    prefix_test(
+      ":is(.a > .b, .c) input::placeholder {color:red}",
+      `
+      :is(.a > .b, .c) input::-webkit-input-placeholder {
+        color: red;
+      }
+
+      :is(.a > .b, .c) input::placeholder {
+        color: red;
+      }
+      `,
+      {
+        chrome: 50 << 16,
+      },
+    );
+
     prefix_test(
       "a:lang(en, fr) {color:red}",
       `

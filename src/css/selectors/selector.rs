@@ -128,17 +128,9 @@ fn downlevel_component<'bump>(
             let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
 
             // Convert :is to :-webkit-any/:-moz-any if needed.
-            // All selectors must be simple, no combinators are supported.
             if targets.should_compile_same(Feature::IsSelector)
                 && !should_unwrap_is(selectors)
-                && 'brk: {
-                    for selector in selectors.iter() {
-                        if selector.has_combinator() {
-                            break 'brk false;
-                        }
-                    }
-                    break 'brk true;
-                }
+                && can_downlevel_is_to_any(selectors)
             {
                 necessary_prefixes.insert(
                     targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
@@ -156,6 +148,16 @@ fn downlevel_component<'bump>(
             // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
+                if targets.should_compile_same(Feature::IsSelector)
+                    && can_downlevel_is_to_any(selectors)
+                {
+                    necessary_prefixes.insert(
+                        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
+                    );
+                } else {
+                    necessary_prefixes.insert(VendorPrefix::NONE);
+                }
+
                 let is: Selector = Selector::from_component(Component::Is({
                     // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
                     // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
@@ -166,14 +168,6 @@ fn downlevel_component<'bump>(
                     new_selectors.into_boxed_slice()
                 }));
                 *component = Component::Negation(vec![is].into_boxed_slice());
-
-                if targets.should_compile_same(Feature::IsSelector) {
-                    necessary_prefixes.insert(
-                        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
-                    );
-                } else {
-                    necessary_prefixes.insert(VendorPrefix::NONE);
-                }
             }
 
             necessary_prefixes
@@ -867,7 +861,9 @@ pub(crate) mod serialize {
                         }
 
                         let vp = dest.vendor_prefix;
-                        if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
+                        if (vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ))
+                            && can_downlevel_is_to_any(selectors)
+                        {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
                             dest.write_str(b"any(")?;
@@ -1668,6 +1664,29 @@ pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
     }
 
     false
+}
+
+/// Whether `:is(selectors)` can be written as the legacy `:-webkit-any()` /
+/// `:-moz-any()` for old browsers without changing the cascade in new ones.
+///
+/// The legacy forms take compound selectors only, and Blink and WebKit still
+/// parse `:-webkit-any()` today with the specificity of one pseudo-class,
+/// (0,1,0), whatever its arguments are. `:is()` takes the specificity of its
+/// most specific argument. When that is below (0,1,0), for example
+/// `:is(span, p)` or `:is(*)`, the prefixed copy of the rule outranks the
+/// `:is()` copy in every browser that supports both, and wins cascades that
+/// the authored selector loses. At or above (0,1,0) the prefixed copy can
+/// never outrank the `:is()` copy, so it is a safe fallback.
+pub(crate) fn can_downlevel_is_to_any(selectors: &[parser::Selector]) -> bool {
+    let mut max: u32 = 0;
+    for selector in selectors {
+        if selector.has_combinator() {
+            return false;
+        }
+        max = max.max(selector.specificity());
+    }
+    let max = parser::Specificity::from_u32(max);
+    max.id_selectors > 0 || max.class_like_selectors > 0
 }
 
 fn has_type_selector(selector: &parser::Selector) -> bool {

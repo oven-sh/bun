@@ -21,6 +21,7 @@
 [bun_http]
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 2
+"narrowed_two_ways:src/http/SendFile.rs" = 1
 
 [bun_http_jsc]
 "generic_body_not_generic:src/http_jsc/websocket_client.rs" = 2

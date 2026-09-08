@@ -877,6 +877,39 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
     expect(exitCode).toBe(0);
   });
 
+  // The other way around: an explicit list blocked a default-list package at
+  // install. Dropping the list from package.json does not mark its scripts as run.
+  test("default-list package blocked by an explicit list stays blocked after the list is removed", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const marker = join(packageDir, "node_modules", "electron", "preinstall.txt");
+    const dependencies = { electron: "1.0.0", "uses-what-bin": "1.0.0" };
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["uses-what-bin"] }));
+    let { out, err, exitCode } = await run(ctx, ["install"]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(exitCode).toBe(0);
+    expect(await exists(marker)).toBeFalse();
+
+    // Without the key, electron falls back to the default list, and uses-what-bin
+    // loses its trust.
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("electron @1.0.0\n");
+    expect(out).toContain("uses-what-bin @1.0.0\n");
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "trust", "electron"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 script ran across 1 package");
+    expect(exitCode).toBe(0);
+    expect(await exists(marker)).toBeTrue();
+  });
+
   // Workspace package.json files count too, like they do for `bun install`.
   test("trust declared by a workspace package.json", async () => {
     using ctx = await setupTest();

@@ -163,10 +163,14 @@ Bun caches static route responses for the lifetime of the server object. To relo
 Serving a file from a route behaves differently depending on whether you buffer the file content or serve it directly:
 
 ```ts
+const logo = Bun.file("./logo.png");
+
 Bun.serve({
   routes: {
     // Static route - content is buffered in memory at startup
-    "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
+    "/logo.png": new Response(await logo.bytes(), {
+      headers: { "Content-Type": logo.type },
+    }),
 
     // File route - content is read from filesystem on each request
     "/download.zip": new Response(Bun.file("./download.zip")),
@@ -181,6 +185,7 @@ Bun.serve({
 - **If-None-Match** - Returns `304 Not Modified` when client ETag matches
 - **No 404 handling** - Missing files cause startup errors, not runtime 404s
 - **Memory usage** - Full file content stored in RAM
+- **Explicit Content-Type** - A byte buffer carries no type, so set the `Content-Type` header yourself (`file.type` is derived from the file extension). A `Bun.file()` body sets it for you.
 - **Best for**: Small static assets, API responses, frequently accessed files
 
 **File routes** (`new Response(Bun.file(path))`) read from filesystem per request:

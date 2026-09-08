@@ -640,9 +640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 js_lexer::is_identifier(value.name.slice())
             } else if p.lexer.token == T::TOpenBracket {
-                // TypeScript allows computed enum member names when the
-                // expression is a string literal or a substitution-free
-                // template literal: "enum E { ['a'] = 1, [`b`] = 2 }".
+                // tsc accepts ['a'] and [`a`] (substitution-free) as member names.
                 p.lexer.next()?;
                 if p.lexer.token != T::TStringLiteral
                     && p.lexer.token != T::TNoSubstitutionTemplateLiteral

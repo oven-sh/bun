@@ -489,6 +489,74 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
   });
 });
 
+// An idle connection in the keep-alive pool must be dropped as soon as the peer
+// sends anything on it. The peer framed a message we never asked for, so its
+// view of the connection and ours have diverged, and whatever arrives next can
+// be read as the answer to the NEXT request written onto that socket. bun
+// evicted the socket for every stray byte sequence except exactly `0\r\n\r\n`
+// (a 2022 workaround), which it swallowed and kept pooled even after a
+// Content-Length framed response, which cannot have a chunked terminator.
+// undici and Chromium close the connection for all four rows below.
+// The server answers with the number of the connection the request arrived on,
+// so `second` says whether bun dialed again: "2" evicted, "1" reused.
+test.concurrent.each([
+  ["0\r\n\r\n", "a chunked terminator"],
+  ["0\r\n", "a last-chunk line"],
+  ["\r\n", "a CRLF"],
+  ["X", "one byte"],
+])("a stray %j (%s) evicts an idle pooled connection", async stray => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      let connections = 0;
+      let idle;
+      const server = net.createServer(sock => {
+        const id = String(++connections);
+        idle = sock;
+        sock.on("error", () => {});
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          let i;
+          while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+            buf = buf.slice(i + 4);
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + id.length + "\\r\\n\\r\\n" + id);
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      const first = await (await fetch(url)).text();
+      idle.write(${JSON.stringify(stray)});
+      // The eviction is the condition; the deadline only bounds the failing
+      // case, where bun keeps the socket and no close ever arrives.
+      const dropped = await Promise.race([
+        new Promise(r => idle.once("close", () => r(true))),
+        Bun.sleep(3000).then(() => false),
+      ]);
+      const second = await (await fetch(url)).text();
+      console.log(JSON.stringify({ first, dropped, second, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { first: "1", dropped: true, second: "2", connections: 2 },
+    exitCode: 0,
+  });
+});
+
 // Raw HTTP/1.1 server for the redirect tests below, bound to 127.0.0.1 (the
 // address fetch() dials). Every request is answered on the connection it came
 // in on, so `connections` is exactly how many times bun dialed.

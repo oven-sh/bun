@@ -1383,11 +1383,10 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            // trailing zero is fine to ignore
-            if buf == http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY {
-                return;
-            }
-
+            // Any byte on an idle pooled connection means the peer's framing no
+            // longer matches ours: a doubled `0\r\n\r\n`, a pipelined reply, a
+            // stray response. Reuse would read those bytes as the answer to the
+            // next request written onto the socket, so evict it.
             bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
             HTTPContext::<SSL>::terminate_socket(socket);
 

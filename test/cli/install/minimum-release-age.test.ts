@@ -937,6 +937,35 @@ describe("minimum-release-age", () => {
         /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
       );
     });
+
+    // An exact version as the first `||` clause is not an exact version request:
+    // the other clauses still get searched (and age-gated).
+    test.each([
+      ["1.0.0 || ^2.0.0", "2.1.0"],
+      ["3.0.0 || ^2.0.0", "2.1.0"],
+      ["9.9.9 || ~2.0.0", "2.0.0"],
+    ])("evaluates the whole range for %p", async (range, expected) => {
+      using dir = tempDir("exact-or-range", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": range },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain(`regular-package@${expected}`);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("stability checks", () => {

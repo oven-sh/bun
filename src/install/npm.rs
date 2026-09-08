@@ -1841,8 +1841,8 @@ impl PackageManifest {
         let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
 
-        if left.op == Semver::range::Op::Eql {
-            let result = self.find_by_version(left.version);
+        if let Some(exact) = group.get_exact_version() {
+            let result = self.find_by_version(exact);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
                     return FindVersionResult::Err(FindVersionError::TooRecent);
@@ -1910,9 +1910,10 @@ impl PackageManifest {
         group_buf: &[u8],
     ) -> Option<FindResult<'_>> {
         let left = group.head.head.range.left;
-        // Fast path: exact version
-        if left.op == Semver::range::Op::Eql {
-            return self.find_by_version(left.version);
+        // Fast path: a bare exact version. `1.0.0 || ^2` and `1.0.0 <2.0.0` still start
+        // with an `Eql` comparator but must go through the full range search below.
+        if let Some(exact) = group.get_exact_version() {
+            return self.find_by_version(exact);
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {

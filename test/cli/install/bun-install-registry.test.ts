@@ -6906,6 +6906,43 @@ describe("semver", () => {
       depVersion: "2 |||| 1",
       expected: "2.0.1",
     },
+    // An exact version as the first `||` clause must not short-circuit the rest of
+    // the range: pick `latest` if it satisfies any clause, else the highest match.
+    {
+      title: "exact version first in || range",
+      depVersion: "1.0.0 || 2.0.1",
+      expected: "2.0.1",
+    },
+    {
+      title: "exact version first in || range, latest satisfies later clause",
+      depVersion: "1.0.0 || 3",
+      expected: "3.0.0",
+    },
+    {
+      title: "'=' exact version first in || range",
+      depVersion: "=1.0.0 || ^2.0.0",
+      expected: "2.0.1",
+    },
+    {
+      title: "'v' exact version first in || range",
+      depVersion: "v1.0.0 || 2.0.1",
+      expected: "2.0.1",
+    },
+    {
+      title: "unpublished exact version first in || range",
+      depVersion: "9.9.9 || ^2.0.0",
+      expected: "2.0.1",
+    },
+    {
+      title: "exact version first in || range through npm: alias",
+      depVersion: "npm:dep-with-tags@1.0.0 || 2.0.1",
+      expected: "2.0.1",
+    },
+    {
+      title: "exact version last in || range",
+      depVersion: "^2.0.0 || 1.0.0",
+      expected: "2.0.1",
+    },
   ];
 
   for (const { title, depVersion, expected } of taggedVersionTests) {
@@ -7067,6 +7104,16 @@ const prereleaseTests = [
     { title: "range matches highest possible", depVersion: "^5.0.0-alpha.152", expected: "5.0.0-alpha.153" },
     { title: "exact", depVersion: "5.0.0-alpha.152", expected: "5.0.0-alpha.152" },
     { title: "exact latest", depVersion: "5.0.0-alpha.153", expected: "5.0.0-alpha.153" },
+    {
+      title: "exact || exact picks the highest",
+      depVersion: "5.0.0-alpha.150 || 5.0.0-alpha.152",
+      expected: "5.0.0-alpha.152",
+    },
+    {
+      title: "unpublished exact || range",
+      depVersion: "5.0.0-alpha.1 || ~5.0.0-alpha.151",
+      expected: "5.0.0-alpha.153",
+    },
     { title: "latest", depVersion: "latest", expected: "5.0.0-alpha.153" },
     { title: "~ lower than latest", depVersion: "~5.0.0-alpha.151", expected: "5.0.0-alpha.153" },
     {

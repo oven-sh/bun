@@ -431,3 +431,55 @@ test.skipIf(!isASAN)(
   },
   30_000,
 );
+
+describe.concurrent("bun info resolves the whole `||` range when a clause is an exact version", () => {
+  // versions 1.0.0, 1.2.0 (latest), 1.5.0, 2.0.0
+  const manifest = JSON.stringify({
+    name: "or-range-pkg",
+    "dist-tags": { latest: "1.2.0" },
+    versions: Object.fromEntries(
+      ["1.0.0", "1.2.0", "1.5.0", "2.0.0"].map(v => [
+        v,
+        {
+          name: "or-range-pkg",
+          version: v,
+          dist: { tarball: `http://localhost/or-range-pkg-${v}.tgz`, shasum: "0".repeat(40) },
+        },
+      ]),
+    ),
+  });
+
+  async function view(spec: string) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(manifest, { headers: { "content-type": "application/json" } });
+      },
+    });
+    const dir = tempDirWithFiles("bun-info-or-range", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "info", `or-range-pkg@${spec}`, "version"],
+      cwd: dir,
+      env: { ...bunEnv, npm_config_registry: `http://localhost:${server.port}/` },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+  // `latest` (1.2.0) satisfies no clause: highest satisfying version over the whole union.
+  test("exact || caret", async () => expect(await view("1.0.0 || ^1.5")).toEqual(ok("1.5.0")));
+  test("caret || exact", async () => expect(await view("^1.5 || 1.0.0")).toEqual(ok("1.5.0")));
+  test("exact || exact", async () => expect(await view("1.0.0 || 2.0.0")).toEqual(ok("2.0.0")));
+  test("=exact || caret", async () => expect(await view("=1.0.0 || ^1.5")).toEqual(ok("1.5.0")));
+  // `latest` satisfies a later clause: it wins over higher versions.
+  test("exact || range containing latest", async () => expect(await view("2.0.0 || ~1.2")).toEqual(ok("1.2.0")));
+  // A lone exact version still resolves to exactly that version.
+  test("bare exact", async () => expect(await view("1.0.0")).toEqual(ok("1.0.0")));
+});

@@ -884,6 +884,27 @@ impl Task {
         let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
+        // (lifecycle scripts are trusted to run, trusted through `--trust`).
+        // Not for the root entry, which has no dependency id.
+        let entry_trust = || -> (bool, bool) {
+            if installer
+                .trusted_dependencies_from_update_requests
+                .contains(&pkg_id)
+            {
+                return (true, true);
+            }
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            let dep = &lockfile.buffers.dependencies[dep_id as usize];
+            if lockfile.has_trusted_dependency(
+                dep.name.slice(string_buf),
+                pkg_name.slice(string_buf),
+                &pkg_res,
+            ) {
+                return (true, false);
+            }
+            (false, false)
+        };
+
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         'step: loop {
@@ -1480,6 +1501,22 @@ impl Task {
                 Step::SymlinkDependencies => {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
+
+                    // `LinkPackage` just finished for a fresh entry. It can wait in
+                    // `CheckIfBlocked` on its dependencies' scripts for a long time
+                    // before `RunPreinstall` enqueues its own, so mark it already.
+                    // `RunPreinstall` clears the mark if there is nothing to run.
+                    if !relinking
+                        && pkg_res.tag.can_enqueue_install_task()
+                        && manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
+                        && !installer.entry_uses_global_store(self.entry_id)
+                        && entry_trust().0
+                    {
+                        let mut pkg_dir = AutoAbsPath::init_top_level_dir();
+                        installer.append_store_path(&mut pkg_dir, self.entry_id);
+                        package::scripts::mark_scripts_pending(pkg_dir.slice());
+                    }
+
                     let strategy = if relinking
                         || matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
                     {
@@ -1595,22 +1632,7 @@ impl Task {
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if installer
-                            .trusted_dependencies_from_update_requests
-                            .contains(&pkg_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if lockfile.has_trusted_dependency(
-                            dep.name.slice(string_buf),
-                            pkg_name.slice(string_buf),
-                            &pkg_res,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
+                    let (is_trusted, is_trusted_through_update_request) = entry_trust();
 
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
@@ -1663,9 +1685,6 @@ impl Task {
                         };
 
                         if let Some(list) = scripts_list {
-                            // Before any script spawns, so that an install killed
-                            // from here on does not count the entry as installed.
-                            list.mark_scripts_pending();
                             // Snapshot before boxing so the post-publish
                             // `first_index` check needs no raw-pointer deref.
                             let first_index = list.first_index;
@@ -1732,6 +1751,11 @@ impl Task {
 
                             return Ok(Yield::RunScripts(clone));
                         }
+                    }
+
+                    // Marked after `LinkPackage`, but nothing will run.
+                    if is_trusted && pkg_res.tag.can_enqueue_install_task() {
+                        package::scripts::clear_scripts_pending(pkg_cwd.slice());
                     }
 
                     step = self.next_step(current_step);

@@ -807,6 +807,134 @@ describe("should not hang", () => {
   }
 });
 
+// What keeps a process alive whose only handle is a child's stdout reader (the
+// child itself is unref'd): a read that can still deliver something does, a
+// reader stopped at its highwater mark does not. Stopped, the pipe reader's
+// poll is unregistered until the next pull, so it could not even observe the
+// child going away. Node: readStop() at the highWaterMark leaves the handle
+// inactive, and a pending read keeps it active.
+describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifetime", () => {
+  async function run(script: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  // "saturating" fills the pipe faster than the parent reads it; "trickling"
+  // lets most parent reads end in EAGAIN, the path that used to re-arm the
+  // poll regardless of the highwater stop.
+  const producers = {
+    saturating: `const chunk = Buffer.alloc(8192, 120); for (;;) require("fs").writeSync(1, chunk);`,
+    trickling: `const chunk = Buffer.alloc(2048, 120); setInterval(() => require("fs").writeSync(1, chunk), 1);`,
+  };
+  for (const [kind, producer] of Object.entries(producers)) {
+    it.concurrent(
+      `an idle reader stopped at the highwater mark does not keep the process alive (${kind} writer)`,
+      async () => {
+        const stdout = await run(`
+        const producer = Bun.spawn({
+          cmd: [process.execPath, "-e", ${JSON.stringify(producer)}],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const reader = producer.stdout.getReader();
+        // The running child no longer counts; only its stdout reader can keep this process alive now.
+        producer.unref();
+        let firstLength = -1;
+        process.on("exit", () => {
+          console.log(JSON.stringify({ gotFirstChunk: firstLength > 0, producerExitCode: producer.exitCode }));
+          producer.kill("SIGKILL");
+        });
+        firstLength = (await reader.read()).value.length;
+        // The reader stays locked and idle while the child keeps writing: the pipe
+        // reader fills to its highwater mark and stops, and then nothing is pending.
+      `);
+        expect(JSON.parse(stdout)).toEqual({ gotFirstChunk: true, producerExitCode: null });
+      },
+    );
+  }
+
+  it.concurrent("a pending read keeps the process alive until the child writes", async () => {
+    const child = `const fs = require("fs"); fs.readSync(0, Buffer.alloc(4)); fs.writeSync(1, "pong");`;
+    // Not top-level await: an unsettled entry-module promise keeps the process
+    // running on its own and would hide a read that does not.
+    const stdout = await run(`
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      child.unref();
+      (async () => {
+        const pending = reader.read();
+        child.stdin.write("ping");
+        child.stdin.end();
+        // Only this read is left to wait for. It must hold the process until "pong" arrives.
+        const { value } = await pending;
+        console.log(new TextDecoder().decode(value));
+      })();
+    `);
+    expect(stdout).toBe("pong\n");
+  });
+
+  // node:child_process pause() stops the pipe reader (the poll is unregistered)
+  // and resume() arms it again; the re-armed poll must hold the loop like the
+  // first one did. The writer starts only once the parent is reading ("s"),
+  // overfills the paused Readable, and sends "END" after a pause the parent has
+  // to sit through idle on the pipe with nothing else pending.
+  it.concurrent("a child_process stdout resumed after pause() keeps the process alive again", async () => {
+    const writer = `
+      const fs = require("fs");
+      const chunk = Buffer.alloc(65536, "x");
+      const waitForParent = () => fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+      waitForParent();
+      for (let i = 0; i < 16; i++) fs.writeSync(1, chunk);
+      waitForParent();
+      setTimeout(() => fs.writeSync(1, "END"), 100);
+    `;
+    const stdout = await run(`
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      child.unref();
+      let received = 0;
+      let paused = false;
+      let drained = false;
+      child.stdout.on("data", chunk => {
+        received += chunk.length;
+        if (!paused) {
+          paused = true;
+          child.stdout.pause();
+          const resumeWhenFull = () => {
+            if (child.stdout.readableLength >= child.stdout.readableHighWaterMark) {
+              console.log("resume");
+              child.stdout.resume();
+            } else {
+              setImmediate(resumeWhenFull);
+            }
+          };
+          setImmediate(resumeWhenFull);
+        } else if (!drained && received >= 16 * 65536) {
+          drained = true;
+          child.stdin.end("g");
+        }
+      });
+      child.stdout.on("end", () => console.log("end " + received));
+      setImmediate(() => child.stdin.write("s"));
+    `);
+    expect(stdout).toBe("resume\nend " + (16 * 65536 + 3) + "\n");
+  });
+});
+
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
   // body and never dequeue the IOCP exit packet, so these children busy-spun

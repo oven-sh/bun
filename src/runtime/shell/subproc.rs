@@ -1342,9 +1342,7 @@ impl Readable {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct SpawnArgs<'a> {
-    /// Shared borrow: arena alloc methods take `&self`, and a `&'a Arena`
-    /// (being `Copy`) lets `fill_env` hand back `&'a [u8]` slices without
-    /// the unsafe pointer round-trip the `&'a mut Arena` reborrow forced.
+    /// Owns the `K=V\0` lines `fill_env` pushes into `env_array`.
     pub(crate) arena: &'a Arena,
     /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
     /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
@@ -1365,7 +1363,6 @@ pub struct SpawnArgs<'a> {
     pub(crate) redirect_stdout: Option<jsc::PinnedArrayBuffer>,
     pub(crate) redirect_stderr: Option<jsc::PinnedArrayBuffer>,
     pub(crate) lazy: bool,
-    pub path: &'a [u8],
     // ipc_mode: IPCMode,
     // ipc_callback: JSValue,
 }
@@ -1388,22 +1385,6 @@ impl<'a> SpawnArgs<'a> {
             redirect_stdout: None,
             redirect_stderr: None,
             lazy: false,
-            // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
-            // has no PATH). PATH="" (explicit empty) is preserved — that's a
-            // deliberate "search nothing" and substituting a default would
-            // change argv[0] resolution on existing platforms.
-            // SAFETY: `event_loop.env()` returns the long-lived `*mut Loader`
-            // owned by the VM (valid for the lifetime of the spawn args), and
-            // `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
-            path: unsafe {
-                if let Some(p) = (*event_loop.env()).get(b"PATH") {
-                    p
-                } else if cfg!(unix) {
-                    core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN).to_bytes()
-                } else {
-                    b""
-                }
-            },
             // .ipc_mode = IPCMode.none,
             // .ipc_callback = .zero,
         };
@@ -1415,22 +1396,12 @@ impl<'a> SpawnArgs<'a> {
         out
     }
 
-    /// `object_iter` should be a some type with the following fields:
-    /// - `next() bool`
-    pub(crate) fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
-        &mut self,
-        env_iter: &mut crate::shell::env_map::Iterator<'_>,
-    ) {
+    pub(crate) fn fill_env(&mut self, env_iter: &mut crate::shell::env_map::Iterator<'_>) {
         self.override_env = true;
         // Note: `bun_collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
             .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
-
-        if DISABLE_PATH_LOOKUP_FOR_ARV0 {
-            // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-            self.path = b"";
-        }
 
         while let Some(entry) = env_iter.next() {
             let key = entry.key_ptr.slice();
@@ -1439,23 +1410,28 @@ impl<'a> SpawnArgs<'a> {
             // Build a NUL-terminated `key=value` string in the spawn arena.
             // Bumpalo owns the bytes; freed when the spawn arena is reset.
             let len = key.len() + 1 + value.len();
-            // `self.arena: &'a Arena` is `Copy`, so binding it yields the full
-            // `'a` lifetime independent of the `&mut self` reborrow — the
-            // returned slice is naturally `&'a mut [u8]`.
-            let arena: &'a Arena = self.arena;
-            let line: &'a mut [u8] = arena.alloc_slice_fill_default(len + 1);
+            let line: &mut [u8] = self.arena.alloc_slice_fill_default(len + 1);
             line[..key.len()].copy_from_slice(key);
             line[key.len()] = b'=';
             line[key.len() + 1..len].copy_from_slice(value);
             line[len] = 0;
-            let line: &'a [u8] = line;
-
-            if key == b"PATH" {
-                self.path = &line[b"PATH=".len()..len];
-            }
 
             self.env_array.push(line.as_ptr().cast::<c_char>());
         }
+    }
+}
+
+/// `$PATH` to search for a command when the shell environment has none, as
+/// for a shell started without `PATH`: `_PATH_DEFPATH` on POSIX (what
+/// `execvp` and libuv use; Android often has no `PATH`), nothing on Windows.
+/// An explicit `PATH=` is not this case: it stays empty and searches nothing.
+pub(crate) fn default_path_for_unset_env() -> &'static [u8] {
+    if cfg!(unix) {
+        // SAFETY: `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string
+        // constant with static storage.
+        unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+    } else {
+        b""
     }
 }
 

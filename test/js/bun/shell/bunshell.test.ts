@@ -3520,3 +3520,47 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+test.skipIf(isWindows)("external command resolution without a PATH does not use the process's launch PATH", async () => {
+  using dir = tempDir("shell-argv0-nopath", {
+    "onlyinlaunchpath": "#!/bin/sh\necho should-not-run\n",
+  });
+  chmodSync(join(String(dir), "onlyinlaunchpath"), 0o755);
+
+  // The tool is on the PATH this child starts with. The fixture then runs the
+  // shell with an environment that has no PATH, in two ways. Neither may find
+  // the tool, and both still search the platform default (_PATH_DEFPATH),
+  // like execvp() and node:child_process do. `which` must agree.
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    const results = {};
+    const run = async (label, pending) => {
+      const { exitCode, stdout, stderr } = await pending;
+      results[label] = { exitCode, stdout: stdout.toString().trim(), stderr: stderr.toString().trim() };
+    };
+    await run("env() without PATH", $\`onlyinlaunchpath\`.env({}).quiet().nothrow());
+    delete process.env.PATH;
+    await run("deleted PATH", $\`onlyinlaunchpath\`.quiet().nothrow());
+    await run("deleted PATH, which", $\`which onlyinlaunchpath\`.quiet().nothrow());
+    await run("deleted PATH, default", $\`sh -c "echo from-default-path"\`.quiet().nothrow());
+    const whichSh = await $\`which sh\`.quiet().nothrow();
+    results["deleted PATH, which default"] = { exitCode: whichSh.exitCode, endsWithSh: whichSh.stdout.toString().trim().endsWith("/sh") };
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, PATH: `${dir}:${bunEnv.PATH}` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyinlaunchpath" },
+    "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyinlaunchpath" },
+    "deleted PATH, which": { exitCode: 1, stdout: "which: onlyinlaunchpath not found", stderr: "" },
+    "deleted PATH, default": { exitCode: 0, stdout: "from-default-path", stderr: "" },
+    "deleted PATH, which default": { exitCode: 0, endsWithSh: true },
+  });
+  expect(exitCode).toBe(0);
+});

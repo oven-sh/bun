@@ -470,15 +470,16 @@ impl Cmd {
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env(&mut iter);
             let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env(&mut iter);
         }
 
-        // Resolve argv[0] via PATH (`bun_which::which`).
+        // Resolve argv[0] via the shell's PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
+            let path = interp.as_cmd(this).base.shell().command_path();
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+            let found = match bun_which::which(&mut *path_buf, path.slice(), spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
                     bun_core::self_exe_path()
@@ -486,7 +487,9 @@ impl Cmd {
                         .map(|z| z.as_bytes().to_vec())
                 }
                 None => None,
-            }
+            };
+            path.deref();
+            found
         };
         let Some(mut resolved) = resolved else {
             // writeFailingError("bun: command not found: {s}\n") →

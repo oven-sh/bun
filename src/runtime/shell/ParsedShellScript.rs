@@ -147,9 +147,6 @@ impl ParsedShellScript {
         // errdefer env.deinit() — Drop on early-return handles this.
         env.ensure_total_capacity(object_iter.len);
 
-        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-        // PATH = "";
-
         while let Some((key, value)) = object_iter.next()? {
             if value.is_undefined() {
                 continue;

@@ -1047,6 +1047,23 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
+  // The buffered consumers (text / array) never park a write, so flush(true) has nothing to
+  // wait for there: it must not hand back their closing promise, which only settles at end().
+  it("flush(true) inside pull() does not stall readableStreamToText / readableStreamToArray", async () => {
+    const source = () => ({
+      type: "direct",
+      async pull(c) {
+        c.write("a");
+        expect(await c.flush(true)).toBeUndefined();
+        c.write("b");
+        c.end();
+      },
+    });
+    expect(await readableStreamToText(new ReadableStream(source()))).toBe("ab");
+    const chunks = await readableStreamToArray(new ReadableStream(source()));
+    expect(Buffer.concat(chunks.map(c => Buffer.from(c))).toString()).toBe("ab");
+  });
+
   // https://github.com/oven-sh/bun/issues/18315
   describe("cancel() reaches a direct source's cancel(reason) hook", () => {
     it("after a read", async () => {

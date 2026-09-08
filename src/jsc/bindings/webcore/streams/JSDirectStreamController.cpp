@@ -308,6 +308,9 @@ static size_t directHighWaterMark(JSDirectStreamController* controller)
 
 void JSDirectStreamController::settlePendingWrite(JSC::VM& vm, JSValue value)
 {
+    // Only the ArrayBuffer sink parks writes; for Text/Array the slot is the closing capability.
+    if (m_sinkKind != DirectSinkKind::ArrayBuffer)
+        return;
     auto* promise = pendingWrite().get();
     if (!promise)
         return;
@@ -1159,9 +1162,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectFlush, (JSGlobalObject *
         return JSValue::encode(jsUndefined());
     controller->onFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // flush(true) waits for the drain, like a native sink: the promise write() returned.
-    if (auto* pendingWrite = controller->pendingWrite().get(); pendingWrite && callFrame->argument(1).toBoolean(globalObject))
-        return JSValue::encode(pendingWrite);
+    // flush(true) waits for the drain, like a native sink: the promise write() returned. The
+    // Text/Array sinks never park a write (their slot is the closing capability).
+    if (controller->m_sinkKind == DirectSinkKind::ArrayBuffer && callFrame->argument(1).toBoolean(globalObject)) {
+        if (auto* pendingWrite = controller->pendingWrite().get())
+            return JSValue::encode(pendingWrite);
+    }
     return JSValue::encode(jsUndefined());
 }
 

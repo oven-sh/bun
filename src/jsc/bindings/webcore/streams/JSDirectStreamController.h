@@ -138,9 +138,18 @@ public:
     JSC::WriteBarrier<JSC::JSArray> m_array;
 
     // ArrayBuffer sink: the parked write() promise. Text/Array sinks: the closing capability.
+    // One slot, two meanings: every access goes through the accessor for its sink kind.
     JSC::WriteBarrier<JSC::JSPromise> m_sinkPromise;
-    JSC::WriteBarrier<JSC::JSPromise>& pendingWrite() { return m_sinkPromise; }
-    JSC::WriteBarrier<JSC::JSPromise>& closingPromise() { return m_sinkPromise; }
+    JSC::WriteBarrier<JSC::JSPromise>& pendingWrite()
+    {
+        ASSERT(m_sinkKind == Bun::WebStreams::DirectSinkKind::ArrayBuffer);
+        return m_sinkPromise;
+    }
+    JSC::WriteBarrier<JSC::JSPromise>& closingPromise()
+    {
+        ASSERT(m_sinkKind != Bun::WebStreams::DirectSinkKind::ArrayBuffer);
+        return m_sinkPromise;
+    }
 
     void armEndOfTickFlush(JSC::JSGlobalObject*);
 

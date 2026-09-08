@@ -2977,7 +2977,14 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    // Only Bun loads a `bun:` module, and its loader makes an own
+                    // `default` of the exports the ES default for every importer.
+                    // `isNodeMode` would make it the whole exports object.
+                    if strings::has_prefix_comptime(record.path.text, b"bun:") {
+                        self.print(b")");
+                    } else {
+                        self.print_to_esm_suffix();
+                    }
                 }
                 if wrap {
                     self.print(b")");

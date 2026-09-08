@@ -29,9 +29,15 @@ pub struct InputSource {
     pub is_file: bool,
 }
 
-/// Why an input source map was rejected. The input file is still bundled; its
-/// output map then points at the input file itself.
-pub struct ParseError(pub Cow<'static, str>);
+/// Why an input source map was rejected (UTF-8 text). The input file is still
+/// bundled; its output map then points at the input file itself.
+pub struct ParseError(pub Cow<'static, [u8]>);
+
+impl ParseError {
+    const fn msg(text: &'static str) -> ParseError {
+        ParseError(Cow::Borrowed(text.as_bytes()))
+    }
+}
 
 impl InputSourceMap {
     /// Parses source-map `json` (ECMA-426, including `sections` index maps).
@@ -52,19 +58,18 @@ impl InputSourceMap {
         let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_source, &mut log) {
             Ok(parsed) => parsed,
             Err(_) => {
-                let reason = log
-                    .msgs
-                    .iter()
-                    .find(|msg| msg.kind == bun_ast::Kind::Err)
-                    .map(|msg| String::from_utf8_lossy(&msg.data.text).into_owned());
-                return Err(ParseError(match reason {
-                    Some(text) => Cow::Owned(format!("invalid JSON: {text}")),
-                    None => Cow::Borrowed("invalid JSON"),
-                }));
+                return Err(
+                    match log.msgs.iter().find(|msg| msg.kind == bun_ast::Kind::Err) {
+                        Some(msg) => {
+                            ParseError(Cow::Owned([b"invalid JSON: ", &*msg.data.text].concat()))
+                        }
+                        None => ParseError::msg("invalid JSON"),
+                    },
+                );
             }
         };
         let ExprData::EObjectJSON(root) = parsed.root.data else {
-            return Err(ParseError(Cow::Borrowed("expected a JSON object")));
+            return Err(ParseError::msg("expected a JSON object"));
         };
         let root: &ObjectJSON = root.get();
 
@@ -89,16 +94,16 @@ impl InputSourceMap {
                         continue;
                     };
                     let Some(map) = map.as_object() else {
-                        return Err(ParseError(Cow::Borrowed(
+                        return Err(ParseError::msg(
                             "expected \"map\" in \"sections\" to be an object",
-                        )));
+                        ));
                     };
                     let (mut line_offset, mut column_offset) = (0, 0);
                     if let Some(offset) = section.get(b"offset") {
                         let Some(offset) = offset.as_object() else {
-                            return Err(ParseError(Cow::Borrowed(
+                            return Err(ParseError::msg(
                                 "expected \"offset\" in \"sections\" to be an object",
-                            )));
+                            ));
                         };
                         if let Some(JsonValue::Number(line)) = offset.get(b"line") {
                             line_offset = line.value() as i32;
@@ -108,9 +113,7 @@ impl InputSourceMap {
                         }
                     }
                     if line_offset < 0 || column_offset < 0 {
-                        return Err(ParseError(Cow::Borrowed(
-                            "negative \"offset\" in \"sections\"",
-                        )));
+                        return Err(ParseError::msg("negative \"offset\" in \"sections\""));
                     }
                     sections.push(Section {
                         line_offset,
@@ -120,9 +123,7 @@ impl InputSourceMap {
                 }
             }
             Some(_) => {
-                return Err(ParseError(Cow::Borrowed(
-                    "expected \"sections\" to be an array",
-                )));
+                return Err(ParseError::msg("expected \"sections\" to be an array"));
             }
         }
 
@@ -142,18 +143,14 @@ impl InputSourceMap {
             let vlq: &[u8] = match section.map.get(b"mappings") {
                 Some(JsonValue::String(s)) => s.slice(),
                 Some(_) => {
-                    return Err(ParseError(Cow::Borrowed(
-                        "expected \"mappings\" to be a string",
-                    )));
+                    return Err(ParseError::msg("expected \"mappings\" to be a string"));
                 }
                 None => continue,
             };
             let section_sources: &[JsonValue] = match section.map.get(b"sources") {
                 Some(JsonValue::Array(items)) => items.get().items(),
                 Some(_) => {
-                    return Err(ParseError(Cow::Borrowed(
-                        "expected \"sources\" to be an array",
-                    )));
+                    return Err(ParseError::msg("expected \"sources\" to be an array"));
                 }
                 None => continue,
             };
@@ -170,10 +167,10 @@ impl InputSourceMap {
             };
 
             let Ok(section_sources_len) = i32::try_from(section_sources.len()) else {
-                return Err(ParseError(Cow::Borrowed("too many \"sources\"")));
+                return Err(ParseError::msg("too many \"sources\""));
             };
             let Ok(source_offset) = i32::try_from(sources.len()) else {
-                return Err(ParseError(Cow::Borrowed("too many \"sources\"")));
+                return Err(ParseError::msg("too many \"sources\""));
             };
             let parsed = match mapping::parse(
                 vlq,
@@ -187,11 +184,14 @@ impl InputSourceMap {
             ) {
                 Ok(parsed) => parsed,
                 Err(fail) => {
-                    return Err(ParseError(Cow::Owned(format!(
-                        "bad \"mappings\" data at character {}: {}",
-                        fail.loc.start.max(0),
-                        fail.err.message()
-                    ))));
+                    return Err(ParseError(Cow::Owned(
+                        format!(
+                            "bad \"mappings\" data at character {}: {}",
+                            fail.loc.start.max(0),
+                            fail.err.message()
+                        )
+                        .into_bytes(),
+                    )));
                 }
             };
 
@@ -233,7 +233,7 @@ impl InputSourceMap {
                             source_index: source_index[i] + source_offset,
                             name_index: -1,
                         })
-                        .map_err(|_| ParseError(Cow::Borrowed("out of memory")))?;
+                        .map_err(|_| ParseError::msg("out of memory"))?;
                 }
             }
 
@@ -261,7 +261,7 @@ impl InputSourceMap {
             if i > 0 {
                 quoted
                     .append(b",\n    ")
-                    .map_err(|_| ParseError(Cow::Borrowed("out of memory")))?;
+                    .map_err(|_| ParseError::msg("out of memory"))?;
             }
             let from_disk;
             let content: Option<&[u8]> = match content {
@@ -274,10 +274,10 @@ impl InputSourceMap {
             };
             match content {
                 Some(content) => bun_core::quote_for_json(content, &mut quoted, false)
-                    .map_err(|_| ParseError(Cow::Borrowed("out of memory")))?,
+                    .map_err(|_| ParseError::msg("out of memory"))?,
                 None => quoted
                     .append(b"null")
-                    .map_err(|_| ParseError(Cow::Borrowed("out of memory")))?,
+                    .map_err(|_| ParseError::msg("out of memory"))?,
             }
         }
 

@@ -1190,10 +1190,10 @@ booga"
 
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
+      // `export FOO` persists; the `BAZ=1` prefix belonged to the first command only.
       procEnv = JSON.parse(str2);
       expect(procEnv).toEqual({
         ...bunEnv,
-        BAZ: "1",
         FOO: "bar",
         BUN_TEST_VAR: "1",
       });
@@ -3563,6 +3563,34 @@ test.skipIf(isWindows)("external command resolution without a PATH ignores the l
     "deleted PATH, which default": { exitCode: 0, endsWithSh: true },
   });
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("a VAR=value prefix applies to its own command only", async () => {
+  using dir = tempDir("shell-prefix-scope", {
+    "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+    "empty/.keep": "",
+  });
+  chmodSync(join(String(dir), "onlyintool"), 0o755);
+  const env = { ...bunEnv, PATH: `${dir}:${bunEnv.PATH}` };
+
+  {
+    // the environment of a later command
+    const { stdout, stderr, exitCode } = await $`FOO=leak true; printenv FOO`.env(env).quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
+  }
+
+  {
+    // the PATH lookup of a later command, and of `which`
+    const { stdout, stderr, exitCode } = await $`PATH=${dir}/empty true; onlyintool; which onlyintool`
+      .env(env)
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe(`from-onlyintool\n${dir}/onlyintool\n`);
+    expect(exitCode).toBe(0);
+  }
 });
 
 // Windows spells the variable `Path`, and the shell env map is case-insensitive

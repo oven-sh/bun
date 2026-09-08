@@ -96,6 +96,11 @@ impl EnvMap {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.deref_strings();
+        self.map.clear_retaining_capacity();
+    }
+
     /// NOTE: Make sure you deref the string when done!
     pub fn get(&self, key: EnvStr) -> Option<EnvStr> {
         let val = *self.map.get(&key)?;

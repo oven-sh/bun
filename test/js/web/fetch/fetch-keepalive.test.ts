@@ -733,3 +733,77 @@ test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connectio
     for (const s of servers) s.srv.close();
   }
 });
+
+// More concurrent requests to one origin than the pool holds (64). The origin
+// answers none of them until all have arrived, so each request gets its own
+// connection. When the responses complete, 64 connections are parked and the
+// rest are evicted. The origin must see each evicted one end with a clean EOF
+// ('end'), not ECONNRESET. Subprocess so the pool starts empty.
+test.concurrent.each(["http", "https"])(
+  "a full keep-alive pool closes the %s connections it evicts with FIN, not RST",
+  async scheme => {
+    const total = 80;
+    const evicted = total - 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      import net from "node:net";
+      import tls from "node:tls";
+      const total = ${total};
+      const outcome = { connections: 0, ended: 0, reset: 0, other: [] };
+      const waiting = [];
+      const onConnection = sock => {
+        outcome.connections++;
+        let settled = false;
+        const settle = fn => { if (!settled) { settled = true; fn(); } };
+        sock.on("end", () => settle(() => outcome.ended++));
+        sock.on("error", err => settle(() => (err.code === "ECONNRESET" ? outcome.reset++ : outcome.other.push(String(err.code)))));
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          let i;
+          while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+            buf = buf.slice(i + 4);
+            waiting.push(sock);
+            if (waiting.length === total) {
+              for (const s of waiting) s.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+            }
+          }
+        });
+      };
+      const server = ${scheme === "https" ? `tls.createServer(${JSON.stringify(tls)}, onConnection)` : "net.createServer(onConnection)"};
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const origin = "${scheme}://127.0.0.1:" + server.address().port;
+
+      const bodies = await Promise.all(
+        Array.from({ length: total }, (_, i) =>
+          fetch(origin + "/" + i, { tls: { rejectUnauthorized: false } }).then(r => r.text()),
+        ),
+      );
+      if (bodies.some(b => b !== "ok")) throw new Error("unexpected body");
+
+      // Every eviction has already issued its close by the time the last
+      // response resolved; wait for the origin side to observe each one.
+      while (outcome.ended + outcome.reset + outcome.other.length < ${evicted}) {
+        await new Promise(r => setImmediate(r));
+      }
+      console.log(JSON.stringify(outcome));
+      process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { connections: total, ended: evicted, reset: 0, other: [] },
+      exitCode: 0,
+    });
+  },
+);

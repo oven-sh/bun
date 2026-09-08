@@ -118,6 +118,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForCrossRealmTransformState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStreamFromIterableContext { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamController { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForDirectStreamSource { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativeStreamSourceAdapter { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectSinkCloseState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAsyncIteratorSourceOperation { nullptr };

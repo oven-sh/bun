@@ -75,6 +75,7 @@
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/BigIntConstructor.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/BooleanConstructor.h"
 #include "JavaScriptCore/DateConstructor.h"
 #include "JavaScriptCore/ErrorConstructor.h"
@@ -2731,11 +2732,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    auto str = Zig::toString(*strPtr);
+    // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
+    auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (str.isNull()) {
-        // isNull() will be true for empty strings and for strings which are too long.
+        // isNull() will be true for strings which are too long, and when an allocation fails.
         // So we need to check the length is plausibly due to a long string.
         if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
@@ -2743,8 +2745,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
         }
     }
 
-    // JSONParseWithException does not propagate exceptions as expected. See #5859
-    JSValue result = JSONParse(globalObject, str);
+    JSValue result = JSONParseWithException(globalObject, str);
     RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
@@ -2820,7 +2821,17 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
-        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
+        // bun_sys::Error tags are static literals; "write" and "close" are common strings.
+        JSC::JSValue syscall;
+        auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
+            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            : std::span<const Latin1Character> {};
+        if (equalSpans(staticSyscall, "write"_span8))
+            syscall = Bun::commonStrings(vm).writeString();
+        else if (equalSpans(staticSyscall, "close"_span8))
+            syscall = Bun::commonStrings(vm).closeString();
+        else
+            syscall = Bun::toJS(globalObject, err.syscall);
         if (scope.exception()) {
             scope.clearException();
         } else {
@@ -3169,6 +3180,16 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync(JSC::CollectionScope::Full);
     else
         vm->heap.collectAsync();
+}
+
+// The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
+// optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
+void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isIdle = true;
+    vm->heap.collectAsync(request);
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)
@@ -4426,18 +4447,15 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
     }
 
     if (value.isInt32()) {
-        return static_cast<uint64_t>(value.asInt32());
+        return static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
     }
     ASSERT(value.isDouble());
 
-    int64_t result = JSC::tryConvertToInt52(value.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        if (result < 0)
-            return 0;
-
-        return static_cast<uint64_t>(result);
-    }
-    return 0;
+    // >= 2^64 (and +Infinity) saturates; below that JSC::toUInt64 is exact, NaN -> 0, negatives wrap like the int32 path.
+    double number = value.asDouble();
+    if (number >= 18446744073709551616.0)
+        return std::numeric_limits<uint64_t>::max();
+    return JSC::toUInt64(number);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1,
@@ -5147,20 +5165,6 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
     // https://github.com/oven-sh/bun/issues/13311
     JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
-}
-
-/// **DEPRECATED** This function does not notify the VM about the rejection,
-/// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
-JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue JSValue1)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Rejected));
-    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
-    JSC::ensureStillAliveHere(promise);
-    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
-    return JSC::JSValue::encode(promise);
 }
 
 JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* globalObject,
@@ -6008,22 +6012,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject*
 extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond, bool localTime)
 {
     auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dateTime;
-    dateTime.setYear(year);
-    dateTime.setMonth(month - 1);
-    dateTime.setMonthDay(day);
-    dateTime.setHour(hour);
-    dateTime.setMinute(minute);
-    dateTime.setSecond(second);
-    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
+    return vm.dateCache.gregorianDateTimeToMS(year, month - 1, day, hour, minute, second, millisecond, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms, bool localTime,
     int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
 {
     auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dt;
-    vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime, dt);
+    auto dt = vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
     *year = dt.year();
     *month = dt.month() + 1;
     *day = dt.monthDay();
@@ -6267,7 +6263,7 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
     auto& vm = JSC::getVM(globalObject);
 
-    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
     if (!gregorianDateTime)
         return -1;
 
@@ -6277,10 +6273,10 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
         ms += msPerSecond;
 
     int charactersWritten;
-    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
     else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
 
     memcpy(buf, buffer, charactersWritten);
 

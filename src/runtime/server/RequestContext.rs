@@ -240,7 +240,6 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_paths::PathBuffer;
 use std::io::Write as _;
 #[allow(non_snake_case)]
 mod NativePromiseContext {
@@ -757,15 +756,19 @@ where
             Self::discard_response_body(global_this, result);
             return;
         };
-        match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+        let resp_held = self.resp.get().is_some();
+        match promise.status() {
             // Only while `resp` is held: the `on_abort` that follows then reclaims the cell.
-            jsc::PromiseResult::Pending if self.resp.get().is_some() => {
+            jsc::PromiseStatus::Pending if resp_held => {
                 let cell = self.create_promise_cell(global_this);
                 result.then_with_value(global_this, cell, Self::ON_RESOLVE, Self::ON_REJECT);
             }
-            jsc::PromiseResult::Pending | jsc::PromiseResult::Rejected(_) => {}
-            jsc::PromiseResult::Fulfilled(fulfilled) => {
-                Self::discard_response_body(global_this, fulfilled);
+            // A subscribed promise that rejects later is dropped. Drop this one the same way.
+            jsc::PromiseStatus::Rejected if resp_held => promise.set_handled(global_this.vm()),
+            // Nothing subscribes, so a rejection stays unhandled and reaches `unhandledRejection`.
+            jsc::PromiseStatus::Pending | jsc::PromiseStatus::Rejected => {}
+            jsc::PromiseStatus::Fulfilled => {
+                Self::discard_response_body(global_this, promise.result(global_this.vm()));
             }
         }
     }
@@ -1782,7 +1785,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = PathBuffer::uninit();
+        let mut file_buf = bun_paths::path_buffer_pool::get();
         let auto_close = !matches!(
             file.pathlike,
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_)

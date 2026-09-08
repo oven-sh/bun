@@ -102,6 +102,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
             return;
@@ -686,8 +687,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -879,6 +881,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
@@ -997,6 +1000,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
                     if !s.is_utf16 {
+                        // A folded `"a" + "b"` is a rope whose `data` is only "a".
+                        s.resolve_rope_if_needed(p.arena);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.arena) {
@@ -1030,7 +1036,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if e_.optional_chain.is_none() {
                             let opts = IdentifierOpts::default()
                                 .with_is_call_target(is_call_target)
-                                // .is_template_tag = is_template_tag,
+                                .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
@@ -1341,12 +1347,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
         // while iterating without laundering.
         let defines = p.define;
-        if let Some(parts) = defines.dots.get(e_.name.slice()) {
+        if let Some(parts) = defines.dots_for(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
@@ -1454,6 +1461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if e_.optional_chain.is_none() {
             let opts = IdentifierOpts::default()
                 .with_is_call_target(is_call_target)
+                .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
@@ -1462,7 +1470,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e_.name.slice(),
                 e_.name_loc,
                 opts,
-                // .is_template_tag = p.template_tag != null,
             ) {
                 *e = _expr;
                 return;
@@ -2061,6 +2068,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .is_some()
                             {
                                 p.note_tracked_namespace_use(im.namespace_ref);
+                                p.note_destructured_locals(obj.properties());
                             }
                         }
                         js_ast::binding::Data::BIdentifier(id) => {
@@ -2715,7 +2723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly
         // uses open_parens_loc.)
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
 
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
@@ -2781,7 +2789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
+        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {

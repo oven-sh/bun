@@ -11,7 +11,7 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -358,6 +358,9 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+
+                this_transpiler.options.compile_entry_point_name =
+                    bun_paths::basename(compile_outfile(outfile)).into();
             }
         }
 
@@ -391,7 +394,7 @@ impl BuildCommand {
             }
         }
 
-        let mut src_root_dir_buf = PathBuffer::uninit();
+        let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {
                 if !ctx.bundler_options.root_dir.is_empty() {
@@ -771,7 +774,7 @@ impl BuildCommand {
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
             if let Err(msg) = collect_compile_assets(
                 &ctx.bundler_options.compile_assets,
-                outfile,
+                compile_outfile(outfile),
                 &mut output_files,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
@@ -799,20 +802,8 @@ impl BuildCommand {
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
-                    for f in output_files.iter_mut() {
-                        if f.output_kind == options::OutputKind::EntryPoint
-                            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-                        {
-                            f.dest_path = bun_paths::basename(outfile).into();
-                            break;
-                        }
-                    }
-                } else {
+                // With --compile, the bundler already named the entry point's chunk after the outfile.
+                if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
@@ -886,9 +877,7 @@ impl BuildCommand {
 
                 let is_cross_compile = !compile_target.is_default();
 
-                if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
-                    outfile = b"index";
-                }
+                outfile = compile_outfile(outfile);
 
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
@@ -900,7 +889,7 @@ impl BuildCommand {
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    let mut zbuf = PathBuffer::uninit();
+                    let mut zbuf = bun_paths::path_buffer_pool::get();
                     let n = outfile.len().min(zbuf.0.len() - 1);
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
                     zbuf.0[n] = 0;
@@ -1007,7 +996,7 @@ impl BuildCommand {
                             // root_dir already points to the outfile's parent directory,
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
-                            let mut pathbuf = PathBuffer::uninit();
+                            let mut pathbuf = bun_paths::path_buffer_pool::get();
                             match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
                                 &bun_sys::WriteFileArgs {
@@ -1195,6 +1184,14 @@ impl BuildCommand {
     }
 }
 
+fn compile_outfile(outfile: &[u8]) -> &[u8] {
+    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+        b"index"
+    } else {
+        outfile
+    }
+}
+
 fn exit_or_watch(code: u8, watch: bool) -> ! {
     if watch {
         // the watcher thread will exit the process. `std::thread::sleep`
@@ -1292,17 +1289,8 @@ pub(crate) fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
-    let mut skipped_main_entry = false;
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
-            continue;
-        }
-        // First server EntryPoint is later renamed to basename(outfile); covered by `entry_name`.
-        if !skipped_main_entry
-            && f.output_kind == options::OutputKind::EntryPoint
-            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-        {
-            skipped_main_entry = true;
             continue;
         }
         let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());

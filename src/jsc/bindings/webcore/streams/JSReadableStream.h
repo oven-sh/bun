@@ -30,7 +30,7 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_reader, m_storedError, m_controller, m_nativePtr,
-    // m_directUnderlyingSource, m_asyncContext, m_closedPromise. No barrier container ⇒ no
+    // m_directSource, m_asyncContext, m_closedPromise. No barrier container ⇒ no
     // cellLock needed.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -81,8 +81,8 @@ public:
     // `$bunNativePtr`: empty = not native; a JSCell = the JS{Blob,File,Bytes}Internal-
     // ReadableStreamSource handle from Rust; jsNumber(-1) = detached.
     JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
-    // `$underlyingSource` on the STREAM. Non-null ⇔ type:"direct" AND not yet consumed.
-    JSC::WriteBarrier<JSC::JSObject> m_directUnderlyingSource;
+    // The converted type:"direct" source. Non-null ⇔ type:"direct" AND not yet consumed.
+    JSC::WriteBarrier<JSDirectStreamSource> m_directSource;
     // `$asyncContext` snapshot at construction. Written once in finishCreation.
     JSC::WriteBarrier<JSC::Unknown> m_asyncContext;
     // Settles when the stream reaches a terminal state, for observers that must not lock it

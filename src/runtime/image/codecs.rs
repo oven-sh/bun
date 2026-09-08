@@ -655,6 +655,13 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
+    fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
+}
+
+/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
+pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
+    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
+    unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is

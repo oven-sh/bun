@@ -1316,16 +1316,13 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
   const fixture = `
     const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
     const fd = openSync(process.env.OUT_FILE, "w");
-    let armed = false;
-    const source = {
+    // The stdin sink invokes pull() synchronously while Bun.spawn wires up stdin.
+    const stream = new ReadableStream({
       type: "direct",
-      get pull() {
-        if (armed) throw new Error("pull unavailable");
-        return () => {};
+      pull() {
+        throw new Error("pull unavailable");
       },
-    };
-    const stream = new ReadableStream(source);
-    armed = true;
+    });
     let message = "did not throw";
     try {
       Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, fd, "ignore"] });
@@ -1359,16 +1356,13 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   const fixture = `
     const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
     const fd = openSync(process.env.OUT_FILE, "w");
-    let armed = false;
-    const source = {
+    // The stdin sink invokes pull() synchronously while Bun.spawn wires up stdin.
+    const stream = new ReadableStream({
       type: "direct",
-      get pull() {
-        if (armed) throw new Error("pull unavailable");
-        return () => {};
+      pull() {
+        throw new Error("pull unavailable");
       },
-    };
-    const stream = new ReadableStream(source);
-    armed = true;
+    });
     let message = "did not throw";
     try {
       Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, Bun.file(fd), "ignore"] });

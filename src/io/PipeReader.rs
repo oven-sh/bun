@@ -118,9 +118,7 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// When the reader has read a chunk of data
-    /// and hasMore is true, it means that there might be more data to read.
-    /// Returning false prevents the reader from reading more data.
+    /// Returning false ends only the current read loop. To stop the reader, call `pause()`.
     fn on_read_chunk(&self, chunk: Chunk<'_>, has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }

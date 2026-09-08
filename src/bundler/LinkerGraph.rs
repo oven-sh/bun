@@ -164,6 +164,9 @@ pub mod js_meta {
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+        /// The parameter of the setters on a lifted CommonJS module's namespace
+        /// object (`set: (value) => $foo = value`). `Ref::NONE` for other files.
+        pub lifted_setter_param: Ref,
         pub flags: Flags,
     }
 
@@ -179,6 +182,7 @@ pub mod js_meta {
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
                 dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
+                lifted_setter_param: Ref::NONE,
                 flags: Flags::default(),
             }
         }
@@ -195,6 +199,7 @@ pub mod js_meta {
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
             dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+            lifted_setter_param: Ref,
             flags: Flags,
         }
     }
@@ -455,11 +460,9 @@ pub(crate) fn generate_symbol_import_and_use(
         let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use {
-                count_estimate: use_count,
-            };
+            *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
         } else {
-            uses_entry.value_ptr.count_estimate += use_count;
+            uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
         }
     }
 
@@ -682,39 +685,26 @@ impl<'a> LinkerGraph<'a> {
                     + server_component_boundaries.list.len()
                     + dynamic_import_entry_points.len(),
             )?;
-            // SAFETY: capacity reserved; columns initialized below.
-            unsafe { self.entry_points.set_len(entry_points.len()) };
-
-            // Note: `source_indices` / `path_strings` are disjoint columns of
-            // the same `MultiArrayList`. `split_mut()` hands out both at once;
-            // `self.entry_points` is not
-            // reallocated until after `path_strings`/`source_indices` are done
-            // with (the next `append_assume_capacity` is within the
-            // pre-reserved capacity, so no realloc).
-            let mut ep_slice = self.entry_points.slice();
-            let ep_cols = ep_slice.split_mut();
-            let source_indices: &mut [index::Int] = ep_cols.source_index;
-            let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
-
-            debug_assert_eq!(entry_points.len(), path_strings.len());
-            debug_assert_eq!(entry_points.len(), source_indices.len());
-            for ((i, path_string), source_index) in entry_points
-                .iter()
-                .zip(path_strings.iter_mut())
-                .zip(source_indices.iter_mut())
-            {
+            for i in entry_points {
                 let source = &sources[i.get() as usize];
                 debug_assert!(source.index.0 == i.get());
+
+                // Two entry points can name one file, e.g. when an onResolve plugin
+                // maps two names to it. The file gets one entry point and one output.
+                if entry_point_kinds[source.index.0 as usize] != entry_point::Kind::None {
+                    continue;
+                }
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
-                if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = RawSlice::new(original_name);
-                } else {
-                    *path_string = RawSlice::new(source.path.text);
-                }
-
-                *source_index = source.index.0;
+                let output_path = match entry_point_original_names.get(i.get()) {
+                    Some(original_name) => RawSlice::new(original_name),
+                    None => RawSlice::new(source.path.text),
+                };
+                self.entry_points.append_assume_capacity(EntryPoint {
+                    source_index: source.index.0,
+                    output_path,
+                });
             }
 
             for &id in dynamic_import_entry_points {

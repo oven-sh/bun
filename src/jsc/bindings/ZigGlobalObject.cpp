@@ -327,6 +327,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+#if OS(WINDOWS)
+            // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
+            // the allocation slow path once the heap has ramped; on Windows that
+            // hangs the sampling profiler (@datadog/pprof, test/integration/datadog-pprof).
+            // BUN_JSC_useWarmUpMarkedBlocks=1 re-enables it.
+            JSC::Options::useWarmUpMarkedBlocks() = false;
+#endif
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -402,19 +409,6 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     }
 }
 
-static void cleanupAsyncHooksData(JSC::VM& vm)
-{
-    auto* globalObject = defaultGlobalObject();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
-    globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
-        vm.setOnEachMicrotaskTick(nullptr);
-    }
-}
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
@@ -453,14 +447,10 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
     auto& vm = this->vm();
-    if (this->asyncHooksNeedsCleanup) {
-        vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    if (this->m_nextTickQueue) {
+        vm.setOnEachMicrotaskTick(nullptr);
     } else {
-        if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
-        } else {
-            vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        }
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     }
 }
 
@@ -3041,6 +3031,12 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
+    // A checkpoint with no script on the stack ends an event loop callback: an
+    // AsyncLocalStorage frame it installed with enterWith() must not leak into
+    // the next one (everything queued runs under the frame it captured).
+    if (!vm.entryScope)
+        m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
@@ -4382,6 +4378,20 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     globalObject->scriptExecutionContext()->prepareForDestruction();
+}
+
+// `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
+// (as WebCore does for a stopped document), so work it left in flight cannot resume its script.
+extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+}
+
+// Whether `value` is an object of a realm retired above; native code does not call into one.
+extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    return object && object->globalObject()->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

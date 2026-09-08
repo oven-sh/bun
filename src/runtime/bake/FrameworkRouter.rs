@@ -15,7 +15,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as paths, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 
 use bun_wyhash;
@@ -1581,7 +1581,7 @@ impl FrameworkRouter {
                             }
                         }
 
-                        let mut rel_path_buf = PathBuffer::uninit();
+                        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,

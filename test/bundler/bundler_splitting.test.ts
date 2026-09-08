@@ -2395,6 +2395,74 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "cjs value called" },
   });
 
+  // A split require() of a lifted `module.exports = require()` file that the
+  // linker wraps again because its target is CommonJS: the chunk's only
+  // export is `default: module.exports`, so the call reads `.default` and
+  // returns `module.exports`, not the chunk namespace.
+  // https://github.com/oven-sh/bun/issues/41236
+  itBundled("splitting/SplitRequireOfRewrappedLiftedCommonJS#41236", {
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch {}
+        console.log(typeof m, m.version, m.default());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = chunkContaining(api, "side effect");
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}").default`);
+    },
+    run: { file: "/out/main.js", stdout: "side effect\nobject 19.0.0 rendered" },
+  });
+
+  // When the lift target is itself lifted, the chunk stays an ES module and
+  // the split require() returns its namespace with no `.default` read.
+  itBundled("splitting/SplitRequireOfLiftedCommonJSStaysEsm", {
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch {}
+        console.log(m.version, m.render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = chunkContaining(api, "side effect");
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+      api.expectFile("/out/main.js").not.toContain(".default");
+    },
+    run: { file: "/out/main.js", stdout: "side effect\n19.0.0 rendered" },
+  });
+
   // A top-level require() in a module that the required chunk imports back
   // (the registry ↔ tool shape): the chunk is evaluated while the entry is
   // still evaluating and sees the entry's hoisted functions through live

@@ -186,6 +186,12 @@ pub(crate) fn init_external_modules(
             let normalized = validate_path(log, fs, cwd, external, b"external path");
 
             if !normalized.is_empty() {
+                // An absolute specifier is also matched as written: on Windows
+                // `/api/config` normalizes to `C:\api\config`, but in a source file
+                // it is a URL path that stays external verbatim.
+                if bun_paths::is_absolute(external) && *normalized != **external {
+                    result.abs_paths.insert(external).expect("unreachable");
+                }
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }

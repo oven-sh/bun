@@ -3564,3 +3564,72 @@ test.skipIf(isWindows)("external command resolution without a PATH does not use 
   });
   expect(exitCode).toBe(0);
 });
+
+// Windows spells the variable `Path`, and the shell env map is case-insensitive
+// there, so the lookup must not depend on the key casing. It must also not fall
+// back to the launch PATH when the shell environment has no PATH under any casing.
+describe.concurrent.skipIf(!isWindows)("external command resolution on Windows", () => {
+  const envWithoutPath: Record<string, string> = {};
+  for (const [key, value] of Object.entries(bunEnv)) {
+    if (key.toLowerCase() !== "path" && value !== undefined) envWithoutPath[key] = value;
+  }
+  const processPath = process.env.PATH!;
+  const toolDir = (name: string, message: string) =>
+    tempDir(`shell-argv0-${name}`, { [`${name}.cmd`]: `@echo ${message}\r\n` });
+
+  test(".env() with a Path key", async () => {
+    using dir = toolDir("onlyintool-pathkey", "from-Path-key");
+    const { stdout, stderr, exitCode } = await $`onlyintool-pathkey`
+      .env({ ...envWithoutPath, Path: `${dir};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-Path-key");
+    expect(exitCode).toBe(0);
+  });
+
+  test("export PATH when the environment has Path", async () => {
+    using dir = toolDir("onlyintool-export", "from-export");
+    const { stdout, stderr, exitCode } = await $`export PATH=${`${dir};${processPath}`}; onlyintool-export`
+      .env({ ...envWithoutPath, Path: processPath })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-export");
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.env.PATH changed or deleted at runtime, .env() without PATH", async () => {
+    using launchDir = toolDir("onlyintool-launch", "should-not-run");
+    using runtimeDir = toolDir("onlyintool-runtime", "from-runtime");
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const results = {};
+      const run = async (label, pending) => {
+        const { exitCode, stdout, stderr } = await pending;
+        results[label] = { exitCode, stdout: stdout.toString().trim(), stderr: stderr.toString().trim() };
+      };
+      const envWithoutPath = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"));
+      await run("env() without PATH", $\`onlyintool-launch\`.env(envWithoutPath).quiet().nothrow());
+      process.env.PATH = ${JSON.stringify(String(runtimeDir))} + ";" + process.env.PATH;
+      await run("runtime PATH", $\`onlyintool-runtime\`.quiet().nothrow());
+      delete process.env.PATH;
+      await run("deleted PATH", $\`onlyintool-launch\`.quiet().nothrow());
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...envWithoutPath, Path: `${launchDir};${processPath}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
+      "runtime PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
+      "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
+    });
+    expect(exitCode).toBe(0);
+  });
+});

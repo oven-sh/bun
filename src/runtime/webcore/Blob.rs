@@ -5997,6 +5997,25 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     }
 }
 
+/// Whether a second Blob over `store` reads the same bytes from the start.
+/// Memory and S3 do. A path does when it names a regular file (each read
+/// opens it again); it is stat'd here if that is not yet known. A file
+/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
+    match Store::data_mut(store).tag() {
+        store::DataTag::Bytes | store::DataTag::S3 => true,
+        store::DataTag::File => {
+            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
+                return false;
+            }
+            if Store::data_mut(store).as_file().seekable.is_none() {
+                resolve_file_stat(store);
+            }
+            Store::data_mut(store).as_file().seekable != Some(false)
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────

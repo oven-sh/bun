@@ -17,7 +17,6 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
-use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
@@ -383,17 +382,14 @@ impl PendingValue {
             return None;
         }
         let mut stream = cached.or_else(|| self.readable.get())?;
-        // Two Blobs over one file descriptor (a pipe, a socket, stdin) would
-        // compete for its bytes, so an fd-backed stream stays teed. A path is
-        // opened again for every read, as for a cloned `Bun.file()` body.
+        // Two Blobs over a pipe, a tty, or any fd would compete for its bytes,
+        // so a stream over such a file stays teed.
         if let Some(reader) = stream.ptr.file() {
             let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
                 return None;
             };
-            if let blob::store::Data::File(file) = &store.data {
-                if let PathOrFileDescriptor::Fd(_) = file.pathlike {
-                    return None;
-                }
+            if !blob::store_reads_repeatably(store) {
+                return None;
             }
         }
         let blob = stream.to_any_blob(global)?;
@@ -1578,6 +1574,14 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
+            if b.store()
+                .is_some_and(|store| !blob::store_reads_repeatably(store))
+            {
+                // A pipe or other fd yields its bytes once: read it as one
+                // stream and tee that.
+                self.to_readable_stream(global_this)?;
+                return self.tee(global_this, None);
+            }
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
 

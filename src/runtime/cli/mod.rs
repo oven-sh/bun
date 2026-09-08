@@ -2164,7 +2164,7 @@ Execute a shell script directly from Bun.
             Tag::InfoCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
+<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property ...]<r>
   Display package metadata from the registry.
 
 <b>Examples:<r>
@@ -2174,10 +2174,12 @@ Execute a shell script directly from Bun.
   <d>View specific version<r>
   <b><green>bun info<r> <blue>react@18.0.0<r>
 
-  <d>View specific property<r>
+  <d>View specific properties (npm view path syntax)<r>
   <b><green>bun info<r> <blue>react<r> version
   <b><green>bun info<r> <blue>react<r> dependencies
   <b><green>bun info<r> <blue>react<r> versions
+  <b><green>bun info<r> <blue>react<r> version license dist-tags.latest
+  <b><green>bun info<r> <blue>react<r> maintainers.name
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
 "

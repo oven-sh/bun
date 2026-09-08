@@ -204,7 +204,7 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--long<r>                    also print author, description and homepage\n\
   <d>└<r> <cyan>--filter<r> <d>\\<pattern\\><r>      list only the matching workspaces' dependencies\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
-  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
+  <b><green>bun pm<r> <blue>view<r> <d>name[@version] [property ...]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
   <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\

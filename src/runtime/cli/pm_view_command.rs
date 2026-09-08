@@ -519,13 +519,15 @@ fn merge_manifest(root: Expr, version: Expr, versions_array: Expr, wants_readme:
             let (Some(key), Some(value)) = (property_key(prop), prop.value) else {
                 continue;
             };
-            // A requested readme comes from the packument root, like npm.
-            if key == b"versions" || (key == b"readme" && wants_readme) {
+            if key == b"versions" || (key == b"readme" && !wants_readme) {
                 continue;
             }
             for existing in props.iter_mut() {
                 if property_key(existing) == Some(key) {
-                    existing.value = Some(value);
+                    // A requested readme prefers the packument root's copy.
+                    if key != b"readme" {
+                        existing.value = Some(value);
+                    }
                     continue 'next;
                 }
             }

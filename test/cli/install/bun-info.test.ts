@@ -425,6 +425,8 @@ describe.concurrent("bun pm view (local registry)", () => {
           exports: { ".": { import: "./i.mjs" }, "./package.json": "./package.json" },
           bin: { zz: "cli.js", yy: "cli2.js" },
           dependencies: { "left-pad": "^1.0.0" },
+          // Verdaccio-style packuments keep a readme on each version too.
+          readme: "# the version readme",
           dist: { tarball: tgz("zz-basic", "2.0.0"), shasum: "0".repeat(40) },
         },
       },
@@ -469,7 +471,15 @@ describe.concurrent("bun pm view (local registry)", () => {
     },
     "zz-notags": {
       name: "zz-notags",
-      versions: byPublishOrder("zz-notags", ["1.0.0", "1.1.0"]),
+      versions: {
+        ...byPublishOrder("zz-notags", ["1.0.0"]),
+        "1.1.0": {
+          name: "zz-notags",
+          version: "1.1.0",
+          readme: "# only on the version",
+          dist: { tarball: tgz("zz-notags", "1.1.0"), shasum: "4".repeat(40) },
+        },
+      },
     },
   };
 
@@ -590,7 +600,12 @@ describe.concurrent("bun pm view (local registry)", () => {
       err: "",
       code: 0,
     });
+    // `readme` comes from the root when asked for, from the version when only
+    // the version has one, and is left out of everything else.
     expect(await view(["zz-basic", "readme"])).toEqual({ out: "# the readme\n", err: "", code: 0 });
+    expect(await view(["zz-notags", "readme"])).toEqual({ out: "# only on the version\n", err: "", code: 0 });
+    const bare = await view(["zz-basic", "--json"]);
+    expect(JSON.parse(bare.out)).not.toHaveProperty("readme");
     const json = await view(["zz-basic@1.0.0", "--json"]);
     expect(json.err).toBe("");
     // Two-space indentation, root keys first in registry order, then the version's own keys.

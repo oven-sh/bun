@@ -228,8 +228,7 @@ impl TTY {
             Err(StartError::Unpollable) => {
                 this.update_flags(|f| f.insert(Flags::UNPOLLABLE));
             }
-            // Like a `uv_tty_init` failure in Node: report through `ctx`, hand
-            // back a closed handle, and let `tty.ReadStream` throw ERR_TTY_INIT_FAILED.
+            // As Node does for a `uv_tty_init` failure: `ctx` gets the error, the handle is closed.
             Err(StartError::Sys(err)) => {
                 this.update_flags(|f| f.insert(Flags::CLOSED));
                 Self::fill_init_error(global_object, ctx, &err)?;
@@ -529,8 +528,7 @@ impl TTY {
         if chunk.is_empty() {
             return self.flags.get().contains(Flags::READING);
         }
-        // A chunk can still arrive after `readStop()` (the reader drains a hung-up
-        // pipe to EOF): deliver it, the socket buffers it, as libuv would.
+        // A chunk read after `readStop()` (a hung-up pipe drains to EOF) is still delivered.
         self.bytes_read
             .set(self.bytes_read.get().wrapping_add(chunk.len() as u64));
 

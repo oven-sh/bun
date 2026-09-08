@@ -593,8 +593,11 @@ describe.concurrent("peer edges follow the installed layout", () => {
     registry.stop();
   });
 
+  // One cache per project dir: the CI runner points every test of a file at one shared cache, and
+  // these installs run concurrently.
   async function run(cwd: string, ...cmd: string[]) {
-    await using proc = spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
+    await using proc = spawn({ cmd: [bunExe(), ...cmd], cwd, env, stdout: "pipe", stderr: "pipe" });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
     return { out, exitCode };
@@ -611,31 +614,33 @@ describe.concurrent("peer edges follow the installed layout", () => {
   // no-deps@1.0.0 nested under one-fixed-dep satisfies peer-deps-fixed's `^1.0.0`, and the
   // resolver binds the peer there, but peer-deps-fixed is installed next to the root's 2.0.0 and
   // that is what it loads, with either linker.
-  test.each(["hoisted", "isolated"] as const)("a peer shown under the copy its owner loads (%s)", async linker => {
-    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
-    await write(
-      packageJson,
-      JSON.stringify({
-        name: "app",
-        dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" },
-      }),
-    );
-    await install(packageDir);
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    test("a peer is shown under the copy its owner loads", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" },
+        }),
+      );
+      await install(packageDir);
 
-    const { out, exitCode } = await why(packageDir, "no-deps");
-    expect(out).toMatchInlineSnapshot(`
-      "no-deps@2.0.0
-        ├─ app (requires 2.0.0)
-        └─ peer peer-deps-fixed@1.0.0 (requires ^1.0.0)
-           └─ app (requires 1.0.0)
+      const { out, exitCode } = await why(packageDir, "no-deps");
+      expect(out).toMatchInlineSnapshot(`
+        "no-deps@2.0.0
+          ├─ app (requires 2.0.0)
+          └─ peer peer-deps-fixed@1.0.0 (requires ^1.0.0)
+             └─ app (requires 1.0.0)
 
-      no-deps@1.0.0
-        └─ one-fixed-dep@1.0.0 (requires 1.0.0)
-           └─ app (requires 1.0.0)
+        no-deps@1.0.0
+          └─ one-fixed-dep@1.0.0 (requires 1.0.0)
+             └─ app (requires 1.0.0)
 
-      "
-    `);
-    expect(exitCode).toBe(0);
+        "
+      `);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // peer-deps (peer `no-deps@*`) is reached from the root, next to no-deps@2.0.0, and from

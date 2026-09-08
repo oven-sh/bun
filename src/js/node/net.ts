@@ -2187,9 +2187,9 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const sink = this[kSyncWriteSink];
     if (sink !== undefined) {
       this[kSyncWriteSink] = undefined;
-      // Closes the sink's dup of the fd once an in-flight tail has drained.
       try {
-        sink.end();
+        // A tail still in flight may drain, but must not hold the process open (node drops it on destroy).
+        if ($isPromise(sink.end())) sink.unref();
       } catch (e) {
         err ||= e;
       }

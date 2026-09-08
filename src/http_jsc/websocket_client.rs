@@ -15,7 +15,7 @@ use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::{EncodedSlice, strings};
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
@@ -394,27 +394,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let outstring;
-                if let Some(utf16) = utf16_bytes {
-                    // Ownership of the UTF-16 buffer transfers to C++: with
-                    // `clone=false` and the global tag set, `Zig::toString`
-                    // adopts the allocation into a `WTF::ExternalStringImpl`
-                    // which `mi_free`s it later. Dropping the Vec here would
-                    // be a UAF + double-free, so `utf16` must never be freed
-                    // locally.
-                    let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    // SAFETY: the buffer is a live default-allocator
-                    // allocation from `to_utf16_alloc`, and `ManuallyDrop`
-                    // keeps this function from freeing it, so C++ is the sole
-                    // owner after `did_receive_text` returns.
-                    outstring = unsafe { EncodedSlice::utf16_global(&utf16) };
-                    jsc::mark_binding!();
-                    out.did_receive_text(false, &outstring);
-                } else {
-                    outstring = EncodedSlice::latin1(data);
-                    jsc::mark_binding!();
-                    out.did_receive_text(true, &outstring);
-                }
+                // `None` means all-ASCII, which C++ copies as Latin-1. A
+                // transcoded `Vec<u16>` moves into an external WTF string
+                // that frees it when the last ref drops.
+                let text = match utf16_bytes {
+                    Some(utf16) => BunString::create_external_globally_allocated_utf16(utf16),
+                    None => BunString::clone_latin1(data),
+                };
+                jsc::mark_binding!();
+                out.did_receive_text(text);
             }
             Opcode::Binary | Opcode::Ping | Opcode::Pong => {
                 jsc::mark_binding!();

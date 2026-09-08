@@ -230,7 +230,7 @@ fn exact_int4(value: JSValue) -> Option<i32> {
     let double = value.as_number();
     let fits =
         double.trunc() == double && double >= f64::from(i32::MIN) && double <= f64::from(i32::MAX);
-    fits.then(|| double as i32)
+    fits.then_some(double as i32)
 }
 
 pub(crate) fn write_query<Context: WriterContext>(

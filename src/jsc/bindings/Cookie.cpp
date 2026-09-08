@@ -52,9 +52,7 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-// RFC 6265 section 5.2.2: Max-Age is ["-"]1*DIGIT. Any other value ("1.5", "+5", "5s")
-// makes a user agent ignore the attribute. A value too large to represent is clamped,
-// not ignored, so clamp to the largest integer a JS number holds exactly.
+// RFC 6265 section 5.2.2: ["-"]1*DIGIT or the attribute is ignored. Too many digits clamp, like a user agent does.
 static std::optional<double> parseMaxAge(StringView attributeValue)
 {
     bool isNegative = attributeValue.startsWith('-');

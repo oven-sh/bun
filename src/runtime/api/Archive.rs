@@ -1,5 +1,6 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
+use bun_jsc::JsClass as _;
 use std::ffi::CString;
 
 use crate::webcore::Blob;
@@ -832,10 +833,7 @@ impl TaskContext for BlobContext {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
                     BlobOutputType::Blob => {
-                        let blob_ptr =
-                            Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                        // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                        unsafe { (*blob_ptr).to_js(global) }
+                        Blob::create_with_bytes_and_allocator(data, global, false).to_js(global)
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
@@ -848,9 +846,7 @@ impl TaskContext for BlobContext {
                     // The clone bumps the refcount; ownership of
                     // the new ref transfers into the Blob via init_with_store.
                     let store = self.store.clone();
-                    let blob_ptr = Blob::new(Blob::init_with_store(store, global));
-                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
+                    PromiseResult::Resolve(Blob::init_with_store(store, global).to_js(global))
                 }
                 BlobOutputType::Bytes => {
                     // On allocation failure, reject the promise instead of aborting.
@@ -1128,10 +1124,7 @@ impl TaskContext for FilesContext {
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr =
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    let blob = unsafe { &mut *blob_ptr };
+                    let blob = Blob::create_with_bytes_and_allocator(data, global, false);
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set((entry.mtime * 1000) as f64);

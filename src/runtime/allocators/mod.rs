@@ -3,5 +3,7 @@
 //! callers import these paths directly (no forwarding stubs in `bun_alloc`).
 #![warn(unused_must_use)]
 
-#[path = "LinuxMemFdAllocator.rs"]
-pub mod linux_mem_fd_allocator;
+/// The memfd allocator backs `Blob` byte stores, which are `bun_jsc` types.
+pub mod linux_mem_fd_allocator {
+    pub use bun_jsc::linux_mem_fd_allocator::*;
+}

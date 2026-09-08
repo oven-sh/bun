@@ -31,7 +31,7 @@ use bun_sys as sys;
 use bun_sys::FdExt;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use crate::webcore::blob::store::Bytes as BlobStoreBytes;
+use crate::webcore_types::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
 ///
@@ -106,6 +106,21 @@ impl LinuxMemFdAllocator {
         }
     }
 
+    /// The memfd allocator backing `bytes`, if [`create`](Self::create) made
+    /// them. `bytes` holds a ref on it (through its allocator) for as long as
+    /// it lives, so the borrow is tied to `bytes`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn from_bytes(bytes: &BlobStoreBytes) -> Option<&Self> {
+        // SAFETY: `Bytes` with this vtable are only built by `alloc`, whose
+        // allocator `ptr` is the live `Self` they hold a ref on until dropped.
+        Self::from(bytes.allocator()).map(|p| unsafe { &*p })
+    }
+
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        self.fd
+    }
+
     /// # Safety
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
@@ -149,8 +164,8 @@ impl LinuxMemFdAllocator {
                 Ok(unsafe {
                     BlobStoreBytes::from_raw_parts(
                         slice_ptr,
-                        len as crate::webcore::blob::SizeType,
-                        map_len as crate::webcore::blob::SizeType,
+                        len as crate::webcore_types::SizeType,
+                        map_len as crate::webcore_types::SizeType,
                         Self::allocator(this),
                     )
                 })
@@ -160,12 +175,12 @@ impl LinuxMemFdAllocator {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn should_use(bytes: &[u8]) -> bool {
+    pub fn should_use(bytes: &[u8]) -> bool {
         if !sys::can_use_memfd() {
             return false;
         }
 
-        if crate::jsc::VirtualMachine::is_smol_mode() {
+        if crate::virtual_machine::is_smol_mode() {
             return bytes.len() >= 1024 * 1024;
         }
 
@@ -175,7 +190,7 @@ impl LinuxMemFdAllocator {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
+    pub fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
         let mut label_buf = [0u8; 128];
         let label: &core::ffi::CStr = {
             use std::io::Write as _;

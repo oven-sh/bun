@@ -82,3 +82,64 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 }
+
+/// One `FormData` entry as [`DOMFormData::for_each`] presents it. The
+/// strings and the blob belong to the `DOMFormData`'s entries.
+pub enum FormDataEntry<'a> {
+    String(EncodedSlice<'a>),
+    File {
+        blob: &'a crate::webcore_types::Blob,
+        filename: EncodedSlice<'a>,
+    },
+}
+
+impl DOMFormData {
+    /// Call `f(name, entry)` for every entry, in order. C++ walks its own
+    /// list synchronously. The names, strings and blobs are the entries' own
+    /// and live while `self` stays borrowed and unmodified: neither `f` nor
+    /// the holder of `'a` may run JS (which could mutate the `FormData`).
+    pub fn for_each<'a, F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>)>(&'a mut self, mut f: F) {
+        type Thunk<'a> = extern "C" fn(
+            *mut c_void,
+            *mut EncodedSlice<'a>,
+            *mut c_void,
+            *mut EncodedSlice<'a>,
+            u8,
+        );
+        unsafe extern "C" {
+            // safe: `this` is the exclusive borrow; `ctx`/`cb` are only used
+            // for the duration of the call.
+            safe fn DOMFormData__forEach(this: &mut DOMFormData, ctx: *mut c_void, cb: Thunk<'_>);
+        }
+        extern "C" fn thunk<'a, F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>)>(
+            ctx: *mut c_void,
+            name: *mut EncodedSlice<'a>,
+            value: *mut c_void,
+            filename: *mut EncodedSlice<'a>,
+            is_blob: u8,
+        ) {
+            // SAFETY: `ctx` is the `&mut F` passed below, live for this
+            // synchronous callback; `name` (and `filename` when non-null) point
+            // at stack `EncodedSlice`s in `DOMFormData__forEach`; `value` is a
+            // `EncodedSlice*` for string entries and the entry's `JSBlob::m_ctx`
+            // (`Blob*`, alive with the entry) for file entries.
+            unsafe {
+                let f = &mut *ctx.cast::<F>();
+                let entry = if is_blob == 0 {
+                    FormDataEntry::String(*value.cast::<EncodedSlice<'a>>())
+                } else {
+                    FormDataEntry::File {
+                        blob: &*value.cast::<crate::webcore_types::Blob>(),
+                        filename: if filename.is_null() {
+                            EncodedSlice::EMPTY
+                        } else {
+                            *filename
+                        },
+                    }
+                };
+                f(*name, entry);
+            }
+        }
+        DOMFormData__forEach(self, (&raw mut f).cast::<c_void>(), thunk::<'a, F>);
+    }
+}

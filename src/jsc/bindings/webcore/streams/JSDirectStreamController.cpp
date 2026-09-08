@@ -188,10 +188,8 @@ void JSDirectStreamController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_array);
     visitor.appendHidden(thisObject->m_sinkPromise);
     visitor.appendHidden(thisObject->m_finalChunk);
+    visitor.reportExtraMemoryVisited(thisObject->m_reportedCapacity);
     Locker locker { thisObject->cellLock() };
-    // Capacity, not size: it only changes (under this lock) where write() reports the growth
-    // and where a teardown frees it, so the visitor sees exactly what was reported allocated.
-    visitor.reportExtraMemoryVisited(thisObject->m_buffer.capacity());
     thisObject->m_textAccumulator.visit(locker, visitor);
 }
 
@@ -317,6 +315,14 @@ void JSDirectStreamController::settlePendingWrite(JSC::VM& vm, JSValue value)
     promise->fulfill(vm, value);
 }
 
+void JSDirectStreamController::syncReportedCapacity(JSC::VM& vm)
+{
+    size_t capacity = m_buffer.capacity();
+    if (capacity > m_reportedCapacity)
+        vm.heap.reportExtraMemoryAllocated(this, capacity - m_reportedCapacity);
+    m_reportedCapacity = capacity;
+}
+
 JSValue JSDirectStreamController::takeBuffer(JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
@@ -327,12 +333,8 @@ JSValue JSDirectStreamController::takeBuffer(JSGlobalObject* globalObject)
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>();
     JSUint8Array* chunk;
     if (byteLength > JSArrayBufferView::fastSizeLimit) {
-        RefPtr<ArrayBuffer> bytes;
-        {
-            Locker locker { cellLock() };
-            bytes = m_buffer.releaseAsArrayBuffer();
-        }
-        chunk = JSUint8Array::create(globalObject, structure, bytes.releaseNonNull(), 0, byteLength);
+        chunk = JSUint8Array::create(globalObject, structure, m_buffer.releaseAsArrayBuffer(), 0, byteLength);
+        m_reportedCapacity = 0;
     } else {
         // Small enough for the view's inline (GC) storage: cheaper to copy than to give it an ArrayBuffer.
         chunk = JSUint8Array::createUninitialized(globalObject, structure, byteLength);
@@ -347,13 +349,11 @@ JSValue JSDirectStreamController::takeBuffer(JSGlobalObject* globalObject)
 
 void JSDirectStreamController::freeBuffer()
 {
-    Locker locker { cellLock() };
     m_buffer.deallocate();
+    m_reportedCapacity = 0;
 }
 
-// Appends the chunk's bytes (a string is UTF-8 encoded); returns the byte count. The buffer's
-// storage is only replaced under the cell lock (visitChildren reads its capacity); nothing
-// GC-allocates while it is held.
+// Appends the chunk's bytes (a string is UTF-8 encoded); returns the byte count.
 static JSValue writeToByteBuffer(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
@@ -376,27 +376,15 @@ static JSValue writeToByteBuffer(JSGlobalObject* globalObject, JSDirectStreamCon
     }
 
     auto& buffer = controller->m_buffer;
-    bool appended;
-    size_t written;
-    size_t grownBy;
-    {
-        Locker locker { controller->cellLock() };
-        size_t sizeBefore = buffer.size();
-        size_t capacityBefore = buffer.capacity();
-        // A steady producer fills about what it filled last time: allocate that once per batch.
-        if (!capacityBefore && buffer.lastCapacity())
-            buffer.tryReserve(std::min(buffer.lastCapacity(), directHighWaterMark(controller)));
-        appended = string ? buffer.tryAppendUTF8(characters) : buffer.tryAppend(bytes);
-        written = buffer.size() - sizeBefore;
-        grownBy = buffer.capacity() - capacityBefore;
-    }
-    if (!appended) [[unlikely]] {
+    size_t sizeBefore = buffer.size();
+    // A steady producer fills about what it filled last time: allocate that once per batch.
+    if (!buffer.capacity() && buffer.lastCapacity())
+        buffer.tryReserve(std::min(buffer.lastCapacity(), directHighWaterMark(controller)));
+    if (!(string ? buffer.tryAppendUTF8(characters) : buffer.tryAppend(bytes))) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    if (grownBy)
-        vm.heap.reportExtraMemoryAllocated(controller, grownBy);
-    return jsNumber(written);
+    return jsNumber(buffer.size() - sizeBefore);
 }
 
 static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
@@ -737,6 +725,7 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    StagedBytesScope stagedBytes(vm, this);
 
     // The one-shot final chunk armed by onClose: deliver it, then close.
     if (m_finalChunkArmed) {
@@ -1020,6 +1009,7 @@ static bool directControllerHasWaitingConsumer(JSDirectStreamController* control
 static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSDirectStreamController::StagedBytesScope stagedBytes(vm, controller);
     auto* stream = controller->m_stream.get();
     if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable) {
         controller->m_pullInFlight = false;
@@ -1120,6 +1110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
         return JSValue::encode(jsUndefined());
     if (controller->m_closed)
         return JSValue::encode(jsNumber(0));
+    JSDirectStreamController::StagedBytesScope stagedBytes(vm, controller);
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     controller->armEndOfTickFlush(globalObject);
@@ -1244,14 +1235,8 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
     switch (sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
         if (double highWaterMark = stream->m_bunHighWaterMark; stream->m_bunHighWaterMarkIsNumber && highWaterMark > 0) {
-            size_t reserved = 0;
-            {
-                Locker locker { controller->cellLock() };
-                if (controller->m_buffer.tryReserve(std::min<size_t>(WebCore::directHighWaterMark(controller), maxDirectBufferReserve)))
-                    reserved = controller->m_buffer.capacity();
-            }
-            if (reserved)
-                vm.heap.reportExtraMemoryAllocated(controller, reserved);
+            controller->m_buffer.tryReserve(std::min<size_t>(WebCore::directHighWaterMark(controller), maxDirectBufferReserve));
+            controller->syncReportedCapacity(vm);
         }
         break;
     }

@@ -118,13 +118,15 @@ public:
     bool m_finalChunkArmed : 1 { false };
     // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
+    // ArrayBuffer sink: m_buffer's capacity as last reported to the heap (reportExtraMemoryAllocated);
+    // visitChildren reports exactly this. Synced in batches (StagedBytesScope), never above capacity.
+    size_t m_reportedCapacity { 0 };
 
     // ArrayBuffer sink: the bytes written since the reader last took them. Its size is the
     // backpressure measure: once it reaches the stream's highWaterMark, write() returns the
     // pending-write promise (m_sinkPromise; one until the next drain) instead of a number, the
     // same contract as a native sink. Taking the bytes fulfills it with the bytes written
-    // meanwhile; error / cancel fulfill it with `false`. Its storage is replaced/freed only
-    // under cellLock() (the visitor reports its capacity as extra memory).
+    // meanwhile; error / cancel fulfill it with `false`.
     DirectByteBuffer m_buffer;
 
     // Text sink: the ONE shared createTextStream accumulator value type
@@ -182,6 +184,27 @@ public:
     JSC::JSValue takeBuffer(JSC::JSGlobalObject*);
     void freeBuffer();
     void settlePendingWrite(JSC::VM&, JSC::JSValue);
+    // Brings m_reportedCapacity to m_buffer's capacity, reporting any growth to the heap once.
+    void syncReportedCapacity(JSC::VM&);
+    // Batches that sync to scope exit; inside the synchronous part of pull() it defers to the
+    // enclosing onPull, which drains first (bytes a chunk adopts are then reported by the chunk alone).
+    class StagedBytesScope {
+    public:
+        StagedBytesScope(JSC::VM& vm, JSDirectStreamController* controller)
+            : m_vm(vm)
+            , m_controller(controller)
+        {
+        }
+        ~StagedBytesScope()
+        {
+            if (m_controller->m_deferFlush != -1)
+                m_controller->syncReportedCapacity(m_vm);
+        }
+
+    private:
+        JSC::VM& m_vm;
+        JSDirectStreamController* m_controller;
+    };
 
 private:
     JSDirectStreamController(JSC::VM&, JSC::Structure*, Bun::WebStreams::DirectSinkKind);

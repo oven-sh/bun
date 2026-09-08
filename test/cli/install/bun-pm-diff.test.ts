@@ -478,6 +478,11 @@ diffme@1.0.0 → diffme@2.0.0
     // …and what exists instead, newest first, plus the tags.
     expect(nover.stderr).toContain("recent versions: 2.0.0, 1.0.0");
     expect(nover.stderr).toMatch(/tags: .*latest: 2\.0\.0/);
+    // A word that is not one of the dist-tags is not a range either. It must not resolve to latest.
+    const notag = await diff(["diffme@beta", "1.0.0"]);
+    expect(notag.stdout).toBe("");
+    expect(notag.stderr).toContain("no version of diffme matches beta");
+    expect(notag.exitCode).toBe(1);
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);

@@ -1527,6 +1527,11 @@ impl PackageManifest {
         self.pkg.releases.keys.get(&self.versions)
     }
 
+    /// Published prerelease versions, oldest first, as sorted at serialization time.
+    pub fn prerelease_versions(&self) -> &[Semver::Version] {
+        self.pkg.prereleases.keys.get(&self.versions)
+    }
+
     /// `(tag, version)` pairs of the dist-tags.
     pub fn dist_tags(&self) -> impl Iterator<Item = (&[u8], Semver::Version)> + '_ {
         let versions = self.pkg.dist_tags.versions.get(&self.versions);
@@ -1554,6 +1559,22 @@ impl PackageManifest {
             }
         }
         None
+    }
+
+    /// Resolves the `spec` of a user-typed `name@spec`: the dist-tag with that
+    /// name if there is one, else the best match for `spec` as a semver range.
+    /// A spec the range parser cannot read (an unknown dist-tag, a git or file
+    /// spec) parses to an empty group, which would satisfy every version, so it
+    /// finds nothing.
+    pub fn find_by_spec(&self, spec: &[u8]) -> Result<Option<FindResult<'_>>, AllocError> {
+        if let Some(result) = self.find_by_dist_tag(spec) {
+            return Ok(Some(result));
+        }
+        let range = Semver::query::parse(spec, SlicedString::init(spec, spec))?;
+        if range.is_empty() {
+            return Ok(None);
+        }
+        Ok(self.find_best_version(&range, spec))
     }
 
     pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {

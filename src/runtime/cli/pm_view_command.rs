@@ -197,19 +197,9 @@ pub(crate) fn view(
                 let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
-                let wanted_version: Semver::Version = 'brk2: {
-                    // First try dist-tag lookup (like "latest", "beta", etc.)
-                    if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
-                        break 'brk2 result.version;
-                    } else {
-                        // Parse as semver query and find best version
-                        let sliced_literal = Semver::SlicedString::init(version, version);
-                        let query = Semver::query::parse(version, sliced_literal)?;
-                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
-                            break 'brk2 result.version;
-                        }
-                    }
-
+                let Some(wanted_version) =
+                    parsed_manifest.find_by_spec(version)?.map(|r| r.version)
+                else {
                     break 'from_versions;
                 };
 
@@ -248,13 +238,12 @@ pub(crate) fn view(
 
             let max_versions_to_display: usize = 5;
 
-            let start_index = parsed_manifest
-                .versions
-                .len()
-                .saturating_sub(max_versions_to_display);
-            let mut versions_to_display = &parsed_manifest.versions[start_index..];
-            versions_to_display =
-                &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
+            let published = match parsed_manifest.release_versions() {
+                [] => parsed_manifest.prerelease_versions(),
+                releases => releases,
+            };
+            let start_index = published.len().saturating_sub(max_versions_to_display);
+            let versions_to_display = &published[start_index..];
             if !versions_to_display.is_empty() {
                 bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {

@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
@@ -224,7 +224,6 @@ describe.concurrent("bun info", () => {
       expect(output).toBe("");
     });
 
-    // TODO: Version validation needs to be fixed - currently falls back to first version instead of failing
     it("should handle non-existent version", async () => {
       const testDir = await setupTest();
       const { output, error, code } = await runCommand([bunExe(), "pm", "view", "is-number@999.0.0"], testDir, false);
@@ -233,12 +232,12 @@ describe.concurrent("bun info", () => {
         "error: No version of "is-number" satisfying "999.0.0" found
 
         Recent versions:
+        - 3.0.0
         - 4.0.0
         - 5.0.0
         - 6.0.0
         - 7.0.0
-        - 7.0.0
-          ... and 11 more
+          ... and 10 more
         "
       `);
       expect(code).toBe(1);
@@ -369,6 +368,112 @@ describe.concurrent("bun info", () => {
         "
       `);
     });
+  });
+});
+
+describe.concurrent("bun info with a spec that is neither a dist-tag nor a range", () => {
+  // `taggy` has the dist-tags `latest` and `next`. `beta` is not one of them, and it is
+  // not a semver range either, so nothing matches it (npm: E404 "No match found for version beta").
+  // `preonly` has prereleases only, for the "Recent versions" hint.
+  function packument(name: string, versionList: string[], distTags: Record<string, string>) {
+    const versions: Record<string, object> = {};
+    for (const v of versionList) {
+      versions[v] = { name, version: v, dist: { tarball: `http://localhost/${name}-${v}.tgz` } };
+    }
+    return JSON.stringify({ name, "dist-tags": distTags, versions });
+  }
+  const packuments: Record<string, string> = {
+    "/taggy": packument("taggy", ["1.0.0", "1.1.0", "2.0.0-rc.1"], { latest: "1.1.0", next: "2.0.0-rc.1" }),
+    "/preonly": packument("preonly", ["0.1.0-alpha.1", "0.1.0-alpha.2"], { latest: "0.1.0-alpha.2" }),
+  };
+  let server: ReturnType<typeof Bun.serve>;
+  let dir: string;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const body = packuments[new URL(req.url).pathname];
+        if (body === undefined) return new Response("Not Found", { status: 404 });
+        return new Response(body, { headers: { "content-type": "application/json" } });
+      },
+    });
+    dir = tempDirWithFiles("view-dist-tag", {
+      "package.json": JSON.stringify({ name: "proj", version: "1.0.0" }),
+      "bunfig.toml": `[install]\nregistry = "${server.url.origin}/"\n`,
+    });
+  });
+  afterAll(() => server?.stop(true));
+
+  async function run(...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(["info", "pm view"])("bun %s: an unknown dist-tag is an error, not latest", async cmd => {
+    const { stdout, stderr, exitCode } = await run(...cmd.split(" "), "taggy@beta", "version");
+    expect(stdout).toBe("");
+    // The hint lists each release once: no prereleases, no dist-tag targets.
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: No version of "taggy" satisfying "beta" found
+
+      Recent versions:
+      - 1.0.0
+      - 1.1.0
+      "
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--json: an unknown dist-tag is an error, not latest", async () => {
+    const { stdout, stderr, exitCode } = await run("info", "taggy@beta", "version", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ error: "No matching version found", version: "taggy@beta" });
+    expect(exitCode).toBe(1);
+  });
+
+  test("a git or file spec does not fall back to latest either", async () => {
+    // `pm view` does not support these spec kinds. The exact wording of the error is not
+    // pinned here, only that they are an error and print no version.
+    for (const spec of ["taggy@github:user/taggy", "taggy@file:./taggy"]) {
+      const { stdout, stderr, exitCode } = await run("info", spec, "version");
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith("error: ");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("a package with prereleases only lists those in the hint", async () => {
+    const { stdout, stderr, exitCode } = await run("info", "preonly@beta", "version");
+    expect(stdout).toBe("");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: No version of "preonly" satisfying "beta" found
+
+      Recent versions:
+      - 0.1.0-alpha.1
+      - 0.1.0-alpha.2
+      "
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("known dist-tags and ranges still resolve", async () => {
+    const results = await Promise.all([
+      run("info", "taggy", "version"),
+      run("info", "taggy@next", "version"),
+      run("info", "taggy@^1.0.0", "version"),
+      run("info", "taggy@*", "version"),
+    ]);
+    expect(results.map(r => r.stdout.trim())).toEqual(["1.1.0", "2.0.0-rc.1", "1.1.0", "1.1.0"]);
+    expect(results.map(r => r.stderr)).toEqual(["", "", "", ""]);
+    expect(results.map(r => r.exitCode)).toEqual([0, 0, 0, 0]);
   });
 });
 

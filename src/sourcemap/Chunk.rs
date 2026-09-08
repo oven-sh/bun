@@ -14,8 +14,7 @@ use crate::{
 pub struct Chunk {
     pub buffer: MutableString,
 
-    /// `buffer` holds an `InternalSourceMap` blob (the runtime print path,
-    /// `Builder::prepend_count`) instead of VLQ text.
+    /// `buffer` is an `InternalSourceMap` blob (`Builder::prepend_count`), not VLQ text.
     pub is_internal_format: bool,
 
     /// This end state will be used to rewrite the start of the following source
@@ -54,8 +53,7 @@ impl Chunk {
         unsafe { core::ptr::read(self) }
     }
 
-    /// The mappings as a standard VLQ `"mappings"` string, re-encoding an
-    /// internal-format buffer.
+    /// The mappings as a VLQ `"mappings"` string, re-encoded if `is_internal_format`.
     pub fn vlq_mappings(&self) -> Cow<'_, [u8]> {
         if !self.is_internal_format {
             return Cow::Borrowed(&self.buffer.list);

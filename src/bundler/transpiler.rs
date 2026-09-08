@@ -2873,8 +2873,7 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    /// Returns the output for `resolve_result` and, for `--sourcemap=linked` /
-    /// `external`, the `.map` that goes next to it.
+    /// The output for `resolve_result` plus, for `--sourcemap=linked|external`, its `.map`.
     fn build_with_resolve_result_eager(
         &mut self,
         resolve_result: &resolver::Result,
@@ -3031,8 +3030,7 @@ impl<'a> Transpiler<'a> {
                 if self.options.source_map == options::SourceMapOption::None {
                     self.print(print_arena, result, &mut writer, format)?;
                 } else {
-                    // Not `print_with_source_map`: its kill switch is for the
-                    // runtime's stack-trace maps, and bundling ignores it too.
+                    // Not `print_with_source_map`: its kill switch is for the runtime's stack-trace maps.
                     let mut source_map = PendingSourceMap::default();
                     self.print_with_source_map_maybe::<true>(
                         print_arena,
@@ -3093,9 +3091,7 @@ impl<'a> Transpiler<'a> {
         Ok(Some((output_file, source_map_file)))
     }
 
-    /// Appends the `//# sourceMappingURL` comment `--sourcemap` asks for to
-    /// `output_file` (named by now, so a linked comment can point at the
-    /// `.map`) and returns the `.map` itself for `linked` / `external`.
+    /// Appends the `--sourcemap` comment to the (already named) output; returns the `.map` for `linked`/`external`.
     fn attach_source_map(
         &self,
         output_file: &mut options::OutputFile,
@@ -3162,9 +3158,7 @@ impl<'a> Transpiler<'a> {
         })))
     }
 
-    /// The `sources` entry for `file_path_text`: relative to the directory the
-    /// `.map` is written to, which is `--outdir` plus whatever directory
-    /// `dest_path` adds. Relative to the cwd when nothing is written to disk.
+    /// `sources` entry: relative to the `.map`'s directory (`--outdir` + `dest_path`'s dir), or to cwd for stdout.
     fn source_map_sources_entry(
         &self,
         dest_path: &[u8],
@@ -3379,14 +3373,19 @@ enum TransformOutstream {
     Dir(#[expect(dead_code)] bun_sys::Fd),
 }
 
-/// `--sourcemap` sink for a transform-only print. The source text is quoted
-/// while the printer still holds it (`ParseResult::source_contents_backing`
-/// frees it right after); the `.map` itself is serialized once the output has
-/// a name, see `Transpiler::attach_source_map`.
-#[derive(Default)]
+/// Transform-only `--sourcemap` sink; quotes the source while the printer still holds it (see `attach_source_map`).
 struct PendingSourceMap {
     chunk: bun_sourcemap::Chunk,
     quoted_source_contents: bun_core::MutableString,
+}
+
+impl Default for PendingSourceMap {
+    fn default() -> Self {
+        PendingSourceMap {
+            chunk: bun_sourcemap::Chunk::init_empty(),
+            quoted_source_contents: bun_core::MutableString::init_empty(),
+        }
+    }
 }
 
 impl js_printer::OnSourceMapChunk for PendingSourceMap {

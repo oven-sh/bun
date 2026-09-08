@@ -375,9 +375,7 @@ impl BuildCommand {
                 }
             }
 
-            // The transpiled output keeps the entry point's name, so the
-            // "next to the entry point" fallback the writer uses for a
-            // multi-file build without --outdir would overwrite a .js entry.
+            // Output keeps the entry's name, so the next-to-the-entry fallback would overwrite a .js entry.
             if output_to_stdout
                 && this_transpiler.options.source_map == options::SourceMapOption::Linked
             {
@@ -387,9 +385,7 @@ impl BuildCommand {
                 Global::exit(1);
             }
 
-            // Like the bundler below: name the output after --outfile and write
-            // into its directory, so a `.map` lands next to it under the name
-            // its sourceMappingURL comment points at.
+            // As when bundling: name the output after --outfile so its `.map` lands next to it.
             if ctx.bundler_options.outdir.is_empty() && !outfile.is_empty() {
                 this_transpiler.options.entry_naming =
                     strings::concat(&[b"./", bun_paths::basename(outfile)]);

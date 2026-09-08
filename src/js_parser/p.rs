@@ -6899,15 +6899,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Paths without a renamer print the closure argument of a TS namespace or
-    /// enum by its original name, so once `body` is visited, rename it if a
-    /// scope in `body` declares that name (tsc: `N_1`):
-    ///
-    ///   namespace N { export let v = 1; export function f(N) { return v } }
-    ///
-    /// must not print `function f(N) { return N.v; }`. The new name is declared
-    /// neither inside nor around `body`, so it captures no reference made in
-    /// `body` (all resolved by now, unbound ones as module scope members).
+    /// `namespace N { export let v; function f(N) { v } }`: without a renamer
+    /// `v` would print as `N.v` under the parameter `N`. After `body` is
+    /// visited, rename the closure argument (tsc: `N_1`) to a name that no
+    /// scope inside or around `body` declares.
     #[cold]
     #[inline(never)]
     pub(crate) fn rename_namespace_arg_to_avoid_collisions(

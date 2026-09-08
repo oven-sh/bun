@@ -406,11 +406,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut arg_ref = Ref::NONE;
         if !opts.is_typescript_declare {
-            // The closure argument is not a member of the namespace scope: a
-            // reference to the name inside the namespace resolves to a merged
-            // sibling's export of that name first. It is in `generated` so the
-            // renamer sees it; `rename_namespace_arg_to_avoid_collisions` (visit
-            // pass) renames it if a binding inside the body has the same name.
+            // The closure argument. Not a scope member: inside the namespace, a
+            // merged sibling's export of the same name wins. The visit pass
+            // renames it if a binding in the body shadows it.
             arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
@@ -638,25 +636,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
-            // The enum's name inside the body resolves to the closure argument:
-            //
-            //   enum foo { bar = foo as any }
-            //
-            // unless a value has that name, which then wins, as in tsc:
-            //
-            //   enum foo { foo = 123, bar = foo }
-            //
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
+            // The closure argument. `enum foo { bar = foo }` resolves `foo` to it,
+            // unless a value is named `foo` (the visit pass then renames it).
             arg_ref = if p.current_scope().members.contains_key(name_text) {
                 p.new_symbol(SymbolKind::Hoisted, name_text)
             } else {
                 p.declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
                     .expect("unreachable")
             };
-            // Listed in `generated` either way, like the namespace closure
-            // argument, so that `rename_namespace_arg_to_avoid_collisions`
-            // finds it by its current name. That pass renames it to `_foo` in
-            // the second case above.
+            // In `generated` so the visit pass finds it by its current name.
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             p.ref_to_ts_namespace_member
                 .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));

@@ -690,9 +690,15 @@ impl ReadFile {
         };
 
         if let Some(store) = &self.store {
-            if let Data::File(file) = Store::data_mut(store) {
+            // Shared borrow: the only write is the `AtomicU64`
+            // `last_modified`, so sibling worker tasks holding `&Data` to
+            // the same allocation stay sound.
+            if let Data::File(file) = &store.data {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
-                file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
+                file.last_modified.store(
+                    jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize),
+                    core::sync::atomic::Ordering::Relaxed,
+                );
             }
         }
 
@@ -1203,11 +1209,14 @@ impl<'a> ReadFileUV<'a> {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = Store::data_mut(&this.store) {
+        // Shared borrow: the only write is the `AtomicU64` `last_modified`.
+        if let Data::File(file) = &this.store.data {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.
-            file.last_modified =
-                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
+            file.last_modified.store(
+                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize),
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {

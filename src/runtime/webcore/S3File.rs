@@ -314,7 +314,9 @@ fn finish_s3_blob(
     aws_options: &s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
-    let s3 = Store::data_mut(&store).as_s3_mut();
+    // SAFETY: `store` was just built/received by value on the JS thread; no
+    // other borrow of it is live.
+    let s3 = unsafe { Store::data_mut(&store) }.as_s3_mut();
     s3.options = aws_options.options;
     s3.acl = aws_options.acl;
     s3.storage_class = aws_options.storage_class;

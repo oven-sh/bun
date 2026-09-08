@@ -44,12 +44,42 @@ describe("2-arg form", () => {
     expect(response.status).toBe(200);
     expect(response.statusText).toBe("");
   });
+
+  // A Response or Request used as the init carries the headers its `.headers`
+  // getter reports, including a Content-Type that only its body Blob implies
+  // and that the getter would have added on first access.
+  test("a Response or Request init carries its body Blob's Content-Type", () => {
+    const typed = () => new Blob(["<p>hi</p>"], { type: "text/html" });
+    const contentType = (init: Response | Request) => new Response("replaced", init).headers.get("content-type");
+
+    expect(contentType(new Response(typed(), { status: 201 }))).toBe("text/html;charset=utf-8");
+    expect(new Response("replaced", new Response(typed(), { status: 201 })).status).toBe(201);
+    expect(contentType(new Request("http://example.com/", { method: "POST", body: typed() }))).toBe(
+      "text/html;charset=utf-8",
+    );
+    // An explicit header wins, a deleted one stays deleted, an untyped body adds none.
+    expect(contentType(new Response(typed(), { headers: { "content-type": "text/x-custom" } }))).toBe("text/x-custom");
+    const deleted = new Response(typed());
+    deleted.headers.delete("content-type");
+    expect(contentType(deleted)).toBe(null);
+    expect(contentType(new Response(new Blob(["<p>hi</p>"])))).toBe(null);
+    expect(contentType(new Response("a string"))).toBe(null);
+    // `new Request(input, init)` with a Response init takes its headers the same way.
+    expect(new Request("http://example.com/", new Response(typed())).headers.get("content-type")).toBe(
+      "text/html;charset=utf-8",
+    );
+    expect(
+      new Request(new Request("http://example.com/", { method: "POST", body: "a" }), new Response(typed())).headers.get(
+        "content-type",
+      ),
+    ).toBe("text/html;charset=utf-8");
+  });
 });
 
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (9.75 KB) {
       ok: true,
       url: "",
       status: 200,

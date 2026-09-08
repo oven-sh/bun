@@ -4055,8 +4055,7 @@ impl URLSearchParamsConverter {
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The value of a new FormData entry (<https://xhr.spec.whatwg.org/#create-an-entry>):
-/// a source that is not a `File` becomes a new `File`, whose `lastModified` defaults to now.
+/// FormData "create an entry": a non-`File` source becomes a new `File`, `lastModified` = now.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJSForFormData(value: JSValue) -> Option<NonNull<Blob>> {
     let source = Blob::from_js(value)?;

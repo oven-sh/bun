@@ -25,9 +25,8 @@ for (let i = 0; i < 5; i++) {
 if (typeof Bun !== "undefined") Bun.gc(true);
 const baseline = rss();
 
-// Instrumented builds (ASAN, debug) load modules many times slower, so the
-// driving test scales the loop down via LEAK_ITERATIONS; the threshold below
-// scales with it. Release runs keep the full 100k.
+// ASAN builds load modules many times slower, so the driving test scales the
+// loop down there via LEAK_ITERATIONS. Everything else keeps the full 100k.
 const iterations = Number(process.env.LEAK_ITERATIONS) || 100000;
 for (let i = 0; i < iterations; i++) {
   delete require.cache[dest];
@@ -53,10 +52,13 @@ setTimeout(() => {
   // }
   //
   // The leak this guards against costs ~1 KB per iteration (100 MB / 100k
-  // above), so the allowance scales with the iteration count on top of an
-  // iteration-independent floor: allocator/JIT warmup normally, and under
-  // ASAN also the free quarantine (256 MB by default) plus redzones. At the
-  // full 100k this is the same 100 MB / 500 MB as before.
+  // above). Non-ASAN builds run the full loop against the 100 MB bound and
+  // are what detect it. Under ASAN the free quarantine (256 MB by default)
+  // and redzones put an iteration-independent floor of several hundred MB
+  // under RSS, which swamps that signal at any iteration count the lane's
+  // clock allows, so the ASAN run is a reduced pass that exercises the path
+  // under the sanitizer and only fails on a gross blowup. At the full 100k
+  // these are the same 100 MB / 500 MB bounds as before.
   const leakAllowance = Math.ceil((60 * iterations) / 100000);
   const limit = (isASAN ? 440 : 40) + leakAllowance;
   if (diff >= limit) {

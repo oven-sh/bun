@@ -337,9 +337,10 @@ describe.concurrent("require.cache", () => {
     );
   });
 
-  // The import() fixture here loads its module 100k times; under
-  // instrumentation it runs a scaled-down loop instead (LEAK_ITERATIONS,
-  // with the fixture's threshold scaling to match).
+  // The import() fixture here loads its module 100k times; under ASAN, where
+  // the quarantine swamps its RSS signal anyway, it runs a reduced loop
+  // instead (LEAK_ITERATIONS). Non-ASAN builds keep the full loop and the
+  // leak detection.
   describe("files transpiled and loaded don't leak file paths", () => {
     test(
       "via require()",
@@ -363,7 +364,7 @@ describe.concurrent("require.cache", () => {
       async () => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
-          env: { ...bunEnv, LEAK_ITERATIONS: instrumented ? "10000" : "100000" },
+          env: { ...bunEnv, LEAK_ITERATIONS: isASAN ? "10000" : "100000" },
           stderr: "inherit",
         });
 

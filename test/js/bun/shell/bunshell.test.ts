@@ -3603,8 +3603,8 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
     if (key.toLowerCase() !== "path" && value !== undefined) envWithoutPath[key] = value;
   }
   const processPath = process.env.PATH!;
-  const toolDir = (name: string, message: string) =>
-    tempDir(`shell-argv0-${name}`, { [`${name}.cmd`]: `@echo ${message}\r\n` });
+  const toolDir = (name: string, message: string, dirPrefix = name) =>
+    tempDir(`shell-argv0-${dirPrefix}`, { [`${name}.cmd`]: `@echo ${message}\r\n` });
 
   test(".env() with a Path key", async () => {
     using dir = toolDir("onlyintool-pathkey", "from-Path-key");
@@ -3617,6 +3617,19 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
     expect(exitCode).toBe(0);
   });
 
+  // `{ ...process.env, PATH }` on Windows: the spread contributes `Path`, the
+  // later `PATH` key must win.
+  test(".env() with PATH added to an env that already has Path", async () => {
+    using dir = toolDir("onlyintool-bothkeys", "from-PATH-over-Path");
+    const { stdout, stderr, exitCode } = await $`onlyintool-bothkeys`
+      .env({ ...envWithoutPath, Path: processPath, PATH: `${dir};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-PATH-over-Path");
+    expect(exitCode).toBe(0);
+  });
+
   test("export PATH when the environment has Path", async () => {
     using dir = toolDir("onlyintool-export", "from-export");
     const { stdout, stderr, exitCode } = await $`export PATH=${`${dir};${processPath}`}; onlyintool-export`
@@ -3625,6 +3638,43 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
       .nothrow();
     expect(stderr.toString()).toBe("");
     expect(stdout.toString().trim()).toBe("from-export");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a PATH= prefix beats export PATH", async () => {
+    using prefixDir = toolDir("onlyintool-priority", "from-prefix", "priority-prefix");
+    using exportDir = toolDir("onlyintool-priority", "from-export", "priority-export");
+    const exportPath = `${exportDir};${processPath}`;
+    const prefixPath = `${prefixDir};${processPath}`;
+    const { stdout, stderr, exitCode } =
+      await $`export PATH=${exportPath}; PATH=${prefixPath} onlyintool-priority; onlyintool-priority`
+        .env({ ...envWithoutPath, Path: processPath })
+        .quiet()
+        .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim().split(/\r?\n/)).toEqual(["from-prefix", "from-export"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun run <script>` runs package.json scripts through the Bun shell on
+  // Windows, with the shell environment seeded from the process environment.
+  test("export PATH in a package.json script", async () => {
+    using dir = toolDir("onlyintool-script", "from-script");
+    using project = tempDir("shell-argv0-project", {
+      "package.json": JSON.stringify({
+        scripts: { tool: `export PATH='${dir};${processPath}'; onlyintool-script` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "run", "tool"],
+      env: { ...envWithoutPath, Path: processPath },
+      cwd: String(project),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("from-script");
     expect(exitCode).toBe(0);
   });
 

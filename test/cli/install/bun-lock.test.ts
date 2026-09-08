@@ -13,7 +13,7 @@ import {
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
-import { join } from "path";
+import { delimiter, join } from "path";
 
 expect.extend({
   toBeValidBin,
@@ -1826,3 +1826,208 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 });
+
+// The dependency lists and `bin` of a `file:` directory dependency are recorded in bun.lock when
+// it is first resolved. Later edits to that directory's package.json must be diffed against the
+// lockfile entry on every install, as they are for workspace packages.
+describe.each(["hoisted", "isolated"] as const)(
+  "file: directory dependency edited after bun.lock was written (%s linker)",
+  linker => {
+    const vdir = (extra: Record<string, unknown>) => JSON.stringify({ name: "vdir", version: "1.0.0", ...extra });
+    // Reports which version of each package `vdir` resolves from wherever the linker placed it.
+    const vdirIndexJs = `module.exports = Object.fromEntries(["no-deps", "a-dep", "no-deps-bins", "basic-1"].map(name => {
+    try {
+      return [name, require(name + "/package.json").version];
+    } catch {
+      return [name, null];
+    }
+  }));`;
+
+    async function createProject(declaredBy: "root" | "workspace") {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { saveTextLockfile: true, linker },
+        files: {
+          "vendor/vdir/package.json": vdir({ dependencies: { "no-deps": "1.0.0" } }),
+          "vendor/vdir/index.js": vdirIndexJs,
+          ...(declaredBy === "workspace"
+            ? {
+                "packages/app/package.json": JSON.stringify({
+                  name: "app",
+                  dependencies: { vdir: "file:../../vendor/vdir" },
+                }),
+              }
+            : {}),
+        },
+      });
+      await write(
+        packageJson,
+        JSON.stringify(
+          declaredBy === "workspace"
+            ? { name: "root", workspaces: ["packages/*"] }
+            : { name: "root", dependencies: { vdir: "file:./vendor/vdir" } },
+        ),
+      );
+      const lock = () => file(join(packageDir, "bun.lock")).text();
+      const bun = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: packageDir,
+          // A cache per project: the environment's cache dir takes precedence over bunfig.
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out, err, code };
+      };
+      const project = {
+        packageDir,
+        lock,
+        editVdir: (extra: Record<string, unknown>) =>
+          write(join(packageDir, "vendor", "vdir", "package.json"), vdir(extra)),
+        async expectInstallToSaveLockfile() {
+          const { out, err, code } = await bun("install");
+          expect({ out, err, code }).toMatchObject({ code: 0 });
+          expect(err).not.toContain("error:");
+          expect(err).toContain("Saved lockfile");
+        },
+        async expectFrozenLockfileToFail() {
+          const { out, err, code } = await bun("install", "--frozen-lockfile");
+          expect({ out, err, code }).toMatchObject({ code: 1 });
+          expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+        },
+        async expectInstallToBeANoop() {
+          const before = await lock();
+          for (const args of [["install", "--frozen-lockfile"], ["install"]]) {
+            const { out, err, code } = await bun(...args);
+            expect({ out, err, code }).toMatchObject({ code: 0 });
+            expect(err).not.toContain("error:");
+            expect(err).not.toContain("Saved lockfile");
+          }
+          expect(await lock()).toBe(before);
+        },
+        async versionsResolvedByVdir() {
+          const { out, err, code } = await bun("-p", `JSON.stringify(require("vdir"))`);
+          expect({ out, err, code }).toMatchObject({ err: "", code: 0 });
+          return JSON.parse(out);
+        },
+      };
+
+      await project.expectInstallToSaveLockfile();
+      expect(await lock()).toContain(`"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" } }`);
+      return project;
+    }
+
+    it.concurrent("an added dependency is installed", async () => {
+      const {
+        lock,
+        editVdir,
+        expectFrozenLockfileToFail,
+        expectInstallToSaveLockfile,
+        expectInstallToBeANoop,
+        versionsResolvedByVdir,
+      } = await createProject("root");
+      expect(await versionsResolvedByVdir()).toEqual({
+        "no-deps": "1.0.0",
+        "a-dep": null,
+        "no-deps-bins": null,
+        "basic-1": null,
+      });
+
+      await editVdir({ dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } });
+      await expectFrozenLockfileToFail();
+      await expectInstallToSaveLockfile();
+
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
+      );
+      expect(await lock()).toContain(`"a-dep@1.0.2"`);
+      expect(await versionsResolvedByVdir()).toEqual({
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.2",
+        "no-deps-bins": null,
+        "basic-1": null,
+      });
+      await expectInstallToBeANoop();
+    });
+
+    it.concurrent("removed, re-ranged, optional and peer dependencies are picked up", async () => {
+      const {
+        lock,
+        editVdir,
+        expectFrozenLockfileToFail,
+        expectInstallToSaveLockfile,
+        expectInstallToBeANoop,
+        versionsResolvedByVdir,
+      } = await createProject("root");
+
+      // `no-deps` leaves `dependencies`, and the locked a-dep (none) cannot satisfy the new range
+      await editVdir({
+        dependencies: { "a-dep": "^1.0.3" },
+        optionalDependencies: { "no-deps-bins": "1.0.0" },
+        peerDependencies: { "basic-1": "^1.0.0" },
+      });
+      await expectFrozenLockfileToFail();
+      await expectInstallToSaveLockfile();
+
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "^1.0.3" }, "optionalDependencies": { "no-deps-bins": "1.0.0" }, "peerDependencies": { "basic-1": "^1.0.0" } }`,
+      );
+      expect(await lock()).not.toContain(`"no-deps@`);
+      expect(await versionsResolvedByVdir()).toMatchObject({
+        "a-dep": "1.0.10",
+        "no-deps-bins": "1.0.0",
+        "basic-1": "1.0.0",
+      });
+      await expectInstallToBeANoop();
+    });
+
+    it.concurrent("an added bin is recorded and linked", async () => {
+      const {
+        packageDir,
+        lock,
+        editVdir,
+        expectFrozenLockfileToFail,
+        expectInstallToSaveLockfile,
+        expectInstallToBeANoop,
+      } = await createProject("root");
+
+      await editVdir({ bin: { "vdir-cli": "index.js" }, dependencies: { "no-deps": "1.0.0" } });
+      await expectFrozenLockfileToFail();
+      await expectInstallToSaveLockfile();
+
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" }, "bin": { "vdir-cli": "index.js" } }`,
+      );
+      expect(Bun.which("vdir-cli", { PATH: join(packageDir, "node_modules", ".bin") })).not.toBeNull();
+      await expectInstallToBeANoop();
+    });
+
+    it.concurrent("when declared by a workspace package", async () => {
+      const {
+        packageDir,
+        lock,
+        editVdir,
+        expectFrozenLockfileToFail,
+        expectInstallToSaveLockfile,
+        expectInstallToBeANoop,
+      } = await createProject("workspace");
+
+      await editVdir({ bin: "index.js", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } });
+      await expectFrozenLockfileToFail();
+      await expectInstallToSaveLockfile();
+
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" }, "bin": "index.js" }`,
+      );
+      expect(await lock()).toContain(`"a-dep@1.0.2"`);
+      // the hoisted linker hoists vdir and its bin to the root, the isolated linker links them into the workspace
+      const binDirs = [
+        join(packageDir, "node_modules", ".bin"),
+        join(packageDir, "packages", "app", "node_modules", ".bin"),
+      ];
+      expect(Bun.which("vdir", { PATH: binDirs.join(delimiter) })).not.toBeNull();
+      await expectInstallToBeANoop();
+    });
+  },
+);

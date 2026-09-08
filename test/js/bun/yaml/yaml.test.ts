@@ -2939,7 +2939,7 @@ config:
         // (#x9 | #xA | #xD | [#x20-#x7E] | #x85 | [#xA0-#xD7FF] | [#xE000-#xFFFD]
         // | [#x10000-#x10FFFF]); anything else must be an escape sequence in a
         // double-quoted scalar. [27] nb-char also keeps a BOM out of content.
-        // libyaml and PyYAML reject the raw characters.
+        // libyaml and PyYAML reject the raw C1 controls, U+FFFE and U+FFFF.
         const cases: [string, string][] = [
           ["\u0080", '"\\x80"'],
           ["\u0084", '"\\x84"'],

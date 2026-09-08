@@ -692,8 +692,8 @@ impl Escape {
 }
 
 /// YAML 1.2 §7.4.2 limits an implicit key to 1024 characters so that a parser
-/// can find the `:` with bounded lookahead. libyaml and PyYAML reject a longer
-/// one, in block and in flow mappings.
+/// can find the `:` with bounded lookahead. libyaml and PyYAML apply the limit
+/// inside flow mappings too, so a longer key is rejected in either style.
 fn key_needs_explicit_entry(key: &BunString, quoted: bool) -> bool {
     const MAX_IMPLICIT_KEY_LEN: usize = 1024;
 
@@ -927,7 +927,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
                 i += 1;
             }
 
-            // not printable, or only representable with an escape (see `Escape::of`)
+            // written with an escape (see `Escape::of`), which only a quoted scalar has
             0x00..=0x1f
             | 0x22
             | 0x7f..=0xa0

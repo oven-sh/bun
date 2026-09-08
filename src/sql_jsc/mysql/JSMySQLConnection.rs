@@ -718,12 +718,9 @@ impl JSMySQLConnection {
     /// hostname match when the ssl mode asks for it (verify-full).
     fn verify_server_identity(&self, hostname_must_match: bool) -> Result<(), JSValue> {
         let global: &JSGlobalObject = &self.global_object;
-        let (hostname, ssl_ptr) = {
-            let connection = self.connection.get();
-            (connection.tls_server_name().to_vec(), connection.ssl())
-        };
-        // SAFETY: in the handshake callback the native handle is the live `SSL*`.
-        let Some(ssl) = (unsafe { ssl_ptr.as_mut() }) else {
+        // Owned: the user callback below may re-enter this connection.
+        let hostname = self.connection.get().tls_server_name().to_vec();
+        let Some(ssl) = self.connection.get().ssl_mut() else {
             return Err(mysql_error_to_js(
                 global,
                 b"Failed to upgrade to TLS",

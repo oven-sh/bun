@@ -1544,29 +1544,17 @@ impl JSValkeyClient {
         }
     }
 
-    fn ssl(&self) -> *mut boringssl::c::SSL {
-        self.client
-            .get()
-            .socket
-            .get_native_handle()
-            .unwrap_or(core::ptr::null_mut())
-            .cast()
-    }
-
     /// Sends `tls_hostname()` as SNI. IP literals are skipped (RFC 6066).
+    /// Runs from `on_open`, before the ClientHello is written.
     fn set_sni(&self) {
         let hostname = self.tls_hostname();
         if hostname.is_empty() || bun_core::ip_address::is_ip_address(hostname) {
             return;
         }
         let hostname = bun_core::ZBox::from_bytes(hostname);
-        let ssl = self.ssl();
-        if ssl.is_null() {
-            return;
+        if let Some(ssl) = self.client.get().socket.ssl_mut() {
+            ssl.set_servername(hostname.as_cstr());
         }
-        // SAFETY: `ssl` is the live `SSL*` of the socket that just opened, not
-        // yet handshaking; `hostname` is NUL-terminated and copied by BoringSSL.
-        unsafe { boringssl::c::SSL_set_tlsext_host_name(ssl, hostname.as_ptr()) };
     }
 
     /// After the chain verified: `tls.checkServerIdentity` when the user set
@@ -1574,9 +1562,9 @@ impl JSValkeyClient {
     /// certificate (skipped for unix sockets with no `serverName`).
     fn verify_server_identity(&self) -> Result<(), JSValue> {
         let global: &JSGlobalObject = &self.global_object;
+        // Owned: the user callback below may re-enter this client.
         let hostname = self.tls_hostname().to_vec();
-        // SAFETY: in the handshake callback the native handle is the live `SSL*`.
-        let Some(ssl) = (unsafe { self.ssl().as_mut() }) else {
+        let Some(ssl) = self.client.get().socket.ssl_mut() else {
             return Err(global
                 .err(
                     jsc::ErrorCode::REDIS_CONNECTION_CLOSED,

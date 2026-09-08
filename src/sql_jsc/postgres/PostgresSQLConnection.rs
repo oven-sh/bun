@@ -901,18 +901,8 @@ impl PostgresSQLConnection {
     /// (verify-full only; verify-ca skips it by definition).
     fn verify_server_identity(&self) -> Result<(), JSValue> {
         let global = self.global();
-        let hostname: &[u8] = match self.tls_config.server_name() {
-            servername if servername.is_null() => b"",
-            // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-            servername => unsafe { bun_core::ffi::cstr(servername) }.to_bytes(),
-        };
-        let ssl_ptr: *mut BoringSSL::c::SSL = self
-            .socket
-            .get()
-            .get_native_handle()
-            .map_or(core::ptr::null_mut(), |p| p.cast());
-        // SAFETY: in the handshake callback the native handle is the live `SSL*`.
-        let Some(ssl) = (unsafe { ssl_ptr.as_mut() }) else {
+        let hostname = self.tls_config.server_name_bytes();
+        let Some(ssl) = self.socket.get().ssl_mut() else {
             return Err(postgres_error_to_js(
                 global,
                 Some(b"Failed to upgrade to TLS"),

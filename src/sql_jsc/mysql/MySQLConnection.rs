@@ -454,21 +454,12 @@ impl MySQLConnection {
 
     /// `tls.serverName`: the SNI sent and the name the certificate must match.
     pub(crate) fn tls_server_name(&self) -> &[u8] {
-        let server_name = self.tls_config.server_name();
-        if server_name.is_null() {
-            return b"";
-        }
-        // SAFETY: `server_name` is a NUL-terminated C string owned by
-        // `tls_config` for the connection lifetime.
-        unsafe { bun_core::ffi::cstr(server_name) }.to_bytes()
+        self.tls_config.server_name_bytes()
     }
 
-    /// The live `SSL*` of the TLS socket, or null before the upgrade.
-    pub(crate) fn ssl(&self) -> *mut bun_boringssl_sys::SSL {
-        self.socket
-            .get_native_handle()
-            .map(|h| h.cast())
-            .unwrap_or(core::ptr::null_mut())
+    /// The `SSL` handle of the TLS socket; `None` before the upgrade.
+    pub(crate) fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
+        self.socket.ssl_mut()
     }
 
     pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {

@@ -151,7 +151,9 @@ JSDirectStreamController* JSDirectStreamController::create(VM& vm, Structure* st
 // as pull() returns.
 void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 {
-    if (m_endOfTickFlushArmed || m_closed || !m_stream || m_deferFlush == -1)
+    // No consumer takes chunks before end() from a Text/Array sink (readableStreamToText /
+    // readableStreamToArray): a delivery job would be a no-op that pins the controller.
+    if (m_sinkKind != DirectSinkKind::ArrayBuffer || m_endOfTickFlushArmed || m_closed || !m_stream || m_deferFlush == -1)
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

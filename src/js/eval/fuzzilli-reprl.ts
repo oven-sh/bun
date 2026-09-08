@@ -42,9 +42,8 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// process.exit ends the REPRL child, and process.kill reaches the child, the
-// fuzzer (its parent) and every other REPRL child in the same process group.
-// Fuzzed scripts must not be able to do either.
+// Fuzzed scripts must not end the REPRL child, or signal it, the fuzzer (its
+// parent) or the other REPRL children in the same process group.
 process.exit = process.reallyExit = () => {};
 process.kill = () => true;
 process._kill = () => 0;

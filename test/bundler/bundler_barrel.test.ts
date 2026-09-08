@@ -680,40 +680,45 @@ describe("bundler", () => {
   });
 
   // --- Ported from Rolldown: dynamic-import-entry ---
-  // A submodule dynamically imports the barrel back. import() returns the full
-  // module namespace — all barrel exports must be preserved, even if the
-  // import() result is discarded (we can't statically prove it isn't used).
-
-  itBundled("barrel/DynamicImportInSubmodule", {
-    files: {
-      "/entry.js": /* js */ `
-        import { a } from 'dynlib';
-        console.log(a);
-      `,
-      "/node_modules/dynlib/package.json": JSON.stringify({
-        name: "dynlib",
-        main: "./index.js",
-        sideEffects: false,
-      }),
-      "/node_modules/dynlib/index.js": /* js */ `
-        export { a } from './a.js';
-        export { b } from './b.js';
-      `,
-      "/node_modules/dynlib/a.js": /* js */ `
-        export const a = 'dyn-a';
-        import('./index.js');
-      `,
-      "/node_modules/dynlib/b.js": /* js */ `
-        export const b = 'dyn-b';
-      `,
-    },
-    outdir: "/out",
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.js").toContain("dyn-a");
-      // b must be included — import() needs the full namespace
-      api.expectFile("/out/entry.js").toContain("dyn-b");
-    },
-  });
+  // A submodule dynamically imports the barrel back. When the namespace it
+  // yields can be observed (here it escapes to a global), every barrel export
+  // must be preserved; a bare `import('./index.js');` statement observes
+  // nothing, so only the statically imported `a` survives.
+  for (const [name, stmt, keepsB] of [
+    ["barrel/DynamicImportInSubmodule", `import('./index.js').then(ns => { globalThis.ns = ns; });`, true],
+    ["barrel/DynamicImportInSubmoduleBare", `import('./index.js');`, false],
+  ] as const) {
+    itBundled(name, {
+      files: {
+        "/entry.js": /* js */ `
+          import { a } from 'dynlib';
+          console.log(a);
+        `,
+        "/node_modules/dynlib/package.json": JSON.stringify({
+          name: "dynlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/dynlib/index.js": /* js */ `
+          export { a } from './a.js';
+          export { b } from './b.js';
+        `,
+        "/node_modules/dynlib/a.js": /* js */ `
+          export const a = 'dyn-a';
+          ${stmt}
+        `,
+        "/node_modules/dynlib/b.js": /* js */ `
+          export const b = 'dyn-b';
+        `,
+      },
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain("dyn-a");
+        if (keepsB) api.expectFile("/out/entry.js").toContain("dyn-b");
+        else api.expectFile("/out/entry.js").not.toContain("dyn-b");
+      },
+    });
+  }
 
   // Dynamic import returns the full namespace at runtime — consumer can access any export.
   // When a file also has a static named import of the same barrel, the barrel
@@ -1676,7 +1681,7 @@ describe("bundler", () => {
     outdir: "/out",
     // Plugin transforms a.js content
     plugins(builder) {
-      builder.onLoad({ filter: /loadlib\/a\.js$/ }, () => {
+      builder.onLoad({ filter: /loadlib[\/\\]a\.js$/ }, () => {
         return { contents: 'export const A = "transformed-by-plugin";', loader: "js" };
       });
     },

@@ -73,6 +73,27 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if !c.options.minify_identifiers {
+            // Top-level names are final; name each file's nested scopes in
+            // parallel.
+            let mut tasks =
+                crate::linker_context::rename_symbols_in_chunk::nested_rename_tasks(chunks);
+            c.worker_pool().each_ptr(
+                ctx,
+                crate::linker_context::rename_symbols_in_chunk::run_nested_rename_task,
+                &mut tasks,
+            );
+            for task in tasks {
+                if let (crate::bun_renamer::ChunkRenamer::Number(r), Some(names)) =
+                    (&mut chunks[task.chunk_index as usize].renamer, task.names)
+                {
+                    r.absorb(names);
+                }
+            }
+            for chunk in chunks.iter_mut() {
+                chunk.nested_scopes_to_rename = Vec::new();
+            }
+        }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {
                 // Counts are in; name the cross-chunk bindings, pin them, then
@@ -364,7 +385,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<()> = StringHashMap::default();
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
 
         #[derive(Default)]
         struct DuplicateEntry {
@@ -395,35 +416,30 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
-            if path_names_map.get_or_put(&rel_path)?.found_existing {
-                // collect all duplicates in a list
-                let dup = duplicates_map.get_or_put(&rel_path)?;
-                if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
-                }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
-                continue;
-            }
-
-            // resolve any /./ and /../ occurrences
-            // use resolvePosix since we asserted above all seps are '/'
-            #[cfg(windows)]
-            if strings::index_of(&rel_path, b"/./").is_some() {
-                let mut buf = bun_paths::PathBuffer::uninit();
-                let rel_path_fixed: Box<[u8]> = Box::from(&*path::resolve_path::normalize_buf::<
-                    path::platform::Posix,
-                >(&rel_path, &mut buf));
-                chunk.final_rel_path = rel_path_fixed;
-                continue;
-            }
-
             // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
             // which importers of the chunk would copy verbatim.
             while let Some(i) = strings::index_of(&rel_path, b"/./") {
                 rel_path.drain(i..i + 2);
             }
 
-            chunk.final_rel_path = rel_path.into_boxed_slice();
+            let claimed = path_names_map.get_or_put(&rel_path)?;
+            if claimed.found_existing {
+                let first = *claimed.value_ptr as usize;
+                let dup = duplicates_map.get_or_put(&rel_path)?;
+                if !dup.found_existing {
+                    *dup.value_ptr = DuplicateEntry::default();
+                    dup.value_ptr
+                        .sources
+                        .push(bun_ptr::BackRef::new(&chunks[first]));
+                }
+                dup.value_ptr
+                    .sources
+                    .push(bun_ptr::BackRef::new(&chunks[index]));
+                continue;
+            }
+            *claimed.value_ptr = index as u32;
+
+            chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {
@@ -478,12 +494,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
-                write!(
-                    &mut text,
-                    "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                    name,
-                    bstr::BStr::new(template),
-                )?;
+                if crate::options::path_template_hash_len(template).is_some() {
+                    write!(
+                        &mut text,
+                        "{} naming is '{}'; these inputs produce identical content",
+                        name,
+                        bstr::BStr::new(template),
+                    )?;
+                } else {
+                    write!(
+                        &mut text,
+                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
+                        name,
+                        bstr::BStr::new(template),
+                    )?;
+                }
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
@@ -1030,18 +1055,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: options::Side = if matches!(chunk.content, crate::chunk::Content::Css(_))
-                || chunk
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            {
-                options::Side::Client
-            } else {
-                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                    options::Target::Browser => options::Side::Client,
-                    _ => options::Side::Server,
-                }
-            };
+            let side: options::Side = c.chunk_side(chunk);
 
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
@@ -1055,7 +1069,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
+                        let mut fdpath = bun_paths::path_buffer_pool::get();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1111,11 +1125,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 output_path: Box::from(source_provider_url_str.slice()),
                                 input_path: input_path_buf.into_boxed_slice(),
                                 input_loader: Loader::Js,
-                                hash: if chunk.template.placeholder.hash.is_some() {
-                                    Some(bun_wyhash::hash(&bytecode))
-                                } else {
-                                    None
-                                },
+                                hash: chunk.template.placeholder.hash.map(|_| {
+                                    chunk.template.content_hash(bun_wyhash::hash(&bytecode))
+                                }),
                                 output_kind: options::OutputKind::Bytecode,
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
@@ -1175,11 +1187,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         output_path: out_path.into_boxed_slice(),
                                         input_path: in_path.into_boxed_slice(),
                                         input_loader: Loader::Js,
-                                        hash: if chunk.template.placeholder.hash.is_some() {
-                                            Some(bun_wyhash::hash(module_info_bytes))
-                                        } else {
-                                            None
-                                        },
+                                        hash: chunk.template.placeholder.hash.map(|_| {
+                                            chunk
+                                                .template
+                                                .content_hash(bun_wyhash::hash(module_info_bytes))
+                                        }),
                                         output_kind: options::OutputKind::ModuleInfo,
                                         loader: Loader::File,
                                         size: Some(module_info_bytes.len()),
@@ -1218,14 +1230,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 None
             };
 
-            let output_kind = if matches!(chunk.content, crate::chunk::Content::Css(_)) {
-                options::OutputKind::Asset
-            } else if chunk.entry_point.is_entry_point() {
-                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                    .output_kind()
-            } else {
-                options::OutputKind::Chunk
-            };
+            let output_kind = c.chunk_output_kind(chunk);
 
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
@@ -1407,7 +1412,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports and everything those require while loading, so their first `require` decodes instead of parsing. One
+/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
+/// instead of parsing. One
 /// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
 /// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
 /// builtins section of the executable the bundle is going into.

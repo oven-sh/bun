@@ -50,7 +50,9 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
+pub use resolver::{
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
@@ -73,8 +75,11 @@ pub mod fs {
 
     // `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
     bun_alloc::bss_string_list! { pub dirname_store_backing : 4096, 129 }
-    // `BSSStringList(4096, 64)` → `<{4096*2}, {64+1}>`
-    bun_alloc::bss_string_list! { pub filename_store_backing : 8192, 65 }
+    // `bss_singleton!` emits one private `STORAGE` per declare site, so the
+    // filename store is declared once, in `fs_full`, and shared with the
+    // `readdir` appender (`FilenameStoreAppender`). A second declaration here
+    // would be a separate store that `exists`/`as_interned` cannot see into.
+    pub use crate::fs_full::filename_store_backing;
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());
@@ -287,7 +292,7 @@ pub mod fs {
                 // (the singleton outlives every caller).
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
-                    let mut buf = bun_paths::PathBuffer::default();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     DirnameStore::instance().append_slice(bun_core::getcwd(&mut buf)?.as_bytes())?
                 }
             };
@@ -305,7 +310,7 @@ pub mod fs {
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
                     top_level_dir: cwd,
-                    top_level_dir_buf: bun_paths::PathBuffer::uninit(),
+                    top_level_dir_buf: bun_paths::PathBuffer::ZEROED,
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
@@ -825,7 +830,7 @@ pub mod fs {
                     | bun_sys::O::TRUNC
                     | bun_sys::O::CLOEXEC;
                 self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
-                let mut buf = bun_paths::PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
                 self.existing_path = Box::<[u8]>::from(&*existing_path);
                 Ok(())
@@ -852,10 +857,9 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
-                use w::Win32ErrorUnwrap as _;
                 let _ = from_name;
-                let mut existing_buf = bun_paths::WPathBuffer::uninit();
-                let mut new_buf = bun_paths::WPathBuffer::uninit();
+                let mut existing_buf = bun_paths::w_path_buffer_pool::get();
+                let mut new_buf = bun_paths::w_path_buffer_pool::get();
                 self.close();
                 let existing = bun_paths::strings::paths::to_extended_path_normalized(
                     &mut new_buf.0[..],
@@ -884,7 +888,11 @@ pub mod fs {
                     )
                 } == w::FALSE
                 {
-                    w::Win32Error::get().unwrap()?;
+                    return Err(bun_sys::Error::from_win32(
+                        w::Win32Error::get(),
+                        bun_sys::Tag::rename,
+                    )
+                    .into());
                 }
                 Ok(())
             }
@@ -1372,7 +1380,7 @@ pub mod fs {
             };
 
             let combo: [&[u8]; 2] = [dir_, base];
-            let mut outpath = bun_paths::PathBuffer::uninit();
+            let mut outpath = bun_paths::path_buffer_pool::get();
             let join_capacity = outpath.len() - 2;
             let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
                 self.cwd,
@@ -1673,14 +1681,14 @@ pub mod fs {
                             return out;
                         }
                         if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::PathBuffer::uninit();
+                            let mut buf = bun_paths::path_buffer_pool::get();
                             let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
                             let out = bun_paths::resolve_path::join_abs_string_buf::<
                                 bun_paths::resolve_path::platform::Loose,
                             >(profile, &mut buf[..], &parts);
                             return out.to_vec();
                         }
-                        let mut tmp_buf = bun_paths::PathBuffer::uninit();
+                        let mut tmp_buf = bun_paths::path_buffer_pool::get();
                         let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
                             Ok(len) => &tmp_buf[..len],
                             Err(_) => panic!("Failed to get cwd for platformTempDir"),
@@ -1806,7 +1814,7 @@ pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
-    use bun_paths::{PathBuffer, Platform, resolve_path};
+    use bun_paths::{Platform, resolve_path};
     use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
 
     pub struct DirEntryAccessor;
@@ -1954,7 +1962,7 @@ pub mod dir_entry_accessor {
         type DirIter = DirEntryDirIter;
 
         fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
                     let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
@@ -1976,7 +1984,7 @@ pub mod dir_entry_accessor {
 
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(entry) = handle.value {
                 return Syscall::lstatat(entry.fd, path_);
             }
@@ -2008,7 +2016,7 @@ pub mod dir_entry_accessor {
             handle: DirEntryHandle,
             path_: &ZStr,
         ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let mut path: &[u8] = path_.as_bytes();
 
             if !Platform::AUTO.is_absolute(path) {

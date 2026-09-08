@@ -69,6 +69,13 @@ pub struct Worker {
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
     pub(crate) reap_pending: bool,
+    /// Set when this process sends `.ready`; reset before each respawn.
+    /// `inflight == None` with `!reached_ready` at reap distinguishes a
+    /// startup failure from a clean post-shutdown exit.
+    pub(crate) reached_ready: bool,
+    /// Consecutive (re)spawns of this slot that exited before `.ready`;
+    /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
+    pub(crate) startup_failures: u8,
 }
 
 impl Worker {

@@ -6,8 +6,8 @@ use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
 use bun_core::Generation;
 use bun_core::MutableString;
+use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -33,7 +33,9 @@ pub(crate) type FilenameStoreBacking =
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via
-// `bss_*!` macros (returns `*mut`).
+// `bss_*!` macros (returns `*mut`). Each declare site owns its own storage:
+// `crate::fs::FilenameStore` re-exports `filename_store_backing` from here so
+// it and `FilenameStoreAppender` share one store.
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 
@@ -440,7 +442,7 @@ impl DirEntry {
         // case (matches `DirEntry::get`); only a basename longer than
         // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
         // would touch the heap.
-        let mut name_lc_buf = PathBuffer::uninit();
+        let mut name_lc_buf = bun_paths::path_buffer_pool::get();
         let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
             if name_slice.len() <= MAX_PATH_BYTES {
                 None
@@ -601,7 +603,7 @@ impl DirEntry {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
-        let mut scratch_lookup_buffer = PathBuffer::uninit();
+        let mut scratch_lookup_buffer = bun_paths::path_buffer_pool::get();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;

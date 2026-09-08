@@ -1013,19 +1013,17 @@ impl Task {
                                             };
 
                                             if src_path_len == 0 || src_path_len as usize >= cap {
-                                                use bun_sys::windows::Win32ErrorExt as _;
-                                                let err: sys::SystemErrno = if src_path_len == 0 {
-                                                    bun_sys::windows::Win32Error::get()
-                                                        .to_system_errno()
-                                                        .unwrap_or(sys::SystemErrno::EUNKNOWN)
-                                                } else {
-                                                    sys::SystemErrno::ENAMETOOLONG
-                                                };
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    sys::Error {
-                                                        errno: err as _,
-                                                        syscall: sys::Tag::copyfile,
-                                                        ..Default::default()
+                                                    if src_path_len == 0 {
+                                                        sys::Error::from_win32(
+                                                            sys::windows::Win32Error::get(),
+                                                            sys::Tag::copyfile,
+                                                        )
+                                                    } else {
+                                                        sys::Error::from_code(
+                                                            sys::E::ENAMETOOLONG,
+                                                            sys::Tag::copyfile,
+                                                        )
                                                     },
                                                 )));
                                             }

@@ -679,7 +679,7 @@ impl ErrorDeferred {
             ))
         };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno: self.errno.errno(),
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -765,7 +765,7 @@ pub(crate) fn error_to_js_with_syscall(
 ) -> JsResult<JSValue> {
     let code = this.code();
     let instance = SystemError {
-        errno: this as i32,
+        errno: this.errno(),
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
@@ -796,7 +796,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
+        errno: this.errno(),
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
@@ -824,6 +824,12 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
         bstr::String::static_("DNSException").to_js(global_this)?,
     );
     Ok(instance)
+}
+
+/// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
+pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
+    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
+        .to_error_instance(global_this)
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────

@@ -513,8 +513,13 @@ impl FileSink {
                 }
             }
 
+            // A piped JS ReadableStream sees the write error as its cancel reason.
+            let err = match (*this).stream_error.get() {
+                Some(streams::StreamError::Error(err)) => Some(err.clone()),
+                _ => None,
+            };
             let mut src = *(*this).source.get();
-            src.close(None);
+            src.close(err);
 
             (*this).settle_stream_done();
 
@@ -847,8 +852,13 @@ impl FileSink {
     pub(crate) unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                return false;
+            }
+            // After `end()` the writable poll drains the tail and drops the ref.
+            if (*this).done.get() {
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }

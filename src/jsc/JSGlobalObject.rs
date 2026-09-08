@@ -1166,8 +1166,7 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
-    /// The live `process.env` object. Runtime `process.env` writes land only
-    /// here; `VirtualMachine::env_loader()` is the startup snapshot.
+    /// The live `process.env` object (runtime writes land here, not in `env_loader()`).
     pub fn process_env(&self) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || Bun__Process__getEnvObject(self))
     }

@@ -554,8 +554,7 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-/// The live `process.env.NODE_ENV` / `BUN_ENV` decide. With neither set, only a
-/// production flag that did not come from the env (`--define`) still counts.
+/// Live `process.env` decides; with neither key set, only a non-env `--define` production flag counts.
 fn default_is_production(global: &JSGlobalObject, vm: &VirtualMachine) -> JsResult<bool> {
     let process_env = global.process_env()?;
     let is_production = |key: &str| -> JsResult<Option<bool>> {

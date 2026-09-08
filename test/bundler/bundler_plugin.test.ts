@@ -540,6 +540,23 @@ describe("bundler", () => {
       },
     });
   }
+  itBundled("plugin/ResolveExternalWithoutPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import lodash from "lodash";
+        console.log(lodash);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^lodash$/ }, () => {
+        return { external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "lodash"`);
+    },
+  });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

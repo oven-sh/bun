@@ -16,9 +16,10 @@ use crate::test_runner::jest::Jest;
 pub struct Collection {
     /// set to true after collection phase ends
     pub(crate) locked: bool,
-    /// Set while an async describe() callback's promise is outstanding. Only then can
-    /// an uncaught error be that callback's failure. At module or preload top level,
-    /// and while a describe() body runs synchronously, no callback is waiting.
+    /// Set while an async describe() callback's promise is outstanding. An uncaught
+    /// error that lands then is charged to that describe and completes it. At module
+    /// or preload top level, and while a describe() body runs synchronously, no
+    /// callback is waiting and an uncaught error fails nothing.
     pub(crate) describe_callback_pending: bool,
     pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
     pub(crate) current_scope_callback_queue: Vec<QueuedDescribe>,

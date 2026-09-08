@@ -46,7 +46,10 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                 // `https://…` and the like: nothing a build can read, and not
                 // something the author of this build can fix, so stay quiet.
                 return None;
-            } else if let Some(source_dir) = source_dir {
+            } else {
+                // A virtual module (plugin namespace) has no directory to
+                // resolve a relative URL against.
+                let source_dir = source_dir?;
                 let url = strip_query_and_fragment(url);
                 let decoded;
                 let url: &[u8] = if bun_core::strings::contains_char(url, b'%') {
@@ -61,17 +64,9 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                     url
                 };
                 let mut buf = bun_paths::path_buffer_pool::get();
-                match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                Box::from(bun_paths::resolve_path::join_abs_string_buf_checked::<
                     bun_paths::resolve_path::platform::Auto,
-                >(source_dir, &mut buf[..], &[url])
-                {
-                    Some(joined) => Box::from(joined),
-                    None => return None,
-                }
-            } else {
-                // A virtual module (plugin namespace) has no directory to
-                // resolve a relative URL against.
-                return None;
+                >(source_dir, &mut buf[..], &[url])?)
             };
 
             json = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &map_path) {
@@ -118,7 +113,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                 format_args!(
                     "Ignoring the source map \"{}\" of this file: {}",
                     bstr::BStr::new(&map_name),
-                    err.0
+                    bstr::BStr::new(&err.0)
                 ),
             );
             None

@@ -41,8 +41,8 @@ use std::io::Write as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag};
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
@@ -53,7 +53,7 @@ use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
-use crate::webcore::blob::BlobExt as _;
+use crate::webcore::blob::{BlobContentType, BlobExt as _};
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::response::HeadersRef;
@@ -68,7 +68,7 @@ use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
-use bun_resolver::data_url::DataURL;
+use bun_resolver::data_url::{DataURL, FetchDataURL};
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
@@ -147,33 +147,65 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
-    let blob = {
-        let url_utf8 = url.to_utf8();
-        match DataURL::parse_without_check(url_utf8.slice())
-            .ok()
-            .and_then(|data_url| {
-                let blob = Blob::init(data_url.decode_data().ok()?, global_this);
-                let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
-                blob.content_type
-                    .set(crate::webcore::blob::BlobContentType::from(mime_type));
-                Some(blob)
-            }) {
-            Some(blob) => blob,
-            None => {
-                let err = global_this.to_type_error(
-                    jsc::ErrorCode::INVALID_URL,
-                    format_args!("failed to fetch the data URL"),
-                );
-                return JSPromise::rejected_promise(global_this, err).to_js();
-            }
+/// https://fetch.spec.whatwg.org/#data-urls runs on the URL serialized with
+/// exclude-fragment set, so normalize through the WHATWG URL parser and strip
+/// the fragment before processing.
+fn process_data_url(url: &BunString) -> Option<FetchDataURL> {
+    let url_utf8 = url.to_utf8();
+    let raw = url_utf8.slice();
+
+    let href;
+    let href_utf8;
+    // Fast path: for an opaque-path data URL with no `?` and every byte in
+    // [0x21, 0x7E] the URL parser is a no-op, so large base64 payloads skip it.
+    let input = if raw.get(b"data:".len()) != Some(&b'/')
+        && raw.iter().all(|&b| (0x21..=0x7E).contains(&b) && b != b'?')
+    {
+        raw
+    } else {
+        href = bun_url::href_from_string(url);
+        if href.is_dead() {
+            return None;
         }
+        href_utf8 = href.to_utf8();
+        href_utf8.slice()
     };
+    let input = match strings::index_of_char_usize(input, b'#') {
+        Some(fragment) => &input[..fragment],
+        None => input,
+    };
+
+    DataURL::process_for_fetch(input)
+}
+
+fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    let Some(FetchDataURL { mime_type, body }) = process_data_url(&url) else {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("failed to fetch the data URL"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+    };
+
+    let content_type: std::sync::Arc<[u8]> = std::sync::Arc::from(mime_type);
+    let blob = Blob::init(body, global_this);
+    blob.content_type
+        .set(BlobContentType::Owned(std::sync::Arc::clone(&content_type)));
+
+    // Set `Content-Type` now: the lazy path in `get_or_create_headers` reads it
+    // off the body's Blob, which is gone once the body is consumed.
+    let mut headers = HeadersRef::create_empty();
+    headers.put(
+        HTTPHeaderName::ContentType,
+        &BunString::borrow_utf8(&content_type),
+        global_this,
+    )?;
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
+            headers: Some(headers),
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
@@ -184,12 +216,12 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
     // Ownership of the boxed Response is transferred to the JS GC via
     // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
     // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
-    JSPromise::resolved_promise_value(
+    Ok(JSPromise::resolved_promise_value(
         global_this,
         // SAFETY: `response` is a freshly allocated heap `Response`; ownership
         // transfers to JSC.
         Response::make_maybe_pooled(global_this, response),
-    )
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -512,7 +544,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url_str.starts_with_ascii(b"data:") {
-        return Ok(data_url_response(url_str, global_this));
+        return data_url_response(url_str, global_this);
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we

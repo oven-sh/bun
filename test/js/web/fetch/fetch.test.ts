@@ -90,7 +90,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain");
     expect(blob.text()).resolves.toBe("Hello, World!");
   });
   it("percent encoded (invalid)", async () => {
@@ -104,7 +104,7 @@ describe("fetch data urls", () => {
   it.each(["BASE64", "Base64", " base64", "base64 ", "  bAsE64  "])(";base64 marker %j", async marker => {
     const res = await fetch("data:text/plain;" + marker + ",aGk=");
     const blob = await res.blob();
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain");
     expect(await blob.text()).toBe("hi");
 
     const binary = await fetch("data:application/octet-stream;" + marker + ",AAEC");
@@ -131,6 +131,23 @@ describe("fetch data urls", () => {
       await fetch("data:text/plain;base64," + body);
     }).toThrow("failed to fetch the data URL");
   });
+  // The processor runs on the URL parser's serialization without the fragment.
+  // Inputs made only of bytes in [0x21, 0x7E] with no `?` and no leading `/`
+  // skip the parser (it is a no-op for them); these do not, and must not.
+  it.each([
+    // the parser collapses `/a,b/..` to `/`, which has no comma
+    ["data:/a,b/..", null, null],
+    // `?` starts a query: `>` is percent-encoded there, and the query stays in the body
+    ["data:x/y;a=?>,Z", 'x/y;a="?%3E"', "Z"],
+    ["data:x/y,a?b", "x/y", "a?b"],
+  ] as const)("URL parser path %j", async (url, type, body) => {
+    if (type === null) {
+      expect(fetch(url)).rejects.toBeInstanceOf(TypeError);
+      return;
+    }
+    const res = await fetch(url);
+    expect({ type: res.headers.get("content-type"), body: await res.text() }).toEqual({ type, body });
+  });
   it("plain text", async () => {
     var url = "data:,Hello%2C%20World!";
     var res = await fetch(url);
@@ -140,7 +157,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     url = "data:,helloworld!";
@@ -151,7 +168,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(11);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("helloworld!");
   });
   it("unstrict parsing of invalid URL characters", async () => {
@@ -163,7 +180,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{{}}");
   });
   it("unstrict parsing of double percent characters", async () => {
@@ -175,7 +192,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(9);
-    expect(blob.type).toBe("application/json;charset=utf-8");
+    expect(blob.type).toBe("application/json");
     expect(blob.text()).resolves.toBe("{%{}%%}%%");
   });
   it("data url (invalid)", async () => {
@@ -194,7 +211,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request", async () => {
@@ -206,7 +223,7 @@ describe("fetch data urls", () => {
 
     var blob = await res.blob();
     expect(blob.size).toBe(13);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("Hello, World!");
 
     req = new Request("data:,😀");
@@ -217,7 +234,7 @@ describe("fetch data urls", () => {
 
     blob = await res.blob();
     expect(blob.size).toBe(4);
-    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.type).toBe("text/plain;charset=US-ASCII");
     expect(blob.text()).resolves.toBe("😀");
   });
   it("should work with Request (invalid)", async () => {

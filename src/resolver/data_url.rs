@@ -142,6 +142,187 @@ fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
     strings::trim_right(rest, b" ").strip_suffix(b";")
 }
 
+/// Result of [`DataURL::process_for_fetch`]: the serialized MIME type to expose
+/// as `Content-Type`, and the decoded body bytes.
+pub struct FetchDataURL {
+    pub mime_type: Vec<u8>,
+    pub body: Vec<u8>,
+}
+
+/// https://fetch.spec.whatwg.org/#http-whitespace
+fn is_http_whitespace(c: u8) -> bool {
+    matches!(c, b'\t' | b'\n' | b'\r' | b' ')
+}
+
+fn trim_trailing_http_whitespace(mut s: &[u8]) -> &[u8] {
+    while let Some(&c) = s.last() {
+        if !is_http_whitespace(c) {
+            break;
+        }
+        s = &s[..s.len() - 1];
+    }
+    s
+}
+
+fn trim_http_whitespace(mut s: &[u8]) -> &[u8] {
+    while let Some(&c) = s.first() {
+        if !is_http_whitespace(c) {
+            break;
+        }
+        s = &s[1..];
+    }
+    trim_trailing_http_whitespace(s)
+}
+
+/// https://mimesniff.spec.whatwg.org/#http-token-code-point
+fn is_http_token(c: u8) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(
+            c,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
+fn is_http_quoted_string_token(c: u8) -> bool {
+    c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80
+}
+
+fn solely_http_tokens(s: &[u8]) -> bool {
+    !s.is_empty() && s.iter().all(|&c| is_http_token(c))
+}
+
+/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string (extract-value)
+/// Caller has consumed the opening `"`. Advances `*pos` past the closing `"`
+/// (or to end of input) and returns the unescaped value.
+fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
+    let mut value = Vec::new();
+    while *pos < input.len() {
+        let c = input[*pos];
+        *pos += 1;
+        match c {
+            b'"' => return value,
+            b'\\' => {
+                if *pos < input.len() {
+                    value.push(input[*pos]);
+                    *pos += 1;
+                } else {
+                    value.push(b'\\');
+                }
+            }
+            _ => value.push(c),
+        }
+    }
+    value
+}
+
+/// Parse and re-serialize a MIME type per mimesniff, returning `None` when the
+/// essence (`type/subtype`) is invalid.
+/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type
+fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
+    let input = trim_http_whitespace(input);
+    let slash = strings::index_of_char_usize(input, b'/')?;
+    let type_ = &input[..slash];
+    if !solely_http_tokens(type_) {
+        return None;
+    }
+
+    let mut pos = slash + 1;
+    let subtype_start = pos;
+    while pos < input.len() && input[pos] != b';' {
+        pos += 1;
+    }
+    let subtype = trim_trailing_http_whitespace(&input[subtype_start..pos]);
+    if !solely_http_tokens(subtype) {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(input.len());
+    out.extend(type_.iter().map(u8::to_ascii_lowercase));
+    out.push(b'/');
+    out.extend(subtype.iter().map(u8::to_ascii_lowercase));
+
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    while pos < input.len() {
+        pos += 1; // consume ';'
+        while pos < input.len() && is_http_whitespace(input[pos]) {
+            pos += 1;
+        }
+        let name_start = pos;
+        while pos < input.len() && input[pos] != b';' && input[pos] != b'=' {
+            pos += 1;
+        }
+        let name: Vec<u8> = input[name_start..pos]
+            .iter()
+            .map(u8::to_ascii_lowercase)
+            .collect();
+
+        if pos >= input.len() || input[pos] == b';' {
+            continue;
+        }
+        pos += 1; // consume '='
+
+        let value: Vec<u8> = if pos < input.len() && input[pos] == b'"' {
+            pos += 1;
+            let v = collect_quoted_string_value(input, &mut pos);
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            v
+        } else {
+            let value_start = pos;
+            while pos < input.len() && input[pos] != b';' {
+                pos += 1;
+            }
+            let v = trim_trailing_http_whitespace(&input[value_start..pos]);
+            if v.is_empty() {
+                continue;
+            }
+            v.to_vec()
+        };
+
+        if name.is_empty()
+            || !name.iter().all(|&c| is_http_token(c))
+            || !value.iter().all(|&c| is_http_quoted_string_token(c))
+            || seen.iter().any(|n| n == &name)
+        {
+            continue;
+        }
+
+        out.push(b';');
+        out.extend_from_slice(&name);
+        out.push(b'=');
+        if value.is_empty() || !value.iter().all(|&c| is_http_token(c)) {
+            out.push(b'"');
+            for &c in &value {
+                if c == b'"' || c == b'\\' {
+                    out.push(b'\\');
+                }
+                out.push(c);
+            }
+            out.push(b'"');
+        } else {
+            out.extend_from_slice(&value);
+        }
+        seen.push(name);
+    }
+
+    Some(out)
+}
+
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
@@ -199,6 +380,29 @@ impl<'a> DataURL<'a> {
         }
 
         Ok(percent_decoded.to_vec())
+    }
+
+    /// https://fetch.spec.whatwg.org/#data-url-processor, steps 12 to 14 on top
+    /// of [`DataURL::parse`] and [`DataURL::decode_data`].
+    ///
+    /// `input` is the URL serialized with exclude-fragment set (the caller ran
+    /// it through the WHATWG URL parser and stripped `#fragment`).
+    pub fn process_for_fetch(input: &[u8]) -> Option<FetchDataURL> {
+        let parsed = DataURL::parse(input).ok()??;
+        let body = parsed.decode_data().ok()?;
+
+        let mut mime_type = parsed.mime_type;
+        let mime_type_buf;
+        if mime_type.first() == Some(&b';') {
+            mime_type_buf = [b"text/plain".as_slice(), mime_type].concat();
+            mime_type = &mime_type_buf;
+        }
+
+        Some(FetchDataURL {
+            mime_type: serialize_mime_type(mime_type)
+                .unwrap_or_else(|| b"text/plain;charset=US-ASCII".to_vec()),
+            body,
+        })
     }
 
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL

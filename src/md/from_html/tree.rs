@@ -66,6 +66,20 @@ impl Open<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Ns {
+    Html,
+    /// SVG or MathML; which one never matters here.
+    Foreign,
+}
+
+/// Whether an inserted element becomes the current node.
+#[derive(Clone, Copy)]
+enum Then {
+    Push,
+    Leave,
+}
+
 /// Entry in the list of active formatting elements.
 #[derive(Clone, Copy)]
 enum Afe<'a> {
@@ -234,11 +248,22 @@ impl<'a> Builder<'a> {
         cur.append(node);
     }
 
-    fn insert(&mut self, name: &str, html: bool, attrs: &[Attr<'a>], push: bool) -> Ref<'a> {
+    /// Inserts an HTML element and makes it the current node.
+    fn open(&mut self, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
+        self.insert(name, Ns::Html, attrs, Then::Push)
+    }
+
+    /// Inserts an HTML element that takes no content (void, or ignored).
+    fn insert_leaf(&mut self, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
+        self.insert(name, Ns::Html, attrs, Then::Leave)
+    }
+
+    fn insert(&mut self, name: &str, ns: Ns, attrs: &[Attr<'a>], then: Then) -> Ref<'a> {
+        let html = matches!(ns, Ns::Html);
         let name = self.arena.alloc_str(name);
         let node = self.arena.new_element(name, html, attrs);
         self.insert_node(node);
-        if push {
+        if matches!(then, Then::Push) {
             self.stack.push(Open {
                 node,
                 tag: node.tag(),
@@ -647,7 +672,16 @@ impl<'a> Builder<'a> {
             }
             self.in_body = true;
             let attrs = self.take_attrs(el, tag, false);
-            let node = self.insert(name, false, &attrs, !self_closing);
+            let node = self.insert(
+                name,
+                Ns::Foreign,
+                &attrs,
+                if self_closing {
+                    Then::Leave
+                } else {
+                    Then::Push
+                },
+            );
             self.attr_buf = attrs;
             return (!self_closing).then_some(node);
         }
@@ -668,7 +702,7 @@ impl<'a> Builder<'a> {
             Tag::Html | Tag::Head | Tag::Body | Tag::Frameset | Tag::Frame => return None,
             Tag::Base | Tag::Basefont | Tag::Bgsound | Tag::Link | Tag::Meta => {
                 if self.in_body {
-                    self.insert(name, true, &[], false);
+                    self.insert_leaf(name, &[]);
                 }
                 return None;
             }
@@ -680,7 +714,7 @@ impl<'a> Builder<'a> {
             | Tag::Noframes => {
                 // Contents are dropped by the converter; the element still
                 // goes in so it separates the text either side.
-                return Some(self.insert(name, true, &[], true));
+                return Some(self.open(name, &[]));
             }
             _ => {}
         }
@@ -734,7 +768,7 @@ impl<'a> Builder<'a> {
             Tag::Plaintext => self.close_p(),
             Tag::Hr => {
                 self.close_p();
-                self.insert(name, true, &[], false);
+                self.insert_leaf(name, &[]);
                 return None;
             }
             Tag::Li => self.close_list_item(&[Tag::Li]),
@@ -781,7 +815,7 @@ impl<'a> Builder<'a> {
                     return None;
                 }
                 self.clear_to(&[Tag::Table, Tag::Colgroup]);
-                self.insert(name, true, &[], false);
+                self.insert_leaf(name, &[]);
                 return None;
             }
             Tag::Tr => {
@@ -796,7 +830,7 @@ impl<'a> Builder<'a> {
                 }
                 self.clear_to(&[Tag::Table, Tag::Tbody, Tag::Thead, Tag::Tfoot, Tag::Tr]);
                 if !self.current_is(Tag::Tr) {
-                    self.insert("tr", true, &[], true);
+                    self.open("tr", &[]);
                 }
             }
             Tag::A => {
@@ -836,7 +870,7 @@ impl<'a> Builder<'a> {
         let pushed = if is_formatting(tag) {
             if self.stack.len() + self.afe.len() < MAX_HANDLES {
                 self.reconstruct_formatting();
-                let node = self.insert(name, true, &attrs, true);
+                let node = self.open(name, &attrs);
                 self.push_formatting(node, tag);
                 Some(node)
             } else {
@@ -844,22 +878,31 @@ impl<'a> Builder<'a> {
             }
         } else if matches!(tag, Tag::Applet | Tag::Marquee | Tag::Object) {
             self.reconstruct_formatting();
-            let node = self.insert(name, true, &attrs, true);
+            let node = self.open(name, &attrs);
             self.afe.push(Afe::Marker);
             Some(node)
         } else if matches!(tag, Tag::Td | Tag::Th | Tag::Caption) {
-            let node = self.insert(name, true, &attrs, true);
+            let node = self.open(name, &attrs);
             self.afe.push(Afe::Marker);
             Some(node)
         } else if tag == Tag::Image {
             self.reconstruct_formatting();
-            self.insert("img", true, &attrs, false);
+            self.insert_leaf("img", &attrs);
             None
         } else {
             if reconstructs_formatting(tag) {
                 self.reconstruct_formatting();
             }
-            let node = self.insert(name, true, &attrs, !tag.is_void());
+            let node = self.insert(
+                name,
+                Ns::Html,
+                &attrs,
+                if tag.is_void() {
+                    Then::Leave
+                } else {
+                    Then::Push
+                },
+            );
             (!tag.is_void()).then_some(node)
         };
         self.attr_buf = attrs;
@@ -894,13 +937,13 @@ impl<'a> Builder<'a> {
             Tag::Html | Tag::Head | Tag::Body => {}
             Tag::Br => {
                 self.reconstruct_formatting();
-                self.insert("br", true, &[], false);
+                self.insert_leaf("br", &[]);
             }
             Tag::P => {
                 if !self.close_in_scope(&[Tag::P], &[Tag::Button]) {
                     // `</p>` with no open <p> makes an empty paragraph.
                     self.close_p();
-                    self.insert("p", true, &[], false);
+                    self.insert_leaf("p", &[]);
                 }
             }
             Tag::Li => {

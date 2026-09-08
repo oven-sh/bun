@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -232,14 +232,32 @@ impl PosixBufferedReader {
         }
     }
 
+    /// `KEEP_ALIVE` is the owner's intent. The poll counts toward keeping the
+    /// loop alive only while it is also armed: an armed poll is the one thing
+    /// that can still complete. `try_register_poll` applies the intent on every
+    /// arm and `park` drops it, so an `update_ref(true)` on a parked reader takes
+    /// effect at the next arm.
     pub fn update_ref(&mut self, value: bool) {
-        // Remember the ref state so a poll created later (lazy start) honours
-        // an unref() that preceded the first registration.
         self.flags.set(PosixFlags::KEEP_ALIVE, value);
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
-        poll.set_keeping_process_alive(self.vtable.event_loop(), value);
+        if !value {
+            poll.disable_keeping_process_alive(self.vtable.event_loop());
+        } else if poll.is_watching() {
+            poll.enable_keeping_process_alive(self.vtable.event_loop());
+        }
+    }
+
+    /// The read loop ended with the one-shot poll fired and not re-armed (the
+    /// streaming parent took no more data). Nothing completes until the parent
+    /// reads again, so stop keeping the loop alive until then.
+    fn park(&mut self) {
+        if let PollOrFd::Poll(poll) = &self.handle {
+            if !poll.is_watching() {
+                poll.disable_keeping_process_alive(self.vtable.event_loop());
+            }
+        }
     }
 
     #[inline]
@@ -529,9 +547,7 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -853,6 +869,8 @@ impl PosixBufferedReader {
                 return;
             }
             if streaming && !keep_going && !received_hup {
+                // SAFETY: caller contract; borrow ends at `;`.
+                unsafe { (*this).park() };
                 return;
             }
             if file_type != FileType::Pipe {

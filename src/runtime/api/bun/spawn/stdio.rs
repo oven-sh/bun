@@ -318,23 +318,24 @@ impl Stdio {
         matches!(self, Self::Fd(_))
     }
 
-    fn throw_unsupported(global: &JSGlobalObject, i: i32) -> jsc::JsError {
+    fn throw_unsupported(global: &JSGlobalObject, i: i32, is_sync: bool) -> jsc::JsError {
         match i {
             0 => global.throw_invalid_arguments(format_args!(
-                "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response, ReadableStream, or a TypedArray"
+                "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response,{} or a TypedArray",
+                if is_sync { "" } else { " ReadableStream," },
             )),
             1 | 2 => global.throw_invalid_arguments(format_args!(
                 "{} must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()",
                 if i == 1 { "stdout" } else { "stderr" },
             )),
             _ => global.throw_invalid_arguments(format_args!(
-                "stdio[{i}] must be one of 'pipe', 'inherit', 'ignore', 'socket-fd', null, a file descriptor, or Bun.file()"
+                "stdio[{i}] must be one of 'pipe', 'inherit', 'ignore',{} null, a file descriptor, or Bun.file()",
+                if is_sync { "" } else { " 'socket-fd'," },
             )),
         }
     }
 
-    /// The parent reads stdout/stderr, so a value that can only be read from
-    /// (a stream or a body) has nothing to connect to there.
+    /// Streams and bodies are sources; the parent is the reader of stdout/stderr.
     fn reject_as_output(global: &JSGlobalObject, i: i32, kind: &str) -> JsResult<()> {
         let name = match i {
             1 => "stdout",
@@ -459,7 +460,7 @@ impl Stdio {
             } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
-                return Err(Self::throw_unsupported(global, i));
+                return Err(Self::throw_unsupported(global, i, is_sync));
             }
             return Ok(());
         } else if value.is_number() {
@@ -574,7 +575,7 @@ impl Stdio {
             return Ok(());
         }
 
-        Err(Self::throw_unsupported(global, i))
+        Err(Self::throw_unsupported(global, i, is_sync))
     }
 
     pub(crate) fn extract_blob(

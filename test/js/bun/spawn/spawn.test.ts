@@ -1347,10 +1347,16 @@ it("names the stdio slot when the value is not a supported kind", () => {
   const stderr = "stderr must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
   const extra =
     "stdio[3] must be one of 'pipe', 'inherit', 'ignore', 'socket-fd', null, a file descriptor, or Bun.file()";
+  // spawnSync accepts neither a ReadableStream for stdin nor 'socket-fd', so it does not suggest them.
+  const stdinSync =
+    "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response, or a TypedArray";
+  const extraSync = "stdio[3] must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
   const cmd = [bunExe(), "-e", ""];
   for (const value of ["bogus", true, {}, new URL("file:///tmp/x"), new Proxy(Bun.file(import.meta.path), {})]) {
     // @ts-expect-error intentionally invalid
     expect(() => spawn({ cmd, env: bunEnv, stdin: value })).toThrow(stdin);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawnSync({ cmd, env: bunEnv, stdin: value })).toThrow(stdinSync);
     // @ts-expect-error intentionally invalid
     expect(() => spawn({ cmd, env: bunEnv, stdout: value })).toThrow(stdout);
     // @ts-expect-error intentionally invalid
@@ -1359,6 +1365,8 @@ it("names the stdio slot when the value is not a supported kind", () => {
     expect(() => spawn({ cmd, env: bunEnv, stdio: [value, "pipe", "pipe"] })).toThrow(stdin);
     // @ts-expect-error intentionally invalid
     expect(() => spawn({ cmd, env: bunEnv, stdio: ["ignore", "pipe", "pipe", value] })).toThrow(extra);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawnSync({ cmd, env: bunEnv, stdio: ["ignore", "pipe", "pipe", value] })).toThrow(extraSync);
   }
 });
 

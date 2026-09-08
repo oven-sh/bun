@@ -1243,7 +1243,8 @@ function foo() {}
 
       it("a long dotted name in a const initializer is walked without recursion", () => {
         // The visitor still rejects the nesting depth; the const pre-pass must not overflow the stack first.
-        const code = "declare const a: any;\nconst x = a" + Buffer.alloc(100_000, ".b").toString() + ";\nenum E { A = 1 }";
+        const code =
+          "declare const a: any;\nconst x = a" + Buffer.alloc(100_000, ".b").toString() + ";\nenum E { A = 1 }";
         expect(() => ts.parsed(code, false, false)).toThrow("Maximum call stack size exceeded");
       });
 

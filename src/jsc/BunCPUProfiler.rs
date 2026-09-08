@@ -30,8 +30,7 @@ impl ProfilerError {
     }
 }
 
-/// Creates the parent directory when the open fails for a missing or inaccessible one.
-/// Removes the file again when the write fails, so a full disk leaves no truncated profile.
+/// Creates a missing parent directory and retries; removes the file when the write fails.
 pub(crate) fn write_profile_file(path: &ZStr, data: &[u8]) -> Result<(), ProfilerError> {
     const FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
     let failed = |err: bun_sys::Error| ProfilerError::WriteFailed(err.with_path(path.as_bytes()));

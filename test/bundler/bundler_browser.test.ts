@@ -502,6 +502,67 @@ describe("bundler", () => {
       ],
     },
   });
+  itBundled("browser/EntryPointIsNodeBuiltinPolyfilledForBrowser", {
+    // "util" has a browser polyfill. The polyfill replaces an import of the
+    // builtin. It is not something to emit as the entry point itself.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {},
+    entryPointsRaw: ["util", "node:util"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": [
+        `Cannot use "util" as an entry point: it resolves to a builtin module`,
+        `Cannot use "node:util" as an entry point: it resolves to a builtin module`,
+      ],
+    },
+  });
+  // A bare entry point named like a builtin is retried as "./<name>" first, as
+  // it is under --target=bun (edgecase/EntryPointNamedLikeBuiltinIsALocalFile).
+  itBundled("browser/EntryPointNamedLikePolyfilledBuiltinIsALocalFile", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/util.ts": `console.log("local util");`,
+    },
+    entryPointsRaw: ["util"],
+    outfile: "/out.js",
+    target: "browser",
+    run: {
+      file: "/out.js",
+      stdout: "local util",
+    },
+  });
+  itBundled("browser/EntryPointNamedLikeStubbedBuiltinIsALocalFile", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/fs.ts": `console.log("local fs");`,
+    },
+    entryPointsRaw: ["fs"],
+    outfile: "/out.js",
+    target: "browser",
+    run: {
+      file: "/out.js",
+      stdout: "local fs",
+    },
+  });
+  // "fs/<subpath>" is stubbed like "fs" itself, so a shell-expanded `bun build fs/*.ts`
+  // from a source directory named "fs" hit the builtin error (the layout in #8009).
+  itBundled("browser/EntryPointInDirectoryNamedLikeStubbedBuiltin", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/fs/read.ts": `console.log("fs/read.ts");`,
+    },
+    entryPointsRaw: ["fs/read.ts"],
+    outfile: "/out.js",
+    target: "browser",
+    run: {
+      file: "/out.js",
+      stdout: "fs/read.ts",
+    },
+  });
 
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external

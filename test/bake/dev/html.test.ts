@@ -545,7 +545,7 @@ devTest("a page whose bundle went stale while it loaded reloads once its hmr soc
 
     // The page loads `value: 1`. Its HMR socket is parked in the proxy.
     const pageLoaded = dev.client(`http://localhost:${proxy.port}/`, { allowUnlimitedReloads: true });
-    await bundleServed.promise;
+    await Promise.race([bundleServed.promise, pageLoaded]);
     // The route is rebuilt. Its hot update reaches no page.
     await dev.write("value.ts", `export const value = 2;`);
     // Now the page's socket gets through, and the handshake tells it to reload.

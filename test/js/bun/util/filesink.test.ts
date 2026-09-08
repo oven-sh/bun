@@ -533,6 +533,64 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
+// A sink on a caller-owned fd never closes that fd. On Windows every file write
+// completes later, so the sink takes a keep-alive ref that only the writer's
+// close releases, and `end()` on a borrowed fd returned before it got there.
+describe.each([
+  [
+    "Bun.write(Bun.file(fd), new Response(stream))",
+    async (fd: number) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue("abc");
+          controller.enqueue("def");
+          controller.close();
+        },
+      });
+      expect(await Bun.write(Bun.file(fd), new Response(stream))).toBe(6);
+    },
+  ],
+  [
+    "Bun.file(fd).writer()",
+    async (fd: number) => {
+      const writer = Bun.file(fd).writer();
+      await writer.write("abcdef");
+      await writer.end();
+    },
+  ],
+])("%s on a borrowed fd", (_, write) => {
+  it("does not leak the native FileSink and leaves the fd open", async () => {
+    const dir = tmpdirSync();
+    async function once(i: number) {
+      const file = join(dir, `borrowed-${i}.txt`);
+      const fd = fs.openSync(file, "w+");
+      try {
+        await write(fd);
+        // Throws EBADF if the sink closed the caller's fd.
+        expect(fs.fstatSync(fd).size).toBe(6);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(file, "utf8")).toBe("abcdef");
+    }
+
+    await once(0);
+    Bun.gc(true);
+    const baseline = fileSinkInternals.liveCount();
+    const iterations = 8;
+    for (let i = 1; i <= iterations; i++) {
+      await once(i);
+    }
+    for (let i = 0; i < 50; i++) {
+      Bun.gc(true);
+      if (fileSinkInternals.liveCount() <= baseline) break;
+      await Bun.sleep(10);
+    }
+    // Unfixed, every iteration leaks one.
+    expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  });
+});
+
 // Now that __doClose runs finalize(), finalize() must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.

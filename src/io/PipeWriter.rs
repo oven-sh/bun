@@ -2524,7 +2524,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
+            // `close()` leaves a borrowed file fd open and still reports `on_close`;
+            // a borrowed pipe or tty handle would be `uv_close`d with the caller's HANDLE.
+            if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
+            {
                 return;
             }
             self.close();

@@ -3799,8 +3799,12 @@ where
             blob.size()
         };
 
-        let (content_type, needs_content_type, content_type_needs_free) =
-            get_content_type(response.get_init_headers_mut(), blob);
+        let headers_own_content_type = response.headers_own_content_type();
+        let (content_type, needs_content_type, content_type_needs_free) = get_content_type(
+            response.get_init_headers_mut(),
+            headers_own_content_type,
+            blob,
+        );
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -4788,7 +4792,15 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {
+/// `headers_own_content_type` is [`Response::headers_own_content_type`]: the
+/// header list is the only source of the Content-Type, so when it has none the
+/// handler removed it and none is sent. The returned `MimeType` still describes
+/// the body (for `autoset_filename`).
+fn get_content_type(
+    headers: Option<&mut FetchHeaders>,
+    headers_own_content_type: bool,
+    blob: &AnyBlob,
+) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
@@ -4807,6 +4819,9 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 );
                 drop(content_slice);
                 break 'brk mt;
+            }
+            if headers_own_content_type {
+                needs_content_type = false;
             }
         }
 

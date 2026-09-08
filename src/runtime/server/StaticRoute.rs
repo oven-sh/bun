@@ -214,18 +214,23 @@ impl StaticRoute {
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
-            if was_string {
-                let text_mime = bun_http_types::MimeType::TEXT;
-                response.get_or_create_headers(global_this)?.put_default(
-                    HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
+            if was_string && !response.headers_own_content_type() {
+                response.put_default_content_type(
                     global_this,
+                    bun_http_types::MimeType::TEXT.value.as_ref(),
                 )?;
             }
 
+            // See `Response::headers_own_content_type`: a Content-Type missing
+            // from such a header list was deleted by the user.
+            let body_content_type = if response.headers_own_content_type() {
+                None
+            } else {
+                any_blob_content_type(&blob)
+            };
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                 response.get_init_headers(),
-                any_blob_content_type(&blob),
+                body_content_type,
             );
 
             // Generate ETag if not already present

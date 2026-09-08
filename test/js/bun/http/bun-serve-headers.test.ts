@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -264,4 +265,213 @@ describe("response Connection: close closes the socket", () => {
       socket.destroy();
     }
   });
+});
+
+// The Response constructor and the `headers` getter copy a typed body's
+// Content-Type (URLSearchParams, FormData, a Blob with a `type`, Bun.file())
+// into the header list, so from then on the header list is the only source of
+// it, as in the Fetch spec. A handler that deletes it must get no Content-Type
+// on the wire; the server used to derive the body's type a second time at send.
+describe("Bun.serve does not re-derive a Content-Type the handler deleted", () => {
+  const jsFile = join(import.meta.dir, "bun-serve.fixture.js");
+  const typedBodies = {
+    URLSearchParams: {
+      make: () => new URLSearchParams("a=1"),
+      type: "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    FormData: {
+      make: () => {
+        const fd = new FormData();
+        fd.append("a", "1");
+        return fd;
+      },
+      // The boundary differs per body; `contentTypes()` normalizes it away.
+      type: "multipart/form-data",
+    },
+    "typed Blob": { make: () => new Blob(["hi"], { type: "text/x-blob" }), type: "text/x-blob" },
+    "Bun.file()": { make: () => Bun.file(jsFile), type: "text/javascript;charset=utf-8" },
+  } satisfies Record<string, { make: () => BodyInit; type: string }>;
+
+  const del = (r: Response) => {
+    r.headers.delete("content-type");
+    return r;
+  };
+  type Case = {
+    make: () => Response;
+    /** Content-Type values expected on the wire (empty: no such header). */
+    wire: string[];
+    /** `headers.get("content-type")` on the Response the handler returns. */
+    inProcess: string | null;
+    /** Also register the Response in `routes` (static / file route). */
+    static?: boolean;
+  };
+  const cases: Record<string, Case> = {};
+  for (const [name, body] of Object.entries(typedBodies)) {
+    // The fix: once deleted, it stays deleted.
+    cases[`${name}: body type deleted`] = {
+      make: () => del(new Response(body.make())),
+      wire: [],
+      inProcess: null,
+      static: true,
+    };
+    cases[`${name}: init content-type deleted`] = {
+      make: () => del(new Response(body.make(), { headers: { "Content-Type": "text/x-init" } })),
+      wire: [],
+      inProcess: null,
+      static: true,
+    };
+    // Controls that keep sending a Content-Type.
+    cases[`${name}: headers never touched`] = {
+      make: () => new Response(body.make()),
+      wire: [body.type],
+      inProcess: body.type,
+      static: true,
+    };
+    cases[`${name}: headers read`] = {
+      make: () => {
+        const r = new Response(body.make(), { headers: { "x-a": "b" } });
+        r.headers.get("x-a");
+        return r;
+      },
+      wire: [body.type],
+      inProcess: body.type,
+      static: true,
+    };
+    cases[`${name}: init content-type kept`] = {
+      make: () => new Response(body.make(), { headers: { "Content-Type": "text/x-init" } }),
+      wire: ["text/x-init"],
+      inProcess: "text/x-init",
+      static: true,
+    };
+    cases[`${name}: content-type replaced`] = {
+      make: () => {
+        const r = new Response(body.make());
+        r.headers.set("content-type", "text/x-set");
+        return r;
+      },
+      wire: ["text/x-set"],
+      inProcess: "text/x-set",
+      static: true,
+    };
+  }
+  Object.assign(cases, {
+    "string: init content-type deleted": {
+      make: () => del(new Response("hello", { headers: { "Content-Type": "text/x-init" } })),
+      wire: [],
+      inProcess: null,
+      static: true,
+    },
+    "Response.json(): content-type deleted": {
+      make: () => del(Response.json({ a: 1 })),
+      wire: [],
+      inProcess: null,
+      static: true,
+    },
+    "clone() of a Response whose content-type was deleted": {
+      make: () => del(new Response(new URLSearchParams("a=1"))).clone(),
+      wire: [],
+      inProcess: null,
+      static: true,
+    },
+    // The deleted-from Response only donates its (now empty) header list; the
+    // new Response pairs it with its own body, whose type goes in again.
+    "typed body with a content-type-deleted Response as init": {
+      make: () => new Response(new URLSearchParams("a=1"), del(new Response(new Blob(["x"], { type: "text/x-b" })))),
+      wire: [typedBodies.URLSearchParams.type],
+      inProcess: typedBodies.URLSearchParams.type,
+      static: true,
+    },
+    // Bodies whose type Bun never puts in the header list keep their defaults.
+    "string: other init headers": {
+      make: () => new Response("hello", { headers: { "x-a": "b" } }),
+      wire: ["text/plain;charset=utf-8"],
+      inProcess: null,
+      static: true,
+    },
+    "string: headers read": {
+      make: () => {
+        const r = new Response("hello");
+        r.headers.get("x-a");
+        return r;
+      },
+      wire: ["text/plain;charset=utf-8"],
+      inProcess: null,
+      static: true,
+    },
+    "Response.json()": {
+      make: () => Response.json({ a: 1 }, { headers: { "x-a": "b" } }),
+      wire: ["application/json;charset=utf-8"],
+      inProcess: "application/json;charset=utf-8",
+      static: true,
+    },
+    "Bun.file().stream() with init headers": {
+      make: () => new Response(Bun.file(jsFile).stream(), { headers: { "x-a": "b" } }),
+      wire: ["text/javascript;charset=utf-8"],
+      inProcess: null,
+    },
+  } satisfies Record<string, Case>);
+
+  let server: ReturnType<typeof Bun.serve>;
+  beforeAll(() => {
+    const routes: Record<string, Response> = {};
+    for (const [name, c] of Object.entries(cases)) {
+      if (c.static) routes["/static/" + encodeURIComponent(name)] = c.make();
+    }
+    server = Bun.serve({
+      port: 0,
+      development: false,
+      routes,
+      fetch(req) {
+        const name = decodeURIComponent(new URL(req.url).pathname.slice("/dynamic/".length));
+        return cases[name]?.make() ?? new Response("no such case", { status: 404 });
+      },
+    });
+  });
+  afterAll(() => server?.stop(true));
+
+  /** The Content-Type header values in the raw response to `method path`. */
+  async function contentTypes(method: string, path: string): Promise<string[]> {
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", chunk => (raw += chunk.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      expect(raw).toStartWith("HTTP/1.1 200 ");
+      return raw
+        .split("\r\n\r\n")[0]
+        .split("\r\n")
+        .filter(line => line.toLowerCase().startsWith("content-type:"))
+        .map(line => line.slice("content-type:".length).trim())
+        .map(value => (value.startsWith("multipart/form-data;") ? "multipart/form-data" : value));
+    } finally {
+      socket.destroy();
+    }
+  }
+  const inProcess = (r: Response) => {
+    const value = r.headers.get("content-type");
+    return value?.startsWith("multipart/form-data;") ? "multipart/form-data" : value;
+  };
+
+  for (const [name, c] of Object.entries(cases)) {
+    test(name, async () => {
+      const path = encodeURIComponent(name);
+      const expected: Record<string, unknown> = { inProcess: c.inProcess, "GET dynamic": c.wire };
+      const actual: Record<string, unknown> = {
+        inProcess: inProcess(c.make()),
+        "GET dynamic": await contentTypes("GET", "/dynamic/" + path),
+      };
+      if (c.static) {
+        expected["GET static"] = c.wire;
+        expected["HEAD static"] = c.wire;
+        actual["GET static"] = await contentTypes("GET", "/static/" + path);
+        actual["HEAD static"] = await contentTypes("HEAD", "/static/" + path);
+      }
+      expect(actual).toEqual(expected);
+    });
+  }
 });

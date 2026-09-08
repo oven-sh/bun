@@ -916,9 +916,9 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
-    /// The `bin` of a workspace or `file:` directory package changed (also counted in `update`).
-    /// Resolving the package again overwrites its lockfile entry in place, which hides the change
-    /// from `Lockfile::eql`, so `--frozen-lockfile` checks this flag.
+    /// The `bin` of a `file:` directory package changed (also counted in `update`). Resolving the
+    /// package again overwrites its lockfile entry in place, which hides the change from
+    /// `Lockfile::eql`, so `--frozen-lockfile` checks this flag.
     pub(crate) bins_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
@@ -1788,18 +1788,22 @@ impl Diff {
                     summary.script_only_updates += 1;
                 }
             }
+        }
 
-            if !Bin::eql(
+        // Not workspaces: `turbo prune` drops their `bin` from bun.lock and that output must keep
+        // passing `--frozen-lockfile` (test/cli/install/frozen-lockfile-pruned.test.ts).
+        if from.resolution.tag == ResolutionTag::Folder
+            && !Bin::eql(
                 &to.bin,
                 &from.bin,
                 to_lockfile.buffers.string_bytes.as_slice(),
                 to_lockfile.buffers.extern_strings.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.extern_strings.as_slice(),
-            ) {
-                summary.update += 1;
-                summary.bins_changed = true;
-            }
+            )
+        {
+            summary.update += 1;
+            summary.bins_changed = true;
         }
 
         Ok(summary)

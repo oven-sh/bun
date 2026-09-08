@@ -1425,7 +1425,7 @@ fn frozen_changed_section(
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
     } else if manager.summary.bins_changed {
-        Some("the \"bin\" field of a workspace or file: dependency")
+        Some("the \"bin\" field of a file: dependency")
     } else {
         None
     }

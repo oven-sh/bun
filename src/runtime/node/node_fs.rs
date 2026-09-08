@@ -412,8 +412,7 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. `clonefile` refuses an existing `dest`, so
-/// without `COPYFILE_EXCL` clone to a temporary name next to `dest` and rename over it.
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: clone to a temporary name, then rename over `dest`.
 #[cfg(target_os = "macos")]
 fn clonefile_force(
     src: &ZStr,

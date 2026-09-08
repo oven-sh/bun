@@ -1,9 +1,8 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. Feeds a payload that calls process.execve with
-// a nonexistent path: the real implementation prints an error and aborts the
-// process (SIGABRT) when exec fails, so the REPRL wrapper must stub it out
-// before running fuzzed scripts.
+// normal (non-fuzzilli) build. Each argv entry is fed to the loop as one exec
+// cycle, followed by EOF. Prints `STATUSES=<exit codes> LIVE=<bool>` and exits
+// 0 only if every payload got a status back and the last one still ran.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -12,10 +11,7 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 
-const payloads = [
-  Buffer.from(`process.execve("fuzzilli-reprl-execve-does-not-exist", []);`, "utf8"),
-  Buffer.from(`globalThis.stillAlive = true;`, "utf8"),
-];
+const payloads = [...process.argv.slice(2), `globalThis.stillAlive = true;`].map(p => Buffer.from(p, "utf8"));
 
 // Script the control-read pipe (fd 100): HELO handshake, then one exec cycle
 // per payload (each followed by the 8-byte length), then EOF.
@@ -31,11 +27,12 @@ let controlStream = Buffer.concat(controlChunks);
 // Data-read pipe (fd 102): the payload for each exec cycle.
 let dataStream = Buffer.concat(payloads);
 
-let statusWrites = 0;
+const statuses: number[] = [];
 
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
 const realWriteSync = fs.writeSync;
+const realExit = process.exit.bind(process);
 
 (fs as any).fstatSync = function (fd: any, ...rest: any[]) {
   if (fd === REPRL_CRFD) return {} as any;
@@ -61,7 +58,7 @@ const realWriteSync = fs.writeSync;
 (fs as any).writeSync = function (fd: any, buffer: any, ...rest: any[]) {
   if (fd === REPRL_CWFD) {
     if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
-      statusWrites++;
+      statuses.push(buffer.readUInt32LE(0) >> 8);
     }
     return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
   }
@@ -77,6 +74,6 @@ const reprlSource = fs.readFileSync(
 );
 (0, eval)(reprlSource);
 
-const liveAfterExecve = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterExecve}\n`);
-process.exit(statusWrites === 2 && liveAfterExecve ? 0 : 1);
+const live = (globalThis as any).stillAlive === true;
+realWriteSync.call(fs, 1, `STATUSES=${statuses.join(",")} LIVE=${live}\n`);
+realExit(statuses.length === payloads.length && live ? 0 : 1);

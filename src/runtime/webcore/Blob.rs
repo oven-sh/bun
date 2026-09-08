@@ -5959,42 +5959,33 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
 
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &RefPtr<Store>) {
+    // the file may not exist yet. That's okay.
+    let _ = stat_file_store(store);
+}
+
+/// Stat a file-backed store and record size, mode, seekability and mtime on
+/// it. The error carries the path or fd.
+pub(crate) fn stat_file_store(store: &RefPtr<Store>) -> bun_sys::Result<()> {
     // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
-    match &file.pathlike {
+    let stat = match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer)).map_err(|err| err.with_path(path.slice()))?
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
-    }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map_err(|err| err.with_fd(*fd))?,
+    };
+    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = stat.st_mode as bun_sys::Mode;
+    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+    file.last_modified = stat_to_js_mtime(&stat);
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

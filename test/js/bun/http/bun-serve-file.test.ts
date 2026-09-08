@@ -862,6 +862,39 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe(`fallback: ${server.url}will-be-deleted.txt`);
       expect(handler.mock.calls.length).toBe(previousCallCount + 1);
     });
+
+    it("a missing file returned from the fetch handler reaches error() for HEAD like for GET", async () => {
+      const missingPath = join(tempDir, "does-not-exist.txt");
+      const errors: { code?: string; path?: string }[] = [];
+      using handlerServer = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Bun.file(missingPath)),
+        error(err) {
+          errors.push({ code: err.code, path: (err as ErrnoException).path });
+          return new Response("from error()", { status: 404, headers: { "X-From": "error" } });
+        },
+      });
+      const results: unknown[] = [];
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(handlerServer.url, { method });
+        results.push({
+          method,
+          status: res.status,
+          from: res.headers.get("X-From"),
+          contentLength: res.headers.get("Content-Length"),
+          body: await res.text(),
+        });
+      }
+      // HEAD used to skip the failed stat and answer 200 with content-length: 0.
+      expect(results).toEqual([
+        { method: "GET", status: 404, from: "error", contentLength: "12", body: "from error()" },
+        { method: "HEAD", status: 404, from: "error", contentLength: "12", body: "" },
+      ]);
+      expect(errors).toEqual([
+        { code: "ENOENT", path: missingPath },
+        { code: "ENOENT", path: missingPath },
+      ]);
+    });
   });
 
   describe.concurrent("Content-Type detection", () => {

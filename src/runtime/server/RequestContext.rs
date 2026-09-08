@@ -2658,6 +2658,18 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
+                // GET opens the file and reports a failure through `error()`;
+                // stat here so HEAD does the same instead of answering 200
+                // with `content-length: 0`.
+                if blob.needs_to_read_file() {
+                    let stat = crate::webcore::blob::stat_file_store(
+                        blob.store.get().as_ref().expect("file blob has a store"),
+                    );
+                    if let Err(err) = stat {
+                        this.run_error_handler(err.to_js(global_this));
+                        return;
+                    }
+                }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written

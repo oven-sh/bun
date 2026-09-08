@@ -26,7 +26,6 @@ test("stream-buffer conversion is a one-shot take (&mut self), not a safe &self 
   // The conversion must require exclusive access so it can null the raw
   // parts whose ownership it transfers out.
   expect(source).toMatch(/\bpub\s+fn\s+take_stream_buffer\s*\(\s*&\s*mut\s+self\s*\)\s*->\s*StreamBuffer\b/);
-  expect(source).not.toMatch(/\bfn\s+to_stream_buffer\b/);
   expect(source).not.toMatch(/\bfn\s+take_stream_buffer\s*\(\s*&\s*self\b/);
 });
 

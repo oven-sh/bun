@@ -6728,11 +6728,19 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
+/// 1-based line of the innermost frame whose source is `preferredSourceURL` (the test file), so
+/// that a `test()` call made through a helper in another module reports the line in the test
+/// file. Falls back to the innermost frame that is not a builtin when no frame is in that file.
+CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, const BunString* preferredSourceURL)
 {
     auto& vm = JSC::getVM(globalObject);
+    String preferred = preferredSourceURL->toWTFString(BunString::ZeroCopy);
     JSC::LineColumn lineColumn;
     String sourceURL;
+    bool found = false;
+    JSC::LineColumn fallbackLineColumn;
+    String fallbackSourceURL;
+    bool haveFallback = false;
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
@@ -6742,13 +6750,26 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
             String currentSourceURL = Zig::sourceURL(visitor);
 
             if (!currentSourceURL.startsWith("builtin://"_s) && !currentSourceURL.startsWith("node:"_s)) {
-                lineColumn = visitor->computeLineAndColumn();
-                sourceURL = currentSourceURL;
-                return WTF::IterationStatus::Done;
+                if (preferred.isEmpty() || currentSourceURL == preferred) {
+                    lineColumn = visitor->computeLineAndColumn();
+                    sourceURL = currentSourceURL;
+                    found = true;
+                    return WTF::IterationStatus::Done;
+                }
+                if (!haveFallback) {
+                    fallbackLineColumn = visitor->computeLineAndColumn();
+                    fallbackSourceURL = currentSourceURL;
+                    haveFallback = true;
+                }
             }
         }
         return WTF::IterationStatus::Continue;
     });
+
+    if (!found) {
+        lineColumn = fallbackLineColumn;
+        sourceURL = fallbackSourceURL;
+    }
 
     if (!sourceURL.isEmpty() && lineColumn.line > 0) {
         Bun::OwnedZigStackFrames remappedFrames(1);

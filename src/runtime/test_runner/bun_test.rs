@@ -217,11 +217,12 @@ pub mod js_fns {
                             tag_name
                         )));
                     }
+                    let line_no = crate::test_runner::jest::capture_test_line_number(call_frame, global_this, bun_test.file_id);
                     let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
-                        BaseScopeCfg::default(),
+                        BaseScopeCfg { line_no, ..Default::default() },
                         AddedInPhase::Collection,
                     )?;
                     Ok(JSValue::UNDEFINED)
@@ -1674,7 +1675,8 @@ pub struct BaseScope {
     pub(crate) has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub(crate) test_id_for_debugger: i32,
-    /// only available if using junit reporter, otherwise 0
+    /// 1-based line of the `test()` / `describe()` / hook call in the test file;
+    /// 0 unless the JUnit reporter or GitHub Actions annotations need it
     pub(crate) line_no: u32,
 }
 impl BaseScope {

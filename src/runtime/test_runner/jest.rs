@@ -829,17 +829,27 @@ pub(crate) fn format_label(
     Ok(list.into_boxed_slice())
 }
 
-pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
+/// The line in test file `file_id` of the `test()` / `describe()` / hook call
+/// on the stack of `callframe`, for the reporters that print it: JUnit and
+/// the GitHub Actions annotation. 0 when neither is on.
+pub(crate) fn capture_test_line_number(
+    callframe: &CallFrame,
+    global_this: &JSGlobalObject,
+    file_id: FileId,
+) -> u32 {
     if let Some(runner) = Jest::runner() {
-        if runner.test_options.reporters.junit {
-            unsafe extern "C" {
-                fn Bun__CallFrame__getLineNumber(
-                    callframe: *const CallFrame,
-                    global: *const JSGlobalObject,
-                ) -> u32;
-            }
-            // SAFETY: callframe and global_this are valid live references.
-            return unsafe { Bun__CallFrame__getLineNumber(callframe, global_this) };
+        if runner.test_options.reporters.junit || Output::is_github_action() {
+            let file = bun_core::String::borrow_utf8(
+                runner.files.items_source()[file_id as usize].path.text,
+            );
+            // SAFETY: live references for the duration of the call; C++ only reads them.
+            return unsafe {
+                bun_jsc::cpp::Bun__CallFrame__getLineNumber(
+                    core::ptr::from_ref(callframe).cast_mut(),
+                    core::ptr::from_ref(global_this).cast_mut(),
+                    &file,
+                )
+            };
         }
     }
     0

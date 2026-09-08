@@ -985,6 +985,7 @@ impl CommandLineReporter {
         status: bun_test::Execution::Result,
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
+        file: &[u8],
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
@@ -1048,20 +1049,10 @@ impl CommandLineReporter {
                     );
                     Output::flush();
                 }
-                bun_test::Execution::Result::FailBecauseTimeout
-                | bun_test::Execution::Result::FailBecauseHookTimeout
-                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
-                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
-                    if Output::is_github_action() {
-                        Output::print_error(format_args!(
-                            "::error title=error: Test \"{}\" timed out after {}ms::\n",
-                            bun_fmt::github_action_property(display_label),
-                            test_entry.timeout
-                        ));
-                        Output::flush();
-                    }
-                }
                 _ => {}
+            }
+            if Output::is_github_action() && status.basic_result() == bun_test::BasicResult::Fail {
+                Self::print_github_annotation(status, sequence, test_entry, scopes, file);
             }
 
             if Output::enable_ansi_colors_stderr() {
@@ -1175,6 +1166,13 @@ impl CommandLineReporter {
                         test_entry.timeout
                     );
                 }
+                R::FailBecauseHookTimeout if test_entry.base.name.is_none() => {
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>a beforeAll/afterAll hook timed out.<r>\n"
+                    );
+                }
                 R::FailBecauseHookTimeout => {
                     let _ = bun_core::write_pretty!(
                         writer,
@@ -1194,10 +1192,170 @@ impl CommandLineReporter {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                        "  <d>^<r> <red>a {} hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n",
+                        if test_entry.base.name.is_none() {
+                            "beforeAll/afterAll"
+                        } else {
+                            "beforeEach/afterEach"
+                        }
                     );
                 }
             }
+        }
+    }
+
+    /// GitHub Actions `::error` command for a test that failed without a thrown
+    /// error, anchored at the `test()` call. A thrown error gets its annotation
+    /// where it is printed (`VirtualMachine::print_github_annotation`), so each
+    /// failed test ends up with one.
+    #[cold]
+    fn print_github_annotation(
+        status: bun_test::Execution::Result,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
+        scopes: &[*const bun_test::DescribeScope],
+        file: &[u8],
+    ) {
+        use bun_test::Execution::Result as R;
+        let kind = match status {
+            R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => return,
+            R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {
+                "AssertionError"
+            }
+            R::FailBecauseTimeout
+            | R::FailBecauseTimeoutWithDoneCallback
+            | R::FailBecauseHookTimeout
+            | R::FailBecauseHookTimeoutWithDoneCallback
+            | R::FailBecauseFailingTestPassed
+            | R::FailBecauseTodoPassed => "error",
+        };
+
+        // `outer describe > inner describe > test name`, as the status line prints it.
+        let mut name: Vec<u8> = Vec::new();
+        for &scope in scopes.iter().rev() {
+            // SAFETY: describe scopes outlive the file's test run.
+            let scope_name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+            if !scope_name.is_empty() {
+                name.extend_from_slice(scope_name);
+                name.extend_from_slice(b" > ");
+            }
+        }
+        // A beforeAll/afterAll hook runs in a sequence of its own, so on timeout the
+        // reported entry is the unnamed hook; a beforeEach/afterEach timeout reports its test.
+        let all_hook = test_entry.base.name.is_none()
+            && matches!(
+                status,
+                R::FailBecauseHookTimeout | R::FailBecauseHookTimeoutWithDoneCallback
+            );
+        let describe_path_len = name.len().saturating_sub(b" > ".len());
+        name.extend_from_slice(test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"));
+        let name: &bstr::BStr = if all_hook {
+            bstr::BStr::new(&name[..describe_path_len])
+        } else {
+            bstr::BStr::new(&name)
+        };
+
+        let mut message: Vec<u8> = Vec::new();
+        let _ = match status {
+            R::FailBecauseTimeout => write!(
+                message,
+                "Test \"{}\" timed out after {}ms",
+                name, test_entry.timeout
+            ),
+            R::FailBecauseTimeoutWithDoneCallback => write!(
+                message,
+                "Test \"{}\" timed out after {}ms, before its done callback was called",
+                name, test_entry.timeout
+            ),
+            R::FailBecauseHookTimeout | R::FailBecauseHookTimeoutWithDoneCallback if all_hook => {
+                let _ = message.write_all(b"A beforeAll/afterAll hook");
+                if !name.is_empty() {
+                    let _ = write!(message, " in \"{}\"", name);
+                }
+                message.write_all(if status == R::FailBecauseHookTimeout {
+                    b" timed out"
+                } else {
+                    b" timed out before its done callback was called"
+                })
+            }
+            R::FailBecauseHookTimeout => write!(
+                message,
+                "A beforeEach/afterEach hook timed out for test \"{}\"",
+                name
+            ),
+            R::FailBecauseHookTimeoutWithDoneCallback => write!(
+                message,
+                "A beforeEach/afterEach hook for test \"{}\" timed out before its done callback was called",
+                name
+            ),
+            R::FailBecauseFailingTestPassed => write!(
+                message,
+                "Test \"{}\" is marked as failing but it passed",
+                name
+            ),
+            R::FailBecauseTodoPassed => {
+                write!(message, "Test \"{}\" is marked as todo but it passed", name)
+            }
+            R::FailBecauseExpectedAssertionCount => {
+                let expected = match sequence.expect_assertions {
+                    bun_test::ExpectAssertions::Exact(n) => n,
+                    _ => 0,
+                };
+                write!(
+                    message,
+                    "expected {} assertion{}, but test \"{}\" ended with {} assertion{}",
+                    expected,
+                    if expected == 1 { "" } else { "s" },
+                    name,
+                    sequence.expect_call_count,
+                    if sequence.expect_call_count == 1 {
+                        ""
+                    } else {
+                        "s"
+                    },
+                )
+            }
+            R::FailBecauseExpectedHasAssertions => write!(
+                message,
+                "expected at least one assertion, but test \"{}\" ended with 0 assertions",
+                name
+            ),
+            R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {
+                unreachable!()
+            }
+        };
+
+        let dir = env_var::GITHUB_WORKSPACE
+            .get()
+            .unwrap_or_else(|| FileSystem::instance().top_level_dir);
+        Output::flush();
+        let writer = Output::error_writer();
+        let _ = write!(
+            writer,
+            "\n::error file={},",
+            bun_fmt::github_action_property(jsc::ZigStackFrame::relative_source_url(dir, file))
+        );
+        if test_entry.base.line_no > 0 {
+            let _ = write!(writer, "line={},", test_entry.base.line_no);
+        }
+        let _ = write!(
+            writer,
+            "title={}: {}::\n",
+            kind,
+            bun_fmt::github_action_property(&message)
+        );
+        Output::flush();
+    }
+
+    /// Absolute path of the file whose tests `buntest` runs.
+    fn test_file_path(buntest: &bun_test::BunTest) -> &'static [u8] {
+        match jest::Jest::runner() {
+            Some(runner) => {
+                runner.files.items_source()[buntest.file_id as usize]
+                    .path
+                    .text
+            }
+            None => b"",
         }
     }
 
@@ -1213,14 +1371,7 @@ impl CommandLineReporter {
         elapsed_ns: u64,
         failure: Option<TestFailure>,
     ) -> TestCaseReport<'a> {
-        let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.items_source()[buntest.file_id as usize]
-                .path
-                .text
-        } else {
-            b""
-        };
-        let file = junit_file_name(file);
+        let file = junit_file_name(Self::test_file_path(buntest));
 
         // Innermost first while walking up; reversed below.
         let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
@@ -1329,11 +1480,14 @@ impl CommandLineReporter {
                     bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => true,
                     bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
                 };
+                let file = Self::test_file_path(buntest);
                 if dim {
-                    Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
+                    Self::print_test_line::<true>(
+                        result, sequence, test_entry, file, elapsed_ns, writer,
+                    );
                 } else {
                     Self::print_test_line::<false>(
-                        result, sequence, test_entry, elapsed_ns, writer,
+                        result, sequence, test_entry, file, elapsed_ns, writer,
                     );
                 }
             }

@@ -705,19 +705,143 @@ describe("bun test", () => {
       expect(annotation).toContain("%0A      at odd%0Aname (");
     });
     test("should annotate a test timeout", () => {
-      const stderr = runTest({
-        input: `
+      const cwd = createTest(
+        `
           import { test } from "bun:test";
           test("time out", async () => {
             await Bun.sleep(1000);
           }, { timeout: 1 });
         `,
+        "timeout.test.ts",
+      );
+      const stderr = runTest({
+        cwd,
         env: {
           FORCE_COLOR: "1",
           GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: cwd,
         },
       });
-      expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toEqual([
+        `::error file=timeout.test.ts,line=3,title=error: Test "time out" timed out after 1ms::`,
+      ]);
+    });
+    test("should annotate failures that have no thrown error at the test() call", () => {
+      const cwd = createTest(
+        [
+          /* 1 */ `import { describe, expect, test } from "bun:test";`,
+          /* 2 */ `describe("group", () => {`,
+          /* 3 */ `  test.failing("failing that passes", () => {});`,
+          /* 4 */ `  test("assertion count", () => { expect.assertions(2); expect(1).toBe(1); });`,
+          /* 5 */ `  test("has assertions", () => { expect.hasAssertions(); });`,
+          /* 6 */ `  test.todo("todo that passes", () => {});`,
+          /* 7 */ `});`,
+          /* 8 */ `test("plain throw", () => { throw new Error("plain"); });`,
+        ].join("\n"),
+        "reasons.test.ts",
+      );
+      const stderr = runTest({
+        cwd,
+        args: ["--todo"],
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: cwd,
+        },
+        expectExitCode: 1,
+      });
+      // One annotation per failed test. The thrown error keeps the annotation that
+      // the error printer emits (with a column and the stack); the others are
+      // anchored at the line of the test() call.
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations.slice(0, 4)).toEqual([
+        `::error file=reasons.test.ts,line=3,title=error: Test "group > failing that passes" is marked as failing but it passed::`,
+        `::error file=reasons.test.ts,line=4,title=AssertionError: expected 2 assertions%2C but test "group > assertion count" ended with 1 assertion::`,
+        `::error file=reasons.test.ts,line=5,title=AssertionError: expected at least one assertion%2C but test "group > has assertions" ended with 0 assertions::`,
+        `::error file=reasons.test.ts,line=6,title=error: Test "group > todo that passes" is marked as todo but it passed::`,
+      ]);
+      expect(annotations).toHaveLength(5);
+      expect(annotations[4]).toMatch(/^::error file=reasons\.test\.ts,line=8,col=\d+,title=error: plain::%0A {6}at /);
+      expect(stderr).toMatch(/\n 0 pass\n 5 fail\n/);
+    });
+    test("should anchor the annotation at the test file when test() or a hook is called through another module", () => {
+      const cwd = createTest([
+        {
+          filename: "define.ts",
+          contents: [
+            /* 1 */ `import { beforeAll, test } from "bun:test";`,
+            /* 2 */ `export function defineSlowTest(name: string) {`,
+            /* 3 */ `  test(name, () => Bun.sleep(1000), { timeout: 1 });`,
+            /* 4 */ `}`,
+            /* 5 */ `export function defineSlowBeforeAll() {`,
+            /* 6 */ `  beforeAll(() => Bun.sleep(1000), 1);`,
+            /* 7 */ `}`,
+          ].join("\n"),
+        },
+        {
+          filename: "wrapped.test.ts",
+          contents: [
+            /* 1 */ `import { describe, test } from "bun:test";`,
+            /* 2 */ `import { defineSlowBeforeAll, defineSlowTest } from "./define";`,
+            /* 3 */ `defineSlowTest("wrapped");`,
+            /* 4 */ `describe("group", () => {`,
+            /* 5 */ `  defineSlowBeforeAll();`,
+            /* 6 */ `  test("after the hook", () => {});`,
+            /* 7 */ `});`,
+          ].join("\n"),
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: cwd,
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toEqual([
+        `::error file=wrapped.test.ts,line=3,title=error: Test "wrapped" timed out after 1ms::`,
+        `::error file=wrapped.test.ts,line=5,title=error: A beforeAll/afterAll hook in "group" timed out::`,
+      ]);
+      expect(stderr).toContain("a beforeAll/afterAll hook timed out.");
+    });
+    test("should anchor the annotation at the test file when the error is thrown inside node_modules", () => {
+      const cwd = createTest([
+        {
+          filename: join("node_modules", "dep", "package.json"),
+          contents: JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
+        },
+        {
+          filename: join("node_modules", "dep", "index.js"),
+          contents: `exports.boom = message => { throw new Error(message); };\n`,
+        },
+        {
+          filename: "caller.test.ts",
+          contents: [
+            /* 1 */ `import { test } from "bun:test";`,
+            /* 2 */ `import { boom } from "dep";`,
+            /* 3 */ `test("dep throws", () => {`,
+            /* 4 */ `  boom("from dep");`,
+            /* 5 */ `});`,
+          ].join("\n"),
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: cwd,
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(1);
+      expect(annotations[0]).toMatch(/^::error file=caller\.test\.ts,line=4,col=\d+,title=error: from dep::%0A {6}at /);
+      // The stack in the annotation body is unchanged: the dependency frame is still on top.
+      const frames = annotations[0].split("%0A      at ").slice(1);
+      expect(frames[0]).toContain(join("node_modules", "dep", "index.js") + ":1:");
+      expect(frames[1]).toContain("caller.test.ts:4:");
     });
     test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
       // Longer than a path buffer on every platform (98302 bytes on Windows).

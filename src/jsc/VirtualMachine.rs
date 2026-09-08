@@ -6731,7 +6731,20 @@ impl VirtualMachine {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
-        let top_frame = frames.first();
+        // GitHub places the annotation only on a file in the checkout, so anchor it
+        // at the first located frame outside node_modules (as jest-message-util's
+        // `getTopFrame` does) and fall back to the top frame.
+        let top_frame = frames
+            .iter()
+            .find(|frame| {
+                let source_url = frame.source_url.to_utf8();
+                let source_url = source_url.slice();
+                !frame.position.is_invalid()
+                    && !source_url.is_empty()
+                    && !bun_core::strings::contains(source_url, b"/node_modules/")
+                    && !bun_core::strings::contains(source_url, b"\\node_modules\\")
+            })
+            .or(frames.first());
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
         bun_core::Output::flush();

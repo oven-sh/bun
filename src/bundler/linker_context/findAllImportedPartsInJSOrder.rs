@@ -385,7 +385,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     }
 
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
-                        && self.c.graph.ast.items_css()[source_index as usize].is_none()
+                        && (self.c.graph.ast.items_css()[source_index as usize].is_none()
+                            || self.c.is_css_module_script(source_index))
                     {
                         // when code splitting, include the file in the chunk if ALL of the entry points overlap
                         self.entry_bits

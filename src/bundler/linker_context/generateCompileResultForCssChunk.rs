@@ -53,6 +53,99 @@ pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPool
     unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
+/// Prints the CSS of every CSS module script (see
+/// [`LinkerContext::css_module_scripts`]) into the string literal of its JS
+/// stub. Each file is rendered as a CSS chunk of its own would be: `@import`ed
+/// files are inlined in order and `url()` assets print as unique-key
+/// placeholders, which the JS chunk later replaces with output paths.
+pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<(), crate::Error> {
+    let entries: Vec<(u32, bun_ast::StoreRef<bun_ast::E::EString>)> = c
+        .css_module_scripts
+        .iter()
+        .filter_map(|(&source_index, string)| string.map(|string| (source_index, string)))
+        .collect();
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    // SAFETY: `c` is the `linker` field of the live `BundleV2` that drives this
+    // link step; `Worker::get` only needs `&BundleV2`.
+    let bundle = unsafe { &*LinkerContext::bundle_v2_ptr(std::ptr::from_mut(c)) };
+    let mut worker = scopeguard::guard(Worker::get(bundle), |w| w.unget());
+    let separator: &[u8] = if c.options.minify_whitespace {
+        b""
+    } else {
+        b"\n"
+    };
+
+    for (source_index, mut string) in entries {
+        let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(
+            c,
+            worker.arena(),
+            &[Index::init(source_index)],
+        );
+        let count = order.len() as usize;
+        let mut chunk = Chunk {
+            content: Content::Css(crate::chunk::CssChunk {
+                imports_in_chunk_in_order: order,
+                asts: (0..count).map(|_| BundlerStyleSheet::empty()).collect(),
+            }),
+            ..Default::default()
+        };
+        crate::linker_context::prepare_css_asts_for_chunk::prepare_css_asts_for_chunk_impl(
+            c,
+            &mut chunk,
+            worker.arena(),
+        );
+
+        let mut css: Vec<u8> = Vec::new();
+        for i in 0..count {
+            match generate_compile_result_for_css_chunk_impl(&mut worker, c, &chunk, i as u32) {
+                CompileResult::Css {
+                    result: Ok(code), ..
+                } => {
+                    let code = bun_core::strings::trim(&code, b" \n\r\t");
+                    if code.is_empty() {
+                        continue;
+                    }
+                    if !css.is_empty() {
+                        css.extend_from_slice(separator);
+                    }
+                    css.extend_from_slice(code);
+                }
+                CompileResult::Css {
+                    result: Err(err),
+                    source_index: failed_source_index,
+                    ..
+                } => {
+                    let source = if failed_source_index != Index::INVALID.get() {
+                        Some(c.get_source(failed_source_index))
+                    } else {
+                        None
+                    };
+                    c.log_mut().add_error(
+                        source,
+                        bun_ast::Loc::EMPTY,
+                        std::borrow::Cow::Owned(
+                            format!("Failed to generate CSS for this file ({})", err.name())
+                                .into_bytes(),
+                        ),
+                    );
+                    return Err(crate::Error::PrintError);
+                }
+                _ => unreachable!("CSS chunk produced a non-CSS compile result"),
+            }
+        }
+
+        // The text must outlive the JS printer, so it lives in the linker arena.
+        let text: &[u8] = c.arena().alloc_slice_copy(&css);
+        *string = bun_ast::E::EString::init(text);
+        string.prefer_template = !c.options.minify_whitespace;
+    }
+
+    Ok(())
+}
+
 fn generate_compile_result_for_css_chunk_impl(
     worker: &mut Worker,
     c: &LinkerContext,

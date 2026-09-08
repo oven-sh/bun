@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_ast::ImportRecord;
+use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_collections::VecExt;
 
 use crate::{Index, LinkerContext};
@@ -78,6 +78,13 @@ pub(crate) fn find_imported_css_files_in_js_order(
                 if record.source_index.is_valid()
                     && !visited.is_set(record.source_index.get() as usize)
                 {
+                    // A CSS module script reaches JS as a `CSSStyleSheet` object,
+                    // not as part of this chunk's stylesheet.
+                    if record.flags.contains(ImportRecordFlags::CSS_MODULE_SCRIPT)
+                        && this.is_css_module_script(record.source_index.get())
+                    {
+                        continue;
+                    }
                     stack.push(Frame::Enter(record.source_index));
                 }
             }

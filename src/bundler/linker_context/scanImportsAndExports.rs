@@ -115,6 +115,7 @@ pub(crate) fn scan_imports_and_exports(
     // Element is a *mutable* nullable
     // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
     let css_asts: *mut [CssCol] = ast.css;
+    let ast_targets: *mut [bun_ast::Target] = ast.target;
 
     let input_files: *mut [Source] = input.source;
     let loaders: *mut [Loader] = input.loader;
@@ -224,6 +225,32 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                // `import sheet from "./x.css" with { type: "css" }` from browser
+                // code is a CSS module script: `x.css` becomes a constructed
+                // `CSSStyleSheet` (see `LinkerContext::css_module_scripts`).
+                // Other targets have no `CSSStyleSheet` (and `bun run` evaluates
+                // this import to `{}`), so they keep the plain CSS import. The
+                // dev server rejects these imports while resolving them.
+                if record.flags.contains(ImportRecordFlags::CSS_MODULE_SCRIPT)
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && output_format != Format::InternalBakeDev
+                    && col_ref!(ast_targets)[id] == bun_ast::Target::Browser
+                    && let Some(other_css) = col_ref!(css_asts)[other_file].as_deref()
+                {
+                    if other_css.local_scope.count() > 0 {
+                        this.log_disjoint().add_range_error_fmt(
+                            Some(&col_ref!(input_files)[id]),
+                            record.range,
+                            format_args!(
+                                "A CSS module (\"{}\") cannot be imported with {{ type: \"css\" }}. Rename it to not end in \".module.css\", or remove the import attribute to get its class names.",
+                                bstr::BStr::new(col_ref!(input_files)[other_file].path.pretty),
+                            ),
+                        );
+                    } else {
+                        this.css_module_scripts.put(other_file as u32, None)?;
+                    }
+                }
 
                 // Union, per importee, of the export names its importers can
                 // observe: named static imports contribute their aliases, a

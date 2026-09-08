@@ -139,6 +139,14 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
+    /// CSS files that browser code imports with `with { type: "css" }` (CSS
+    /// module scripts), by source index. Their JS stub exports a constructed
+    /// `CSSStyleSheet` instead of `{}`, the importing chunk's CSS leaves them
+    /// out, and chunk assignment treats them as JS files. The value is the
+    /// string literal argument of the stub's `__cssModule()` call:
+    /// `generate_code_for_lazy_export` creates it empty and
+    /// `generate_chunks_in_parallel` fills in the printed CSS.
+    pub(crate) css_module_scripts: ArrayHashMap<u32, Option<bun_ast::StoreRef<E::EString>>>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -178,6 +186,7 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
+            css_module_scripts: ArrayHashMap::new(),
         }
     }
 }
@@ -523,6 +532,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.css_module_scripts.clear_retaining_capacity();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -2877,7 +2887,11 @@ impl<'a> LinkerContext<'a> {
                         ctx.queue.push_back((record.source_index.get(), out_dist));
                     }
                 }
-                continue;
+                // Except the JS stub of a CSS module script, whose export part
+                // depends on the runtime's `__cssModule`.
+                if !self.is_css_module_script(source_index) {
+                    continue;
+                }
             }
 
             // A dead part prints nothing, so only live parts reach other files.
@@ -3089,7 +3103,12 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            return;
+            // The JS stub of a CSS module script is a module of its own: as an
+            // `import()` target or inside a CommonJS wrapper its parts are live
+            // like those of any other lazy-export file.
+            if !self.is_css_module_script(source_index) {
+                return;
+            }
         }
 
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
@@ -3318,6 +3337,12 @@ impl<'a> LinkerContext<'a> {
     #[inline]
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         self.graph.runtime_function(name)
+    }
+
+    /// See [`LinkerContext::css_module_scripts`].
+    #[inline]
+    pub(crate) fn is_css_module_script(&self, source_index: u32) -> bool {
+        self.css_module_scripts.count() > 0 && self.css_module_scripts.contains(&source_index)
     }
 
     /// Returns the part indices within file `id` that declare the

@@ -342,6 +342,14 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
+// `import sheet from "./x.css" with { type: "css" }` (a CSS module script):
+// the default export is a constructed stylesheet with the bundled CSS text.
+export var __cssModule = css => {
+  var sheet = new CSSStyleSheet();
+  sheet.replaceSync(css);
+  return sheet;
+};
+
 export var __promiseAll = args => Promise.all(args);
 
 // React Compiler memo-cache slot sentinels.

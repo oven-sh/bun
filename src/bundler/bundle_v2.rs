@@ -6689,6 +6689,28 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
+                        // A production build turns this into a constructed
+                        // `CSSStyleSheet`. The dev server serves CSS as hot-reloaded
+                        // `<link>` tags outside of the module graph, which cannot
+                        // represent that yet.
+                        if import_record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT)
+                            && bake_graph == bake_types::Graph::Client
+                        {
+                            let log =
+                                self.log_for_resolution_failures(source.path.text, bake_graph);
+                            log.add_range_error_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "The dev server does not support CSS module scripts (import attribute type: \"css\") yet. Use \"bun build\", or remove the attribute to apply \"{}\" to the page.",
+                                    bstr::BStr::new(import_record.path.text),
+                                ),
+                            );
+                            continue 'outer;
+                        }
+
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
                             && (import_record.loader.is_none()
                                 || import_record.loader.unwrap() == Loader::Html)

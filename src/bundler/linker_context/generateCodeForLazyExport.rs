@@ -364,6 +364,43 @@ pub(crate) fn generate_code_for_lazy_export(
         }
     }
 
+    // A CSS module script exports `__cssModule("<css>")`, a constructed
+    // `CSSStyleSheet`. The CSS text is only known once chunks are generated, so
+    // the string literal starts empty and `LinkerContext::css_module_scripts`
+    // remembers it.
+    let css_module_script = maybe_css_ast.is_some() && this.is_css_module_script(source_index);
+    if css_module_script {
+        let stmt: Stmt = part.stmts[0];
+        let StmtData::SLazyExport(mut slot) = stmt.data else {
+            panic!("Internal error: expected top-level lazy export statement");
+        };
+        let css_text = Expr::init(E::EString::init(b""), stmt.loc);
+        let ExprData::EString(css_text_string) = css_text.data else {
+            unreachable!();
+        };
+        *this
+            .css_module_scripts
+            .get_ptr_mut(&source_index)
+            .expect("checked by is_css_module_script") = Some(css_text_string);
+        let call = Expr::init(
+            E::Call {
+                target: Expr::init(
+                    E::Identifier {
+                        ref_: this.runtime_function(b"__cssModule"),
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ),
+                args: bun_ast::ExprNodeList::from_slice(&[css_text]),
+                can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                ..Default::default()
+            },
+            stmt.loc,
+        );
+        // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
+        *slot = call.data;
+    }
+
     let stmt: Stmt = part.stmts[0];
     let StmtData::SLazyExport(lazy) = stmt.data else {
         panic!("Internal error: expected top-level lazy export statement");
@@ -378,6 +415,13 @@ pub(crate) fn generate_code_for_lazy_export(
     let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
+    let runtime_function_called: Option<&[u8]> = if calls_runtime_require {
+        Some(b"__require")
+    } else if css_module_script {
+        Some(b"__cssModule")
+    } else {
+        None
+    };
 
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
@@ -401,11 +445,11 @@ pub(crate) fn generate_code_for_lazy_export(
                 Index::init(source_index),
             )?;
 
-            if calls_runtime_require {
+            if let Some(name) = runtime_function_called {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
                     Index::part(1u32),
-                    b"__require",
+                    name,
                     1,
                 )?;
             }
@@ -509,11 +553,11 @@ pub(crate) fn generate_code_for_lazy_export(
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
 
-                if calls_runtime_require {
+                if let Some(name) = runtime_function_called {
                     this.graph.generate_runtime_symbol_import_and_use(
                         source_index,
                         Index::part(generated.1),
-                        b"__require",
+                        name,
                         1,
                     )?;
                 }

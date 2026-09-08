@@ -106,6 +106,11 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// Written with the `with { type: "css" }` import attribute: a CSS module
+        /// script, whose default export is a constructed `CSSStyleSheet` rather
+        /// than a stylesheet applied to the document.
+        const CSS_MODULE_SCRIPT = 1 << 19;
     }
 }
 

@@ -1468,7 +1468,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(loader) = state.import_loader {
-                self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
+                let record = &mut self.import_records.items_mut()[import_record_index as usize];
+                record.loader = Some(loader);
+                if loader == options::Loader::Css {
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT);
+                }
             }
 
             self.import_records.items_mut()[import_record_index as usize]
@@ -4564,10 +4570,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut S::Import,
     ) -> Result<(), crate::Error> {
         if let Some(loader) = path.loader {
-            self.import_records.items_mut()[stmt.import_record_index as usize].loader =
-                Some(loader);
+            let record = &mut self.import_records.items_mut()[stmt.import_record_index as usize];
+            record.loader = Some(loader);
 
-            if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
+            if loader == options::Loader::Css {
+                record
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT);
+            } else if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded
+            {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.

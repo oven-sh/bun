@@ -7,6 +7,7 @@
 #include <wtf/text/StringToIntegerConversion.h>
 #include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/MathCommon.h>
 #include "HTTPParsers.h"
 namespace WebCore {
 
@@ -49,6 +50,22 @@ ExceptionOr<Ref<Cookie>> Cookie::create(const String& name, const String& value,
         return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
     }
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
+}
+
+// RFC 6265 section 5.2.2: Max-Age is ["-"]1*DIGIT. Any other value ("1.5", "+5", "5s")
+// makes a user agent ignore the attribute. A value too large to represent is clamped,
+// not ignored, so clamp to the largest integer a JS number holds exactly.
+static std::optional<double> parseMaxAge(StringView attributeValue)
+{
+    bool isNegative = attributeValue.startsWith('-');
+    auto digits = isNegative ? attributeValue.substring(1) : attributeValue;
+    if (digits.isEmpty() || !digits.containsOnly<isASCIIDigit>())
+        return std::nullopt;
+
+    double magnitude = 0;
+    for (auto digit : digits.codeUnits())
+        magnitude = std::min(magnitude * 10 + (digit - '0'), JSC::maxSafeInteger());
+    return isNegative ? -magnitude : magnitude;
 }
 
 ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
@@ -103,6 +120,9 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                 attributeValue = emptyString();
             }
 
+            if (attributeValue.length() > maxAttributeValueLength)
+                continue;
+
             // RFC 6265 5.2: each attribute is recorded independently, last occurrence wins.
             // Max-Age's precedence over Expires (5.3) governs the computed expiry time, so it
             // must not drop the Expires attribute, and must not depend on attribute order.
@@ -128,9 +148,8 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                     }
                 }
             } else if (attributeName == "max-age"_s) {
-                if (auto parsed = WTF::parseIntegerAllowingTrailingJunk<int64_t>(attributeValue); parsed.has_value()) {
-                    maxAge = static_cast<double>(parsed.value());
-                }
+                if (auto parsed = parseMaxAge(attributeValue))
+                    maxAge = *parsed;
             } else if (attributeName == "secure"_s) {
                 secure = true;
             } else if (attributeName == "httponly"_s) {

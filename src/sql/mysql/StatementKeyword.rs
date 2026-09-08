@@ -1,19 +1,12 @@
-//! MySQL replies carry no command tag (PostgreSQL sends `CommandComplete`
-//! with `INSERT 0 3`, `UPDATE 2`, ...), so `result.command` is derived from
-//! the query text: the leading keyword of the statement that produced the
-//! result.
+//! MySQL replies carry no command tag, so `result.command` is the leading
+//! keyword of the statement in the query text.
 
 use core::ops::Range;
 
-/// Walks the `;`-separated statements of a query, one per result, and yields
-/// the leading keyword of each. Whitespace, comments and opening parentheses
-/// before a keyword are skipped, `/*! ... */` counts as code, and quoted
-/// strings, quoted identifiers and comments do not split statements. The text
-/// of a statement is only scanned when the result after it arrives, so a
-/// single-statement query costs a look at its first word.
-///
-/// Not modelled: `ANSI_QUOTES` (a `"` identifier is scanned like a string)
-/// and `DELIMITER`, which the server does not understand either.
+/// Yields the leading keyword of each `;`-separated statement, one per
+/// result, skipping comments (but not `/*! ... */`) and ignoring `;` inside
+/// quotes and comments. A statement's text is scanned only when the next
+/// result arrives. `ANSI_QUOTES` is not modelled.
 #[derive(Clone, Copy, Default)]
 pub struct KeywordCursor {
     /// Just past the keyword last returned, inside that statement.
@@ -23,14 +16,9 @@ pub struct KeywordCursor {
 }
 
 impl KeywordCursor {
-    /// Advances to the next statement and returns the range of its leading
-    /// keyword in `sql` (empty when it has none). When no statement is left (a
-    /// `CALL` produces one result per result set plus one), the previous
-    /// keyword is returned again. `backslash_escapes` is false when the
-    /// session runs with `NO_BACKSLASH_ESCAPES`.
-    ///
-    /// Generic over the code unit so it runs on both Latin-1 and UTF-16
-    /// strings without transcoding.
+    /// Range of the next statement's leading keyword in `sql` (Latin-1 or
+    /// UTF-16 units), empty when it has none. Past the last statement (a
+    /// `CALL` yields several results) the previous keyword is returned again.
     pub fn next<T: Copy + Into<u32>>(
         &mut self,
         sql: &[T],
@@ -73,8 +61,8 @@ fn is_digit(c: u32) -> bool {
     c >= u32::from(b'0') && c <= u32::from(b'9')
 }
 
-/// Length of the `/*!`, `/*!50701` or MariaDB `/*M!100504` prefix at `pos`
-/// that opens an executable comment, whose content the server runs as SQL.
+/// Length of a `/*!`, `/*!50701` or `/*M!100504` opener at `pos`: the server
+/// runs what follows as SQL.
 fn executable_comment_prefix<T: Copy + Into<u32>>(sql: &[T], pos: usize) -> Option<usize> {
     if at(sql, pos) != u32::from(b'/') || at(sql, pos + 1) != u32::from(b'*') {
         return None;
@@ -93,8 +81,7 @@ fn executable_comment_prefix<T: Copy + Into<u32>>(sql: &[T], pos: usize) -> Opti
     Some(end - pos)
 }
 
-/// Skips whitespace, comments, executable comment openers and `(` starting
-/// at `pos`.
+/// Skips whitespace, comments, executable-comment openers and `(`.
 fn skip_to_keyword<T: Copy + Into<u32>>(sql: &[T], mut pos: usize) -> usize {
     while pos < sql.len() {
         let c = at(sql, pos);
@@ -114,9 +101,7 @@ fn skip_to_keyword<T: Copy + Into<u32>>(sql: &[T], mut pos: usize) -> usize {
     pos
 }
 
-/// When a comment starts at `pos`, returns the position just past it. `-- `
-/// needs whitespace or a control character after it (`1--1` is arithmetic),
-/// and `/*!` is not a comment.
+/// End of the comment starting at `pos`, if one does (`1--1` is arithmetic).
 fn comment_end<T: Copy + Into<u32>>(sql: &[T], pos: usize) -> Option<usize> {
     let c = at(sql, pos);
     if c == u32::from(b'#')

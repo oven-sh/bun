@@ -32,17 +32,14 @@ pub struct MySQLQuery {
     /// one ref).
     statement: Option<RefPtr<MySQLStatement>>,
     query: BunString,
-    /// Position in `query` of the statement whose result arrives next; its
-    /// leading keyword becomes `result.command`.
+    /// Where in `query` the next result's statement starts.
     command: KeywordCursor,
 
     status: Status,
     flags: Flags,
 }
 
-/// Statements common enough that `result.command` reaches JS as an index into
-/// this table (exposed to JS as `commands` on the binding) instead of a string
-/// allocated per query.
+/// `result.command` values passed to JS by index (the binding's `commands`).
 pub(crate) const COMMON_KEYWORDS: [&[u8]; 16] = [
     b"SELECT",
     b"INSERT",
@@ -62,9 +59,7 @@ pub(crate) const COMMON_KEYWORDS: [&[u8]; 16] = [
     b"USE",
 ];
 
-/// Upper-cases an ASCII keyword into what JS receives as the command: an
-/// index into `COMMON_KEYWORDS`, a string otherwise, `null` when there is no
-/// keyword.
+/// An index into `COMMON_KEYWORDS`, else the upper-cased keyword, else null.
 fn keyword_to_js<T: Copy + Into<u32>>(global: &JSGlobalObject, keyword: &[T]) -> JsResult<JSValue> {
     if keyword.is_empty() {
         return Ok(JSValue::NULL);
@@ -456,8 +451,7 @@ impl MySQLQuery {
         }
     }
 
-    /// Advances to the statement whose result arrives next and returns the
-    /// range of its leading keyword in the query text.
+    /// Range in `query` of the leading keyword of the next result's statement.
     pub(crate) fn advance_command(&mut self, backslash_escapes: bool) -> Range<usize> {
         if self.query.is_utf16() {
             self.command.next(self.query.utf16(), backslash_escapes)
@@ -466,8 +460,7 @@ impl MySQLQuery {
         }
     }
 
-    /// `result.command` for a keyword range from `advance_command` (see
-    /// `keyword_to_js`).
+    /// `result.command` for a range from `advance_command`.
     pub(crate) fn command_to_js(
         &self,
         global: &JSGlobalObject,

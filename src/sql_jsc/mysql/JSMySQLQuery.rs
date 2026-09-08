@@ -220,8 +220,7 @@ impl JSMySQLQuery {
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
         let global = self.global_object();
-        // Computed before `result()` marks the query as answered, so that a
-        // failure here can still reject it.
+        // Before `result()`, so a throw here can still reject the query.
         let keyword = self
             .query
             .with_mut(|q| q.advance_command(result.backslash_escapes));

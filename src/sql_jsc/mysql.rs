@@ -7,8 +7,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         b"MySQLConnection",
         crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
     );
-    // The strings behind the `result.command` indexes that
-    // `MySQLQuery::command_to_js` hands to JS.
+    // `result.command` strings, see `MySQLQuery::command_to_js`.
     binding.put(
         global_object,
         b"commands",

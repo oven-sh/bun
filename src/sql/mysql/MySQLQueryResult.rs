@@ -1,6 +1,5 @@
 pub struct MySQLQueryResult {
-    /// Rows returned for a result set; rows affected for a reply with no
-    /// result set (the OK packet of an INSERT, UPDATE, DELETE or DDL).
+    /// Rows of a result set, or rows affected when there was none.
     pub count: u64,
     pub last_insert_id: u64,
     pub affected_rows: u64,

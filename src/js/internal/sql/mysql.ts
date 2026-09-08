@@ -33,9 +33,7 @@ initMySQL(
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
-    // MySQL replies carry no command tag; the native side derives this from
-    // the leading keyword of the statement, as an index into `commands` for
-    // the common ones.
+    // The statement's leading keyword; an index into `commands` when common.
     result.command = typeof command === "number" ? commands[command] : command;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;

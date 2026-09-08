@@ -1433,10 +1433,8 @@ impl MySQLConnection {
         }
 
         // Short-lived borrow via the audited accessor; dropped before the
-        // re-entrant `on_query_result` call below. HEADER_RECEIVED means a
-        // result set preceded this OK/EOF, so `count` is its row count;
-        // otherwise the OK packet answers a statement with no result set and
-        // `count` is the rows it affected, matching PostgreSQL's command tag.
+        // re-entrant `on_query_result` call below. Without a result set
+        // (no HEADER_RECEIVED) the OK packet's affected rows are the count.
         let count = request.get_statement().map_or(affected_rows, |s| {
             if s.execution_flags
                 .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED)

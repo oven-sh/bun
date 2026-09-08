@@ -57,8 +57,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
-/// Version 30: Top-level `this` in an ES module is `undefined`, not `null` (#32167),
-/// and `module_type` participates in the features hash.
+/// Version 30: ESM top-level `this` is `undefined`, not `null`; `module_type` is in the features hash.
 const EXPECTED_VERSION: u32 = 30;
 
 /// Source files smaller than this are not written to / read from the on-disk

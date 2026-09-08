@@ -3404,8 +3404,9 @@ fn normalize_specifier_for_resolution<'a>(
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
     // In a `data:` URL everything after the comma is the payload; a `?` is
-    // part of the data, not a query string.
-    if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
+    // part of the data, not a query string. The scheme is case-insensitive;
+    // the resolver folds it to lowercase.
+    if bun_core::strings::has_prefix_case_insensitive(specifier_, b"data:") {
         return specifier_;
     }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
@@ -4642,7 +4643,9 @@ impl VirtualMachine {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
-        if IS_A_FILE_PATH && specifier.length() > MAX_LEN && !specifier.starts_with_ascii(b"data:")
+        if IS_A_FILE_PATH
+            && specifier.length() > MAX_LEN
+            && !specifier.starts_with_ascii_case_insensitive(b"data:")
         {
             let specifier_utf8 = specifier.to_utf8();
             let source_utf8 = source.to_utf8();

@@ -132,9 +132,8 @@ struct WorkerVmInit {
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
-/// Build the loader for a worker that was given its environment: `pairs` is
-/// `[key, value, key, value, ...]` in the order the worker's `process.env`
-/// should enumerate.
+/// The loader for a worker given its environment as `[key, value, ...]` pairs,
+/// in `process.env` enumeration order.
 fn worker_env_loader(
     parent: &bun_dotenv::Loader,
     pairs: &[BunString],
@@ -299,10 +298,8 @@ impl WebWorker {
     /// and spawn the thread. On any failure returns null with `error_message`
     /// set and nothing to clean up.
     ///
-    /// `env_ptr` holds `env_pairs_len` key/value pairs, interleaved. With
-    /// `has_env` they become the worker's whole environment (`options.env`, or
-    /// the parent's current `process.env`); without it the worker starts from
-    /// a clone of the parent's env loader.
+    /// With `has_env`, the `env_pairs_len` interleaved key/value pairs at `env_ptr`
+    /// are the worker's whole environment; otherwise the parent's loader is cloned.
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
@@ -397,13 +394,10 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
-        // The worker's env loader is what its `process.env`, `fetch()` proxy
-        // resolution, TLS defaults and `Bun.spawn` inheritance read. With an
-        // explicit environment it holds exactly those entries; otherwise it
-        // starts as a copy of the parent's now (as in Node). In the copy case
-        // proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage: snapshot slots + map under its lock so
-        // every slice copied is backed by a ref the snapshot holds.
+        // The worker's env loader (what its `process.env`, fetch() and Bun.spawn
+        // read): exactly the given environment, or a copy of the parent's now (as
+        // in Node), taken under the parent's proxy-env lock so every
+        // RefCountedEnvValue slice in the copy is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
         let env_loader = if has_env {
             // SAFETY: caller passed `2 * env_pairs_len` valid strings (or `(null,0)`);

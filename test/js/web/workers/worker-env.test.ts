@@ -69,6 +69,46 @@ describe.concurrent("worker env", () => {
     });
   });
 
+  test("a nested worker started without env from a worker with env inherits exactly that env", async () => {
+    using dir = tempDir("worker-env-nested", {
+      "main.mjs": `
+        const outer = new Worker(new URL("./outer.mjs", import.meta.url).href, {
+          env: { ONLY_IN_OUTER: "outer" },
+        });
+        outer.onmessage = e => {
+          console.log(JSON.stringify(e.data));
+          outer.terminate();
+        };
+        outer.onerror = e => { console.error(e.message); process.exit(1); };
+      `,
+      // Starts the inner worker before anything reads process.env here.
+      "outer.mjs": `
+        const inner = new Worker(new URL("./inner.mjs", import.meta.url).href, { type: "module" });
+        inner.onmessage = e => postMessage(e.data);
+        inner.onerror = e => { throw e.error ?? new Error(e.message); };
+      `,
+      "inner.mjs": `
+        postMessage({
+          keys: Object.keys(process.env).filter(k => k === "ONLY_IN_OUTER" || k === "SET_AT_LAUNCH"),
+          only: process.env.ONLY_IN_OUTER,
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...cleanEnv, SET_AT_LAUNCH: "launch" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout ? JSON.parse(stdout) : stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      result: { keys: ["ONLY_IN_OUTER"], only: "outer" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("NODE_TLS_REJECT_UNAUTHORIZED in the worker's env applies to the worker's fetch()", async () => {
     using dir = tempDir("worker-env-tls", {
       "cert.pem": tls.cert,

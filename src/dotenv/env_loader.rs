@@ -595,10 +595,8 @@ impl Loader {
         }
     }
 
-    /// A `Worker`'s loader: a copy of the map. Whatever this loader already read
-    /// (the process environment, `.env` files, explicit `--env-file` entries) counts
-    /// as loaded in the copy too, so the worker thread neither reads a pipe twice
-    /// nor overlays the copied map with `environ` again.
+    /// A `Worker`'s copy: the map plus what was already loaded, so the worker thread
+    /// does not read `environ`, `.env` files or an `--env-file` pipe a second time.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,
@@ -611,10 +609,8 @@ impl Loader {
         })
     }
 
-    /// A `Worker`'s loader when `new Worker(url, { env })` gave it an environment:
-    /// an empty map for the caller to fill with exactly those entries. The process
-    /// environment and every `.env` source count as loaded, so
-    /// `Transpiler::configure_defines` on the worker thread overlays nothing.
+    /// An empty loader for a `Worker` given `{ env }`: the caller fills the map, and
+    /// every env source counts as loaded so nothing overlays it later.
     pub fn for_worker_env(&self, capacity: usize) -> Result<Loader, AllocError> {
         let mut map = Map::init();
         map.ensure_unused_capacity(capacity)?;

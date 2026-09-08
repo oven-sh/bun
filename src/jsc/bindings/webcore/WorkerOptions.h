@@ -34,10 +34,8 @@ struct WorkerOptions {
     // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
-    // The worker's whole initial environment (`options.env`, or a snapshot of the
-    // parent's `process.env`), in enumeration order. Consumed on the parent thread
-    // by WebWorker__create, which seeds the worker VM's env loader from it. nullopt
-    // means the worker clones the parent's env loader instead.
+    // The worker's whole initial environment in enumeration order, consumed on the parent
+    // thread by WebWorker__create. If nullopt, the worker clones the parent's env loader.
     std::optional<Vector<std::pair<String, String>>> env;
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread

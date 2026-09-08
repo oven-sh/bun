@@ -571,14 +571,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
             auto& options = worker.options();
 
-            // An explicit `options.env` (or the parent's process.env snapshot) was
-            // already seeded into this worker VM's env loader by WebWorker__create,
-            // so process.env is built lazily from it by createEnvironmentVariablesMap,
-            // exactly as on the main thread.
+            // options.env already seeded this VM's env loader (WebWorker__create); process.env
+            // is built lazily from it by createEnvironmentVariablesMap, as on the main thread.
             if (options.sharedEnvStore) {
-                // worker_threads SHARE_ENV: join the env tree the spawning thread
-                // resolved. Consumed here, and published on the context before the
-                // view, which resolves its store through the context.
+                // worker_threads SHARE_ENV: join the env tree the spawning thread resolved.
+                // Published on the context before the view, which resolves its store through it.
                 RefPtr<Bun::SharedEnvStore> store = std::exchange(options.sharedEnvStore, nullptr);
                 globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
                 globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());

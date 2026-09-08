@@ -143,8 +143,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
-    // [key, value, key, value, ...]; WebWorker__create copies the bytes into the
-    // worker's env loader, so the strings only need to live across the call.
+    // [key, value, ...]; WebWorker__create copies the bytes, so these only live across the call.
     Vector<BunString> envPairs;
     bool hasEnv = m_options.env.has_value();
     if (hasEnv) {

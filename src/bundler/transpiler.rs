@@ -583,11 +583,7 @@ impl<'a> Transpiler<'a> {
         self.configure_defines_with_process_env(None)
     }
 
-    /// [`Self::configure_defines`], but with `process_env` given, the
-    /// `process.env.*` defines (for `env.behavior` `load_all` / `prefix`) and
-    /// `NODE_ENV` / `BUN_ENV` are read from that map instead of the env loader,
-    /// which holds the environment the process started with. `Bun.build`
-    /// passes the caller's live `process.env`.
+    /// [`Self::configure_defines`], with env defines and `NODE_ENV` read from `process_env` when given.
     pub fn configure_defines_with_process_env(
         &mut self,
         process_env: Option<&dot_env::Map>,

@@ -55,10 +55,7 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. The value bytes are copied there
-    // too: the source map may be a `process.env` snapshot that the caller frees
-    // after the build is configured, or the VM's env map, whose entries a
-    // `process.env` write can replace mid-build.
+    // instead of leaking a `Box` per env var. The value is copied there too.
     let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
@@ -73,8 +70,7 @@ fn env_string_store_put(
     Ok(())
 }
 
-/// Copies `process.env.*` entries from `env` into `to_string` according to
-/// `behavior` (all of them, or only those starting with `prefix`).
+/// One `process.env.<KEY>` define per `env` entry (`Prefix`: only keys starting with `prefix`).
 pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Map,
     to_string: &mut UserDefinesArray,

@@ -952,10 +952,7 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__generateHeapSnapshot(self)
     }
 
-    /// The object `process.env` (and `Bun.env`) resolves to, created on first
-    /// use. Its own enumerable properties are the live environment as JS sees
-    /// it, unlike `VirtualMachine::env_loader`, which is the environment the
-    /// process started with.
+    /// The live `process.env` / `Bun.env` object (the env loader only has the startup environment).
     pub fn process_env(&self) -> JsResult<JSValue> {
         crate::cpp::Bun__Process__getEnvObject(self)
     }

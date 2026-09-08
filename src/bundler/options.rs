@@ -1604,9 +1604,7 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
-    /// `env_map` is the environment `process.env.*` defines are inlined from
-    /// (for `env.behavior` `load_all` / `prefix`), and `node_env` the value of
-    /// `BUN_ENV` / `NODE_ENV` in it, if any.
+    /// `env_map`: what `process.env.*` defines inline from; `node_env`: its `BUN_ENV` / `NODE_ENV`.
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,

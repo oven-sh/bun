@@ -104,10 +104,7 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    /// Copy the own enumerable entries of `process.env` as it is now. The VM's
-    /// env loader map is not the same thing: it is the environment the process
-    /// started with, so a key the script deleted is still in it and a key the
-    /// script set is not.
+    /// Own enumerable entries of the live `process.env`; the env loader map only has the startup environment.
     fn process_env_snapshot(global_this: &JSGlobalObject) -> JsResult<bun_dotenv::Map> {
         let mut map = bun_dotenv::Map::init();
         let Some(process_env) = global_this.process_env()?.get_object() else {
@@ -184,10 +181,7 @@ pub mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
-        /// `process.env` as it was when `Bun.build` was called, taken for
-        /// `env: "inline"` and `env: "PREFIX_*"`. Those inline these values (and
-        /// read `NODE_ENV` / `BUN_ENV` from them), not the environment the
-        /// process started with.
+        /// Live `process.env` at `Bun.build()` time, for `env: "inline"` / `"PREFIX_*"` to inline from.
         pub(crate) process_env: Option<bun_dotenv::Map>,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.

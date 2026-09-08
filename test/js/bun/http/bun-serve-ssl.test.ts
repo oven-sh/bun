@@ -217,13 +217,9 @@ describe("Bun.serve tls material given both inline and as a *File path", () => {
       ca: "-----BEGIN CERTIFICATE-----\nZ2FyYmFnZQ==\n-----END CERTIFICATE-----\n",
       caFile: ca5File,
     };
-    expect(() => Bun.serve({ port: 0, tls, fetch: () => new Response("ok") })).toThrow(
-      "Failed to create HTTP server",
-    );
+    expect(() => Bun.serve({ port: 0, tls, fetch: () => new Response("ok") })).toThrow("Failed to create HTTP server");
     // Bun.listen names the SSL context error.
-    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } })).toThrow(
-      /^Invalid CA$/,
-    );
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } })).toThrow(/^Invalid CA$/);
   });
 
   test("cert + certFile and key + keyFile throw instead of serving one of them", () => {

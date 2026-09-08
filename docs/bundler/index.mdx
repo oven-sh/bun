@@ -763,7 +763,7 @@ Specifies the type of sourcemap to generate.
 
 The associated `*.js.map` sourcemap is a JSON file containing an equivalent `debugId` property.
 
-The generated sourcemap maps to the files the bundler read. If an input file is itself generated code with its own `//# sourceMappingURL` comment (inline or a `.map` file next to it), that input sourcemap is not read, so the output map points at the generated file rather than at its original source.
+The generated sourcemap maps to the files the bundler read. When an input file is itself generated code with its own `//# sourceMappingURL` comment (inline, or a `.map` file next to it), Bun does not read that input sourcemap. The output map then points at the generated file, not at its original source.
 
 ### minify
 

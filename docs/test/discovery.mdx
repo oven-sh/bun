@@ -75,7 +75,7 @@ For this test, `bun test` matches the pattern against the string "Math operation
 
 ### When Nothing Matches
 
-If no test file is found, or a filter or `--test-name-pattern` matches nothing, `bun test` reports it and exits with code 1. Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
+When `bun test` finds no test file, or a filter or `--test-name-pattern` matches nothing, it reports that and exits with code 1. Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
 
 ```bash terminal icon="terminal"
 bun test --pass-with-no-tests

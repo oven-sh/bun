@@ -123,11 +123,12 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--no-bundle" type="boolean">
-  Transpile only — do not bundle. Each entry point is transpiled on its own and its imports are left as written.
+  Transpile only — do not bundle. Bun transpiles each entry point on its own and leaves its imports as written.
   Transpiler options (`--define`, `--env`, `--drop`, `--loader`, the `--jsx-*` flags, `--minify`, `--tsconfig-override`)
-  and output options (`--outdir`, `--outfile`, `--root`, `--entry-naming`, `--watch`) apply. Options that describe a
-  bundle (`--splitting`, `--external`, `--packages`, `--banner`, `--footer`, `--metafile`, `--metafile-md`,
-  `--bytecode`) are accepted but have no effect in this mode. `--compile` cannot be combined with `--no-bundle`
+  and output options (`--outdir`, `--outfile`, `--root`, `--entry-naming`) apply. Bun accepts options that describe a
+  bundle (`--splitting`, `--external`, `--packages`, `--format`, `--banner`, `--footer`, `--sourcemap`, `--metafile`,
+  `--metafile-md`, `--bytecode`) but ignores them in this mode. `--watch` runs the first build and then keeps the
+  process alive without rebuilding. Bun rejects `--compile` together with `--no-bundle`
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">
@@ -168,7 +169,7 @@ bun build <entry points>
 ### Development Features
 
 <ParamField path="--watch" type="boolean">
-  Rebuild automatically when files change
+  Rebuild automatically when files change. Applies to bundles; see `--no-bundle` for the transpile-only case
 </ParamField>
 
 <ParamField path="--no-clear-screen" type="boolean">

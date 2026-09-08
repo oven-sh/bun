@@ -399,9 +399,7 @@ impl BuildCommand {
             }
         }
 
-        // For the bundler, `--outfile dir/app.js` is `--outdir dir` with the
-        // entry chunk (and so its .map) named after the file. `--compile` and
-        // `--no-bundle` keep the output in memory and write `outfile` below.
+        // Bundle `--outfile dir/app.js` as `--outdir dir` with the entry named `app.js`.
         if ctx.bundler_options.outdir.is_empty()
             && !outfile.is_empty()
             && !ctx.bundler_options.compile
@@ -790,9 +788,7 @@ impl BuildCommand {
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
-            // `--compile` and `--no-bundle` keep the `--outfile` output in memory
-            // until here. It goes into the outfile's directory.
-            // https://github.com/oven-sh/bun/issues/8697
+            // `--compile` and `--no-bundle` output for `--outfile` is still in memory here (#8697).
             if output_dir.is_empty() && !outfile.is_empty() {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
                 // With --compile, the bundler already named the entry point's chunk after the outfile.

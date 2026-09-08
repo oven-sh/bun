@@ -2633,9 +2633,7 @@ fn parse_build_command_options(
 
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
-            // Same rule as `Bun.build({ sourcemap: true })`: a separate .map
-            // file when the build writes to disk, an inline map when the
-            // bundle goes to stdout.
+            // Same rule as `Bun.build({ sourcemap: true })`.
             let writes_to_disk = ctx.bundler_options.compile
                 || !ctx.bundler_options.outdir.is_empty()
                 || !ctx.bundler_options.outfile.is_empty();

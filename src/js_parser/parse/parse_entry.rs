@@ -81,7 +81,8 @@ pub struct Options<'a> {
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
-    pub macro_context: Option<&'a mut MacroContext>,
+    /// A handle onto the transpiler's macro runner (see `MacroContext::handle`).
+    pub macro_context: Option<MacroContext>,
 
     pub warn_about_unbundled_modules: bool,
 
@@ -154,7 +155,7 @@ impl<'a> Options<'a> {
     /// Field-by-field clone for the bundler's empty-file fallback
     /// (`getEmptyAST(..., opts, ...)` after `caches.js.parse(..., opts, ...)`
     /// returned null). `parse()` consumes `opts`,
-    /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
+    /// and `Options` is not `Clone`.
     ///
     /// Co-located with the struct so adding a field is a hard error here —
     /// the struct-literal below has no `..Default::default()` tail. Callers

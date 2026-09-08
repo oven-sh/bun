@@ -2438,6 +2438,18 @@ pub mod ffi {
                 _borrow: core::marker::PhantomData,
             }
         }
+
+        /// The slice this describes (empty if `ptr` is null). For a value
+        /// received *from* C, in a struct typed with `FfiSlice<'a>` at the FFI
+        /// boundary, the C side made the same promise `new` records.
+        #[inline]
+        pub fn as_slice(&self) -> &'a [T] {
+            if self.ptr.is_null() {
+                return &[];
+            }
+            // SAFETY: `ptr`/`len` describe a live `&'a [T]` (see `new` / type doc).
+            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        }
     }
 
     impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {

@@ -87,7 +87,7 @@ pub struct ImportInfo<'a> {
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [&'a [u8]],
+    pub ast_unique_key_for_additional_file: &'a [Box<[u8], bun_alloc::AstAlloc>],
 }
 
 impl<'a> ImportInfo<'a> {
@@ -370,8 +370,8 @@ impl<'a> Printer<'a> {
                 return Ok(with_suffix(urls_for_css, fragment));
             }
             // It is a chunk URL (copied asset): keep the full `?query#fragment`.
-            let unique_key_for_additional_file =
-                import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
+            let unique_key_for_additional_file: &[u8] =
+                &import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
                 return Ok(with_suffix(unique_key_for_additional_file, suffix));
             }

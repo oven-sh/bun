@@ -161,14 +161,12 @@ pub(crate) fn filter<'a>(
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
-    // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
-    // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
-
+    let _ = arena;
+    let heap = bun_bundler::bundle_v2::BundleHeap::new();
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
-        bun_ptr::ParentRef::from_ref_mut(scan_transpiler),
-        arena,
-        Some(core::ptr::NonNull::from(&mut event_loop)),
+        scan_transpiler,
+        &heap,
+        bun_event_loop::AnyEventLoop::init(),
         &entry_points,
     ) {
         Ok(b) => b,

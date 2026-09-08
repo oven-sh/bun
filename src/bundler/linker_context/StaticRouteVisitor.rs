@@ -8,15 +8,15 @@ use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
 
 use crate::import_record;
-use crate::{Index, LinkerContext, UseDirective};
+use crate::{Index, UseDirective};
 
-pub(crate) struct StaticRouteVisitor<'a> {
-    pub(crate) c: &'a LinkerContext<'a>,
+pub(crate) struct StaticRouteVisitor<'r, 'a> {
+    pub(crate) pg: &'r crate::Graph::Graph<'a>,
     pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
     pub(crate) visited: AutoBitSet,
 }
 
-impl<'a> StaticRouteVisitor<'a> {
+impl<'r, 'a> StaticRouteVisitor<'r, 'a> {
     /// This the quickest, simplest, dumbest way I can think of doing this.
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
@@ -29,11 +29,7 @@ impl<'a> StaticRouteVisitor<'a> {
             return false;
         }
 
-        // `self.c` is `&'a LinkerContext` (Copy), so these slice
-        // borrows are tied to `'a`, not to `&self`, and do not conflict with
-        // the `&mut self` call below. `parse_graph()` is the safe backref
-        // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
-        let parse_graph = self.c.parse_graph();
+        let parse_graph = self.pg;
         let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries

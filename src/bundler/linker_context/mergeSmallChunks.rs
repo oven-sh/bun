@@ -3,6 +3,7 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
+use crate::Graph::Graph;
 use crate::linker_context_mod::debug;
 use crate::options::Target;
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
@@ -29,7 +30,7 @@ fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
         })
 }
 
-impl LinkerContext<'_> {
+impl<'a> LinkerContext<'a> {
     /// None of the file's live parts run anything at the top level:
     /// declarations only, `"sideEffects": false`, or a lazily initialized
     /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its
@@ -38,11 +39,15 @@ impl LinkerContext<'_> {
     /// importer, and one of an external module loads it (hoisted out of a
     /// wrapper, too); either counts as running something. An import of an
     /// unwrapped bundled file does not: that file is judged on its own.
-    pub(crate) fn loading_file_has_no_side_effects(&self, source_index: u32) -> bool {
+    pub(crate) fn loading_file_has_no_side_effects(
+        &self,
+        pg: &Graph<'a>,
+        source_index: u32,
+    ) -> bool {
         self.inits_already_done
             .as_ref()
             .is_some_and(|files| files.is_set(source_index as usize))
-            || self.loading_file_side_effects(source_index, None)
+            || self.loading_file_side_effects(pg, source_index, None)
     }
 
     /// `loading_file_has_no_side_effects`, except that a top-level
@@ -52,6 +57,7 @@ impl LinkerContext<'_> {
     /// `import "x"` still counts; it is there for the effect.
     pub(crate) fn loading_file_side_effects(
         &self,
+        pg: &Graph<'a>,
         source_index: u32,
         mut inits: Option<&mut Vec<u32>>,
     ) -> bool {
@@ -63,7 +69,7 @@ impl LinkerContext<'_> {
         }
         // `"sideEffects": false` vouches for the file's own statements, not
         // for what importing a wrapped or external module from it runs.
-        let declared_pure = self.file_has_no_side_effects(source_index);
+        let declared_pure = self.file_has_no_side_effects(pg, source_index);
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         let records = &self.graph.ast.items_import_records()[source_index as usize];
         let mut import_has_no_side_effects = |record: &bun_ast::ImportRecord| {
@@ -621,8 +627,9 @@ fn immediate_dominators<'a>(
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
 /// cross-chunk imports) sees the merged layout.
-pub(crate) fn merge_small_chunks(
-    this: &mut LinkerContext,
+pub(crate) fn merge_small_chunks<'a>(
+    this: &mut LinkerContext<'a>,
+    pg: &Graph<'a>,
     temp: &Arena,
     min_chunk_size: u64,
 ) -> crate::Result<()> {
@@ -630,7 +637,7 @@ pub(crate) fn merge_small_chunks(
     debug_assert!(this.graph.code_splitting);
 
     let entry_points_len = this.graph.entry_points.len();
-    let sources = this.parse_graph().input_files.items_source();
+    let sources = pg.input_files.items_source();
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let kinds = this.graph.files.items_entry_point_kind();
     let fold_pure = min_chunk_size > 0;
@@ -890,7 +897,7 @@ pub(crate) fn merge_small_chunks(
         // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         inits.clear();
-        let pure = fold_pure && this.loading_file_side_effects(source_index, Some(&mut inits));
+        let pure = fold_pure && this.loading_file_side_effects(pg, source_index, Some(&mut inits));
         if fold_pure && !pure {
             inits.clear();
             this.top_level_inits(source_index, &mut inits);
@@ -984,7 +991,7 @@ pub(crate) fn merge_small_chunks(
             }
             for &record_index in part.import_record_indices.iter() {
                 let record = &import_records[source_index][record_index as usize];
-                if let Some(other) = this.file_loaded_by_import(record, source_index as u32) {
+                if let Some(other) = this.file_loaded_by_import(pg, record, source_index as u32) {
                     deps.push(group_of_file[other as usize]);
                 }
             }

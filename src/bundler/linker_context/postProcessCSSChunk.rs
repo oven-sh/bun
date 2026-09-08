@@ -4,17 +4,19 @@ use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
 use crate::chunk::IntermediateOutput;
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{LinkShared, LinkerOptionsMode};
 use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_css_chunk(
-    ctx: GenerateChunkCtx,
+    ctx: LinkShared<'_, '_>,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
 ) -> Result<(), crate::Error> {
-    let c = ctx.c();
+    let c = ctx.c;
+    let pg = ctx.graph;
+    let _ = &worker;
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -53,7 +55,7 @@ pub(crate) fn post_process_css_chunk(
         MultiArrayList::default();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
-    let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
+    let sources: &[bun_ast::Source] = pg.input_files.items_source();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
 
@@ -138,25 +140,24 @@ pub(crate) fn post_process_css_chunk(
     // `chunk.intermediate_output`, which is only read while the chunk and the linker
     // graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
-    chunk.intermediate_output =
-        bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
+    let _ = alloc;
+    chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
+        pg,
+        &mut j,
+        ctx.chunk_unique_keys.len() as u32,
+    ));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    chunk.isolated_hash = c.generate_isolated_hash(pg, chunk);
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
-        // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
-        // borrows the local, not `c`, avoiding the split-borrow with
-        // `c.generate_source_map_for_chunk(&mut self, …)` below.
-        let resolver = c.resolver.expect("resolver set in load()");
-        let output_dir = &resolver.opts.output_dir;
         chunk.output_source_map = c.generate_source_map_for_chunk(
+            pg,
             chunk.isolated_hash,
-            worker,
             &compile_results_for_source_map,
-            output_dir,
+            &c.options.output_dir,
             can_have_shifts,
         )?;
     }

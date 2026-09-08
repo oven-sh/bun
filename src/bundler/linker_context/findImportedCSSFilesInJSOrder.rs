@@ -27,6 +27,7 @@ use bun_collections::DynamicBitSet as BitSet;
 /// In this case we just pick an arbitrary but consistent order.
 pub(crate) fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
+    pg: &crate::Graph::Graph<'_>,
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
@@ -34,7 +35,7 @@ pub(crate) fn find_imported_css_files_in_js_order(
     let mut order: Vec<Index> = Vec::new();
 
     let all_import_records = this.graph.ast.items_import_records();
-    let all_loaders = this.parse_graph().input_files.items_loader();
+    let all_loaders = pg.input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
 
     // Explicit-stack DFS (was per-edge recursive). `Enter` pushes

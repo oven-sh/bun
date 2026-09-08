@@ -27,6 +27,7 @@
 //!    then we don't need to do any allocations or extra work to get the output
 //!    file for a chunk.
 
+use crate::Graph::Graph;
 use crate::mal_prelude::*;
 use crate::options::{self, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
@@ -48,11 +49,12 @@ pub enum OutputFileListError {
 impl OutputFileList {
     pub(crate) fn init(
         c: &LinkerContext,
+        parse_graph: &Graph<'_>,
         chunks: &[Chunk],
         _unused: usize,
     ) -> Result<Self, crate::Error> {
         let (length, supplementary_file_count) =
-            OutputFileList::calculate_output_file_list_capacity(c, chunks);
+            OutputFileList::calculate_output_file_list_capacity(c, parse_graph, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
         output_files.resize_with(length as usize, OutputFile::zero_value);
 
@@ -85,9 +87,9 @@ impl OutputFileList {
 
     pub(crate) fn calculate_output_file_list_capacity(
         c: &LinkerContext,
+        parse_graph: &Graph<'_>,
         chunks: &[Chunk],
     ) -> (u32, u32) {
-        let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
                 let mut count: usize = 0;

@@ -1532,8 +1532,7 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Resolves the version part of `name@spec` as `npm view` does: a dist-tag with exactly that name
-    /// wins, otherwise a semver range picks the best published match. Other kinds of spec match nothing.
+    /// Resolves the spec of `name@spec` like `npm view`: an exact dist-tag name wins, else the best range match.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
         let spec = if spec.is_empty() { b"latest" } else { spec };

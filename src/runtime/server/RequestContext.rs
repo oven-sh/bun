@@ -2658,9 +2658,7 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
-                // GET opens the file and reports a failure through `error()`;
-                // stat here so HEAD does the same instead of answering 200
-                // with `content-length: 0`.
+                // A failed stat goes to `error()`, as the open does for GET.
                 if blob.needs_to_read_file() {
                     let store = blob.store.get().as_ref().expect("file blob has a store");
                     if let Err(err) = crate::webcore::blob::stat_file_store(store) {

@@ -5963,9 +5963,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     let _ = stat_file_store(store);
 }
 
-/// Stat a file-backed store and record size, mode, seekability and mtime on
-/// it. The error is the bare stat error; callers that surface it attach the
-/// path or fd.
+/// Records size, mode, seekability and mtime on the store. The error has no path attached.
 pub(crate) fn stat_file_store(store: &RefPtr<Store>) -> bun_sys::Result<()> {
     // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across

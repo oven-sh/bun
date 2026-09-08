@@ -61,6 +61,28 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
+    /// Whether `source_url` is one of bun's bundled `src/js` modules (see `bundle-modules.ts`).
+    pub(crate) fn is_bun_module(&self) -> bool {
+        let url = &self.source_url;
+        url.starts_with_ascii(b"bun:")
+            || url.starts_with_ascii(b"node:")
+            || url.starts_with_ascii(b"internal:")
+    }
+
+    /// Whether `source_url` names a source the user can open. False for JSC's JS builtins
+    /// (no URL, or `native` / `unknown` once parsed back out of `error.stack`), for bun's
+    /// own modules, and for sources JSC could not attribute. The code frame, its caret and
+    /// the GitHub Actions annotation all use the first frame for which this is true.
+    pub(crate) fn has_user_source(&self) -> bool {
+        let url = &self.source_url;
+        !(self.is_bun_module()
+            || url.is_empty()
+            || url.eq_ascii(b"native")
+            || url.eq_ascii(b"unknown")
+            || url.eq_ascii(b"[unknown]")
+            || url.starts_with_ascii(b"[source:"))
+    }
+
     /// The frame's source as a report that lists files relative to `dir` (the JUnit
     /// reporter, the GitHub Actions annotation) prints it.
     ///

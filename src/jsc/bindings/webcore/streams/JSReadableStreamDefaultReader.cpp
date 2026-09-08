@@ -128,7 +128,7 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         // The direct pump allocates and settles its own head-of-line promise; a
         // promise-backed read adopts it instead of waiting in [[readRequests]].
         if (readRequest->kind() == ReadRequestKind::Promise) {
-            auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->m_context.get());
+            auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->context());
             JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
             RETURN_IF_EXCEPTION(scope, void());
             if (!pulled.isObject()) {

@@ -40,15 +40,17 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
     if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
+        api::JsxRuntime::Automatic
     } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
-    } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
+        api::JsxRuntime::Classic
     } else {
-        Err(crate::Error::InvalidJSXRuntime)
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Invalid --jsx-runtime: \"{}\", expected \"automatic\" or \"classic\"",
+            BStr::new(s)
+        );
+        Global::exit(1);
     }
 }
 
@@ -1604,7 +1606,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     api::JsxRuntime::Automatic
                 },
@@ -1620,7 +1622,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .map(Box::<[u8]>::from)
                     .unwrap_or(prev.import_source),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     prev.runtime
                 },

@@ -6,24 +6,40 @@
 #include "root.h"
 #include "StreamsForward.h"
 
-#include <JavaScriptCore/JSObject.h>
+#include "JSDirectStreamSource.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 #include <JavaScriptCore/JSPromise.h>
 
 namespace WebCore {
 
-class JSDirectSinkCloseState final : public JSC::JSNonFinalObject {
+class JSDirectSinkCloseState final : public JSC::JSInternalFieldObjectImpl<3> {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSInternalFieldObjectImpl<3>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
+
+    enum class Field : uint32_t {
+        // the direct stream's JSDirectStreamSource (its `cancel` runs from onClose).
+        Source = 0,
+        // the JS sink controller driving the source; onClose must end() it so the cell
+        // detaches from the native sink before it can be collected.
+        SinkController,
+        // the close-capability promise returned to the caller when `pull` returned synchronously
+        // without closing; initially empty, armed by readDirectStream, resolved by onClose.
+        // (An unvisited close promise is a premature collection of the promise handed to Rust.)
+        ClosePromise,
+    };
 
     static JSDirectSinkCloseState* create(JSC::VM&, JSC::Structure*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
+    static size_t allocationSize(Checked<size_t> inlineCapacity)
+    {
+        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
+        return sizeof(JSDirectSinkCloseState);
+    }
+
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit ALL THREE: m_underlyingSource, m_sinkController,
-    // m_closePromise. (An unvisited m_closePromise is a premature collection of the
-    // promise handed to Rust.)
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -36,18 +52,30 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the direct stream's user underlyingSource (its `cancel` runs from onClose).
-    JSC::WriteBarrier<JSC::JSObject> m_underlyingSource;
-    // the JS sink controller driving the source; onClose must end() it so the cell
-    // detaches from the native sink before it can be collected.
-    JSC::WriteBarrier<JSC::JSObject> m_sinkController;
-    // the close-capability promise returned to the caller when `pull` returned synchronously
-    // without closing; initially null, armed by readDirectStream, resolved by onClose.
-    JSC::WriteBarrier<JSC::JSPromise> m_closePromise;
+    const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
+    JSDirectStreamSource* source() const { return uncheckedDowncast<JSDirectStreamSource>(fieldCell(Field::Source)); }
+    JSC::JSObject* sinkController() const { return uncheckedDowncast<JSC::JSObject>(fieldCell(Field::SinkController)); }
+    JSC::JSPromise* closePromise() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::ClosePromise)); }
+
+    void setSource(JSC::VM& vm, JSDirectStreamSource* source) { internalField(Field::Source).set(vm, this, source); }
+    void setSinkController(JSC::VM& vm, JSC::JSObject* sinkController) { internalField(Field::SinkController).set(vm, this, sinkController); }
+    void setClosePromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::ClosePromise).set(vm, this, promise); }
+
+    void clearSource() { internalField(Field::Source).clear(); }
+    void clearSinkController() { internalField(Field::SinkController).clear(); }
+    void clearClosePromise() { internalField(Field::ClosePromise).clear(); }
 
 private:
     JSDirectSinkCloseState(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&);
+
+    JSC::JSCell* fieldCell(Field field) const
+    {
+        JSC::JSValue value = internalField(field).get();
+        return value.isCell() ? value.asCell() : nullptr;
+    }
 };
 
 } // namespace WebCore

@@ -2821,7 +2821,17 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
-        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
+        // bun_sys::Error tags are static literals; "write" and "close" are common strings.
+        JSC::JSValue syscall;
+        auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
+            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            : std::span<const Latin1Character> {};
+        if (equalSpans(staticSyscall, "write"_span8))
+            syscall = Bun::commonStrings(vm).writeString();
+        else if (equalSpans(staticSyscall, "close"_span8))
+            syscall = Bun::commonStrings(vm).closeString();
+        else
+            syscall = Bun::toJS(globalObject, err.syscall);
         if (scope.exception()) {
             scope.clearException();
         } else {
@@ -5155,20 +5165,6 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
     // https://github.com/oven-sh/bun/issues/13311
     JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
-}
-
-/// **DEPRECATED** This function does not notify the VM about the rejection,
-/// meaning it will not trigger unhandled rejection handling. Use JSC__JSPromise__rejectedPromise instead.
-JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue JSValue1)
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Rejected));
-    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
-    JSC::ensureStillAliveHere(promise);
-    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
-    return JSC::JSValue::encode(promise);
 }
 
 JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* globalObject,

@@ -216,13 +216,28 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-                if str.tag() == bun_core::Tag::Dead {
-                    return Err(AnyPostgresError::OutOfMemory);
-                }
-                let slice = str.to_utf8();
+                // Text format. A `Date` goes out as `toISOString()` (what
+                // postgres.js and pg send): valid input for date, timestamp,
+                // timestamptz and text parameters, unlike its `toString()`
+                // form. An invalid Date has no ISO form and is sent as
+                // "Invalid Date" for the server to reject.
+                let mut iso_buf = [0u8; 64];
+                let str;
+                let utf8;
+                let slice: &[u8] = if value.is_date()
+                    && let Some(iso) = value.to_iso_string(global, &mut iso_buf)
+                {
+                    iso
+                } else {
+                    str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
+                    if str.tag() == bun_core::Tag::Dead {
+                        return Err(AnyPostgresError::OutOfMemory);
+                    }
+                    utf8 = str.to_utf8();
+                    utf8.slice()
+                };
                 let l = writer.length()?;
-                writer.write(slice.slice())?;
+                writer.write(slice)?;
                 l.write_excluding_self()?;
             }
         }

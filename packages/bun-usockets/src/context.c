@@ -370,6 +370,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    ls->shared = 0;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -435,6 +436,8 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+    /* The process that handed over the descriptor can still hold it. */
+    ls->shared = 1;
 
     if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
         ls->deferred_accept = bsd_set_defer_accept(fd);
@@ -515,6 +518,10 @@ int us_listen_socket_port(struct us_listen_socket_t *ls) {
 
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) {
     return ls->accept_group;
+}
+
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) {
+    ls->shared = 1;
 }
 
 /* ── Connect ────────────────────────────────────────────────────────────── */

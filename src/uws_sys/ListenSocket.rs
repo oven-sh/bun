@@ -36,6 +36,11 @@ impl ListenSocket {
         ))
     }
 
+    /// Call before another process gets a duplicate of this socket (see `bsd_accept_socket`).
+    pub fn set_shared(&mut self) {
+        us_listen_socket_set_shared(self)
+    }
+
     /// Group accepted sockets are linked into.
     pub fn group(&mut self) -> &mut SocketGroup {
         // SAFETY: self is a valid listen socket; C returns a non-null group.
@@ -102,6 +107,7 @@ unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
+    safe fn us_listen_socket_set_shared(ls: &mut ListenSocket);
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

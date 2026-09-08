@@ -1660,7 +1660,7 @@ describe.concurrent(() => {
   const spawnAbort = async (src, extraFlags = [], exe = bunExe()) => {
     const cmd = [exe, "--abort-on-uncaught-exception", ...extraFlags, "-e", src];
     const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
-      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1694,6 +1694,9 @@ describe.concurrent(() => {
   it("--abort-on-uncaught-exception aborts a synchronous throw with no listeners", async () => {
     const r = await spawnAbort(`throw new Error("x")`);
     expect(r.stderr).toContain("x");
+    // A requested abort bypasses Bun's crash reporter, like process.abort().
+    expect(r.stderr).not.toContain("bun.report");
+    expect(r.stderr).not.toContain("Bun has crashed");
     expect(aborted(r)).toBe(true);
   });
 

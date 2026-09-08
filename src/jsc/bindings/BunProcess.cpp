@@ -1332,6 +1332,9 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 extern "C" bool Bun__isMainThreadVM();
+#if !OS(WINDOWS)
+static void restoreDefaultSignalDisposition(int signalNumber);
+#endif
 
 static bool shouldAbortOnUncaughtException()
 {
@@ -1346,6 +1349,8 @@ static bool shouldAbortOnUncaughtException()
     if (IsDebuggerPresent()) DebugBreak();
     _exit(134);
 #else
+    // Requested abort, like process.abort(): keep Bun's crash reporter out of it.
+    restoreDefaultSignalDisposition(SIGABRT);
     abort();
 #endif
 }

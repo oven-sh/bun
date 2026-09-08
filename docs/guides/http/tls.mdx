@@ -18,7 +18,7 @@ const server = Bun.serve({
 
 ---
 
-By default, Bun trusts the Mozilla-curated list of well-known root CAs. To override this list, pass an array of certificates as `ca`. On a server, this list is used to verify _client_ certificates, so also set `requestCert: true`.
+By default, Bun trusts the Mozilla-curated list of well-known root CAs. To override this list, pass an array of certificates as `ca`. On a server, Bun uses this list to verify _client_ certificates, so also set `requestCert: true`.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.serve({

@@ -365,7 +365,7 @@ impl IOReader {
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).io_evtloop().native_loop();

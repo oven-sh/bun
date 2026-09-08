@@ -11,7 +11,7 @@ Yes
 
 #### Generate a lockfile without installing?
 
-To generate a lockfile without installing to `node_modules`, use the `--lockfile-only` flag. The lockfile is always saved to disk, even if it is already up to date with your project's `package.json`(s), unless `--frozen-lockfile` (or `--production`) is set.
+To generate a lockfile without installing to `node_modules`, use the `--lockfile-only` flag. Bun always saves the lockfile to disk, even if it is already up to date with your project's `package.json`(s). The exception is when `--frozen-lockfile` (or `--production`) is set.
 
 ```bash terminal icon="terminal"
 bun install --lockfile-only
@@ -56,12 +56,12 @@ For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-l
 
 #### Automatic lockfile migration
 
-When running `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
+When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
 
 - `yarn.lock` (v1)
 - `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
 - `pnpm-lock.yaml` (pnpm)
 
-A `package-lock.json` from npm 6 or older (`lockfileVersion` 1) is not migrated; Bun prints a warning and resolves from `package.json` instead.
+Bun does not migrate a `package-lock.json` from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
 
-The original lockfile is preserved and can be removed manually after verification.
+Bun preserves the original lockfile. You can remove it manually after verification.

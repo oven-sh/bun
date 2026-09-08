@@ -4,15 +4,21 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashContext, HashMap, StringHashMap, index_sort};
 use bun_core::strings;
 use bun_core::{self};
-use bun_paths::PathBuffer;
 use bun_semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
 };
 use bun_semver::{self as Semver, ExternalString, String};
 
+use crate::bin_real::ToJsonStyle;
+use crate::config_version::ConfigVersion;
+use crate::extract_tarball as ExtractTarball;
+use crate::integrity::Integrity;
+use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
@@ -24,17 +30,6 @@ use crate::{
     invalid_package_id,
     resolution::Tag as ResolutionTag,
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
-// enum (different nominal type) that does not unify with the
-// `bun_install_types::DependencyVersion::tag` field; use the install_types one
-// so assignments at the two `.tag = Workspace` sites type-check.
-use crate::bin_real::ToJsonStyle;
-use crate::config_version::ConfigVersion;
-use crate::extract_tarball as ExtractTarball;
-use crate::integrity::Integrity;
-use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
@@ -44,7 +39,7 @@ use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -163,22 +158,39 @@ impl<'a> TreeDepsSortCtx<'a> {
             r.name.slice(self.string_buf),
         )
     }
+
+    fn sort(&self, dep_ids: &mut [DependencyID]) {
+        index_sort::sort_indices(dep_ids, &mut |a, b| {
+            if self.is_less_than(a, b) {
+                core::cmp::Ordering::Less
+            } else if self.is_less_than(b, a) {
+                core::cmp::Ordering::Greater
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        });
+    }
+}
+
+/// The slot order every existing bun.lock has its `trustedDependencies` and
+/// `patchedDependencies` in (`std.AutoHashMap(u64)`'s hash).
+struct WrittenOrderContext;
+
+impl HashContext<u64> for WrittenOrderContext {
+    #[inline]
+    fn ctx_hash(key: &u64) -> u64 {
+        bun_wyhash::hash(&key.to_le_bytes())
+    }
+    #[inline]
+    fn ctx_eql(a: &u64, b: &u64) -> bool {
+        a == b
+    }
 }
 
 pub(crate) struct Stringifier;
 
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
-
-    pub(crate) fn save_from_binary(
-        lockfile: &mut BinaryLockfile,
-        load_result: &LoadResult,
-        options: &PackageManagerOptions,
-        writer: &mut Writer,
-    ) -> Result<(), WriteError> {
-        // bun.handleOom → drop wrapper; allocation aborts on OOM in Rust.
-        Self::save_from_binary_inner(lockfile, load_result, options, writer)
-    }
 
     /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
     /// the version it already carried — re-saving never silently upgrades an
@@ -253,7 +265,7 @@ impl Stringifier {
                         // No supported integrity: only v2-clean if the tarball
                         // URL is under the *default* registry, the one case the
                         // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary_inner`). An empty
+                        // serialization in `save_from_binary`). An empty
                         // URL never sets the parser's `npm_url_needs_integrity`,
                         // so that round-trips for any reader. A URL under a
                         // configured-but-not-default scope is written verbatim,
@@ -286,7 +298,7 @@ impl Stringifier {
         if has_scoped { Version::V3 } else { Version::V2 }
     }
 
-    fn save_from_binary_inner(
+    pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -306,12 +318,15 @@ impl Stringifier {
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
-        let mut found_trusted_dependencies: HashMap<u64, String> = HashMap::default();
+        // Written out in iteration order, which the hash and the reserved capacity decide.
+        let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
+            HashMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
             found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
-        let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String)> = HashMap::default();
+        let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String), WrittenOrderContext> =
+            HashMap::default();
         found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
@@ -328,7 +343,7 @@ impl Stringifier {
             buf,
         );
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         // if we loaded from a binary lockfile or pnpm-lock.yaml and we're migrating it to a text lockfile, ensure
         // peer dependencies have resolutions, and mark them optional if they don't
@@ -404,7 +419,7 @@ impl Stringifier {
                 }
 
                 // local Sorter struct → closure
-                workspace_sort_buf.sort_by(|&l, &r| {
+                index_sort::sort_indices(&mut workspace_sort_buf, &mut |l, r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
                     l_res.workspace().order(*r_res.workspace(), buf, buf)
@@ -523,7 +538,7 @@ impl Stringifier {
 
             pkgs_iter.reset();
 
-            tree_sort_buf.sort_by(tree_sort_is_less_than);
+            index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
             if found_trusted_dependencies.len() > 0 {
                 Self::write_indent(writer, *indent)?;
@@ -663,21 +678,11 @@ impl Stringifier {
                 tree_deps_sort_buf.clear();
                 tree_deps_sort_buf.extend_from_slice(dependencies);
 
-                {
-                    let ctx = TreeDepsSortCtx {
-                        string_buf: buf,
-                        deps_buf,
-                    };
-                    tree_deps_sort_buf.sort_by(|&a, &b| {
-                        if ctx.is_less_than(a, b) {
-                            core::cmp::Ordering::Less
-                        } else if ctx.is_less_than(b, a) {
-                            core::cmp::Ordering::Greater
-                        } else {
-                            core::cmp::Ordering::Equal
-                        }
-                    });
+                TreeDepsSortCtx {
+                    string_buf: buf,
+                    deps_buf,
                 }
+                .sort(&mut tree_deps_sort_buf);
 
                 for &dep_id in &tree_deps_sort_buf {
                     let pkg_id = resolution_buf[dep_id as usize];
@@ -762,21 +767,11 @@ impl Stringifier {
                     // there might be duplicate names due to dependency behaviors,
                     // but we print behaviors in different groups so it won't affect
                     // the result
-                    {
-                        let ctx = TreeDepsSortCtx {
-                            string_buf: buf,
-                            deps_buf,
-                        };
-                        pkg_deps_sort_buf.sort_by(|&a, &b| {
-                            if ctx.is_less_than(a, b) {
-                                core::cmp::Ordering::Less
-                            } else if ctx.is_less_than(b, a) {
-                                core::cmp::Ordering::Greater
-                            } else {
-                                core::cmp::Ordering::Equal
-                            }
-                        });
+                    TreeDepsSortCtx {
+                        string_buf: buf,
+                        deps_buf,
                     }
+                    .sort(&mut pkg_deps_sort_buf);
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
 
@@ -1315,9 +1310,20 @@ impl Stringifier {
             any = true;
         }
 
+        // Re-sort by current name: a no-alias git/tarball dep sorts under its version
+        // literal at parse time, and `assign_resolution` renames it without a re-sort.
+        let deps_list = pkg_deps[pkg_id as usize];
+        let mut deps_sort_buf: Vec<DependencyID> = (deps_list.begin()..deps_list.end()).collect();
+        TreeDepsSortCtx {
+            string_buf: buf,
+            deps_buf,
+        }
+        .sort(&mut deps_sort_buf);
+
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
-            for dep in pkg_deps[pkg_id as usize].get(deps_buf) {
+            for &dep_id in &deps_sort_buf {
+                let dep = &deps_buf[dep_id as usize];
                 if !dep.behavior.intersects(group_behavior) {
                     continue;
                 }
@@ -2488,23 +2494,29 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    let Some(pkgs_expr) = root.get(b"packages") else {
-        // packages is empty, but there might be empty workspace packages
-        if workspace_pkgs_len == 0 {
-            lockfile.init_empty();
-        }
+    let pkgs_expr = root.get(b"packages");
+
+    // A missing "packages" object is parsed like an empty one. With no
+    // workspace packages there is nothing to resolve, otherwise the workspace
+    // packages appended above and the root's dependencies on them still need
+    // the resolution pass below (which also sizes `buffers.resolutions`).
+    if pkgs_expr.is_none() && workspace_pkgs_len == 0 {
+        lockfile.init_empty();
         return Ok(());
-    };
+    }
 
     {
-        if !pkgs_expr.is_object() {
-            log.add_error(
-                Some(source),
-                value_loc_of(source, pkgs_expr.loc),
-                b"Expected an object",
-            );
-            return Err(ParseError::InvalidPackagesObject);
+        if let Some(pkgs_expr) = &pkgs_expr {
+            if !pkgs_expr.is_object() {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, pkgs_expr.loc),
+                    b"Expected an object",
+                );
+                return Err(ParseError::InvalidPackagesObject);
+            }
         }
+        let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
 
         // find the bundle roots.
         //
@@ -2518,7 +2530,7 @@ pub(crate) fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(pkg_info) = row.value.as_array() else {
@@ -2546,7 +2558,7 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for row in object_rows(&pkgs_expr) {
+        'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
 
@@ -3037,10 +3049,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
-        // a package can list the same dependency in each dependnecy group, but only the first
-        // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -3061,18 +3069,18 @@ pub(crate) fn parse_into_binary_lockfile(
         let catalogs: &CatalogMap = &lockfile.catalogs;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
-        // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
+        // `&dependencies[i]` and `&mut resolutions[i]` together with a shared
         // `string_bytes` view.
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
-        let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
+        let dependencies: &[Dependency] = buffers.dependencies.as_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
 
         {
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep_id: DependencyID = _dep_id;
-                let dep = &mut dependencies[dep_id as usize];
+                let dep = &dependencies[dep_id as usize];
 
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
@@ -3085,7 +3093,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
-                    if dep.behavior.contains(Behavior::OPTIONAL) {
+                    if may_stay_unresolved(dep) {
                         continue;
                     }
                     dependency_resolution_failure(
@@ -3099,27 +3107,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if !dep.behavior.is_workspace()
-                    && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
-                        .found_existing
-                {
-                    resolutions[dep_id as usize] = res_id;
-                    continue;
-                }
-
-                map_dep_to_pkg(
-                    dep,
-                    dep_id,
-                    res_id,
-                    resolutions,
-                    lockfile_version,
-                    pkg_resolutions,
-                );
+                resolutions[dep_id as usize] = res_id;
             }
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
@@ -3127,12 +3119,10 @@ pub(crate) fn parse_into_binary_lockfile(
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
-                seen_deps.clear_retaining_capacity();
-
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = _dep_id;
-                    let dep = &mut dependencies[dep_id as usize];
+                    let dep = &dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
                     let workspace_node_modules = {
@@ -3170,7 +3160,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
+                        if may_stay_unresolved(dep) {
                             continue;
                         }
                         dependency_resolution_failure(
@@ -3184,25 +3174,13 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
-                        continue;
-                    }
-
-                    map_dep_to_pkg(
-                        dep,
-                        dep_id,
-                        res_id,
-                        resolutions,
-                        lockfile_version,
-                        pkg_resolutions,
-                    );
+                    resolutions[dep_id as usize] = res_id;
                 }
             }
         }
 
         // then each package dependency
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {
@@ -3220,7 +3198,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = _dep_id;
-                let dep = &mut dependencies[dep_id as usize];
+                let dep = &dependencies[dep_id as usize];
 
                 // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
                 if dep.version.tag == DependencyVersionTag::Uninitialized {
@@ -3259,7 +3237,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                if may_stay_unresolved(dep) {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(
@@ -3276,22 +3254,18 @@ pub(crate) fn parse_into_binary_lockfile(
                     }
                 };
 
-                map_dep_to_pkg(
-                    dep,
-                    dep_id,
-                    res_id,
-                    resolutions,
-                    lockfile_version,
-                    pkg_resolutions,
-                );
+                resolutions[dep_id as usize] = res_id;
             }
         }
 
-        if let Err(err) = lockfile.resolve(log) {
-            return Err(match err {
-                tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
-                tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
-            });
+        lockfile.tag_workspace_links(
+            manager
+                .as_deref()
+                .is_none_or(|manager| manager.options.link_workspace_packages),
+        );
+
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+            return Err(ParseError::OutOfMemory);
         }
     }
 
@@ -3396,12 +3370,7 @@ pub(crate) fn resolve_peer_dep_version_based(
         return None;
     }
 
-    let entry = package_index.get(&name_hash)?;
-    let candidates: &[PackageID] = match entry {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
-
+    let candidates = package_index.get(&name_hash)?.as_slice();
     for &id in candidates {
         if (id as usize) < pkg_resolutions.len()
             && pkg_resolutions[id as usize]
@@ -3426,36 +3395,9 @@ pub(crate) fn resolve_peer_dep_version_based(
     None
 }
 
-// Taking `&mut BinaryLockfile` plus a `&mut Dependency` that
-// points into `lockfile.buffers.dependencies` would be illegal aliasing.
-// The function only touches `buffers.resolutions[dep_id]` and reads
-// `text_lockfile_version`, so accept those disjoint pieces directly and let the
-// caller split-borrow `lockfile.buffers`.
-fn map_dep_to_pkg(
-    dep: &mut Dependency,
-    dep_id: DependencyID,
-    pkg_id: PackageID,
-    resolutions: &mut [PackageID],
-    text_lockfile_version: Version,
-    pkg_resolutions: &[Resolution],
-) {
-    resolutions[dep_id as usize] = pkg_id;
-
-    if text_lockfile_version != Version::V0 {
-        let res = &pkg_resolutions[pkg_id as usize];
-        if res.tag == ResolutionTag::Workspace {
-            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
-            // npm chain. SAFETY: `res.tag == Workspace` checked above.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Workspace,
-                literal,
-                value: DependencyVersionValue {
-                    workspace: *res.workspace(),
-                },
-            };
-        }
-    }
+/// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
+fn may_stay_unresolved(dep: &Dependency) -> bool {
+    dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 
 fn dependency_resolution_failure(
@@ -3549,7 +3491,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     }
 
     let mut path_buf = if CHECK_FOR_BUNDLED {
-        Some(PathBuffer::uninit())
+        Some(bun_paths::path_buffer_pool::get())
     } else {
         None
     };
@@ -3697,9 +3639,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
-        // total-order form of `isLessThan` (behavior group, then name ASC).
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
+        // `Dependency::cmp` is the total-order form of `isLessThan` (behavior group, then name ASC).
+        index_sort::sort_slice_by(&mut lockfile.buffers.dependencies[off..], |a, b| {
+            Dependency::cmp(bytes, a, b)
+        });
     }
 
     optional_peers_buf.clear();

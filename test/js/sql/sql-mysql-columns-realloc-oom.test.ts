@@ -18,6 +18,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlOkPacket,
@@ -54,6 +55,7 @@ test("MySQL: OOM reallocating statement.columns does not leave a dangling slice"
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         const cmd = payload[0];
         if (cmd === COM_STMT_PREPARE) {
           socket.write(

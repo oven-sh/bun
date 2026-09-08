@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -8,6 +8,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -64,6 +65,24 @@ describe("vm", () => {
         },
       );
       expect(result).toBe(2);
+    });
+    test("ShadowRealm can be created and used inside a context", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+          const realm = vm.runInNewContext("new ShadowRealm()");
+          const wrapped = vm.runInNewContext("new ShadowRealm().evaluate('(a, b) => a + b')");
+          console.log(typeof realm.evaluate, realm.evaluate("6 * 7"), wrapped(20, 22));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("function 42 42\n");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -391,6 +410,18 @@ describe("Script", () => {
       err = e;
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("a compile-time error without a position gets no arrow header", () => {
+    // Overflowing the parser's stack fails compilation without a line, like Node's RangeError.
+    let err: any;
+    try {
+      new Script(Buffer.alloc(200_000, "(").toString());
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RangeError);
+    expect(err.stack.split("\n")[0]).toBe("RangeError: Maximum call stack size exceeded.");
   });
 
   test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
@@ -890,6 +921,114 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
+});
+
+test("SourceTextModule accepts the cachedData it produced", () => {
+  const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
+  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  expect(cachedData.length).toBeGreaterThan(0);
+  expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
+  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
+    expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
+  );
+});
+
+describe("Script compiles its source once and links that in every context it runs in", () => {
+  // Runs Script(s) in fresh contexts, keeping what every run produced alive (each run's wrapper function
+  // pins that run's ProgramExecutable), and reports how many UnlinkedProgramCodeBlock cells (one per
+  // compile of a program) the runs after the first added. BUN_JSC_useCodeCache=0 takes JSC's own cache
+  // out of the picture, so a Script that does not hold on to its compile adds one per context.
+  const fixture = String.raw`
+    const { Script, createContext } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    let body = "";
+    for (let i = 0; i < 50; i++) body += "function f" + i + "(a) { return a + " + i + "; }\n";
+    const source = "(function (exports) {\n" + body + "exports.sum = f0(1) + f49(1);\n})";
+    const options = process.env.VM_FIXTURE_CACHED_DATA ? { cachedData: new Script(source).createCachedData() } : {};
+    const scripts = [new Script(source, options)];
+    if (process.env.VM_FIXTURE_TWO_SCRIPTS) scripts.push(new Script(source, options));
+    const programBlocks = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    };
+    const keep = [];
+    let afterFirstContext = 0;
+    for (let i = 0; i < 6; i++) {
+      const context = createContext({});
+      for (const script of scripts) {
+        const wrapper = script.runInContext(context);
+        const exports = {};
+        wrapper(exports);
+        if (exports.sum !== 51) throw new Error("context " + i + " computed " + exports.sum);
+        keep.push(wrapper);
+      }
+      if (i === 0) afterFirstContext = programBlocks();
+    }
+    console.log(JSON.stringify({
+      programBlocksAddedByLaterContexts: programBlocks() - afterFirstContext,
+      cachedDataRejected: scripts.map(script => script.cachedDataRejected),
+      cachedDataStillProducible: scripts.every(script => script.createCachedData().length > 0),
+    }));
+  `;
+
+  async function runFixture(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0", ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { programBlocksAddedByLaterContexts, ...rest } = JSON.parse(stdout);
+    // A Script that recompiles adds one per Script per context (+5 / +10 here). Slightly negative is
+    // possible: garbage from before the first measurement may only be collected by the second one.
+    expect(programBlocksAddedByLaterContexts).toBeLessThanOrEqual(0);
+    return rest;
+  }
+
+  test.concurrent("one Script", async () => {
+    expect(await runFixture({})).toEqual({ cachedDataRejected: [null], cachedDataStillProducible: true });
+  });
+
+  test.concurrent("two Scripts with the same source", async () => {
+    expect(await runFixture({ VM_FIXTURE_TWO_SCRIPTS: "1" })).toEqual({
+      cachedDataRejected: [null, null],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test.concurrent("a Script constructed with accepted cachedData", async () => {
+    expect(await runFixture({ VM_FIXTURE_CACHED_DATA: "1" })).toEqual({
+      cachedDataRejected: [false],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("each context gets its own global declarations", () => {
+    const script = new Script(
+      "var counter = (typeof counter === 'number' ? counter : 0) + 1; function whoami() { return tag; } counter;",
+    );
+    const first = createContext({ tag: "first" });
+    const second = createContext({ tag: "second" });
+    expect(script.runInContext(first)).toBe(1);
+    expect(script.runInContext(second)).toBe(1);
+    expect(script.runInContext(first)).toBe(2);
+    expect(runInContext("whoami()", first)).toBe("first");
+    expect(runInContext("whoami()", second)).toBe("second");
+    expect(first.counter).toBe(2);
+    expect(second.counter).toBe(1);
+  });
+
+  test("source positions are the same in every context the compile is linked into", () => {
+    const script = new Script("\n\nnew Error('where').stack.split('\\n')[1].trim()", {
+      filename: "shared.js",
+      lineOffset: 100,
+    });
+    for (const context of [createContext({}), createContext({})]) {
+      expect(script.runInContext(context)).toBe("at shared.js:103:10");
+    }
+  });
 });
 
 describe("codeGeneration options", () => {
@@ -1526,4 +1665,312 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
+});
+
+// `timeout` is wall-clock, as in Node: a script that spends the budget off-CPU (blocked in
+// sleepSync / Atomics.wait / I/O) times out too. It used to be built on JSC's CPU-time watchdog,
+// which not only let such a script finish "normally" but also could not be retired afterwards: its
+// stale deadline was serviced later and terminated the *caller's* own JS once it had used up the
+// script's leftover CPU budget (and asserted on debug builds).
+test.concurrent("vm timeout is wall-clock and leaves nothing armed against the caller afterwards", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      const sleepSync = (ms) => Bun.sleepSync(ms);   // off-CPU and not interruptible by the deadline's trap
+      try {
+        vm.runInNewContext("sleepSync(80)", { sleepSync }, { timeout: 20 });
+        console.log("finished");
+      } catch (e) {
+        console.log("threw", e.code);
+      }
+      // Same synchronous section: burn CPU well past the script's leftover CPU budget.
+      const t = performance.now();
+      let s = 0;
+      while (performance.now() - t < 300) s += Math.sqrt(s + 1);
+      console.log("caller ran on", s > 0);
+      const script = new vm.Script("sleepSync(80)");
+      try {
+        script.runInThisContext({ timeout: 20 });
+        console.log("finished");
+      } catch (e) {
+        console.log("threw", e.code);
+      }
+      setImmediate(() => console.log("event loop ran on"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "threw ERR_SCRIPT_EXECUTION_TIMEOUT\ncaller ran on true\nthrew ERR_SCRIPT_EXECUTION_TIMEOUT\nevent loop ran on\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a vm timeout that never fires leaves nothing behind either", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      // Runs that finish well inside their timeout: nothing they armed may hit later runs or the caller,
+      // which stays busy — in script and idle — for far longer than that timeout afterwards.
+      const ctx = vm.createContext({});
+      for (let i = 0; i < 50; i++) vm.runInContext("1 + 1", ctx, { timeout: 100 });
+      const t = performance.now();
+      let s = 0;
+      while (performance.now() - t < 500) s += Math.sqrt(s + 1);   // 5x the timeout, in script
+      await new Promise(r => setTimeout(r, 200));                    // and idle in the loop
+      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 100 });
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+// The following tests run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run
+// in a child: a regression then fails that child (spawn timeout) instead of hanging this file.
+// As in Node: microtasks a script left on an afterEvaluate context when its synchronous part timed out run
+// at the next evaluation's checkpoint, under that run's timeout (never unbounded); a checkpoint that is
+// itself cut short discards the rest; the context stays usable throughout.
+test.concurrent("microtasks left on an afterEvaluate context by a timed-out script stay bounded", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const ctx = vm.createContext({ log: console.log }, { microtaskMode: "afterEvaluate" });
+    const run = (src, timeout) => { try { return String(vm.runInContext(src, ctx, { timeout })); } catch (e) { return e.code; } };
+    console.log(run("Promise.resolve().then(() => log('leftover ran')); for (;;) {}", 20));
+    console.log(run("1 + 1", 1000));
+    console.log(run("Promise.resolve().then(() => { for (;;) {} }); 2", 20));
+    console.log(run("3", 1000));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nleftover ran\n2\nERR_SCRIPT_EXECUTION_TIMEOUT\n3\n");
+  expect(exitCode).toBe(0);
+});
+
+// POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
+test.skipIf(isWindows)(
+  "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",
+  async () => {
+    const code = `
+    const vm = require("node:vm");
+    const { Worker } = require("node:worker_threads");
+    new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
+    let code_;
+    try { vm.runInNewContext("for (;;) {}", {}, { breakOnSigint: true }); } catch (e) { code_ = e.code; }
+    const t = Date.now(); while (Date.now() - t < 50);   // still running normally afterwards
+    // ...and SIGINT handling is back to the default-less state Node leaves it in: a listener sees the next one.
+    process.on("SIGINT", () => { console.log(code_, "second SIGINT observed"); process.exit(0); });
+    process.kill(process.pid, "SIGINT");
+    setTimeout(() => { console.log("no second SIGINT"); process.exit(1); }, 5000);
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// POSIX-only for the same reason. As in Node, one SIGINT interrupts only the innermost breakOnSigint run.
+test.skipIf(isWindows)("a SIGINT interrupts only the innermost of nested breakOnSigint runs", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const { Worker } = require("node:worker_threads");
+    new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
+    const r = vm.runInNewContext(
+      'let inner; try { vm.runInNewContext("for (;;) {}", {}, { breakOnSigint: true }); } catch (e) { inner = e.code; } "outer completed, inner " + inner',
+      { vm }, { breakOnSigint: true });
+    console.log(r);
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("outer completed, inner ERR_SCRIPT_EXECUTION_INTERRUPTED\n");
+  expect(exitCode).toBe(0);
+});
+
+test("nested vm runs each keep their own deadline", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const codeOf = (fn) => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+    // Inner run times out; the outer script catches that (catchable) error and carries on within its budget.
+    console.log(vm.runInNewContext(
+      'let r; try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch (e) { r = "inner:" + e.code } r',
+      { vm }, { timeout: 5000 }));
+    // Outer deadline passes while the inner run is on the stack: the outer run is what times out.
+    console.log(codeOf(() => vm.runInNewContext('vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })', { vm }, { timeout: 30 })));
+    // Both deadlines pass before the inner run ends (it is blocked off-CPU past both): the inner
+    // run's error is caught by the outer script, which must nevertheless still be stopped by its own,
+    // already-fired deadline rather than loop forever.
+    const t = performance.now();
+    console.log(codeOf(() => vm.runInNewContext(
+      'try { vm.runInNewContext("sleepSync(120)", { sleepSync }, { timeout: 20 }) } catch {} for (;;) {}',
+      { vm, sleepSync }, { timeout: 40 })), performance.now() - t < 2000);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "inner:ERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT true\n",
+  );
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("a module whose evaluation times out is errored", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("for (;;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    const first = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code + "|" + e.message);
+    // A second evaluate() re-throws the recorded error rather than complaining about the status.
+    const second = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
+    console.log(first, m.status, second);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "ERR_SCRIPT_EXECUTION_TIMEOUT|Script execution timed out after 20ms errored ERR_SCRIPT_EXECUTION_TIMEOUT\n",
+  );
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// The same timeout value reaches the native evaluate() either as an int32 or as a double (a
+// Float64Array element is always the latter). Only the value may decide whether the deadline is armed.
+test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a double", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const timeout = new Float64Array([20])[0];
+    // Spins far past the 20ms deadline, but not forever: without the deadline the body finishes
+    // and evaluate() resolves, so a timeout that is not armed fails this test instead of hanging it.
+    const m = new vm.SourceTextModule("for (const end = Date.now() + 2000; Date.now() < end;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    console.log(timeout === 20, await m.evaluate({ timeout }).then(() => "resolved", (e) => e.code), m.status);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("true ERR_SCRIPT_EXECUTION_TIMEOUT errored\n");
+  expect(exitCode).toBe(0);
+});
+
+// A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
+// wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
+// ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
+// In a child, like the other unbounded waits above.
+test.concurrent("timeout during a nested event-loop wait beneath the script", async () => {
+  const code = `
+    const vm = require("node:vm"); const { expect } = require("bun:test");
+    const never = new Promise(() => {}); const iv = setInterval(() => {}, 1);
+    try { vm.runInNewContext("expect(never).resolves.toBe(1)", { expect, never }, { timeout: 100 }); console.log("returned"); }
+    catch (e) { console.log(e.code); } finally { clearInterval(iv); }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+  expect(exitCode).toBe(0);
+});
+
+describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
+  // Node's validator accepts any int32 here. JSC stores positions as ints,
+  // converts the offset to one-based and counts the source's own lines on top
+  // of it, so an offset this large used to overflow in the parser: assertion
+  // builds abort in JSTextPosition::checkConsistency ("line >= 0"), release
+  // builds report wrapped negative line numbers. Each case gets its own
+  // process because the failure mode is an abort.
+  const INT32_MAX = 2147483647;
+
+  async function runFixture(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const vm = require("node:vm");\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent.each([
+    ["new Script, one-line source", `new vm.Script("1", { lineOffset: ${INT32_MAX} })`],
+    [
+      "new Script, second line steps past INT32_MAX",
+      `new vm.Script(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX - 1} })`,
+    ],
+    ["new Script, columnOffset", `new vm.Script(${JSON.stringify("1;\n2;")}, { columnOffset: ${INT32_MAX} })`],
+    ["compileFunction", `vm.compileFunction("return 1", [], { lineOffset: ${INT32_MAX} })`],
+    [
+      "compileFunction with params, a multi-line body and both offsets",
+      `vm.compileFunction(${JSON.stringify("a;\nreturn a;")}, ["a"], { lineOffset: ${INT32_MAX - 1}, columnOffset: ${INT32_MAX} })`,
+    ],
+    // Three lines so the counter steps past INT32_MAX whether the module's
+    // first line is taken as lineOffset or, like Script, as lineOffset + 1.
+    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;\n3;")}, { lineOffset: ${INT32_MAX - 1} })`],
+  ])("%s compiles", async (_, expression) => {
+    const stdout = await runFixture(`${expression};\nconsole.log("ok");`);
+    expect(stdout).toBe("ok\n");
+  });
+
+  test.concurrent.each([
+    [
+      "line of a runtime error thrown by a Script",
+      `new vm.Script(${JSON.stringify('1;\nthrow new Error("q")')}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} }).runInThisContext()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from a Script",
+      `new vm.Script(${JSON.stringify("1;\n%%")}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} })`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "column of a runtime error thrown on the first line of a Script",
+      `new vm.Script('throw new Error("q")', { filename: "big.js", columnOffset: ${INT32_MAX} }).runInThisContext()`,
+      /big\.js:1:(-?\d+)/,
+    ],
+    [
+      "line of a runtime error thrown by a compileFunction body",
+      `vm.compileFunction('throw new Error("q")', [], { filename: "big.js", lineOffset: ${INT32_MAX} })()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from compileFunction",
+      `vm.compileFunction("%%", [], { filename: "big.js", lineOffset: ${INT32_MAX} })`,
+      /big\.js:(-?\d+)/,
+    ],
+  ])("%s stays near the requested offset", async (_, expression, pattern) => {
+    const stdout = await runFixture(`try { ${expression}; } catch (e) { console.log(e.stack); }`);
+    const match = pattern.exec(stdout);
+    expect(match).not.toBeNull();
+    // The offset is only pulled down by as much as the (tiny) source could
+    // possibly add to it, so the reported position stays just below INT32_MAX
+    // rather than wrapping negative or being dropped.
+    const position = Number(match![1]);
+    expect(position).toBeGreaterThan(INT32_MAX - 100);
+    expect(position).toBeLessThanOrEqual(INT32_MAX);
+  });
 });

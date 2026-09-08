@@ -4,7 +4,7 @@ sidebarTitle: Write stream
 mode: center
 ---
 
-To write a `ReadableStream` to disk, call `.writer()` on a `BunFile` to get a [`FileSink`](/runtime/file-io#incremental-writing-with-filesink). The stream is an async iterable, so write each of its chunks to the `FileSink` with `for await`, then call `.end()` to flush the buffer and close the file.
+To write a `ReadableStream` to disk, call `.writer()` on a `BunFile` to get a [`FileSink`](/runtime/file-io#incremental-writing-with-filesink). The stream is an async iterable, so write each of its chunks to the `FileSink` with `for await`. Then call `.end()` to flush the buffer and close the file.
 
 ```ts
 const stream: ReadableStream = ...;
@@ -20,7 +20,7 @@ await writer.end();
 
 ---
 
-`.writer()` creates the file if it doesn't exist, but it does not truncate an existing file. If the file may already exist, delete it first.
+`.writer()` creates the file if it doesn't exist, but does not truncate an existing file. If the file may already exist, delete it first.
 
 ---
 

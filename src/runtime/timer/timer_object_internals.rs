@@ -100,6 +100,7 @@ impl TimerObjectInternals {
     /// lives in exactly one place.
     #[inline]
     fn parent_ptr(&self) -> TimerParent {
+        bun_core::assert_not_freeze!(TimerObjectInternals, TimerParent);
         let this = std::ptr::from_ref::<Self>(self).cast_mut();
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
@@ -802,18 +803,11 @@ impl TimerObjectInternals {
         }
     }
 
-    /// Final teardown invoked by the
-    /// parent container's intrusive-refcount destructor (`{Timeout,Immediate}
-    /// Object::deref` when the count hits zero). Unlinks the parent from every
-    /// `Timer::All` data structure it may still be reachable from so the
-    /// imminent `heap::take` free cannot leave a dangling
+    /// Final teardown, invoked from the parent container's `Drop` (count hit
+    /// zero). Unlinks the parent from every `Timer::All` data structure it may
+    /// still be reachable from so the free cannot leave a dangling
     /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
-    ///
-    /// Note: an explicit `this_value` release is intentionally NOT
-    /// done here — `JsRef: Drop` runs when the parent `Box` is reclaimed
-    /// immediately after this returns, performing the same release.
-    /// `ref_count.assertNoRefs()` is likewise omitted: the only caller is the
-    /// `n == 1` branch of `deref`, so the count is provably zero.
+    /// `this_value` is released by `JsRef: Drop` right after.
     ///
     /// # Safety
     /// `self` is the `internals` field of a live heap-allocated
@@ -1052,7 +1046,6 @@ impl TimerObjectInternals {
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
-        self.deref();
     }
 
     /// `clearTimeout`/`clearInterval`

@@ -288,6 +288,13 @@ impl CompilerErrorOrDiagnostic {
             Self::ErrorDetail(d) => d.logged_severity(),
         }
     }
+
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            Self::Diagnostic(d) => d.category,
+            Self::ErrorDetail(d) => d.category,
+        }
+    }
 }
 
 impl CompilerError {
@@ -324,13 +331,9 @@ impl CompilerError {
 
     /// Check if any error detail has Invariant category.
     pub fn has_invariant_errors(&self) -> bool {
-        self.details.iter().any(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            cat == ErrorCategory::Invariant
-        })
+        self.details
+            .iter()
+            .any(|d| d.category() == ErrorCategory::Invariant)
     }
 
     pub fn merge(&mut self, other: CompilerError) {

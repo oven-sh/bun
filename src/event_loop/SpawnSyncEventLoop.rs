@@ -8,9 +8,8 @@
 //!
 //! Implementation approach:
 //! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or libuv loop (Windows)
-//! - Wraps it in a full jsc.EventLoop instance
-//! - On POSIX: temporarily overrides vm.event_loop_handle to point to isolated loop
-//! - On Windows: stores isolated loop pointer in EventLoop.uws_loop
+//! - Wraps it in a full jsc.EventLoop instance whose `uws_loop` is the isolated loop
+//! - Temporarily overrides vm.event_loop_handle to point to the isolated loop
 //! - Minimal handler callbacks (wakeup/pre/post are no-ops)
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
@@ -45,8 +44,8 @@ pub type VmEventLoopHandle = Option<NonNull<libuv::Loop>>;
 // encapsulates the erased-pointer derefs), so the declarations are `safe fn` —
 // no caller-side `unsafe { }` needed.
 unsafe extern "Rust" {
-    /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, with
-    /// `uws_loop` as its loop on Windows. Returns erased `*mut jsc::EventLoop`.
+    /// Heap-allocate and zero-init a `jsc::EventLoop` bound to `vm`, running
+    /// on `uws_loop`. Returns erased `*mut jsc::EventLoop`.
     safe fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut ();
     safe fn __bun_spawn_sync_destroy_event_loop(el: *mut ());
     /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
@@ -54,8 +53,6 @@ unsafe extern "Rust" {
     safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
     safe fn __bun_spawn_sync_vm_get_event_loop_handle(vm: *mut ()) -> VmEventLoopHandle;
     safe fn __bun_spawn_sync_vm_set_event_loop_handle(vm: *mut (), h: VmEventLoopHandle);
-    /// `vm.event_loop = prev` (cleanup path).
-    safe fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ());
     /// Swap `vm.suppress_microtask_drain`, return previous.
     safe fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool;
 }
@@ -100,8 +97,8 @@ pub struct SpawnSyncEventLoop {
     // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
 
-    /// On POSIX, we need to temporarily override the VM's event_loop_handle
-    /// Store the original so we can restore it
+    /// `prepare` overrides the VM's event_loop_handle; the original, restored
+    /// by `cleanup`.
     original_event_loop_handle: VmEventLoopHandle,
 
     #[cfg(windows)]
@@ -156,8 +153,7 @@ impl SpawnSyncEventLoop {
         let loop_ =
             NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
 
-        // Initialize the JSC EventLoop with empty state.
-        // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
+        // A fresh `jsc::EventLoop` whose `uws_loop` is the isolated loop.
         let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
 
         this.write(Self {
@@ -304,13 +300,8 @@ impl SpawnSyncEventLoop {
     }
 
     /// Restore the original event loop handle after spawnSync completes
-    pub fn cleanup(
-        &mut self,
-        vm: *mut (),              /* SAFETY: erased *mut VirtualMachine */
-        prev_event_loop: *mut (), /* SAFETY: erased *mut jsc::EventLoop */
-    ) {
+    pub fn cleanup(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
-        __bun_spawn_sync_vm_set_event_loop(vm, prev_event_loop);
 
         #[cfg(windows)]
         {

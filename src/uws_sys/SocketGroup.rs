@@ -81,12 +81,6 @@ impl Default for SocketGroup {
     }
 }
 
-impl Default for VTable {
-    fn default() -> Self {
-        bun_core::ffi::zeroed()
-    }
-}
-
 pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
@@ -144,13 +138,6 @@ impl SocketGroup {
     pub fn owner<T>(&self) -> *mut T {
         debug_assert!(!self.ext.is_null());
         self.ext.cast::<T>()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.head_sockets.is_null()
-            && self.head_connecting_sockets.is_null()
-            && self.head_listen_sockets.is_null()
-            && self.low_prio_count == 0
     }
 
     pub fn listen(

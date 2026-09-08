@@ -51,7 +51,7 @@ afterEach(() => {
 
 ---
 
-Next, add these preload scripts to your `bunfig.toml`. If you combine them into a single preload script, load the `@testing-library/*` packages with `await import()` after `GlobalRegistrator.register()`; a static `import` is evaluated before `register()` runs, and `screen` queries then throw.
+Next, add these preload scripts to your `bunfig.toml`. If you combine them into a single preload script, load the `@testing-library/*` packages with `await import()` after `GlobalRegistrator.register()`. Bun evaluates a static `import` before `register()` runs, and `screen` queries then throw.
 
 ```toml bunfig.toml icon="settings"
 [test]

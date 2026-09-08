@@ -46,6 +46,16 @@ pub(crate) enum Step {
     Next,
 }
 
+impl Step {
+    fn run(self, interp: &Interpreter, cmd: NodeId) -> Yield {
+        match self {
+            Step::Suspend => Yield::suspended(),
+            Step::Done(code) => Builtin::done(interp, cmd, code),
+            Step::Next => Cat::next(interp, cmd),
+        }
+    }
+}
+
 impl Cat {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
@@ -300,11 +310,7 @@ impl Cat {
             CatState::WaitingWriteErr => Step::Done(1),
             _ => panic!("Invalid state"),
         };
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        step.run(interp, cmd)
     }
 
     pub(crate) fn on_io_reader_chunk(
@@ -394,11 +400,7 @@ impl Cat {
                 fd.writer.cancel_chunks(wchild);
             }
         }
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        step.run(interp, cmd)
     }
 }
 

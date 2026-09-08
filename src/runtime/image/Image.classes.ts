@@ -35,9 +35,7 @@ export default [
       clipboardChangeCount: { fn: "clipboardChangeCount", length: 0 },
     },
     proto: {
-      // Snapshot: a new Image sharing this one's input with a copy of the
-      // ops recorded so far (Sharp's clone()). Clone-family members dedupe
-      // concurrent full-resolution decodes — see SharedDecode in Image.rs.
+      // Sharp's clone(): a new Image sharing this input with the recorded ops.
       clone: { fn: "doClone", length: 0 },
       // Chainable mutators — record an op and return `this`.
       resize: { fn: "doResize", length: 2 },
@@ -68,8 +66,7 @@ export default [
       // <img src> / blurDataURL.
       placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
-      // Sharp-shaped pixel statistics of the SOURCE image (ops ignored):
-      // per-channel stats, isOpaque, entropy, sharpness, dominant colour.
+      // Sharp-shaped stats of the source image (recorded ops ignored).
       stats: { fn: "doStats", length: 0, async: true },
 
       // Read-only after a pipeline has run; -1 before.

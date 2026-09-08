@@ -1929,6 +1929,110 @@ describe("css tests", () => {
     prefix_test(
       `
       .foo {
+        -webkit-border-image: url(foo.png) 60;
+        -moz-border-image: url(foo.png) 60;
+        -o-border-image: url(foo.png) 60;
+        border-image: url(foo.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+      }
+    `,
+      {
+        chrome: 15 << 16,
+      },
+    );
+
+    // The next four are skipped: lightningcss prints the legacy direction keyword
+    // (`top,`) in generated -webkit-/-moz-linear-gradient() fallbacks since
+    // parcel-bundler/lightningcss#936, which bun's port does not have yet.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
+        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 8 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
+        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        -moz-border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 8 << 16,
+        firefox: 4 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
+      }
+    `,
+      {
+        chrome: 15 << 16,
+        firefox: 15 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: -webkit-linear-gradient(top, #ff0f0e, #7773ff);
+        border-image-source: linear-gradient(#ff0f0e, #7773ff);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 15 << 16,
+      },
+      true,
+    );
+
+    prefix_test(
+      `
+      .foo {
         border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo);
       }
     `,
@@ -2051,6 +2155,48 @@ describe("css tests", () => {
     `,
       {
         chrome: 56 << 16,
+      },
+    );
+
+    // `border` resets border-image, so a kept fallback must stay after it.
+    prefix_test(
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: url(a.png);
+        border: 2px solid red;
+        border-image-source: url(fallback.png);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image-source: url("fallback.png");
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
       },
     );
   });

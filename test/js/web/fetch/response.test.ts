@@ -108,12 +108,18 @@ test("Response.redirect coerces the status argument per WebIDL", () => {
   expect(Response.redirect("http://x/", "308").status).toBe(308);
   // numeric coercion edge cases
   expect(Response.redirect("http://x/", 307.9).status).toBe(307);
+  // boxed primitives take the numeric path, not the ResponseInit path
+  expect(Response.redirect("http://x/", new Number(307)).status).toBe(307);
+  expect(Response.redirect("http://x/", new String("301")).status).toBe(301);
+  expect(() => Response.redirect("http://x/", new Boolean(true))).toThrow(RangeError);
   // out-of-range / non-numeric → RangeError
   expect(() => Response.redirect("http://x/", "9999")).toThrow(RangeError);
   expect(() => Response.redirect("http://x/", "abc")).toThrow(RangeError);
   expect(() => Response.redirect("http://x/", "")).toThrow(RangeError);
   expect(() => Response.redirect("http://x/", true)).toThrow(RangeError);
   expect(() => Response.redirect("http://x/", null)).toThrow(RangeError);
+  // statusText alone is still a ResponseInit → 302
+  expect(Response.redirect("http://x/", { statusText: "Moved" }).status).toBe(302);
   // number control
   expect(Response.redirect("http://x/", 307).status).toBe(307);
 });

@@ -995,6 +995,9 @@ impl Response {
             };
 
             if let Some(arg_init) = args.next_eat() {
+                // `new Number(307)` etc. take the numeric path, not the
+                // ResponseInit path.
+                let arg_init = arg_init.unwrap_boxed_primitive(global_this)?;
                 if arg_init.is_undefined() {
                     // WebIDL `optional unsigned short status = 302`: omitted.
                 } else if arg_init.is_object() {

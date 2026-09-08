@@ -617,15 +617,10 @@ pub struct StreamBuffer {
     pub cursor: usize,
 }
 
-// Ownership invariant for the raw parts: a non-null `list_ptr` means the
-// struct owns the raw parts of exactly one `Vec<u8>` decomposed by `update`.
-// `take_stream_buffer` nulls the parts when it transfers ownership out, and
-// `update` drops any buffer still owned before overwriting them, so the
-// invariant holds on every path (C++ only ever zero-initializes the struct).
+// Invariant: a non-null `list_ptr` means this struct owns exactly one
+// `Vec<u8>` decomposed by `update`. `take_stream_buffer` is the only way out.
 impl us_socket_stream_buffer_t {
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
-        // Drop whatever is currently owned so overwriting the raw parts below
-        // can't leak a previous buffer.
         drop(self.take_stream_buffer());
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.
@@ -644,16 +639,12 @@ impl us_socket_stream_buffer_t {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
 
-    /// One-shot ownership transfer: rebuilds the owned `Vec<u8>` from the raw
-    /// parts and nulls them, so the returned `StreamBuffer` is the allocation's
-    /// sole owner and a second take (or a later `destroy`) sees an empty
-    /// buffer. `total_bytes_written` is cumulative socket state, not buffer
-    /// contents, and survives the take.
+    /// Moves the owned buffer out and nulls the raw parts, so a second take or
+    /// a later `destroy` sees an empty buffer. `total_bytes_written` survives.
     pub fn take_stream_buffer(&mut self) -> StreamBuffer {
         let list = if !self.list_ptr.is_null() {
-            // SAFETY: per the ownership invariant above, the raw parts came
-            // from a Vec<u8> decomposed in `update` (global allocator
-            // matches), and nulling them below ends this struct's ownership.
+            // SAFETY: the raw parts came from a Vec<u8> decomposed in `update`
+            // and are nulled below, so this is the only owner.
             unsafe { Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap) }
         } else {
             Vec::new()
@@ -666,12 +657,10 @@ impl us_socket_stream_buffer_t {
         StreamBuffer { list, cursor }
     }
 
-    /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
-    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl. Idempotent:
-    /// the take nulls the raw parts, so a second call is a no-op.
+    /// Explicit teardown (no `Drop` impl: the struct is `#[repr(C)]` and freed
+    /// from C++ via `us_socket_free_stream_buffer`). Idempotent.
     ///
-    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
-    /// `Vec<u8>` on the global mimalloc allocator).
+    /// SAFETY: `list_ptr`/`list_cap` were produced by `update`.
     pub(crate) unsafe fn destroy(&mut self) {
         drop(self.take_stream_buffer());
     }
@@ -684,14 +673,12 @@ extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
 
-// Pure Rust (no FFI at test runtime), so these run under `cargo miri test`,
-// which catches double-frees and leaks of the raw-part round-trips.
+// FFI-free, so `cargo miri test` runs these (see scripts/rust-miri.ts).
 #[cfg(test)]
 mod stream_buffer_tests {
     use super::{StreamBuffer, us_socket_stream_buffer_t};
 
-    // Mirrors the C++ zero-initialization (`streamBuffer = {}`), the only way
-    // this struct is created outside the tests.
+    // The C++ side zero-initializes the struct.
     fn empty() -> us_socket_stream_buffer_t {
         us_socket_stream_buffer_t {
             list_ptr: core::ptr::null_mut(),
@@ -715,8 +702,6 @@ mod stream_buffer_tests {
         assert_eq!(first.list, [1, 2, 3]);
         assert_eq!(first.cursor, 1);
 
-        // The take nulled the raw parts: a second take yields an empty buffer
-        // instead of a second owner of the same allocation.
         let second = raw.take_stream_buffer();
         assert!(second.list.is_empty());
         assert_eq!(second.list.capacity(), 0);
@@ -732,7 +717,6 @@ mod stream_buffer_tests {
             cursor: 0,
         });
         let taken = raw.take_stream_buffer();
-        // SAFETY: `raw`'s parts came from `update`.
         unsafe { raw.destroy() };
         drop(taken);
     }
@@ -744,7 +728,6 @@ mod stream_buffer_tests {
             list: vec![7; 32],
             cursor: 0,
         });
-        // SAFETY: `raw`'s parts came from `update`.
         unsafe { raw.destroy() };
         unsafe { raw.destroy() };
         assert!(raw.list_ptr.is_null());

@@ -20,6 +20,53 @@ test.each([
   expect(() => get.call(x)).toThrow();
 });
 
+// https://streams.spec.whatwg.org/#transformstream-set-up gives the platform's own
+// transform streams a writable highWaterMark of 1 and a readable highWaterMark of 0,
+// the same as `new TransformStream()`. So the stream starts with backpressure applied:
+// with nothing reading the readable side, the first write stays in flight (it is
+// not transformed and parked in the readable queue) and writer.desiredSize drops to
+// 0, exactly as for the JS TransformStream in the first row. Chromium does the same
+// for all four; WPT encoding/streams/backpressure.any.js covers the text codecs.
+{
+  const helloBytes = new TextEncoder().encode("hello");
+  const helloGzip = zlib.gzipSync(helloBytes);
+  const text = (chunks: unknown[]) => Buffer.concat(chunks as Uint8Array[]).toString();
+  test.each([
+    ["TransformStream", () => new TransformStream(), "hello", (chunks: unknown[]) => chunks.join("")],
+    ["TextEncoderStream", () => new TextEncoderStream(), "hello", text],
+    ["TextDecoderStream", () => new TextDecoderStream(), helloBytes, (chunks: unknown[]) => chunks.join("")],
+    [
+      "CompressionStream",
+      () => new CompressionStream("gzip"),
+      helloBytes,
+      (chunks: unknown[]) => zlib.gunzipSync(Buffer.concat(chunks as Uint8Array[])).toString(),
+    ],
+    ["DecompressionStream", () => new DecompressionStream("gzip"), helloGzip, text],
+  ] as const)("%s starts with backpressure: a write with no reader stays pending", async (_, make, chunk, decode) => {
+    const ts: ReadableWritablePair<unknown, unknown> = make();
+    const writer = ts.writable.getWriter();
+    expect(writer.desiredSize).toBe(1);
+
+    let firstSettled = false;
+    let ready = false;
+    const first = writer.write(chunk).finally(() => (firstSettled = true));
+    writer.ready.then(() => (ready = true));
+    // One full turn of the event loop: start() has settled, and a transform that was
+    // going to run without a read request would have run and resolved the write.
+    await Bun.sleep(0);
+    expect(firstSettled).toBe(false);
+    expect(ready).toBe(false);
+    expect(writer.desiredSize).toBe(0);
+
+    // Reading the readable side relieves it, and everything written comes out.
+    const closed = writer.close();
+    const chunks = await Array.fromAsync(ts.readable as ReadableStream<unknown>);
+    expect(decode(chunks)).toBe("hello");
+    expect({ firstSettled, ready }).toEqual({ firstSettled: true, ready: true });
+    expect(await Promise.all([first, closed])).toEqual([undefined, undefined]);
+  });
+}
+
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
     test("compresses data with brotli", async () => {
@@ -781,36 +828,6 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     expect(out).toBe(input);
   });
 
-  // readable highWaterMark is 1 (matching Node.js and Chromium), so a single
-  // write completes before any reader is attached.
-  test("a single write completes without a reader attached", async () => {
-    const cs = new CompressionStream("gzip");
-    const writer = cs.writable.getWriter();
-    await writer.write(new Uint8Array(1024));
-    void writer.close();
-    const out = await Array.fromAsync(cs.readable);
-    expect(out.length).toBeGreaterThan(0);
-  });
-
-  // Backpressure still kicks in once the readable queue is full.
-  test("a second write stays pending until the readable side is drained", async () => {
-    const cs = new CompressionStream("gzip");
-    const writer = cs.writable.getWriter();
-    const reader = cs.readable.getReader();
-
-    await writer.write(new Uint8Array(1024));
-    const second = writer.write(new Uint8Array(1024));
-    const raced = await Promise.race([second.then(() => "done"), Bun.sleep(0).then(() => "pending")]);
-    expect(raced).toBe("pending");
-
-    const { value } = await reader.read();
-    expect(value!.byteLength).toBeGreaterThan(0);
-    await second;
-
-    void writer.close();
-    while (!(await reader.read()).done) {}
-  });
-
   // DecompressionStream rejects trailing bytes after the compressed data. Concatenated
   // gzip members are a single valid stream per RFC 1952 section 2.2, not trailing junk,
   // so they must still decode in full.
@@ -972,7 +989,8 @@ describe("bounded output per input chunk", () => {
     const cs = new CompressionStream("zstd");
     const writer = cs.writable.getWriter();
     const reader = cs.readable.getReader();
-    await writer.write(input);
+    // zstd holds the incompressible input back, so all output comes from the flush.
+    const written = writer.write(input);
     const closed = writer.close();
 
     const first = await reader.read();
@@ -986,7 +1004,7 @@ describe("bounded output per input chunk", () => {
       pieces.push(value);
     }
     expect(zlib.zstdDecompressSync(Buffer.concat(pieces)).equals(input)).toBe(true);
-    expect(await Promise.all([closed, aborted])).toEqual([undefined, undefined]);
+    expect(await Promise.all([written, closed, aborted])).toEqual([undefined, undefined, undefined]);
   });
 
   test("a request body bomb trips a streaming size guard after one step, not after the whole expansion", async () => {
@@ -1209,12 +1227,15 @@ describe("bounded output per input chunk", () => {
   // promise, so the source cancel algorithm just returns it), and the cancelled
   // readable will never pull again. A flush parked between steps at that point
   // still has to be woken up, or close() and cancel() both stay pending forever.
-  // Both encoders hold incompressible input back until the flush: zstd's ~100 KiB
-  // flush takes two steps (parked after the first, cancelled with no read in
-  // between), and brotli's ~200 KiB one takes four (the second read is served by
-  // the resumed flush, which then parks again before the cancel lands).
+  // Both encoders hold incompressible input back until the flush, and each read
+  // is served by one flush step (the readable's highWaterMark is 0, so a step's
+  // output goes straight to the pending read and the flush parks right after it):
+  // zstd's ~100 KiB flush takes two steps (the first read is served from inside
+  // close(), then it parks and is cancelled with no read in between), and brotli's
+  // ~200 KiB one takes four (the second read resumes the parked flush through a
+  // pull, which then parks again before the cancel lands).
   test.each([
-    { format: "zstd", writes: [100 * 1024], readsBeforeCancel: 0 },
+    { format: "zstd", writes: [100 * 1024], readsBeforeCancel: 1 },
     { format: "brotli", writes: [100 * 1024, 100 * 1024], readsBeforeCancel: 2 },
   ] as const)(
     "reader.cancel() after writer.close() settles both while a $format flush is parked (reads first: $readsBeforeCancel)",
@@ -1222,7 +1243,7 @@ describe("bounded output per input chunk", () => {
       const cs = new CompressionStream(format);
       const writer = cs.writable.getWriter();
       const reader = cs.readable.getReader();
-      for (const size of writes) await writer.write(randomBytes(size));
+      const written = writes.map(size => writer.write(randomBytes(size)));
       const closed = writer.close();
 
       for (let i = 0; i < readsBeforeCancel; i++) {
@@ -1230,6 +1251,7 @@ describe("bounded output per input chunk", () => {
         expect(done).toBe(false);
         expect(value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
       }
+      expect(await Promise.all(written)).toEqual(writes.map(() => undefined));
       const cancelled = reader.cancel();
       // close() and cancel() share the transform's finish promise; the abandoned
       // flush resolves it rather than leaving both pending forever.

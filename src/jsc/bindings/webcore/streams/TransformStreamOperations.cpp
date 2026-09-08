@@ -89,9 +89,10 @@ void setUpNativeTransformStream(JSGlobalObject* globalObject, JSTransformStream*
     auto* domGlobalObject = defaultGlobalObject(globalObject);
 
     auto* startPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    // readableHighWaterMark = 1 (not the spec's 0) so the first write completes without a
-    // reader attached, matching Node.js and Chromium.
-    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 1, nullptr);
+    // https://streams.spec.whatwg.org/#transformstream-set-up: writableHighWaterMark = 1,
+    // readableHighWaterMark = 0. The stream starts with [[backpressure]] set, so a write
+    // waits for the first pull, exactly like `new TransformStream()`.
+    initializeTransformStream(globalObject, stream, startPromise, 1, nullptr, 0, nullptr);
     RETURN_IF_EXCEPTION(scope, void());
 
     auto* controller = JSTransformStreamDefaultController::create(vm, WebCore::getDOMStructure<JSTransformStreamDefaultController>(vm, *domGlobalObject));

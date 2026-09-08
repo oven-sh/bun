@@ -451,9 +451,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
-      expect(bundled).toMatch(
-        /await\s+__promiseAll\s*\(\s*\[\s*init_a\(\),\s*init_b\(\),\s*init_c\(\)\s*\]\s*\)/,
-      );
+      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[\s*init_a\(\),\s*init_b\(\),\s*init_c\(\)\s*\]\s*\)/);
       expect(bundled).toContain("var __promiseAll = ");
     },
   });
@@ -504,8 +502,8 @@ describe("bundler", () => {
   });
 
   // Only `import` statements join the `await __promiseAll([...])`. An `import()`
-  // of a second async module prints its own `init_c().then(...)` and does not
-  // need the helper.
+  // of a second async module calls `init_c()` where the expression is and does
+  // not need the helper.
   itBundled("bundler/__promiseAll is tree-shaken when a wrapper's second async dependency is an import()", {
     files: {
       "/entry.js": `

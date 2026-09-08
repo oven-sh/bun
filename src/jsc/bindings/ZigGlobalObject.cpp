@@ -3409,6 +3409,7 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPluginRunner(void*);
+extern "C" void Bun__onModuleResolved(void* bunVM, const BunString* referrer, const BunString* key);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3498,10 +3499,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     auto resolved = res.result.value.transferToWTFString();
     auto query = queryZ.transferToWTFString();
-
     if (!query.isEmpty()) {
-        return Identifier::fromString(vm, makeString(resolved, query));
+        resolved = makeString(resolved, query);
     }
+
+    // Once per import of each module, in source order: how the transpiler store learns the graph it is fetching.
+    BunString resolvedZ = Bun::toString(resolved);
+    Bun__onModuleResolved(globalObject->bunVM(), &referrerZ, &resolvedZ);
+
     return Identifier::fromString(vm, resolved);
 }
 

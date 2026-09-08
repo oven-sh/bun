@@ -442,6 +442,71 @@ describe("When CJS and ESM are mixed", () => {
   it("loads reflect-metadata before tsyringe", async () => {
     expect(await bunRun(fixturePath)).toSpawn();
   });
+
+  // A CommonJS file imported from an ES module runs when its transpile
+  // finishes. The thread pool finishes a small file before a big one, so
+  // without ordering the imports below would run in reverse.
+  describe.concurrent("CommonJS imports run in import order", () => {
+    // Enough code that transpiling this file takes much longer than the others.
+    const big = Array.from(
+      { length: 4000 },
+      (_, i) => `module.exports.f${i} = function (a, b) { return a + b + ${i}; };`,
+    ).join("\n");
+    const trace = `globalThis.order ??= []; process.on("exit", () => console.log(JSON.stringify(globalThis.order))); module.exports = {};`;
+
+    async function run(files: Record<string, string>) {
+      using dir = tempDir("esm-imports-cjs-order", { "package.json": `{"name": "order"}`, ...files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    it("between siblings", async () => {
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./big.cjs";\nimport "./small.cjs";\nglobalThis.order.push("entry");`,
+        "trace.cjs": trace,
+        "big.cjs": `globalThis.order.push("big");\n${big}`,
+        "small.cjs": `globalThis.order.push("small"); module.exports = {};`,
+      });
+      expect(order).toEqual(["big", "small", "entry"]);
+    });
+
+    it("across a nested ES module", async () => {
+      // polyfill.cjs is below setup.mjs, so it is not even requested until
+      // setup.mjs has been transpiled and parsed. app.cjs must still wait for it.
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./setup.mjs";\nimport "./app.cjs";\nglobalThis.order.push("entry");`,
+        "trace.cjs": trace,
+        "setup.mjs": `import "./polyfill.cjs";\nexport {};`,
+        "polyfill.cjs": `globalThis.order.push("polyfill");\n${big}`,
+        "app.cjs": `globalThis.order.push("app"); module.exports = {};`,
+      });
+      expect(order).toEqual(["polyfill", "app", "entry"]);
+    });
+
+    it("when a module's first importer is not the first to fetch it", async () => {
+      // entry fetches handler.mjs and container.mjs together, but a depth-first
+      // walk reaches container.mjs through handler.mjs first, so polyfill.cjs
+      // (under container.mjs) comes before dep.cjs (handler.mjs's next import).
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./handler.mjs";\nimport "./container.mjs";\nglobalThis.order.push("entry");`,
+        "trace.cjs": trace,
+        "handler.mjs": `import "./container.mjs";\nimport "./dep.cjs";\nexport {};`,
+        "container.mjs": `import "./polyfill.cjs";\nimport "./dep.cjs";\nexport {};`,
+        "polyfill.cjs": `globalThis.order.push("polyfill");\n${big}`,
+        "dep.cjs": `globalThis.order.push("dep"); module.exports = {};`,
+      });
+      expect(order).toEqual(["polyfill", "dep", "entry"]);
+    });
+  });
 });
 
 // The "browser" map resolver copied the normalized input path into a 512-byte

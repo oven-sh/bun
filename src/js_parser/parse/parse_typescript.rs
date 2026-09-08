@@ -406,9 +406,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut arg_ref = Ref::NONE;
         if !opts.is_typescript_declare {
-            // The closure argument. Not a scope member: inside the namespace, a
-            // merged sibling's export of the same name wins. The visit pass
-            // renames it if a binding in the body shadows it.
+            // The closure argument; not a scope member so that a merged sibling's export of the name wins.
             arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
@@ -636,8 +634,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
-            // The closure argument. `enum foo { bar = foo }` resolves `foo` to it,
-            // unless a value is named `foo` (the visit pass then renames it).
+            // The closure argument; `enum foo { bar = foo }` binds `foo` to it unless a value has that name.
             arg_ref = if p.current_scope().members.contains_key(name_text) {
                 p.new_symbol(SymbolKind::Hoisted, name_text)
             } else {

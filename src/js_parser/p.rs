@@ -6899,10 +6899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `namespace N { export let v; function f(N) { v } }`: without a renamer
-    /// `v` would print as `N.v` under the parameter `N`. After `body` is
-    /// visited, rename the closure argument (tsc: `N_1`) to a name that no
-    /// scope inside or around `body` declares.
+    /// `namespace N { export let v; function f(N) { v } }` must not print `N.v` under the parameter (tsc: `N_1`).
     #[cold]
     #[inline(never)]
     pub(crate) fn rename_namespace_arg_to_avoid_collisions(

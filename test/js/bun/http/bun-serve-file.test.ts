@@ -275,6 +275,71 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("Hello, World!");
     });
+
+    // A file body from the fetch handler takes the same open + fstat path for
+    // HEAD as for GET (RFC 9110 §9.3.2): same Content-Type, same Range
+    // handling, and nothing after the header section on the wire.
+    it("HEAD of a file from the fetch handler sends GET's headers and no body", async () => {
+      using handlerServer = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(join(tempDir, "partial.txt"))),
+      });
+
+      // A raw socket, so that body bytes after the head would be visible.
+      const { promise: wireDone, resolve, reject } = Promise.withResolvers<string>();
+      let wire = "";
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: handlerServer.port,
+        socket: {
+          open(s) {
+            s.write("HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+          },
+          data(_s, d) {
+            wire += Buffer.from(d).toString("latin1");
+          },
+          close() {
+            resolve(wire);
+          },
+          error(_s, e) {
+            reject(e);
+          },
+        },
+      });
+      const captured = await wireDone;
+      client.end();
+      const [head, ...afterHead] = captured.split("\r\n\r\n");
+      const header = (name: string) =>
+        head
+          .split("\r\n")
+          .find(line => line.toLowerCase().startsWith(name + ":"))
+          ?.slice(name.length + 1)
+          .trim() ?? null;
+
+      const ranged = await fetch(handlerServer.url, { method: "HEAD", headers: { Range: "bytes=2-5" } });
+      const unsatisfiable = await fetch(handlerServer.url, { method: "HEAD", headers: { Range: "bytes=99-" } });
+
+      expect({
+        status: head.split("\r\n")[0],
+        contentType: header("content-type"),
+        contentLength: header("content-length"),
+        body: afterHead.join("\r\n\r\n"),
+        ranged: {
+          status: ranged.status,
+          contentLength: ranged.headers.get("Content-Length"),
+          contentRange: ranged.headers.get("Content-Range"),
+        },
+        unsatisfiable: { status: unsatisfiable.status, contentRange: unsatisfiable.headers.get("Content-Range") },
+      }).toEqual({
+        status: "HTTP/1.1 200 OK",
+        contentType: "text/plain;charset=utf-8",
+        contentLength: "16",
+        body: "",
+        ranged: { status: 206, contentLength: "4", contentRange: "bytes 2-5/16" },
+        unsatisfiable: { status: 416, contentRange: "bytes */16" },
+      });
+    });
   });
 
   describe.concurrent("Custom headers and status", () => {
@@ -798,14 +863,20 @@ describe("Bun.file in serve routes", () => {
     // file body is resolved with open + fstat for both, so a missing file or
     // a directory reaches error() on HEAD too, instead of a 200 sized from a
     // bare stat (0 for a missing file, the inode size for a directory).
-    // The error() Response's headers come from its own body, not from the
-    // file that failed: no text/html from "nope.html", no filename.
+    // The error() Response's headers come from its own body (a string for
+    // ENOENT, a typed Blob for EISDIR), not from the file that failed: no
+    // text/html from "nope.html", no filename from the directory.
     it("HEAD of a missing file or a directory from the fetch handler fails like GET", async () => {
       using handlerServer = Bun.serve({
         port: 0,
         fetch: req =>
           new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.html"))),
-        error: e => new Response(`err ${(e as NodeJS.ErrnoException).code}`, { status: 500 }),
+        error: e => {
+          const code = (e as NodeJS.ErrnoException).code;
+          return code === "EISDIR"
+            ? new Response(new Blob([`err ${code}`], { type: "text/x-error" }), { status: 500 })
+            : new Response(`err ${code}`, { status: 500 });
+        },
       });
       const probe = async (pathname: string, method: string) => {
         const res = await fetch(new URL(pathname, handlerServer.url), { method });
@@ -817,10 +888,10 @@ describe("Bun.file in serve routes", () => {
           text: await res.text(),
         };
       };
-      const error = (text: string) => ({
+      const error = (contentType: string, text: string) => ({
         status: 500,
         contentLength: "10",
-        contentType: "text/plain;charset=utf-8",
+        contentType,
         contentDisposition: null,
         text,
       });
@@ -830,10 +901,10 @@ describe("Bun.file in serve routes", () => {
         "GET /dir": await probe("/dir", "GET"),
         "HEAD /dir": await probe("/dir", "HEAD"),
       }).toEqual({
-        "GET /missing": error("err ENOENT"),
-        "HEAD /missing": error(""),
-        "GET /dir": error("err EISDIR"),
-        "HEAD /dir": error(""),
+        "GET /missing": error("text/plain;charset=utf-8", "err ENOENT"),
+        "HEAD /missing": error("text/plain;charset=utf-8", ""),
+        "GET /dir": error("text/x-error", "err EISDIR"),
+        "HEAD /dir": error("text/x-error", ""),
       });
     });
 
@@ -904,6 +975,39 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(`fallback: ${server.url}will-be-deleted.txt`);
       expect(handler.mock.calls.length).toBe(previousCallCount + 1);
+    });
+
+    it("a missing file returned from the fetch handler reaches error() for HEAD like for GET", async () => {
+      const missingPath = join(tempDir, "does-not-exist.txt");
+      const errors: { code?: string; path?: string }[] = [];
+      using handlerServer = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Bun.file(missingPath)),
+        error(err) {
+          errors.push({ code: err.code, path: (err as ErrnoException).path });
+          return new Response("from error()", { status: 404, headers: { "X-From": "error" } });
+        },
+      });
+      const results: unknown[] = [];
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(handlerServer.url, { method });
+        results.push({
+          method,
+          status: res.status,
+          from: res.headers.get("X-From"),
+          contentLength: res.headers.get("Content-Length"),
+          body: await res.text(),
+        });
+      }
+      // HEAD used to ignore the failed stat and answer 200 with content-length: 0.
+      expect(results).toEqual([
+        { method: "GET", status: 404, from: "error", contentLength: "12", body: "from error()" },
+        { method: "HEAD", status: 404, from: "error", contentLength: "12", body: "" },
+      ]);
+      expect(errors).toEqual([
+        { code: "ENOENT", path: missingPath },
+        { code: "ENOENT", path: missingPath },
+      ]);
     });
   });
 

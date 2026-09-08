@@ -2609,24 +2609,10 @@ where
         // handler-supplied Content-Length / Transfer-Encoding header)
         let body_value = response.get_body_value();
         match body_value {
-            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                // `render_metadata` reads `this.blob`, as GET does.
-                this.blob
-                    .set(body_value.use_as_any_blob_allow_non_utf8_string());
-                let size = this.blob.get().size();
-                this.render_metadata();
-
-                if size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", size as u64);
-                }
-                this.end_without_body(this.should_close_connection());
-                this.blob.with_mut(|b| b.detach());
-            }
-
-            Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
+            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) | Body::Value::Blob(_) => {
+                if let Body::Value::Blob(blob) = body_value
+                    && shim::blob_is_s3(blob)
+                {
                     // we need to read the size asynchronously
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
                     // Ref for the S3 stat; adopted and released by
@@ -2660,25 +2646,32 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
+                // `render_metadata` reads `this.blob`, as GET does. A Blob body
+                // stays on the Response: a view of it is enough for the headers.
+                let body = match body_value {
+                    Body::Value::Blob(blob) => AnyBlob::Blob(blob.dupe()),
+                    _ => body_value.use_as_any_blob_allow_non_utf8_string(),
+                };
+                this.blob.set(body);
                 // Same open + fstat as GET; `do_sendfile` ends HEAD after the headers.
-                if shim::blob_needs_to_read_file(blob) {
-                    this.blob
-                        .set(body_value.use_as_any_blob_allow_non_utf8_string());
+                if this.blob.get().needs_to_read_file() {
                     this.render_with_blob_from_body_value();
                     return;
                 }
-                // Size the blob *before* `render_metadata()`: it re-fetches the
-                // Response from `response_weakref`, so no borrow of the Response
-                // (here, `blob`) may still be live across it. Nothing is written
-                // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                let size = {
+                    let blob = this.blob.get();
+                    if let AnyBlob::Blob(blob) = blob {
+                        blob.resolve_size();
+                    }
+                    blob.size()
+                };
                 this.render_metadata();
+                this.blob.with_mut(|b| b.detach());
 
-                if blob_size == crate::webcore::blob::MAX_SIZE {
+                if size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
-                    resp.write_header_int(b"content-length", blob_size as u64);
+                    resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }

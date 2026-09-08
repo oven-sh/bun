@@ -82,9 +82,7 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        // The --no-bundle transpiler only prints ESM. For cjs (and --bytecode),
-        // convert each file with the linker instead: every import external,
-        // tree shaking off.
+        // The --no-bundle printer is ESM-only: convert cjs per file with the linker instead.
         let no_bundle = ctx.bundler_options.transform_only;
         let convert_format_only =
             no_bundle && ctx.bundler_options.output_format == options::Format::Cjs;

@@ -460,13 +460,8 @@ impl EventLoop {
         Ok(())
     }
 
-    /// The gate for native code entering user JS from outside the task queue
-    /// (all 50+ `run_callback*` callers funnel through here): not once teardown
-    /// has forbidden script (Node's `can_call_into_js`), not with an exception
-    /// already pending — a prior callback's microtasks can request termination
-    /// (worker.terminate()), and entering JS then would trip executeCallImpl's
-    /// `assertNoException` — and not into a realm that `bun test --isolate`
-    /// retired (a killed child's late `onExit`).
+    /// `run_callback*`'s gate; also refuses a function of a realm that
+    /// `bun test --isolate` retired (a killed child's late `onExit`).
     #[inline]
     fn may_enter_js(callback: JSValue, global_object: &JSGlobalObject) -> bool {
         !global_object.has_exception()
@@ -484,6 +479,12 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
+        // The gate for native code entering user JS from outside the task
+        // queue (all 50+ callers funnel through here): not once teardown has
+        // forbidden script (Node's `can_call_into_js`), and not with an
+        // exception already pending — a prior callback's microtasks can request
+        // termination (worker.terminate()), and entering JS then would trip
+        // executeCallImpl's `assertNoException`.
         if !Self::may_enter_js(callback, global_object) {
             return;
         }

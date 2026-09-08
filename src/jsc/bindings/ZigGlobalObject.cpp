@@ -4380,9 +4380,8 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
     globalObject->scriptExecutionContext()->prepareForDestruction();
 }
 
-// `bun test --isolate`: the swap has torn the outgoing file down. From here on JSC drops every
-// microtask queued against its realm (as WebCore does for a stopped document), so work the file left
-// in flight cannot resume its script under the next file's global when it lands.
+// `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
+// (as WebCore does for a stopped document), so work it left in flight cannot resume its script.
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);

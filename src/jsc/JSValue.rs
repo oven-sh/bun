@@ -352,8 +352,7 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
-    /// An object of a realm `bun test --isolate` has retired (its file
-    /// finished); native code does not call into such a function.
+    /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
     #[inline]
     pub fn is_from_retired_test_isolation_realm(self) -> bool {
         self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)

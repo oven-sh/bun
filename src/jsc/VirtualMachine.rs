@@ -5178,10 +5178,8 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
-        // The outgoing file's exit. What it left in flight (thread-pool jobs,
-        // the children just killed) lands later and must not resume its script:
-        // its realm's microtasks are discarded from here, stale-generation job
-        // completions are released unrun, and `run_callback` skips its functions.
+        // The outgoing file's exit: work it left in flight (thread-pool jobs,
+        // the children just killed) lands later and must not resume its script.
         Zig__GlobalObject__retireForTestIsolation(self.global());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 

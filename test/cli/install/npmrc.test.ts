@@ -576,6 +576,12 @@ registry=https://somehost.com/org1/npm/registry/
     ["ignore-scripts=undefined", undefined],
     ["ignore-scripts= 0 ", false],
     ["ignore-scripts= 1 ", true],
+    // ini JSON-parses a single-quoted value, so these reach the loader as numbers
+    ["ignore-scripts='1'", true],
+    ["ignore-scripts='0'", false],
+    ['ignore-scripts="1"', true],
+    ['ignore-scripts="0"', false],
+    ["ignore-scripts='null'", false],
   ])("boolean option: %s", (line, expected) => {
     expect(loadNpmrc(line + "\n").ignore_scripts).toBe(expected);
   });

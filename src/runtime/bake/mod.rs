@@ -27,7 +27,7 @@ pub(crate) use dev_server_body::is_allowed_host_header;
 pub(crate) mod framework_router_body;
 
 #[path = "production.rs"]
-mod production_body;
+pub mod production_body;
 
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
@@ -90,9 +90,7 @@ pub struct ReactFastRefresh {
     pub(crate) import_source: Cow<'static, [u8]>,
 }
 
-/// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
-/// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
-/// DevServer touches is named here.
+/// `bake.Framework.FileSystemRouterType` (`from_js` lives in `bake_body.rs`).
 // Deliberately not `Clone` — `framework_router::Style` is the
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
 pub struct FileSystemRouterType {
@@ -111,8 +109,7 @@ pub struct FileSystemRouterType {
 
 /// A "Framework" is simply a set of bundler options that a framework author
 /// would set in order to integrate with the application. Since many fields
-/// have default values which may point to static memory, this structure is
-/// always arena-allocated, usually owned by the arena in `UserOptions`.
+/// default to static strings, they are `Cow<'static, [u8]>`.
 pub struct Framework {
     pub(crate) is_built_in_react: bool,
     /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
@@ -123,13 +120,34 @@ pub struct Framework {
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
 }
 
+impl Default for Framework {
+    /// Unopinionated default.
+    fn default() -> Self {
+        Framework {
+            is_built_in_react: false,
+            file_system_router_types: Vec::new(),
+            server_components: None,
+            react_fast_refresh: None,
+            built_in_modules: bun_collections::StringArrayHashMap::new(),
+        }
+    }
+}
+
+impl Default for ReactFastRefresh {
+    fn default() -> Self {
+        ReactFastRefresh {
+            import_source: Cow::Borrowed(b"react-refresh/runtime"),
+        }
+    }
+}
+
 impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
     /// the value `init_transpiler` arena-allocates and hands to
     /// `out.options.framework`.
-    fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+    pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
         for (k, v) in self.built_in_modules.iter() {
@@ -172,12 +190,7 @@ impl Framework {
         )
     }
 
-    /// Sets up a per-graph
-    /// `Transpiler` in place. The full body lives in
-    /// `bake_body::Framework::init_transpiler_with_options`; this keystone
-    /// version operates on the keystone `BuildConfigSubset` (which omits
-    /// `conditions`/`env`/`define`/`drop` until the schema types are
-    /// const-constructible — those paths default).
+    /// Sets up a per-graph `Transpiler`.
     /// The transpiler is boxed because its linker holds pointers into it.
     pub(crate) fn init_transpiler<'a>(
         &mut self,
@@ -186,6 +199,41 @@ impl Framework {
         mode: Mode,
         renderer: Graph,
         bundler_options: &BuildConfigSubset,
+    ) -> crate::Result<Box<bun_bundler::Transpiler<'a>>> {
+        self.init_transpiler_with_options(
+            arena,
+            log,
+            mode,
+            renderer,
+            bundler_options,
+            match mode {
+                // Source maps must always be external, as DevServer special cases
+                // the linking and part of the generation of these. It also relies
+                // on source maps always being enabled.
+                Mode::Development => bun_bundler::options::SourceMapOption::External,
+                // TODO: follow user configuration
+                Mode::ProductionDynamic | Mode::ProductionStatic => {
+                    bun_bundler::options::SourceMapOption::None
+                }
+            },
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn init_transpiler_with_options<'a>(
+        &mut self,
+        arena: &'a bun_alloc::Arena,
+        log: &mut bun_ast::Log,
+        mode: Mode,
+        renderer: Graph,
+        bundler_options: &BuildConfigSubset,
+        source_map: bun_bundler::options::SourceMapOption,
+        minify_whitespace: Option<bool>,
+        minify_syntax: Option<bool>,
+        minify_identifiers: Option<bool>,
     ) -> crate::Result<Box<bun_bundler::Transpiler<'a>>> {
         use bun_options_types::schema as bun_schema;
 
@@ -242,12 +290,9 @@ impl Framework {
 
         out.options.production = mode != Mode::Development;
         out.options.tree_shaking = mode != Mode::Development;
-        // The three minify overrides always default to `mode != Development`
-        // here regardless of `BuildConfigSubset`. User-supplied minify flags
-        // are only honored by `init_transpiler_with_options` (bake_body).
-        out.options.minify_syntax = mode != Mode::Development;
-        out.options.minify_identifiers = mode != Mode::Development;
-        out.options.minify_whitespace = mode != Mode::Development;
+        out.options.minify_syntax = minify_syntax.unwrap_or(mode != Mode::Development);
+        out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
+        out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
         // The bundler crate (lower tier) carries a TYPE_ONLY
         // projection (`bake_types::Framework`).
@@ -256,19 +301,10 @@ impl Framework {
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
         }
-        out.options.source_map = match mode {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            Mode::Development => bun_bundler::options::SourceMapOption::External,
-            // TODO: follow user configuration
-            Mode::ProductionDynamic | Mode::ProductionStatic => {
-                bun_bundler::options::SourceMapOption::None
-            }
-        };
+        out.options.source_map = source_map;
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
-            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
+            out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();
         }
         // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
         // re-project via the dedicated helper rather than `Clone`.
@@ -452,118 +488,38 @@ pub struct SplitBundlerOptions {
     pub(crate) ssr: BuildConfigSubset,
 }
 
-// ─── bake_body → keystone bridges ────────────────────────────────────────────
-// LAYERING: `UserOptions` (bake_body.rs) carries `&'static [u8]`-backed
-// duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
-// (DevServer.rs) wants the keystone Cow-backed types defined above. Until the
-// two struct families unify (tracked by the `convert_file_system_router_type`
-// note in ServerConfig.rs), bridge by-value here so `server/mod.rs` can hand
-// `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
-// `Cow::Borrowed` / `Box<[u8]>` projections are by-reference (no copy of the
-// underlying arena bytes).
-impl From<bake_body::FileSystemRouterType> for FileSystemRouterType {
-    fn from(src: bake_body::FileSystemRouterType) -> Self {
-        Self {
-            root: Cow::Borrowed(src.root),
-            prefix: Cow::Borrowed(src.prefix),
-            entry_client: src.entry_client.map(Cow::Borrowed),
-            entry_server: Cow::Borrowed(src.entry_server),
-            ignore_underscores: src.ignore_underscores,
-            ignore_dirs: src.ignore_dirs.iter().map(|s| Cow::Borrowed(*s)).collect(),
-            extensions: src.extensions.iter().map(|s| Cow::Borrowed(*s)).collect(),
-            style: src.style,
-            allow_layouts: src.allow_layouts,
-        }
-    }
-}
-impl From<bake_body::ServerComponents> for ServerComponents {
-    fn from(src: bake_body::ServerComponents) -> Self {
-        Self {
-            separate_ssr_graph: src.separate_ssr_graph,
-            server_runtime_import: Cow::Borrowed(src.server_runtime_import),
-            server_register_client_reference: Cow::Borrowed(src.server_register_client_reference),
-            server_register_server_reference: Cow::Borrowed(src.server_register_server_reference),
-            client_register_server_reference: Cow::Borrowed(src.client_register_server_reference),
-        }
-    }
-}
-impl From<bake_body::ReactFastRefresh> for ReactFastRefresh {
-    fn from(src: bake_body::ReactFastRefresh) -> Self {
-        Self {
-            import_source: Cow::Borrowed(src.import_source),
-        }
-    }
-}
-impl From<bake_body::BuiltInModule> for BuiltInModule {
-    fn from(src: bake_body::BuiltInModule) -> Self {
-        match src {
-            bake_body::BuiltInModule::Import(p) => BuiltInModule::Import(p.into()),
-            bake_body::BuiltInModule::Code(c) => BuiltInModule::Code(c.into()),
-        }
-    }
-}
-impl From<bake_body::Framework> for Framework {
-    fn from(src: bake_body::Framework) -> Self {
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-        for (k, v) in src.built_in_modules.iter() {
-            bun_core::handle_oom(built_in_modules.put(*k, BuiltInModule::from(*v)));
-        }
-        Self {
-            is_built_in_react: src.is_built_in_react,
-            file_system_router_types: src
-                .file_system_router_types
-                .into_iter()
-                .map(FileSystemRouterType::from)
-                .collect(),
-            server_components: src.server_components.map(ServerComponents::from),
-            react_fast_refresh: src.react_fast_refresh.map(ReactFastRefresh::from),
-            built_in_modules,
-        }
-    }
-}
-impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
-    fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `source_map`,
-        // which only `init_transpiler_with_options` honours).
-        Self {
-            ignore_dce_annotations: src.ignore_dce_annotations,
-            conditions: src.conditions,
-            drop: src.drop,
-            env: src.env,
-            env_prefix: src.env_prefix,
-            define: src.define,
-        }
-    }
-}
-impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
-    fn from(src: bake_body::SplitBundlerOptions) -> Self {
-        Self {
-            // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
-            // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
-            plugin: src.plugin,
-            client: src.client.into(),
-            server: src.server.into(),
-            ssr: src.ssr.into(),
-        }
-    }
-}
-
-/// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
-/// lives in `bake_body.rs`; this keystone mirror carries every field that
-/// `Framework::init_transpiler` reads so DevServer's
-/// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
-#[derive(Default)]
+/// `bake.SplitBundlerOptions.BuildConfigSubset` (`from_js` lives in
+/// `bake_body.rs`).
 pub struct BuildConfigSubset {
     pub(crate) ignore_dce_annotations: Option<bool>,
     pub(crate) conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
     pub(crate) drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
     pub(crate) env: bun_options_types::schema::api::DotEnvBehavior,
-    pub(crate) env_prefix: Option<&'static [u8]>,
+    pub(crate) env_prefix: Option<Box<[u8]>>,
     pub(crate) define: bun_options_types::schema::api::StringMap,
-    // `source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours it, and DevServer
-    // never calls that path.
+    /// Honoured by the production build only; the dev server forces external
+    /// source maps (see [`Framework::init_transpiler`]).
+    pub(crate) source_map: bun_options_types::schema::api::SourceMapMode,
+    pub(crate) minify_syntax: Option<bool>,
+    pub(crate) minify_identifiers: Option<bool>,
+    pub(crate) minify_whitespace: Option<bool>,
+}
+
+impl Default for BuildConfigSubset {
+    fn default() -> Self {
+        BuildConfigSubset {
+            ignore_dce_annotations: None,
+            conditions: bun_collections::ArrayHashMap::new(),
+            drop: bun_collections::ArrayHashMap::new(),
+            env: bun_options_types::schema::api::DotEnvBehavior::_none,
+            env_prefix: None,
+            define: bun_options_types::schema::api::StringMap::EMPTY,
+            source_map: bun_options_types::schema::api::SourceMapMode::External,
+            minify_syntax: None,
+            minify_identifiers: None,
+            minify_whitespace: None,
+        }
+    }
 }
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
@@ -583,8 +539,6 @@ pub(crate) use bake_body::get_hmr_runtime;
 // the cross-crate hook is gone. This crate's `HmrRuntime` keeps the
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
-
-pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════
 // FrameworkRouter

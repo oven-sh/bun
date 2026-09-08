@@ -815,7 +815,7 @@ impl AnyRoute {
 
         if argument.is_object() {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
-                let relative_root = init_ctx.js_string_allocations.track(dir);
+                let relative_root = dir.slice();
 
                 if !strings::ends_with(path, b"/*") {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -921,7 +921,6 @@ impl AnyRoute {
 pub struct ServerInitContext<'a> {
     pub(crate) dedupe_html_bundle_map:
         HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
-    pub(crate) js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,
     pub(crate) user_routes: &'a mut Vec<server_config::StaticRouteEntry>,

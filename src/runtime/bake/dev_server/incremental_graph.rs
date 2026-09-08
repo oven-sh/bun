@@ -693,7 +693,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Bust the resolution cache of the dir containing this file.
         let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
-        let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
+        let _ = bv2.bust_dir_cache(dirname);
 
         // Clear the cached entry from the path→source-index maps.
         for map in bv2.graph.build_graphs.values_mut() {

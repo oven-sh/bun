@@ -126,9 +126,8 @@ pub(crate) fn filter<'a>(
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
     //
-    // `BundleV2::scan_module_graph_from_cli` takes
-    // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. Route through the shared CLI arena.
+    // The arena, log, and transpiler are process-lifetime (the bundle keeps
+    // back-references to them). Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
@@ -167,7 +166,7 @@ pub(crate) fn filter<'a>(
     let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
-        scan_transpiler,
+        bun_ptr::ParentRef::from_ref_mut(scan_transpiler),
         arena,
         Some(core::ptr::NonNull::from(&mut event_loop)),
         &entry_points,
@@ -300,13 +299,12 @@ pub(crate) fn filter<'a>(
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
     // everything needed has been copied out above. The scan transpiler itself
-    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
+    // is in the CLI arena, so its Drop never runs either; free its heap-backed
+    // options through the back-reference `bundle` still holds.
     bundle.deinit_without_freeing_arena();
-    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
-    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
-    unsafe { bundle.transpiler.deinit() };
+    // SAFETY: `bundle.transpiler` is the arena-backed transpiler noted above —
+    // its `Drop` never runs, so `deinit` cannot lead to a double-drop.
+    unsafe { bundle.transpiler_mut().deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

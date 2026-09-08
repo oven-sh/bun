@@ -2235,7 +2235,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         match expr.data {
             js_ast::ExprData::ENumber(num) => Some(TSConstantValue::Number(num.value())),
-            js_ast::ExprData::EString(str_) => self.ts_constant_string(str_),
+            // The parse pass builds no ropes.
+            js_ast::ExprData::EString(str_) => Some(Self::ts_constant_string(str_)),
             js_ast::ExprData::EUnary(unary) => {
                 let TSConstantValue::Number(value) =
                     self.eval_ts_constant_expression(&unary.value)?
@@ -2319,16 +2320,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(&value) = self.ts_enum_constants.get(&result.r#ref) {
                     return Some(value);
                 }
-                let data = *self.ref_to_ts_namespace_member.get(&result.r#ref)?;
-                self.ts_namespace_member_value(data)
+                Self::ts_namespace_member_value(
+                    *self.ref_to_ts_namespace_member.get(&result.r#ref)?,
+                )
             }
             js_ast::ExprData::EDot(dot) => {
                 if dot.optional_chain.is_some() {
                     return None;
                 }
                 let map = self.eval_ts_namespace_chain(&dot.target)?;
-                let data = (*map).get(dot.name.slice())?.data;
-                self.ts_namespace_member_value(data)
+                Self::ts_namespace_member_value((*map).get(dot.name.slice())?.data)
             }
             js_ast::ExprData::EIndex(index) => {
                 if index.optional_chain.is_some() {
@@ -2341,8 +2342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return None;
                 }
                 let map = self.eval_ts_namespace_chain(&index.target)?;
-                let data = (*map).get(name.slice8())?.data;
-                self.ts_namespace_member_value(data)
+                Self::ts_namespace_member_value((*map).get(name.slice8())?.data)
             }
             _ => None,
         }
@@ -2383,34 +2383,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn ts_namespace_member_value(&mut self, data: js_ast::ts::Data) -> Option<TSConstantValue> {
+    fn ts_namespace_member_value(data: js_ast::ts::Data) -> Option<TSConstantValue> {
         match data {
             js_ast::ts::Data::EnumNumber(num) => Some(TSConstantValue::Number(num)),
-            js_ast::ts::Data::EnumString(str_) => self.ts_constant_string(str_),
+            // `s_enum` stores string members flat.
+            js_ast::ts::Data::EnumString(str_) => Some(Self::ts_constant_string(str_)),
             _ => None,
         }
     }
 
-    /// `TSConstantValue::String` is never a rope: each substitution copies the
-    /// node it points at, and copies of a rope would share its tail.
-    fn ts_constant_string(
-        &mut self,
-        str_: js_ast::StoreRef<E::EString>,
-    ) -> Option<TSConstantValue> {
-        if str_.next.is_none() {
-            return Some(TSConstantValue::String(str_));
-        }
-        if !str_.is_utf8() {
-            return None;
-        }
-        let flat = str_.flattened(self.arena).shallow_clone();
-        Some(self.new_ts_constant_string(flat))
+    fn ts_constant_string(str_: js_ast::StoreRef<E::EString>) -> TSConstantValue {
+        debug_assert!(
+            str_.next.is_none(),
+            "each substitution copies this node, and copies of a rope would share its tail"
+        );
+        TSConstantValue::String(str_)
     }
 
     fn new_ts_constant_string(&mut self, string: E::EString) -> TSConstantValue {
-        debug_assert!(string.next.is_none());
         let expr = self.new_expr(string, bun_ast::Loc::EMPTY);
-        TSConstantValue::String(expr.data.e_string().expect("infallible: just created"))
+        Self::ts_constant_string(expr.data.e_string().expect("infallible: just created"))
     }
 
     fn s_enum(
@@ -2502,8 +2494,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         next_numeric_value = Some(num.value() + 1.0);
                     }
-                    js_ast::ExprData::EString(str_) => {
+                    js_ast::ExprData::EString(mut str_) => {
                         has_string_value = true;
+
+                        // Inlined uses share this node's rope and folds append to ropes in place: store it flat.
+                        str_.resolve_rope_if_needed(p.arena);
 
                         exported_members.get_ptr_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumString(str_);

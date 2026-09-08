@@ -2356,7 +2356,7 @@ describe("bundler", () => {
 					X25 = (321),
 
 					// a dotted name (e.g. x.y.z) that references a const variable with a constant expression initializer and no type annotation,
-					/* (see ts/EnumConstVariableReferences below) */
+					/* (a bare const identifier folds, see ts/EnumConstVariableReferences below; a namespace member such as ns.x does not) */
 
 					// a dotted name that references an enum member with an enum literal type, or
 					X26 = X0,

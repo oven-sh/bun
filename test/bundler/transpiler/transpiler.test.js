@@ -1232,6 +1232,32 @@ function foo() {}
           'var N;\n((N) => {\n  N.a = 1;\n  let E;\n  ((E) => {\n    E[E["X"] = 1] = "X";\n    E[E["Y"] = 2] = "Y";\n  })(E = N.E ||= {});\n})(N ||= {})',
         );
       });
+
+      // tsc folds a dotted name to a namespace's exported const too. Not implemented:
+      // the namespace member map does not carry the value.
+      it.todo("const reached through a namespace", () => {
+        exp(
+          "namespace N { export const a = 1; }\nenum E { X = N.a, Y }",
+          'var N;\n((N) => {\n  N.a = 1;\n})(N ||= {});\nvar E;\n((E) => {\n  E[E["X"] = 1] = "X";\n  E[E["Y"] = 2] = "Y";\n})(E ||= {})',
+        );
+      });
+
+      it("folds through to uses of the member", () => {
+        // https://github.com/oven-sh/bun/issues/19581
+        const out = ts.parsedMin(
+          "const enum First { A = 1, B = 2, C = 3 }\nconst multiplier = 5;\nconst enum Second { D = First.A * multiplier, E = First.B * multiplier, F = First.C * multiplier }\nconsole.log(Second.E + Second.F);",
+        );
+        expect(out.split("\n").at(-1)).toBe("console.log(25)");
+      });
+
+      it("a folded string member can be read by more than one template literal", () => {
+        // The member is stored flat. A rope would be shared by every inlined copy,
+        // and folding the first template literal would append to it.
+        ts.expectPrintedMin_(
+          'const prefix = "app";\nenum Tag { Upper = prefix + "!" }\nconsole.log(`${Tag.Upper}x`, `${Tag.Upper}y`);',
+          'const prefix = "app";\nvar Tag;\n((Tag) => Tag.Upper = "app!")(Tag ||= {});\nconsole.log("app!x", "app!y")',
+        );
+      });
     });
 
     // TODO: fix all the cases that report generic "Parse error"

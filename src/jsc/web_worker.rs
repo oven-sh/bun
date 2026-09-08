@@ -83,6 +83,10 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
+    /// The working directory when `new Worker()` ran. `spin()` resolves
+    /// `unresolved_specifier` from it, so a `process.chdir()` between
+    /// construction and thread start does not change which module loads.
+    cwd: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
@@ -304,6 +308,10 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
+        // Copied, not borrowed: `process.chdir()` rewrites the buffer behind
+        // `top_level_dir` in place.
+        // SAFETY: `parent` is the calling thread's live VM.
+        let cwd: Box<[u8]> = Box::from(unsafe { (*parent).top_level_dir() });
         let mut temp_log = bun_ast::Log::default();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
@@ -336,7 +344,13 @@ impl WebWorker {
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
+                resolve_entry_point_specifier(
+                    parent,
+                    &cwd,
+                    utf8_slice.slice(),
+                    error_message,
+                    temp_log,
+                )
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -413,6 +427,7 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
+            cwd,
             preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
@@ -803,15 +818,16 @@ impl WebWorker {
         vm.as_mut().preload.clone_from(&self.preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored
-        // the raw specifier). The returned slice is BORROWED — every exit from
-        // spin() goes through shutdown() which is noreturn, so a `defer free`
-        // here would never run anyway.
+        // the raw specifier and its cwd). The returned slice is BORROWED — every
+        // exit from spin() goes through shutdown() which is noreturn, so a
+        // `defer free` here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
         let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
             resolve_entry_point_specifier(
                 vm_ptr,
+                &self.cwd,
                 &self.unresolved_specifier,
                 &mut resolve_error,
                 vm_log,
@@ -1263,9 +1279,9 @@ fn on_unhandled_rejection(
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
-/// consume. The returned slice is BORROWED — it aliases `str`, the
-/// standalone module graph, or the resolver's arena; the caller must NOT
-/// free it.
+/// consume; a relative or bare `str` resolves from `cwd`. The returned slice
+/// is BORROWED — it aliases `str`, the standalone module graph, or the
+/// resolver's arena; the caller must NOT free it.
 ///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
@@ -1274,6 +1290,7 @@ fn on_unhandled_rejection(
 /// the single expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
+    cwd: &[u8],
     str: &'s [u8],
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
@@ -1317,7 +1334,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
     let global = unsafe { (*parent).global };
     // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
     // owning thread (the caller's thread per fn contract).
-    let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
+    let resolved_entry_point = match unsafe {
+        (*parent).transpiler.resolve_entry_point_from(cwd, str)
+    } {
         Ok(r) => r,
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).

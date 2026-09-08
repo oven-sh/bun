@@ -419,10 +419,13 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        let top_level_dir = self.fs().top_level_dir;
+    fn _resolve_entry_point(
+        &mut self,
+        source_dir: &[u8],
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
         let first = match self.resolver.resolve_with_framework(
-            top_level_dir,
+            source_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
         ) {
@@ -446,11 +449,10 @@ impl<'a> Transpiler<'a> {
             prefixed.extend_from_slice(entry_point);
             // `Resolver::resolve` interns the path internally,
             // so the heap buffer can drop after the call.
-            if let Ok(r) = self.resolver.resolve(
-                top_level_dir,
-                &prefixed,
-                bun_ast::ImportKind::EntryPointBuild,
-            ) {
+            if let Ok(r) =
+                self.resolver
+                    .resolve(source_dir, &prefixed, bun_ast::ImportKind::EntryPointBuild)
+            {
                 if !r.flags.is_external() {
                     return Ok(r);
                 }
@@ -463,7 +465,19 @@ impl<'a> Transpiler<'a> {
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        match self._resolve_entry_point(entry_point) {
+        let top_level_dir = self.fs().top_level_dir;
+        self.resolve_entry_point_from(top_level_dir, entry_point)
+    }
+
+    /// [`Self::resolve_entry_point`] with a relative or bare `entry_point`
+    /// resolved from the absolute directory `source_dir` instead of the
+    /// current working directory.
+    pub fn resolve_entry_point_from(
+        &mut self,
+        source_dir: &[u8],
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
+        match self._resolve_entry_point(source_dir, entry_point) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
@@ -476,9 +490,7 @@ impl<'a> Transpiler<'a> {
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if self.fs().top_level_dir.len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
+                    if source_dir.len() + entry_point.len() + 4 > bun_paths::MAX_PATH_BYTES {
                         break 'name false;
                     }
                     if bun_paths::is_absolute(entry_point) {
@@ -502,12 +514,11 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = self.fs().top_level_dir;
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,
                     >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
+                        source_dir, &mut cache_bust_buf[..], &parts
                     );
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
@@ -518,7 +529,7 @@ impl<'a> Transpiler<'a> {
 
                 // Only re-query if we previously had something cached.
                 if busted {
-                    if let Ok(result) = self._resolve_entry_point(entry_point) {
+                    if let Ok(result) = self._resolve_entry_point(source_dir, entry_point) {
                         return self.reject_unbundleable_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error

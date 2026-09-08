@@ -1665,10 +1665,23 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
       height: 1,
       format: "gif",
       space: "srgb",
-      channels: 4,
-      hasAlpha: true,
+      channels: 3,
+      hasAlpha: false,
     });
     expect([...(await gifPixels(g, be)).data.subarray(0, 4)]).toEqual([0xff, 0x80, 0x40, 0xff]);
+  });
+
+  test("GIF: metadata() reports alpha only when the GCE transparency flag is set", async () => {
+    // Matches sharp/libvips: an opaque GIF is 3-channel, a GCE with the
+    // transparent-colour flag makes it 4-channel.
+    const pal: [number, number, number][] = [
+      [255, 0, 0],
+      [0, 255, 0],
+    ];
+    const opaque = await new Bun.Image(makeGif(2, 1, pal, x => x)).metadata();
+    expect(opaque).toEqual({ width: 2, height: 1, format: "gif", space: "srgb", channels: 3, hasAlpha: false });
+    const transparent = await new Bun.Image(makeGif(2, 1, pal, x => x, { trns: 1 })).metadata();
+    expect(transparent).toEqual({ width: 2, height: 1, format: "gif", space: "srgb", channels: 4, hasAlpha: true });
   });
 
   test("GIF: width-growth boundary (forces 3→4→5-bit transitions mid-row)", async () => {
@@ -1734,7 +1747,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     // earlier tests' side-effect on the process-global).
     Bun.Image.backend = "bun";
     const m = await new Bun.Image(g).metadata();
-    expect(m).toEqual({ width: 2, height: 2, format: "gif", space: "srgb", channels: 4, hasAlpha: true });
+    expect(m).toEqual({ width: 2, height: 2, format: "gif", space: "srgb", channels: 3, hasAlpha: false });
     // And actually decode (exercises Bits.drain too).
     const out = await new Bun.Image(g).png().bytes();
     expect(out[0]).toBe(0x89);

@@ -331,13 +331,11 @@ pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// `metadata().space` vocabulary — sharp/libvips interpretation names
-/// (`srgb`, `b-w`, `cmyk`, `rgb16`, `grey16`) so content-negotiation code
-/// written against sharp ports unchanged.
+/// `metadata().space`, using sharp/libvips interpretation names.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Space {
     Srgb,
-    /// Greyscale — libvips spells it "b-w".
+    /// Greyscale; libvips spells it "b-w".
     Bw,
     Cmyk,
     /// 16-bit-per-channel RGB (PNG bit depth 16).
@@ -358,14 +356,11 @@ impl Space {
     }
 }
 
-/// Colour facts for `.metadata()` — read from the same per-format headers
-/// as the dimensions, describing the SOURCE (the pipeline itself is RGBA8
-/// everywhere regardless).
+/// Source colour layout for `.metadata()`; the decode pipeline itself is always RGBA8.
 #[derive(Copy, Clone)]
 pub struct ColorInfo {
     pub space: Space,
-    /// Channel count as sharp reports it: 1 grey, 2 grey+alpha, 3 RGB,
-    /// 4 RGB+alpha or CMYK.
+    /// 1 grey, 2 grey+alpha, 3 RGB, 4 RGB+alpha or CMYK (sharp's counting).
     pub channels: u8,
     pub has_alpha: bool,
 }
@@ -377,13 +372,7 @@ pub(crate) struct Probe {
     pub color: ColorInfo,
 }
 
-/// Whether a PNG carries a tRNS chunk — transparency for the colour types
-/// with no native alpha channel (grey/truecolour colour-key, palette
-/// alpha). Walks the chunk list from the first chunk after IHDR; tRNS must
-/// precede IDAT per the spec, so the walk stops there. Lengths are
-/// attacker bytes: every read is bounds-checked and the offset advance is
-/// overflow-checked, and each step consumes ≥12 bytes so the walk is
-/// linear in the input.
+/// Walks PNG chunks up to IDAT (tRNS must precede it per spec) with checked offsets.
 fn png_has_trns(bytes: &[u8]) -> bool {
     let mut off: usize = 8;
     loop {
@@ -425,9 +414,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
             let bit_depth = bytes[24];
             let color_type = bytes[25];
-            // PNG colour types: 0 grey, 2 truecolour, 3 indexed, 4
-            // grey+alpha, 6 truecolour+alpha. Anything else is a corrupt
-            // header the decoder would reject too.
+            // PNG colour types: 0 grey, 2 RGB, 3 indexed, 4 grey+alpha, 6 RGBA.
             let (base_channels, grey): (u8, bool) = match color_type {
                 0 => (1, true),
                 2 => (3, false),
@@ -436,9 +423,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 6 => (4, false),
                 _ => return Err(Error::DecodeFailed),
             };
-            // Legal depths per colour type (PNG spec §11.2.2) — the same
-            // table libspng's check_ihdr enforces at decode, so metadata()
-            // and bytes() keep agreeing on what's corrupt.
+            // Same depth-per-type table as libspng's check_ihdr (PNG spec §11.2.2).
             if !matches!(
                 (color_type, bit_depth),
                 (0, 1 | 2 | 4 | 8 | 16) | (2 | 4 | 6, 8 | 16) | (3, 1 | 2 | 4 | 8)
@@ -446,9 +431,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 return Err(Error::DecodeFailed);
             }
             let native_alpha = color_type == 4 || color_type == 6;
-            // Types without a native alpha channel can still carry
-            // transparency via a tRNS chunk; libvips expands that to a real
-            // channel on load and sharp counts it, so match.
+            // tRNS transparency counts as a channel, matching libvips/sharp.
             let has_alpha = native_alpha || png_has_trns(bytes);
             color = ColorInfo {
                 space: match (grey, bit_depth == 16) {
@@ -479,9 +462,6 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             }
             w = u32::try_from(rw).expect("int cast");
             h = u32::try_from(rh).expect("int cast");
-            // JPEG never has alpha. Grey decodes to 1 channel; CMYK and its
-            // YCCK transport both report as 4-channel "cmyk"; everything
-            // else (YCbCr/RGB, or an unreadable param) is 3-channel sRGB.
             // SAFETY: same handle invariant as above.
             color = match unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_COLORSPACE) } {
                 jpeg::TJCS_GRAY => ColorInfo {
@@ -502,9 +482,6 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             };
         }
         Format::Webp => {
-            // Same header parse as `WebPGetInfo` (both are GetFeatures
-            // internally) plus the alpha flag — VP8X ALPH chunk or the VP8L
-            // alpha_is_used bit.
             let f = webp::get_features(bytes).ok_or(Error::DecodeFailed)?;
             if f.width <= 0 || f.height <= 0 {
                 return Err(Error::DecodeFailed);
@@ -522,8 +499,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let ih = bmp::parse_header(bytes)?;
             w = ih.width;
             h = ih.height;
-            // Alpha only with an explicit V4+ BITFIELDS alpha mask; plain
-            // 32-bit BI_RGB's 4th byte is reserved (see parse_header).
+            // Only a V4+ BITFIELDS alpha mask counts; see parse_header.
             let has_alpha = ih.a_mask != 0;
             color = ColorInfo {
                 space: Space::Srgb,
@@ -540,13 +516,11 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 as u32;
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
-            // GIF decodes to RGBA unconditionally (transparency is a
-            // per-frame palette flag, not a header fact); sharp/libvips
-            // reports every GIF as 4-channel with alpha — match that.
+            let has_alpha = gif::first_frame_transparent(bytes);
             color = ColorInfo {
                 space: Space::Srgb,
-                channels: 4,
-                has_alpha: true,
+                channels: if has_alpha { 4 } else { 3 },
+                has_alpha,
             };
         }
         Format::Tiff | Format::Heic | Format::Avif => {
@@ -560,9 +534,14 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 }
                 match system_backend::BackendError::split(system_backend::probe(bytes, max_pixels))
                 {
-                    Ok(Some((pw, ph))) => {
-                        w = pw;
-                        h = ph;
+                    Ok(Some(p)) => {
+                        w = p.width;
+                        h = p.height;
+                        color = ColorInfo {
+                            space: Space::Srgb,
+                            channels: if p.has_alpha { 4 } else { 3 },
+                            has_alpha: p.has_alpha,
+                        };
                     }
                     Ok(None) => return Err(Error::UnsupportedOnPlatform),
                     Err(e) => return Err(e),

@@ -129,6 +129,46 @@ impl Dict {
     }
 }
 
+/// Header-only: whether a Graphic Control Extension before the first image
+/// descriptor sets the transparent-colour flag. Same block walk as `decode`.
+pub(crate) fn first_frame_transparent(bytes: &[u8]) -> bool {
+    if bytes.len() < 13 {
+        return false;
+    }
+    let lsd_packed = bytes[10];
+    let gct_len: usize = if lsd_packed & 0x80 != 0 {
+        (1usize << ((lsd_packed & 7) + 1)) * 3
+    } else {
+        0
+    };
+    let mut i: usize = 13 + gct_len;
+    let mut trns = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            0x21 => {
+                if i + 2 > bytes.len() {
+                    return false;
+                }
+                let label = bytes[i + 1];
+                i += 2;
+                if label == 0xF9 && i + 6 <= bytes.len() && bytes[i] == 4 {
+                    trns = bytes[i + 1] & 1 != 0;
+                }
+                while i < bytes.len() {
+                    let n: usize = bytes[i] as usize;
+                    i += 1 + n;
+                    if n == 0 {
+                        break;
+                    }
+                }
+            }
+            0x2C => return trns,
+            _ => return false,
+        }
+    }
+    false
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {

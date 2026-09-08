@@ -48,8 +48,6 @@ fn format_name(f: codecs::Format) -> &'static str {
     }
 }
 
-/// Build the `.metadata()` result object — shared by the JS-thread fast
-/// path in `do_metadata` and the WorkPool delivery in `then()`.
 fn metadata_to_js(
     global: &JSGlobalObject,
     w: u32,
@@ -1702,10 +1700,7 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Metadata) {
-            // Reached only for HEIC/AVIF/TIFF (probe fell through) — the
-            // system backend has already decoded to RGBA8 and the source
-            // channel layout is gone, so derive the colour facts from the
-            // pixels. An all-opaque alpha plane reports as 3-channel.
+            // HEIC/AVIF/TIFF: the system backend decoded to RGBA8 already, so alpha is read from pixels.
             let has_alpha = decoded.rgba.chunks_exact(4).any(|px| px[3] != 0xFF);
             self.result = TaskResult::Meta {
                 w: decoded.width,

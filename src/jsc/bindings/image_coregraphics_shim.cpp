@@ -279,11 +279,12 @@ enum : int32_t { CG_OK = 0,
     CG_TOO_MANY_PIXELS = 4 };
 
 // Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
-// Two-phase: pass `out=nullptr` to get dimensions; then call again with a
+// Two-phase: pass `out=nullptr` to get dimensions (and, if `out_has_alpha` is
+// non-null, whether the source has an alpha channel); then call again with a
 // buffer of `w*h*4` to fill it. Avoids allocating in C++ so the caller owns
 // the buffer like every other decode path.
 int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
-    uint32_t* out_w, uint32_t* out_h, uint8_t* out)
+    uint32_t* out_w, uint32_t* out_h, uint8_t* out, int32_t* out_has_alpha)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
@@ -317,6 +318,10 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (!out) {
         *out_w = static_cast<uint32_t>(w);
         *out_h = static_cast<uint32_t>(h);
+        if (out_has_alpha) {
+            uint32_t a = s->CGImageGetAlphaInfo(r.img);
+            *out_has_alpha = !(a == kBunCGImageAlphaNone || a == kBunCGImageAlphaNoneSkipLast || a == kBunCGImageAlphaNoneSkipFirst);
+        }
         return CG_OK; // dimensions-only probe
     }
     // TOCTOU guard: the input is a borrowed-but-mutable JS slice and this runs
@@ -595,7 +600,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 #else
 // Non-Apple: stubs so the link succeeds; callers only reference these on
 // macOS so they're dead code, but LTO needs the definitions.
-extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }

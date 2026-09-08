@@ -28,15 +28,11 @@ unsafe extern "C" {
     pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
-/// `struct WebPBitstreamFeatures` — header-level facts from
-/// `WebPGetFeatures`. Only `width`/`height`/`has_alpha` are read; the rest
-/// is here for the C layout.
+/// `struct WebPBitstreamFeatures` from libwebp's decode.h.
 #[repr(C)]
 pub(crate) struct WebPBitstreamFeatures {
     pub width: c_int,
     pub height: c_int,
-    /// True if the bitstream contains an alpha channel (VP8X ALPH chunk or
-    /// the VP8L alpha_is_used flag).
     pub has_alpha: c_int,
     pub has_animation: c_int,
     /// 0 = undefined/mixed, 1 = lossy, 2 = lossless.
@@ -44,12 +40,10 @@ pub(crate) struct WebPBitstreamFeatures {
     pad: [u32; 5],
 }
 
-/// `WEBP_DECODER_ABI_VERSION` from decode.h — pinned to the libwebp commit
-/// like the mux/demux versions below.
+/// `WEBP_DECODER_ABI_VERSION` from decode.h, pinned like the mux/demux versions below.
 const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
 
-// `WebPGetFeatures()` is a static-inline header wrapper over this
-// version-checked entry point, same pattern as WebPDemuxInternal below.
+// `WebPGetFeatures()` is a static-inline wrapper over this version-checked entry point.
 unsafe extern "C" {
     fn WebPGetFeaturesInternal(
         data: *const u8,
@@ -59,9 +53,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Header-only feature probe. `None` on a malformed or truncated header —
-/// the acceptance set is identical to `WebPGetInfo` (libwebp implements
-/// both over the same `GetFeatures`).
+/// Header-only probe; accepts exactly the inputs `WebPGetInfo` accepts.
 pub(crate) fn get_features(bytes: &[u8]) -> Option<WebPBitstreamFeatures> {
     // SAFETY: all-zero is a valid WebPBitstreamFeatures (#[repr(C)] POD ints).
     let mut f: WebPBitstreamFeatures = unsafe { bun_core::ffi::zeroed_unchecked() };

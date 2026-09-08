@@ -53,8 +53,8 @@ inline bool exceedsStringLimit(size_t length)
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
 using WebCore::JSCrossRealmTransformState;
 using WebCore::JSDirectSinkCloseState;
-using WebCore::JSDirectStreamSource;
 using WebCore::JSDirectStreamController;
+using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
 using WebCore::JSPullIntoDescriptor;
 using WebCore::JSReadableByteStreamController;

@@ -1157,9 +1157,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        // The flag is set once the Response had headers to give, even if the
-                        // copy came back null — so a later arg can't repopulate headers from a
-                        // different source.
+                        // Flagged whenever the Response had headers (even if the copy came back null) so a later arg can't repopulate them.
                         let had_headers = response.get_init_headers().is_some();
                         match response.clone_headers(global_this) {
                             Ok(headers) => {

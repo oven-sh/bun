@@ -85,8 +85,7 @@ impl HeadersRef {
             .map(|p| unsafe { Self::adopt(p) }))
     }
 
-    /// The headers a lazy `.headers` getter creates for `body` on first access: the body
-    /// Blob's `Content-Type` (`Bun.file()` mime, `Blob.type`), or `None` when it has none.
+    /// What a lazy `.headers` getter creates for `body`: its Blob's `Content-Type` (`Bun.file()` mime, `Blob.type`), or `None`.
     pub(crate) fn for_body(body: &BodyValue, global: &JSGlobalObject) -> JsResult<Option<Self>> {
         let BodyValue::Blob(blob) = body else {
             return Ok(None);
@@ -391,10 +390,7 @@ impl Response {
         }
     }
 
-    /// The `ResponseInit` this Response presents to one that takes over its status and
-    /// headers with a different body (`new Response(body, response)`, `HTMLRewriter`):
-    /// the headers are what the `.headers` getter would report, so a body Blob's type
-    /// comes along even when `.headers` was never read.
+    /// Status and what `.headers` would report, for a Response that takes them over with a new body (`new Response(body, response)`, `HTMLRewriter`).
     pub(crate) fn clone_init(&self, global: &JSGlobalObject) -> JsResult<Init> {
         let init = self.init.get();
         Ok(Init {

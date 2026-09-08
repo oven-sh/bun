@@ -12,6 +12,9 @@ use bun_jsc::{
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
+use bun_sys_jsc::SystemErrorJsc as _;
+
+use crate::node::types::Valid;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
@@ -52,30 +55,36 @@ impl ScanOpts {
             return Ok(Box::default());
         }
 
-        let cwd_str: Box<[u8]> = 'cwd_str: {
-            let cwd_utf8 = cwd_string.to_utf8();
+        let cwd_utf8 = cwd_string.to_utf8();
+        let cwd = cwd_utf8.slice();
+        // The walker opens `cwd` as a C string; an interior NUL would scan a different directory.
+        if bun_core::strings::contains_char(cwd, 0) {
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'cwd' must be a string or URL without null bytes. Received {}",
+                        bun_core::fmt::quote(cwd)
+                    ),
+                )
+                .throw());
+        }
+        let too_long = |path: &[u8]| {
+            Valid::path_too_long(path)
+                .map(|err| global_this.throw_value(err.to_error_instance(global_this)))
+        };
+        if let Some(err) = too_long(cwd) {
+            return Err(err);
+        }
 
-            if cwd_utf8.slice().len() > MAX_PATH_BYTES {
-                return Err(global_this.throw(format_args!(
-                    "{}: invalid `cwd`, longer than {} bytes",
-                    fn_name, MAX_PATH_BYTES
-                )));
-            }
+        if resolve_path::Platform::AUTO.is_absolute(cwd) {
+            return Ok(Box::from(cwd));
+        }
 
-            // If its absolute return as is
-            if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
-                break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
-            }
-
-            // `cwd_utf8` drops at scope exit.
-            let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
-
-            if !absolute {
-                let parts: &[&[u8]] = &[cwd_utf8.slice()];
-                let cwd_str = join_string_buf::<platform::Auto>(&mut path_buf2, parts);
-                break 'cwd_str Box::<[u8]>::from(cwd_str);
-            }
-
+        let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
+        let cwd_str = if !absolute {
+            join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd])
+        } else {
             // Convert to an absolute path
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
@@ -85,22 +94,12 @@ impl ScanOpts {
                     return Err(global_this.throw_value(err_js));
                 }
             };
-
-            let cwd_str = join_string_buf::<platform::Auto>(
-                &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd_utf8.slice()],
-            );
-            break 'cwd_str Box::<[u8]>::from(cwd_str);
+            join_string_buf::<platform::Auto>(&mut path_buf2, &[&path_buf[..cwd_len], cwd])
         };
-
-        if cwd_str.len() > MAX_PATH_BYTES {
-            return Err(global_this.throw(format_args!(
-                "{}: invalid `cwd`, longer than {} bytes",
-                fn_name, MAX_PATH_BYTES
-            )));
+        if let Some(err) = too_long(cwd_str) {
+            return Err(err);
         }
-
-        Ok(cwd_str)
+        Ok(Box::from(cwd_str))
     }
 
     fn from_js(
@@ -131,9 +130,10 @@ impl ScanOpts {
             }
             return Ok(Some(out));
         }
-        // A Buffer or an array is an object too, but never an options bag. Taking
-        // it as one would silently scan `process.cwd()`.
-        if !opts_obj.is_object() || opts_obj.js_type().is_array_like() {
+        // A Buffer, DataView or array is an object too, but never an options bag.
+        // Taking it as one would silently scan `process.cwd()`.
+        let ty = opts_obj.js_type();
+        if !ty.is_object() || ty.is_array_like() || ty == bun_jsc::JSType::DataView {
             return Err(global_this.throw(format_args!(
                 "{}: expected first argument to be a string, URL, or options object",
                 fn_name

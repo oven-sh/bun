@@ -228,6 +228,10 @@ describe("glob.match", async () => {
           await attempt("scanSync({cwd: Buffer})", () => [...new Bun.Glob("*").scanSync({ cwd: Buffer.from(real) })]);
           await attempt("scanSync(http URL)", () => [...new Bun.Glob("*").scanSync(new URL("http://example.com/real"))]);
           await attempt("scanSync({cwd: http URL})", () => [...new Bun.Glob("*").scanSync({ cwd: new URL("http://example.com/real") })]);
+          await attempt("scanSync(DataView)", () => [...new Bun.Glob("*").scanSync(new DataView(new ArrayBuffer(1)))]);
+          // The native walker opens cwd as a C string, so an interior NUL would scan "real" instead.
+          await attempt("scanSync(real + NUL)", () => [...new Bun.Glob("*").scanSync(real + "\\0ignored")]);
+          await attempt("scanSync({cwd: real + NUL})", () => [...new Bun.Glob("*").scanSync({ cwd: real + "\\0ignored" })]);
           console.log(JSON.stringify(results));
         `,
         real,
@@ -253,6 +257,13 @@ describe("glob.match", async () => {
       "scanSync({cwd: Buffer})": "throw: scanSync: invalid `cwd`, not a string or URL",
       "scanSync(http URL)": 'throw: URL must be a non-empty "file:" path',
       "scanSync({cwd: http URL})": 'throw: URL must be a non-empty "file:" path',
+      "scanSync(DataView)": "throw: scanSync: expected first argument to be a string, URL, or options object",
+      "scanSync(real + NUL)": expect.stringContaining(
+        "throw: The argument 'cwd' must be a string or URL without null bytes. Received ",
+      ),
+      "scanSync({cwd: real + NUL})": expect.stringContaining(
+        "throw: The argument 'cwd' must be a string or URL without null bytes. Received ",
+      ),
     });
     expect(await proc.exited).toBe(0);
   });

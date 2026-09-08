@@ -964,11 +964,12 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        // Taken before `wire_input` consumes the body the Content-Type derives from (#3334).
-        let mut headers = original.clone_headers(global)?;
+        // Status and headers (#3334), taken before `wire_input` consumes the body a
+        // Content-Type may derive from.
+        let mut init = original.clone_init(global)?;
         // A string body is `text/plain` by itself; the Response overload's output body is not.
         if sync_only_noun.is_none() && original.get_body_value().was_string() {
-            headers
+            init.headers
                 .get_or_insert_with(HeadersRef::create_empty)
                 .put_default(
                     jsc::HTTPHeaderName::ContentType,
@@ -1037,11 +1038,7 @@ impl RewriterPipe {
         // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
         let result = bun_core::heap::alloc_nn(Response::init(
-            webcore::response::Init {
-                headers,
-                status_code: 200,
-                ..Default::default()
-            },
+            init,
             webcore::Body::new({
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
@@ -1058,12 +1055,6 @@ impl RewriterPipe {
         // SAFETY: `result` is the live Response just allocated above.
         this.response
             .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
-
-        result_ref.set_init(
-            original.get_method(),
-            original.get_init_status_code(),
-            original.get_init_status_text().clone(),
-        );
 
         let response_js_value = result_ref.to_js(&this.global);
 

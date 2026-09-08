@@ -308,7 +308,9 @@ static String agentClusterIDFromGlobalObject(JSGlobalObject& globalObject)
 
 // Version 2 added the AKP key class (ML-DSA/ML-KEM), the KEM usage tags, and
 // the ChaCha20-Poly1305/ML-* algorithm identifier tags.
-const uint32_t currentKeyFormatVersion = 2;
+// Version 3 added <lengthBits> to CryptoKeyHMAC.
+const uint32_t currentKeyFormatVersion = 3;
+const uint32_t firstKeyFormatVersionWithHMACLengthBits = 3;
 
 enum class CryptoKeyClassSubtag {
     HMAC = 0,
@@ -547,7 +549,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    SharedArrayBufferTag <value:uint32_t>
  *
  * CryptoKeyHMAC :-
- *    <keySize:uint32_t> <keyData:byte{keySize}> CryptoAlgorithmIdentifierTag // Algorithm tag inner hash function.
+ *    <keySize:uint32_t> <keyData:byte{keySize}> CryptoAlgorithmIdentifierTag <lengthBits:uint32_t> // Algorithm tag inner hash function; lengthBits since key format version 3.
  *
  * CryptoKeyAES :-
  *    CryptoAlgorithmIdentifierTag <keySize:uint32_t> <keyData:byte{keySize}>
@@ -1899,6 +1901,7 @@ private:
             write(CryptoKeyClassSubtag::HMAC);
             write(downcast<CryptoKeyHMAC>(*key).key());
             write(downcast<CryptoKeyHMAC>(*key).hashAlgorithmIdentifier());
+            write(static_cast<uint32_t>(downcast<CryptoKeyHMAC>(*key).lengthBits()));
             break;
         case CryptoKeyClass::AES:
             write(CryptoKeyClassSubtag::AES);
@@ -3051,7 +3054,7 @@ private:
         return true;
     }
 
-    bool readHMACKey(bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
+    bool readHMACKey(uint32_t keyFormatVersion, bool extractable, CryptoKeyUsageBitmap usages, RefPtr<CryptoKey>& result)
     {
         Vector<uint8_t> keyData;
         if (!read(keyData))
@@ -3059,7 +3062,12 @@ private:
         CryptoAlgorithmIdentifier hash;
         if (!read(hash))
             return false;
-        result = CryptoKeyHMAC::importRaw(0, hash, WTF::move(keyData), extractable, usages);
+        uint32_t lengthBits = 0;
+        if (keyFormatVersion >= firstKeyFormatVersionWithHMACLengthBits) {
+            if (!read(lengthBits) || !CryptoKeyHMAC::lengthIsValidForKeyData(lengthBits, keyData.size()))
+                return false;
+        }
+        result = CryptoKeyHMAC::importRaw(lengthBits, hash, WTF::move(keyData), extractable, usages);
         return true;
     }
 
@@ -3329,7 +3337,7 @@ private:
         RefPtr<CryptoKey> result;
         switch (cryptoKeyClass) {
         case CryptoKeyClassSubtag::HMAC:
-            if (!readHMACKey(extractable, usages, result))
+            if (!readHMACKey(keyFormatVersion, extractable, usages, result))
                 return false;
             break;
         case CryptoKeyClassSubtag::AES:

@@ -66,14 +66,18 @@ const { createPrivateKey, createPublicKey, createSecretKey } = require('crypto')
         name: 'DataError',
         message: 'HmacImportParams.length cannot be 0'
       });
+    // Diverges from upstream: Bun supports an HmacImportParams.length that is not a
+    // multiple of 8, as https://w3c.github.io/webcrypto/#hmac-operations-import-key
+    // and Chromium do. A length that does not end in the last byte of the key data is
+    // the spec's DataError, not Node's NotSupportedError.
     await assert.rejects(
       subtle.importKey('raw', keyData, {
         name: 'HMAC',
         hash: 'SHA-256',
         length: 1
       }, false, ['sign', 'verify']), {
-        name: 'NotSupportedError',
-        message: 'Unsupported HmacImportParams.length'
+        name: 'DataError',
+        message: 'Invalid key length'
       });
     await assert.rejects(
       subtle.importKey('jwk', null, {

@@ -93,6 +93,47 @@ test("get the current mocked time", () => {
 
 Use it to read the mocked time without creating a new `Date` object.
 
+## Fake timers
+
+`jest.useFakeTimers()` also puts `setTimeout`, `setInterval`, and `AbortSignal.timeout()` on a fake clock that only moves when the test moves it. `Date.now()`, `new Date()`, and `performance.now()` follow the same clock. `setImmediate`, `process.nextTick`, `queueMicrotask`, and I/O keep running in real time. The same functions exist on `vi` for tests written against Vitest.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, jest } from "bun:test";
+
+test("retries after one second", () => {
+  jest.useFakeTimers();
+
+  let retried = false;
+  setTimeout(() => {
+    retried = true;
+  }, 1000);
+
+  jest.advanceTimersByTime(999);
+  expect(retried).toBe(false);
+
+  jest.advanceTimersByTime(1);
+  expect(retried).toBe(true);
+
+  jest.useRealTimers();
+});
+```
+
+| Function                          | What it does                                                                                                                                                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jest.useFakeTimers({ now? })`    | Turns fake timers on. `now` (a number or a `Date`) sets what `Date.now()` returns and defaults to the real current time. `performance.now()` starts again from 0.                             |
+| `jest.useRealTimers()`            | Turns fake timers off and discards every pending fake timer without running it.                                                                                                               |
+| `jest.advanceTimersByTime(ms)`    | Moves the clock forward by `ms` milliseconds and runs each timer that comes due, in order. `advanceTimersByTime(0)` runs timers that were scheduled with a 0 ms delay.                        |
+| `jest.advanceTimersToNextTimer()` | Moves the clock to the earliest pending timer and runs it.                                                                                                                                    |
+| `jest.runOnlyPendingTimers()`     | Runs the timers that are pending at the time of the call. Timers that those callbacks schedule stay pending.                                                                                  |
+| `jest.runAllTimers()`             | Runs timers until none are pending, including timers scheduled along the way. An active `setInterval` always schedules another one, so clear intervals first or use `runOnlyPendingTimers()`. |
+| `jest.clearAllTimers()`           | Discards every pending fake timer without running it.                                                                                                                                         |
+| `jest.getTimerCount()`            | Returns the number of pending fake timers.                                                                                                                                                    |
+| `jest.isFakeTimers()`             | Returns `true` while fake timers are on.                                                                                                                                                      |
+
+The functions that do not return a value return the `jest` object, so calls chain: `jest.useFakeTimers().advanceTimersByTime(100)`.
+
+Only timers created after `useFakeTimers()` are fake. A `setTimeout` that was already scheduled when fake timers were turned on still fires in real time, and `getTimerCount()` does not count it.
+
 ## Set the time zone
 
 By default, `bun test` runs in UTC (`Etc/UTC`). To change the time zone, either pass the `TZ` environment variable to `bun test`:

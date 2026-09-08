@@ -28,6 +28,31 @@ By default, Bun's CSS bundler targets the following browsers:
 - Safari 14+
 - Opera 67+
 
+Lowering is decided per rule and per selector. When one selector in a selector list needs a fallback that the others do not, or is a selector Bun does not recognize (a vendor-specific pseudo-class, for example), Bun splits the rule into one rule per selector (or, when the targets and the selectors allow it, wraps the list in `:is()`), so that the other selectors keep working everywhere. A rule that counted on one unrecognized selector to make other browsers drop the whole rule, a common form of browser hack, no longer does that after bundling:
+
+<CodeGroup>
+
+```css title="input.css" icon="file-code"
+/* Only Safari understands the second selector, so other browsers drop the rule */
+.callout,
+_::-webkit-full-page-media .never-matches {
+  padding: 1px;
+}
+```
+
+```css title="output.css" icon="file-code"
+/* After bundling, .callout applies in every browser */
+.callout {
+  padding: 1px;
+}
+
+_::-webkit-full-page-media .never-matches {
+  padding: 1px;
+}
+```
+
+</CodeGroup>
+
 ## Syntax Lowering
 
 ### Nesting
@@ -385,6 +410,8 @@ For browsers that don't fully support logical properties, Bun's CSS bundler comp
 
 If the `:dir()` selector isn't supported, Bun generates additional fallbacks.
 
+Block-axis properties (`inset-block`, `margin-block`, `padding-block`, `border-block-*`) compile to the physical `top` and `bottom` properties. That is only equivalent in a horizontal writing mode, so content set in `writing-mode: vertical-rl` or `vertical-lr` needs targets that support logical properties natively.
+
 ### :dir() selector
 
 The `:dir()` pseudo-class styles elements based on their text direction (RTL or LTR), as determined by the document or explicit direction attributes. Use it to write direction-aware styles without JavaScript.
@@ -409,28 +436,35 @@ The `:dir()` pseudo-class styles elements based on their text direction (RTL or 
 }
 ```
 
-For browsers that don't support the `:dir()` selector, Bun's CSS bundler converts it to the more widely supported `:lang()` selector with appropriate language mappings:
+For browsers that don't support the `:dir()` selector, Bun's CSS bundler converts it to the more widely supported `:lang()` selector. `:dir(rtl)` becomes a match on the languages that are written right to left, and `:dir(ltr)` becomes every other language:
 
 ```css title="styles.css" icon="file-code"
-/* Converted to use language-based selectors as fallback */
-.nav-arrow:lang(en, fr, de, es, it, pt, nl) {
+/* Converted to use language-based selectors as fallback (language list shortened here) */
+.nav-arrow:not(:lang(ar, dv, fa, he, ku, ps, sd, ug, ur, yi)) {
   transform: rotate(0deg);
 }
 
-.nav-arrow:lang(ar, he, fa, ur) {
+.nav-arrow:lang(ar, dv, fa, he, ku, ps, sd, ug, ur, yi) {
   transform: rotate(180deg);
 }
 
-.sidebar:lang(en, fr, de, es, it, pt, nl) {
+.sidebar:not(:lang(ar, dv, fa, he, ku, ps, sd, ug, ur, yi)) {
   border-right: 1px solid #ddd;
 }
 
-.sidebar:lang(ar, he, fa, ur) {
+.sidebar:lang(ar, dv, fa, he, ku, ps, sd, ug, ur, yi) {
   border-left: 1px solid #ddd;
 }
 ```
 
 If multiple arguments to `:lang()` aren't supported, Bun generates further fallbacks.
+
+<Warning>
+  The fallback infers direction from the `lang` attribute alone. A `dir` attribute is invisible to `:lang()`, so
+  `<div dir="rtl">` inside a page with `lang="en"` does not match the fallback for `:dir(rtl)`, and an Arabic page that
+  sets `dir="ltr"` on an element still matches it. If your markup sets direction with `dir`, select on the attribute
+  instead (`[dir="rtl"]`) or target browsers that support `:dir()`.
+</Warning>
 
 ### :lang() selector
 

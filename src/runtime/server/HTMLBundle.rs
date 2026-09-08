@@ -39,7 +39,6 @@ use debug_scope::HTMLBundle as debug;
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
 // hence the ref count alongside the JS wrapper.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(debug_name = "HTMLBundle")]
 pub struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
     pub global: bun_ptr::BackRef<JSGlobalObject>,
@@ -143,7 +142,6 @@ pub(crate) type HTMLBundleRoute = Route;
 // `JSBundleCompletionTask` while a prior `&Route` may still be on the
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
     pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times

@@ -48,7 +48,6 @@ pub enum JsxImportKind {
     Jsxs,
     JsxDEV,
     Fragment,
-    CreateElement,
 }
 
 /// Parser-side state the React Compiler needs. Implemented by `P` at the
@@ -1015,11 +1014,7 @@ fn handle_error(
         .any(|d| d.category() == ErrorCategory::Config);
 
     if should_panic || is_config_error {
-        Some(CompileOutput::Error {
-            error: err,
-            events: Vec::new(),
-            ordered_log: Vec::new(),
-        })
+        Some(CompileOutput::Error { error: err })
     } else {
         None
     }
@@ -1374,9 +1369,6 @@ pub fn finish(
         } else {
             CompileOutput::Changed {
                 diagnostics: state.diagnostics,
-                events: Vec::new(),
-                ordered_log: Vec::new(),
-                renames: convert_renames(&state.context.renames),
             }
         };
     }
@@ -1386,21 +1378,5 @@ pub fn finish(
 
     CompileOutput::Changed {
         diagnostics: state.diagnostics,
-        events: Vec::new(),
-        ordered_log: Vec::new(),
-        renames: convert_renames(&state.context.renames),
     }
-}
-
-fn convert_renames(
-    renames: &[crate::hir::environment::BindingRename],
-) -> Vec<crate::compile_result::BindingRenameInfo> {
-    renames
-        .iter()
-        .map(|r| crate::compile_result::BindingRenameInfo {
-            original: bun_core::BStr::new(r.original.slice()).to_string(),
-            renamed: bun_core::BStr::new(r.renamed.slice()).to_string(),
-            declaration_start: r.declaration_start,
-        })
-        .collect()
 }

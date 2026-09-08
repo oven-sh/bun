@@ -8,7 +8,6 @@ use crate::css_values::ident::{CustomIdent, CustomIdentList};
 use crate::dependencies::Location;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
-use bun_wyhash::Wyhash;
 
 /// A value for the [composes](https://github.com/css-modules/css-modules/#dependencies) property from CSS modules.
 pub struct Composes {
@@ -124,16 +123,6 @@ pub enum Specifier {
     ImportRecordIndex(u32),
 }
 
-// `generics::CssEql` so the `Option<Specifier>` blanket (used by
-// `DashedIdentReference::eql` in values/ident.rs) resolves. Forwards to the
-// inherent `eql` below.
-impl crate::generics::CssEql for Specifier {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        Specifier::eql(*self, *other)
-    }
-}
-
 impl Specifier {
     pub fn eql(lhs: Self, rhs: Self) -> bool {
         match (lhs, rhs) {
@@ -177,15 +166,5 @@ impl Specifier {
     pub(crate) fn deep_clone(self, _bump: &Arena) -> Self {
         // Variants are `Copy`; the deep clone is the value itself.
         self
-    }
-
-    pub(crate) fn hash(self, hasher: &mut Wyhash) {
-        match self {
-            Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
-            Specifier::ImportRecordIndex(i) => {
-                hasher.update(&1u32.to_ne_bytes());
-                hasher.update(&i.to_ne_bytes());
-            }
-        }
     }
 }

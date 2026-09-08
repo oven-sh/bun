@@ -22,14 +22,6 @@ pub struct PrinterOptions<'a> {
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
-    /// Whether to analyze dependencies (i.e. `@import` and `url()`).
-    /// If true, the dependencies are returned as part of the
-    /// [ToCssResult](super::stylesheet::ToCssResult).
-    ///
-    /// When enabled, `@import` and `url()` dependencies
-    /// are replaced with hashed placeholders that can be replaced with the final
-    /// urls later (after bundling).
-    pub analyze_dependencies: Option<css::dependencies::DependencyOptions>,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
@@ -48,7 +40,6 @@ impl<'a> PrinterOptions<'a> {
                 browsers: None,
                 ..Targets::default()
             },
-            analyze_dependencies: None,
             pseudo_classes: None,
         }
     }
@@ -131,8 +122,6 @@ pub struct Printer<'a> {
     pub(crate) skip_prefixed_nested_rules: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
-    pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
-    pub(crate) remove_imports: bool,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub(crate) pseudo_classes: Option<PseudoClasses<'a>>,
@@ -262,7 +251,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // deinit() dropped — scratchbuf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf is an arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
@@ -280,16 +269,6 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() {
-                Some(BumpVec::new_in(arena))
-            } else {
-                None
-            },
-            remove_imports: options
-                .analyze_dependencies
-                .as_ref()
-                .map(|d| d.remove_imports)
-                .unwrap_or(false),
             pseudo_classes: options.pseudo_classes,
             import_info,
             scratchbuf,
@@ -313,14 +292,6 @@ impl<'a> Printer<'a> {
             prefix_expansion_bytes: 0,
             error_kind: None,
         }
-    }
-
-    #[inline]
-    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
-        if let Some(info) = &self.import_info {
-            return Ok(info.import_records);
-        }
-        Err(self.add_no_import_record_error())
     }
 
     #[inline]
@@ -506,16 +477,6 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    fn replace_dots<'b>(arena: &'b Bump, s: &[u8]) -> &'b mut [u8] {
-        let str_ = arena.alloc_slice_copy(s);
-        for b in str_.iter_mut() {
-            if *b == b'.' {
-                *b = b'-';
-            }
-        }
-        str_
-    }
-
     pub(crate) fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
@@ -555,51 +516,31 @@ impl<'a> Printer<'a> {
                 // Copy the `'a`-lifetime references out of `css_module` up front so
                 // the closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
-                let arena = self.arena;
-                let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
+                let (config, hash): (&'a css::css_modules::Config, &'a [u8]) = {
                     let m = self.css_module.as_ref().unwrap();
-                    let sources: &'a Vec<Box<[u8]>> = m.sources;
-                    (
-                        m.config,
-                        m.hashes[source_index],
-                        sources[source_index].as_ref(),
-                    )
+                    (m.config, m.hashes[source_index])
                 };
 
                 let mut first = true;
                 let mut err: Option<PrintErr> = None;
-                config
-                    .pattern
-                    .write(hash, source, ident, |s1: &[u8], replace_dots: bool| {
-                        if err.is_some() {
-                            return;
-                        }
-                        // PERF: stack fallback?
-                        let s: &[u8] = if !replace_dots {
-                            s1
-                        } else {
-                            Printer::replace_dots(arena, s1)
-                        };
-                        self.col += u32::try_from(s.len()).expect("int cast");
-                        let r = if first {
-                            first = false;
-                            css::serializer::serialize_identifier(s, self)
-                        } else {
-                            css::serializer::serialize_name(s, self)
-                        };
-                        if r.is_err() {
-                            err = Some(PrintErr::CSSPrintError);
-                        }
-                    });
+                config.pattern.write(hash, ident, |s: &[u8]| {
+                    if err.is_some() {
+                        return;
+                    }
+                    self.col += u32::try_from(s.len()).expect("int cast");
+                    let r = if first {
+                        first = false;
+                        css::serializer::serialize_identifier(s, self)
+                    } else {
+                        css::serializer::serialize_name(s, self)
+                    };
+                    if r.is_err() {
+                        err = Some(PrintErr::CSSPrintError);
+                    }
+                });
                 if let Some(e) = err {
                     return Err(e);
                 }
-
-                let src_idx = self.loc.source_index;
-                self.css_module
-                    .as_mut()
-                    .unwrap()
-                    .add_local(arena, ident, ident, src_idx);
                 return Ok(());
             }
         }
@@ -607,70 +548,9 @@ impl<'a> Printer<'a> {
         self.serialize_identifier(ident)
     }
 
-    pub(crate) fn write_dashed_ident(
-        &mut self,
-        ident: &DashedIdent,
-        is_declaration: bool,
-    ) -> PrintResult<()> {
+    pub(crate) fn write_dashed_ident(&mut self, ident: &DashedIdent) -> PrintResult<()> {
         self.write_str(b"--")?;
-
-        // NOTE: cannot use `ident.v()` here — `add_dashed` requires `&'a [u8]`
-        // (arena lifetime), but the safe accessor ties the borrow to `&ident`.
-        // SAFETY: DashedIdent.v is an arena-owned slice valid for `'a`.
-        let ident_v: &'a [u8] = unsafe { crate::arena_str(ident.v) };
-
-        let dashed_idents = match &self.css_module {
-            Some(m) => m.config.dashed_idents,
-            None => false,
-        };
-        if dashed_idents {
-            // Same borrowck reshape as `write_ident`.
-            let source_index = self.loc.source_index as usize;
-            let arena = self.arena;
-            let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
-                let m = self.css_module.as_ref().unwrap();
-                let sources: &'a Vec<Box<[u8]>> = m.sources;
-                (
-                    m.config,
-                    m.hashes[source_index],
-                    sources[source_index].as_ref(),
-                )
-            };
-
-            let mut err: Option<PrintErr> = None;
-            config.pattern.write(
-                hash,
-                source,
-                &ident_v[2..],
-                |s1: &[u8], replace_dots: bool| {
-                    if err.is_some() {
-                        return;
-                    }
-                    let s: &[u8] = if !replace_dots {
-                        s1
-                    } else {
-                        Printer::replace_dots(arena, s1)
-                    };
-                    self.col += u32::try_from(s.len()).expect("int cast");
-                    if css::serializer::serialize_name(s, self).is_err() {
-                        err = Some(PrintErr::CSSPrintError);
-                    }
-                },
-            );
-            if let Some(e) = err {
-                return Err(e);
-            }
-
-            if is_declaration {
-                let src_idx = self.loc.source_index;
-                self.css_module
-                    .as_mut()
-                    .unwrap()
-                    .add_dashed(arena, ident_v, src_idx);
-            }
-        }
-
-        self.serialize_name(&ident_v[2..])
+        self.serialize_name(&ident.v()[2..])
     }
 
     /// Write a single character to the underlying destination.

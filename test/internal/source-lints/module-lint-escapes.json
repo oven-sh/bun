@@ -1,0 +1,20 @@
+{
+  "src/install/windows-shim/main.rs": 1,
+  "src/jsc/cpp.rs": 1,
+  "src/react_compiler/diagnostics/mod.rs": 1,
+  "src/react_compiler/hir/mod.rs": 1,
+  "src/react_compiler/inference/mod.rs": 1,
+  "src/react_compiler/optimization/mod.rs": 1,
+  "src/react_compiler/reactive_scopes/mod.rs": 1,
+  "src/react_compiler/ssa/mod.rs": 1,
+  "src/react_compiler/typeinference/mod.rs": 1,
+  "src/react_compiler/utils/mod.rs": 1,
+  "src/react_compiler/validation/mod.rs": 1,
+  "src/runtime/api/bun/h2/connection.rs": 1,
+  "src/runtime/api/bun/h2/flow_control.rs": 1,
+  "src/runtime/api/bun/h2/hpack.rs": 1,
+  "src/runtime/api/bun/h2/settings.rs": 1,
+  "src/runtime/api/bun/h2/stream.rs": 1,
+  "src/runtime/api/bun/h2/wire.rs": 1,
+  "src/runtime/generated_classes.rs": 1
+}

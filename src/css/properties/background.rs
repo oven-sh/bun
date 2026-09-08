@@ -14,8 +14,6 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
-// Clone derive gated on `Image` gaining `Clone` upstream.
-#[cfg_attr(any(), derive(Clone))]
 pub struct Background {
     /// The background image.
     pub(crate) image: Image,

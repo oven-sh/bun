@@ -21,15 +21,6 @@ use crate::hir::object_shape::default_mutating_hook;
 use crate::hir::object_shape::default_nonmutating_hook;
 use crate::hir::*;
 
-/// A variable rename from lowering: the binding at `declaration_start` position
-/// was renamed from `original` to `renamed`.
-#[derive(Debug, Clone, Copy)]
-pub struct BindingRename {
-    pub original: StoreStr,
-    pub renamed: StoreStr,
-    pub declaration_start: u32,
-}
-
 /// Output mode for the compiler, mirrored from the entrypoint's CompilerOutputMode.
 /// Stored on Environment so pipeline passes can access it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,10 +62,6 @@ pub struct Environment {
     pub instrument_fn_name: Option<StoreStr>,
     pub instrument_gating_name: Option<StoreStr>,
     pub hook_guard_name: Option<StoreStr>,
-
-    // Renames: tracks variable renames from lowering (original_name → new_name)
-    // keyed by binding declaration position, for applying back to the Babel AST.
-    pub renames: HirVec<BindingRename>,
 
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
@@ -189,7 +176,6 @@ impl Environment {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config

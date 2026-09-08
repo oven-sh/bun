@@ -44,31 +44,10 @@ pub trait HasLength {
     fn length(&self) -> usize;
 }
 
-impl HasLength for [u8] {
-    #[inline]
-    fn length(&self) -> usize {
-        self.len()
-    }
-}
-
 impl HasLength for &[u8] {
     #[inline]
     fn length(&self) -> usize {
         self.len()
-    }
-}
-
-impl HasLength for &str {
-    #[inline]
-    fn length(&self) -> usize {
-        self.len()
-    }
-}
-
-impl HasLength for &crate::String {
-    #[inline]
-    fn length(&self) -> usize {
-        crate::String::length(self)
     }
 }
 

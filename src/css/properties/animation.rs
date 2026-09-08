@@ -336,30 +336,11 @@ impl AnimationName {
         match self {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
-                // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(s.v) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck — capture arena/source_index
-                    // before borrowing dest.css_module mutably.
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
             }
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
 
                 // CSS-wide keywords and `none` cannot remove quotes
                 if strings::eql_case_insensitive_ascii_check_length(name, b"none")

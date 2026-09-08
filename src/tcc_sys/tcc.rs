@@ -66,12 +66,6 @@ tcc_externs! {
 }
 
 const TCC_OUTPUT_MEMORY: c_int = 1;
-const TCC_OUTPUT_EXE: c_int = 2;
-// NOTE: vendor/tinycc/libtcc.h defines OBJ=3, DLL=4 (Bun's fork swapped vs upstream);
-// match libtcc.h here.
-const TCC_OUTPUT_OBJ: c_int = 3;
-const TCC_OUTPUT_DLL: c_int = 4;
-const TCC_OUTPUT_PREPROCESS: c_int = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
@@ -84,20 +78,13 @@ pub enum Error {
     // output
     #[error("InvalidOutputType")]
     InvalidOutputType,
-    #[error("SyntaxError")]
-    SyntaxError,
     #[error("InvalidLibraryPath")]
     InvalidLibraryPath,
     #[error("InvalidSymbol")]
     InvalidSymbol,
-    #[error("ExecError")]
-    ExecError,
     /// Could not get a symbol for some reason
     #[error("RelocationError")]
     RelocationError,
-    // Returned by `output_file`.
-    #[error("OutputError")]
-    OutputError,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }
@@ -108,14 +95,6 @@ pub enum OutputFormat {
     /// Output will be run in memory
     #[default]
     Memory = TCC_OUTPUT_MEMORY as _,
-    /// Executable file
-    Exe = TCC_OUTPUT_EXE as _,
-    /// Dynamic library
-    Dll = TCC_OUTPUT_DLL as _,
-    /// Object file
-    Obj = TCC_OUTPUT_OBJ as _,
-    /// Only preprocess
-    Preprocess = TCC_OUTPUT_PREPROCESS as _,
 }
 
 // Nominal type for some registered symbol. Used to force pointer-cast usage without

@@ -467,7 +467,6 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // Struct-level attribute:
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
 //                                         `drop(::bun_core::heap::take(this))`
-//   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
 //
 // Field selection follows the shared `find_ref_count_field` rules (a
 // `#[ref_count]`-annotated field, else a field literally named `ref_count`).
@@ -478,13 +477,9 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // migrated structs keep their own bespoke `ref_`/`r#ref`/`deref` thin
 // wrappers — emitting inherent fns here would collide.
 
-/// Parse the struct-level `#[ref_count(destroy = …, debug_name = "…")]`
-/// attribute (both keys optional, either order).
-fn parse_ref_count_attrs(
-    attrs: &[syn::Attribute],
-) -> Result<(Option<syn::Expr>, Option<LitStr>), syn::Error> {
+/// Parse the struct-level `#[ref_count(destroy = …)]` attribute (optional).
+fn parse_ref_count_attrs(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn::Error> {
     let mut destroy = None;
-    let mut debug_name = None;
     for a in attrs {
         if !a.path().is_ident("ref_count") {
             continue;
@@ -494,16 +489,13 @@ fn parse_ref_count_attrs(
                 if meta.path.is_ident("destroy") {
                     destroy = Some(meta.value()?.parse::<syn::Expr>()?);
                     Ok(())
-                } else if meta.path.is_ident("debug_name") {
-                    debug_name = Some(meta.value()?.parse::<LitStr>()?);
-                    Ok(())
                 } else {
                     Err(meta.error("unknown ref_count attribute key"))
                 }
             })?;
         }
     }
-    Ok((destroy, debug_name))
+    Ok(destroy)
 }
 
 /// `#[derive(RefCounted)]` — see module comment above.
@@ -526,7 +518,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
         Ok(f) => f,
         Err(e) => return e.to_compile_error().into(),
     };
-    let (destroy, debug_name) = match parse_ref_count_attrs(&input.attrs) {
+    let destroy = match parse_ref_count_attrs(&input.attrs) {
         Ok(v) => v,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -544,16 +536,9 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
             drop(unsafe { ::bun_core::heap::take(this) });
         },
     };
-    let debug_name_impl = debug_name.map(|lit| {
-        quote! {
-            #[inline]
-            fn debug_name() -> &'static str { #lit }
-        }
-    });
 
     quote! {
         impl #impl_g ::bun_ptr::RefCounted for #name #ty_g #where_g {
-            #debug_name_impl
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live Self.

@@ -15,26 +15,8 @@ use bun_core::ThreadLock;
 // Host-type traits (field projection + destructor)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.meta.typeBaseName` — strip the module path (and the path inside any
-/// leading generic segment) from a `core::any::type_name` string, returning a
-/// subslice so the result stays `&'static str`.
-/// `"a::b::Foo<c::Bar>"` → `"Foo<c::Bar>"`.
-fn type_base_name(name: &'static str) -> &'static str {
-    let bytes = name.as_bytes();
-    let end = bun_core::strings::index_of_char_usize(bytes, b'<').unwrap_or(bytes.len());
-    match bun_core::strings::last_index_of(&bytes[..end], b"::") {
-        Some(i) => &name[i + 2..],
-        None => name,
-    }
-}
-
 /// Implemented by types that embed a [`RefCount`] field.
 pub trait RefCounted: Sized {
-    /// Defaults to the type basename.
-    fn debug_name() -> &'static str {
-        type_base_name(core::any::type_name::<Self>())
-    }
-
     /// Locate the embedded `RefCount` field.
     ///
     /// # Safety
@@ -57,11 +39,6 @@ pub trait RefCounted: Sized {
 
 /// Implemented by types that embed a [`ThreadSafeRefCount`] field.
 pub trait ThreadSafeRefCounted: Sized {
-    /// Defaults to the type basename.
-    fn debug_name() -> &'static str {
-        type_base_name(core::any::type_name::<Self>())
-    }
-
     /// Locate the embedded `ThreadSafeRefCount` field.
     ///
     /// # Safety
@@ -965,14 +942,5 @@ mod tests {
             CellRefCounted::deref(l);
         }
         assert_eq!(drops(), before + 1);
-    }
-
-    // ── helpers ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn type_base_name_strips_module_path() {
-        assert_eq!(type_base_name("a::b::Foo"), "Foo");
-        assert_eq!(type_base_name("a::b::Foo<c::Bar>"), "Foo<c::Bar>");
-        assert_eq!(type_base_name("Foo"), "Foo");
     }
 }

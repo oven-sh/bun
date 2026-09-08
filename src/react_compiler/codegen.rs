@@ -42,7 +42,6 @@ use crate::hir::{
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
     PropertyLiteral, ScopeId,
 };
-use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
     build_reactive_function, prune_hoisted_contexts, prune_unused_labels, prune_unused_lvalues,
     rename_variables,
@@ -62,23 +61,7 @@ pub struct CodegenFunction {
     pub(crate) generator: bool,
     pub(crate) is_async: bool,
     pub(crate) memo_slots_used: u32,
-    pub(crate) memo_blocks: u32,
-    pub(crate) memo_values: u32,
-    pub(crate) pruned_memo_blocks: u32,
-    pub(crate) pruned_memo_values: u32,
     pub(crate) outlined: Vec<OutlinedFunction>,
-}
-
-impl std::fmt::Debug for CodegenFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CodegenFunction")
-            .field("memo_slots_used", &self.memo_slots_used)
-            .field("memo_blocks", &self.memo_blocks)
-            .field("memo_values", &self.memo_values)
-            .field("pruned_memo_blocks", &self.pruned_memo_blocks)
-            .field("pruned_memo_values", &self.pruned_memo_values)
-            .finish()
-    }
 }
 
 pub struct OutlinedFunction {
@@ -499,9 +482,6 @@ fn codegen_reactive_function(
         }
     }
 
-    let (memo_blocks, memo_values, pruned_memo_blocks, pruned_memo_values) =
-        count_memo_blocks(func, cx.env);
-
     let id = func.id.as_ref().map(|name| {
         let r = cx.cg.ref_for_name(store_str(name.as_bytes()));
         LocRef {
@@ -520,10 +500,6 @@ fn codegen_reactive_function(
         generator: func.generator,
         is_async: func.is_async,
         memo_slots_used: cx.next_cache_index,
-        memo_blocks,
-        memo_values,
-        pruned_memo_blocks,
-        pruned_memo_values,
         outlined: Vec::new(),
     })
 }
@@ -2989,64 +2965,6 @@ fn codegen_dependency(
         }
     }
     Ok(object)
-}
-
-// =============================================================================
-// CountMemoBlockVisitor
-// =============================================================================
-
-struct CountMemoBlockVisitor<'a> {
-    env: &'a Environment,
-}
-
-struct CountMemoBlockState {
-    memo_blocks: u32,
-    memo_values: u32,
-    pruned_memo_blocks: u32,
-    pruned_memo_values: u32,
-}
-
-impl<'a> ReactiveFunctionVisitor for CountMemoBlockVisitor<'a> {
-    type State = CountMemoBlockState;
-
-    fn env(&self) -> &Environment {
-        self.env
-    }
-
-    fn visit_scope(&self, scope_block: &ReactiveScopeBlock, state: &mut CountMemoBlockState) {
-        state.memo_blocks += 1;
-        let scope = &self.env.scopes[scope_block.scope.0 as usize];
-        state.memo_values += scope.declarations.len() as u32;
-        self.traverse_scope(scope_block, state);
-    }
-
-    fn visit_pruned_scope(
-        &self,
-        scope_block: &PrunedReactiveScopeBlock,
-        state: &mut CountMemoBlockState,
-    ) {
-        state.pruned_memo_blocks += 1;
-        let scope = &self.env.scopes[scope_block.scope.0 as usize];
-        state.pruned_memo_values += scope.declarations.len() as u32;
-        self.traverse_pruned_scope(scope_block, state);
-    }
-}
-
-fn count_memo_blocks(func: &ReactiveFunction, env: &Environment) -> (u32, u32, u32, u32) {
-    let visitor = CountMemoBlockVisitor { env };
-    let mut state = CountMemoBlockState {
-        memo_blocks: 0,
-        memo_values: 0,
-        pruned_memo_blocks: 0,
-        pruned_memo_values: 0,
-    };
-    visit_reactive_function(func, &visitor, &mut state);
-    (
-        state.memo_blocks,
-        state.memo_values,
-        state.pruned_memo_blocks,
-        state.pruned_memo_values,
-    )
 }
 
 // =============================================================================

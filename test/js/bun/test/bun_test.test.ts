@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 test("describe/test", async () => {
   const result = await Bun.spawn({
@@ -233,6 +235,89 @@ test("cross-file safety", async () => {
   const stdout = await result.stdout.text();
   const stderr = await result.stderr.text();
   expect(stderr).toInclude("Snapshot matchers cannot be used outside of a test");
+  expect(exitCode).toBe(1);
+});
+
+test("cross-file safety: a snapshot taken by a finished file's leaked callback is rejected, not written into the running file's .snap", async () => {
+  // a.test.ts leaves promise continuations behind. b.test.ts releases them
+  // while its own test is running, which is where a leaked timer, I/O
+  // callback or event handler from an earlier file would land.
+  using dir = tempDir("bun-test-late-snapshot", {
+    "helper.ts": `
+      import { expect } from "bun:test";
+      export function snapshotInHelper(value: unknown) {
+        expect(value).toMatchSnapshot();
+      }
+      export async function snapshotInHelperLater(value: unknown) {
+        await Promise.resolve();
+        expect(value).toMatchSnapshot();
+      }
+    `,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { snapshotInHelper } from "./helper";
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+      (globalThis as any).releaseA = resolve;
+
+      test("a passes and leaks late snapshot assertions", () => {
+        promise.then(() => {
+          expect("late inline").toMatchInlineSnapshot(\`"late inline"\`);
+        });
+        promise.then(() => {
+          expect({ secret: "written by a.test.ts after it finished" }).toMatchSnapshot();
+        });
+        promise.then(() => {
+          expect(() => {
+            throw new Error("thrown by a.test.ts after it finished");
+          }).toThrowErrorMatchingSnapshot();
+        });
+        promise.then(() => {
+          snapshotInHelper("via helper.ts, from a.test.ts after it finished");
+        });
+        expect(1).toBe(1);
+      });
+    `,
+    "b.test.ts": `
+      import { test, expect } from "bun:test";
+      import { snapshotInHelper, snapshotInHelperLater } from "./helper";
+
+      test("b own snapshot", async () => {
+        (globalThis as any).releaseA();
+        // a.test.ts's four continuations run during this await.
+        await Promise.resolve();
+        expect("b's real value").toMatchSnapshot();
+        snapshotInHelper("b via helper.ts");
+        await snapshotInHelperLater("b via helper.ts, after an await");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Nothing a.test.ts asserted late is written anywhere, and b's own
+  // snapshots (taken directly, through a helper module, and through a helper
+  // after an await) keep their names and numbering.
+  expect(await Bun.file(join(String(dir), "__snapshots__", "b.test.ts.snap")).text()).toBe(
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
+      "\n" +
+      'exports[`b own snapshot 1`] = `"b\'s real value"`;\n' +
+      "\n" +
+      'exports[`b own snapshot 2`] = `"b via helper.ts"`;\n' +
+      "\n" +
+      'exports[`b own snapshot 3`] = `"b via helper.ts, after an await"`;\n',
+  );
+  expect(existsSync(join(String(dir), "__snapshots__", "a.test.ts.snap"))).toBe(false);
+  for (const matcher of ["toMatchInlineSnapshot", "toMatchSnapshot", "toThrowErrorMatchingSnapshot"]) {
+    expect(stderr).toContain(`${matcher} was called from a test file that has already finished running`);
+  }
   expect(exitCode).toBe(1);
 });
 

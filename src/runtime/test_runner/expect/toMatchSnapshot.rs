@@ -95,5 +95,5 @@ pub(crate) fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(&**this, global, frame, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }

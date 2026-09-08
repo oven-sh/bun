@@ -1014,6 +1014,55 @@ impl Expect {
         }
     }
 
+    /// `expect()` belongs to whichever test is running when it is called. A
+    /// callback that a finished test file left behind (timer, promise reaction,
+    /// event handler) and that runs during a later file's test would therefore
+    /// name and count its snapshot after that test and write it into that
+    /// file's `.snap`. Throws when the JS stack shows this: a frame from another
+    /// test file of this run and none from the running test's file. Calls that
+    /// only have frames from other modules (snapshot helpers) cannot be told
+    /// apart and pass.
+    fn check_snapshot_call_site(
+        &self,
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+        fn_name: &'static str,
+    ) -> JsResult<()> {
+        let Some(buntest_strong) = self.bun_test() else { return Ok(()) };
+        let file_id = buntest_strong.file_id as usize;
+        let Some(runner) = Jest::runner() else { return Ok(()) };
+        let files = runner.files.items_source();
+        let test_file_path: &[u8] = files[file_id].path.text;
+
+        let mut test_file_on_stack = false;
+        let mut other_test_file: Option<usize> = None;
+        call_frame.for_each_source_url(global_this, |source_url| {
+            if source_url.eql_utf8(test_file_path) {
+                test_file_on_stack = true;
+                return false;
+            }
+            if other_test_file.is_none() {
+                let source_url = source_url.to_utf8();
+                other_test_file = files.iter().position(|file| file.path.text == source_url.slice());
+            }
+            true
+        });
+        if test_file_on_stack {
+            return Ok(());
+        }
+        let Some(other_test_file) = other_test_file else { return Ok(()) };
+
+        let signature = Self::get_signature(fn_name, "", false);
+        throw!(
+            self, global_this, signature,
+            "\n\n<b>Matcher error<r>: {} was called from a test file that has already finished running:\n  Called from file: <red>{:?}<r>\n  Test file running now: <green>{:?}<r>\n\nA test in the first file left a callback behind (a timer, a promise continuation or an event handler) that ran during a test of the second file. The snapshot was not written. Await that work inside the test that starts it.\n",
+            fn_name,
+            bstr::BStr::new(files[other_test_file].path.text),
+            bstr::BStr::new(test_file_path),
+        )
+        .map(drop)
+    }
+
     pub(crate) fn inline_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1024,6 +1073,7 @@ impl Expect {
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let this = self;
+        this.check_snapshot_call_site(global_this, call_frame, fn_name)?;
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
             let signature = Self::get_signature(fn_name, "", false);
@@ -1155,12 +1205,14 @@ impl Expect {
     pub(crate) fn snapshot(
         &self,
         global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
         value: JSValue,
         property_matchers: Option<JSValue>,
         hint: &[u8],
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let this = self;
+        this.check_snapshot_call_site(global_this, call_frame, fn_name)?;
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 

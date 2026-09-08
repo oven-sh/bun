@@ -150,6 +150,29 @@ impl CallFrame {
         CallerSrcLoc { str, line, column }
     }
 
+    /// Calls `f` with the source URL of each JS frame under this call,
+    /// innermost first, until `f` returns `false`. Native frames and private
+    /// builtins are skipped and a run of frames from one source is reported
+    /// once. Unlike [`get_caller_src_loc`](Self::get_caller_src_loc) the URL
+    /// is not remapped through source maps: it is the module path as loaded.
+    /// The `&String` borrows C++ stack storage and is only valid inside `f`.
+    pub fn for_each_source_url<F: FnMut(&bun_core::String) -> bool>(
+        &self,
+        global_this: &JSGlobalObject,
+        mut f: F,
+    ) {
+        extern "C" fn call<F: FnMut(&bun_core::String) -> bool>(
+            ctx: *mut c_void,
+            source_url: &bun_core::String,
+        ) -> bool {
+            // SAFETY: `ctx` is the `&mut F` passed below and is only used for
+            // the duration of `Bun__CallFrame__forEachSourceURL`.
+            let f = unsafe { &mut *ctx.cast::<F>() };
+            f(source_url)
+        }
+        Bun__CallFrame__forEachSourceURL(self, global_this, (&raw mut f).cast(), call::<F>);
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
@@ -290,6 +313,15 @@ unsafe extern "C" {
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,
         out_column: &mut c_uint,
+    );
+    // safe: `ctx` is an opaque round-trip pointer that C++ only forwards to
+    // `callback`, together with a `BunString` that lives on its stack for the
+    // duration of that call.
+    safe fn Bun__CallFrame__forEachSourceURL(
+        cf: &CallFrame,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: extern "C" fn(ctx: *mut c_void, source_url: &bun_core::String) -> bool,
     );
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;

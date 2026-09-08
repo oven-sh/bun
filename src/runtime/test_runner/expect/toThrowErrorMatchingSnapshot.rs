@@ -86,5 +86,5 @@ pub(crate) fn to_throw_error_matching_snapshot(
         );
     };
 
-    this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
+    this.snapshot(global, frame, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
 }

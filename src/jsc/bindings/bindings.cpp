@@ -6605,6 +6605,33 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outColumn = lineColumn.column;
 }
 
+// Walks the JS frames under `callFrame`, innermost first, and hands the source
+// URL of each to `callback` until it returns false. Native frames, private
+// builtins and frames without a source URL are skipped; a run of frames from
+// the same source is reported once. The URL is not remapped through source
+// maps, it is the module path the loader registered. `*sourceURL` borrows a
+// string that is only valid for the duration of the callback.
+CPP_DECL void Bun__CallFrame__forEachSourceURL(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, void* ctx, bool (*callback)(void* ctx, const BunString* sourceURL))
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::String previous;
+
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (Zig::isImplementationVisibilityPrivate(visitor))
+            return WTF::IterationStatus::Continue;
+        if (!visitor->hasLineAndColumnInfo())
+            return WTF::IterationStatus::Continue;
+
+        WTF::String url = Zig::sourceURL(visitor);
+        if (url.isEmpty() || url == previous)
+            return WTF::IterationStatus::Continue;
+        previous = url;
+
+        BunString borrowed = Bun::toString(url);
+        return callback(ctx, &borrowed) ? WTF::IterationStatus::Continue : WTF::IterationStatus::Done;
+    });
+}
+
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)
 {
     if (!object) [[unlikely]] {

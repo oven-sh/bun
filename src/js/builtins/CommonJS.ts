@@ -172,8 +172,7 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string, parentFilename?: string) {
-  // Runs JSC's loader synchronously (fetch → parse → link → evaluate) in C++. A graph with
-  // top-level await throws ERR_REQUIRE_ASYNC_MODULE before any of it runs.
+  // Runs JSC's loader synchronously in C++; a graph with top-level await throws ERR_REQUIRE_ASYNC_MODULE before any of it runs.
   return $esmLoadSync(resolvedSpecifier, parentFilename);
 }
 

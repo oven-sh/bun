@@ -889,8 +889,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         loadPromise->markAsHandled();
-        // A fetch is genuinely asynchronous (a plugin's async onLoad, or an outer import() still fetching).
-        // Keep an entry that outer load owns, or the module would evaluate twice once that load completes.
+        // A fetch is genuinely asynchronous (a plugin's async onLoad, or an outer import() that owns the entry is still fetching).
         if (!entryExistedBefore) {
             WTF::Locker locker { loader->cellLock() };
             loader->removeEntry(key);
@@ -914,9 +913,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         promise->markAsHandled();
-        // Still Pending: this module shares an SCC with an outer module that is mid-evaluation (ESM entry →
-        // CJS shim → require(esm) → imports something the entry already loaded). Its body already ran; only
-        // the status flip waits on the SCC root, so the namespace is complete.
+        // Pending here: the module shares an SCC with an outer module that is mid-evaluation. Its body already ran; only the status flip waits on the SCC root.
         if (auto* entry = loader->registryEntry(key)) {
             auto* record = entry->record();
             if (isModuleEvaluatingSync(record))

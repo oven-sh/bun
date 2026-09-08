@@ -92,22 +92,33 @@ impl Default for StdAllocator {
 }
 
 impl StdAllocator {
+    /// # Safety
+    /// `buf` must describe a live allocation obtained from this allocator, and
+    /// `alignment`/`ra` must satisfy this allocator's vtable contract for it.
+    /// The allocation is freed exactly once; its memory must not be accessed
+    /// after this call.
     #[inline]
-    pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
+    pub(crate) unsafe fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
+        // SAFETY: caller contract matches the vtable `free` contract.
         unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
-    /// `raw_free` with `ret_addr = 0`, byte-aligned.
+    /// [`Self::raw_free`] with `ret_addr = 0`, byte-aligned. A null `ptr` or
+    /// zero `len` is a no-op.
+    ///
+    /// # Safety
+    /// `ptr` must be null or point to a live allocation of `len` bytes
+    /// obtained from this allocator. The allocation is freed exactly once; its
+    /// memory must not be accessed after this call.
     #[inline]
-    pub fn free(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
+    pub unsafe fn free(&self, ptr: *mut u8, len: usize) {
+        if ptr.is_null() || len == 0 {
             return;
         }
-        // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
-        // callee treats it as opaque.
-        let buf =
-            unsafe { core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len()) };
-        self.raw_free(buf, Alignment::from_byte_units(1), 0);
+        // SAFETY: caller contract — `ptr[..len]` is a live allocation owned by
+        // this allocator; the slice exists only to satisfy the vtable signature.
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        // SAFETY: caller contract — see the `# Safety` section above.
+        unsafe { self.raw_free(buf, Alignment::from_byte_units(1), 0) };
     }
 }
 

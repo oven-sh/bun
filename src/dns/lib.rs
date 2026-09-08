@@ -464,9 +464,8 @@ impl Order {
     }
 }
 
-/// A numeric address, or a host name within the RFC 1035 limits whose labels are LDH
-/// plus `_` (what glibc `getaddrinfo` accepts in a name to look up; narrower than
-/// c-ares's record-name set, which also has `/` and `*`) or non-ASCII (UTF-8 mDNS).
+/// A numeric address, or a host name within the RFC 1035 limits made of LDH, `_`
+/// (the bytes glibc `getaddrinfo` accepts in a query) or non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
     fn is_hostname_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_') || !b.is_ascii()

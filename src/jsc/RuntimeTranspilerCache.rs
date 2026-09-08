@@ -58,7 +58,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
 /// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
-const EXPECTED_VERSION: u32 = 30;
+/// Version 31: NaN and undefined print as `0 / 0` and `void 0` where the file shadows the global name.
+const EXPECTED_VERSION: u32 = 31;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

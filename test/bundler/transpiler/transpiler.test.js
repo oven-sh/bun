@@ -5729,6 +5729,83 @@ describe("numeric property keys that overflow to Infinity", () => {
   });
 });
 
+// A folded or synthesized undefined / NaN value has no binding of its own, and without the
+// bundler's renamer a same-named binding in the file (or an enclosing `with` object) would
+// capture the bare global name. The printer spells the value `void 0` / `0 / 0` there instead.
+describe("synthesized undefined and NaN next to a binding of the same name", () => {
+  const plain = new Bun.Transpiler({ loader: "ts" });
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+
+  it("prints void 0 when the file binds undefined", () => {
+    expect(plain.transformSync("export let r = (function (undefined) { return void 0 === undefined; })(1);")).toBe(
+      "export let r = function(undefined) {\n  return undefined === void 0;\n}(1);\n",
+    );
+    expect(plain.transformSync("class undefined {}\nexport let r = [void 0, undefined];")).toBe(
+      "class undefined {\n}\nexport let r = [void 0, undefined];\n",
+    );
+    expect(
+      minifier.transformSync("export let r = (undefined => [(void 0) ** x, (void 0).x, x + void 0, -void 0])();"),
+    ).toBe("export let r=((undefined)=>[(void 0)**x,(void 0).x,x+void 0,NaN])();");
+  });
+
+  it("prints 0 / 0 when the file binds NaN", () => {
+    expect(plain.transformSync(`export let r = (function (NaN) { return [+"a", NaN]; })(1);`)).toBe(
+      "export let r = function(NaN) {\n  return [0 / 0, NaN];\n}(1);\n",
+    );
+    expect(minifier.transformSync(`export let f = function NaN() { return +"a" };`)).toBe(
+      "export let f=function NaN(){return 0/0};",
+    );
+    expect(plain.transformSync(`import { NaN } from "./x";\nexport let r = [+"a", NaN];`)).toBe(
+      'import { NaN } from "./x";\nexport let r = [0 / 0, NaN];\n',
+    );
+    expect(plain.transformSync(`try {} catch (NaN) {}\nexport let r = +"a";`)).toBe(
+      "try {} catch (NaN) {}\nexport let r = 0 / 0;\n",
+    );
+    // parenthesized wherever a bare `NaN` token would have bound tighter than `0 / 0`
+    expect(
+      minifier.transformSync(
+        `export let r = (NaN => [x ** +"a", (+"a") ** x, (+"a").toFixed(), x / +"a", +"a" / x, { [0 / 0]: 1 }])();`,
+      ),
+    ).toBe("export let r=((NaN)=>[x**(0/0),(0/0)**x,(0/0).toFixed(),x/(0/0),0/0/x,{[0/0]:1}])();");
+  });
+
+  it("keeps the bare names when nothing in the file binds them", () => {
+    // references to the globals themselves are not bindings
+    expect(plain.transformSync(`export let r = [void 0, +"a", 1e999, undefined, NaN, typeof undefined];`)).toBe(
+      'export let r = [undefined, NaN, 1 / 0, undefined, NaN, "undefined"];\n',
+    );
+    // a label and a property name live in other namespaces
+    expect(plain.transformSync(`NaN: for (;;) break NaN;\nexport let r = { NaN: +"a" }.NaN;`)).toBe(
+      "NaN:\n  for (;; )\n    break NaN;\nexport let r = { NaN: NaN }.NaN;\n",
+    );
+  });
+
+  it("prints the expression forms inside a with statement body", () => {
+    expect(plain.transformSync(`with (x) y = [void 0, +"a", 1e999];\nz = [void 0, +"a"];`)).toBe(
+      "with (x)\n  y = [void 0, 0 / 0, 1 / 0];\nz = [undefined, NaN];\n",
+    );
+  });
+
+  it("still evaluates to the global values at runtime", () => {
+    const out = minifier.transformSync(`
+      var result = (function (undefined, NaN) {
+        return [void 0 === undefined, typeof void 0, Number.isNaN(+"a"), 0 / 0 === NaN, Object.keys({ [0 / 0]: 1 })[0]];
+      })(1, 2);
+      with ({ NaN: 3, undefined: 4, Infinity: 5 }) result.push(String(0 / 0), String(void 0), String(1e999));
+    `);
+    expect(new Function(`${out}; return result;`)()).toEqual([
+      false,
+      "undefined",
+      true,
+      false,
+      "NaN",
+      "NaN",
+      "undefined",
+      "Infinity",
+    ]);
+  });
+});
+
 describe("parse error flood", () => {
   it("reports duplicate-binding floods in linear time", async () => {
     await using proc = Bun.spawn({

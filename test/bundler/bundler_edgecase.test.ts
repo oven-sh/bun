@@ -3401,6 +3401,29 @@ describe("bundler", () => {
       },
     });
   }
+  // The renamer cannot help inside a `with` body: there the bare names may
+  // resolve to properties of the object, so the printer spells the values
+  // `0 / 0`, `1 / 0` and `void 0` instead. A cross-file const enum key that
+  // inlines to NaN must then print as a computed property.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/WithStatementNaNInfinityUndefined${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { E } from "./enum.ts";
+          with ({ NaN: "n", Infinity: "i", undefined: "u" }) {
+            console.write(JSON.stringify([String(+"x"), String(1e999), String(-1e999), String(void 0), { [E.N]: 1, [E.I]: 2 }]));
+          }
+        `,
+        "/enum.ts": /* ts */ `
+          export const enum E { N = 0 / 0, I = 1 / 0 }
+        `,
+      },
+      format: "cjs",
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      run: { stdout: '["NaN","Infinity","-Infinity","undefined",{"NaN":1,"Infinity":2}]' },
+    });
+  }
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant

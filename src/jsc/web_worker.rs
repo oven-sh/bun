@@ -864,7 +864,11 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // A load cut short by the parent's terminate() did not fail either:
+                // the worker chose no exit code, and the proxy reports that per kind.
+                if !self.exit_called.load(Ordering::Relaxed)
+                    && !self.termination_requested_by_parent()
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1091,6 +1095,16 @@ impl WebWorker {
     pub fn stopped_by_parent(&self) -> bool {
         self.terminated_by_parent.load(Ordering::Relaxed)
             && !self.exit_called.load(Ordering::Relaxed)
+    }
+
+    /// The parent's `terminate()` is what asked this thread to stop. Worker
+    /// thread, while the VM handle is still published. Read under the handle's
+    /// lock: `request_termination` sets `requested_terminate` and then
+    /// `terminated_by_parent` while holding it, so a thread that already saw
+    /// the former cannot read a stale `false` here.
+    fn termination_requested_by_parent(&self) -> bool {
+        let _handle = self.vm_handle.lock();
+        self.terminated_by_parent.load(Ordering::Relaxed)
     }
 
     /// process.exit() inside the worker. Worker-thread only.

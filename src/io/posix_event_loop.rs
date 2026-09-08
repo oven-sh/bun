@@ -908,12 +908,8 @@ impl FilePoll {
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
             || self.flags.contains(Flags::PollMemoryPressure);
-        // The `needs_rearm` skip below leaves a fired one-shot poll's disarmed
-        // registration in the kernel. The fd can outlive this poll (stdio, a
-        // borrowed fd), and the next EPOLL_CTL_ADD for it then fails with
-        // EEXIST, so a forced unregister (teardown) deletes it after all. Its
-        // direction is no longer recorded: epoll deletes by fd; kqueue gets a
-        // delete for both filters and tolerates the missing one.
+        // The `needs_rearm` skip below keeps the disarmed registration in the kernel; teardown still has to delete
+        // it (the fd may outlive this poll), by fd on epoll and for both filters on kqueue.
         let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
         if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());

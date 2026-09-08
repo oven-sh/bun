@@ -47,7 +47,9 @@ describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr, exitCode };
+    // `signalCode` is the hang guard: a door that blocks is killed by the
+    // spawn deadline and reports SIGKILL here.
+    return { stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode };
   }
 
   // `ca`, `cert`, `key` and `crl` take a BunFile, which the option reader
@@ -67,21 +69,23 @@ describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
 
   for (const [name, door] of Object.entries(doors)) {
     test.concurrent(`${name} throws instead of blocking the event loop`, async () => {
-      const { stdout, stderr, exitCode } = await runDoor(door);
+      const { stdout, stderr, signalCode, exitCode } = await runDoor(door);
       expect(stdout).toContain("must be a regular file");
       expect(stdout).toContain("is a FIFO");
       expect(stderr).toBe("");
+      expect(signalCode).toBeNull();
       expect(exitCode).toBe(0);
     });
   }
 
   test.concurrent("an array entry that is a FIFO names the option and the path", async () => {
-    const { stdout, stderr, exitCode } = await runDoor(
+    const { stdout, stderr, signalCode, exitCode } = await runDoor(
       `({ F }) => require("node:tls").createSecureContext({ ca: [Bun.file(F)] })`,
     );
     expect(stdout).toContain("TLSOptions.ca must be a regular file");
     expect(stdout).toContain("fifo.pem");
     expect(stderr).toBe("");
+    expect(signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });
 });

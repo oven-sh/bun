@@ -80,17 +80,6 @@ fn dupe_z(bytes: &[u8]) -> *const c_char {
 
 type CStrSlice = Option<Box<[*const c_char]>>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// A path-valued option must name a regular file
-//
-// Every path here is opened on the JS thread: `ca`/`cert`/`key`/`crl` by
-// `read_from_blob` below, and `keyFile`/`certFile`/`caFile`/`dhParamsFile` by
-// BoringSSL when the socket context is built. `open(2)` on a FIFO with no
-// writer never returns, so one such path stops the event loop with no error
-// and no timer. Reject every kind but a regular file, as the system CA loader
-// (`system_certs.rs`) and the `.env` loader (`bun_dotenv::env_loader`) do.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// The kind of a mode that is not `S_IFREG`, or `None` for a regular file.
 fn non_regular_kind(mode: bun_sys::Mode) -> Option<bun_sys::FileKind> {
     match bun_sys::kind_from_mode(mode) {
@@ -114,8 +103,7 @@ fn non_regular_error(
         FileKind::UnixDomainSocket => "a socket",
         _ => "not a regular file",
     };
-    // A pipe or a device can still carry PEM text. Say how to use it without
-    // a read that can block the event loop.
+    // A pipe or a device can carry PEM text, so name the way that does not block.
     let remedy = match kind {
         FileKind::NamedPipe | FileKind::CharacterDevice => {
             ". Read it first and pass the contents as a string or Buffer instead"
@@ -144,12 +132,10 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
-    // Before the open, not after: the open is what blocks. A `Bun.file(fd)`
-    // store has no path to open, so it keeps today's read.
+    // The read below is on the JS thread, and `open(2)` on a FIFO with no
+    // writer never returns. A `stat` failure is left to the read's own errno.
     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
         let mut buffer = bun_paths::path_buffer_pool::get();
-        // A `stat` failure is not this check's business. The read below
-        // reports it with its own errno.
         if let Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer))
             && let Some(kind) = non_regular_kind(stat.st_mode as bun_sys::Mode)
         {
@@ -371,8 +357,7 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // `bun_sys::stat` routes to `stat(2)` on POSIX and to libuv on Windows, so
-    // one call is both the cross-platform existence probe and the kind check.
+    // BoringSSL opens this path on the JS thread when the context is built.
     let failure = match bun_sys::stat(&name) {
         Err(_) => {
             Some(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)))

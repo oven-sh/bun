@@ -1,5 +1,5 @@
 import type { Subprocess } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -714,4 +714,107 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+describe("when the port is in use", () => {
+  // No PORT-like variable may leak in from the environment: each test picks
+  // exactly one way to name (or not name) the port.
+  const { PORT: _1, BUN_PORT: _2, NODE_PORT: _3, ...cleanEnv } = bunEnv;
+  const env = { ...cleanEnv, NODE_ENV: "production", NO_COLOR: "1" };
+  const files = { "index.html": `<!DOCTYPE html><html><body><h1>Hello</h1></body></html>` };
+
+  // Holds a port that still has room above it: the fallback walks upward and
+  // stops at 65535.
+  function takePort() {
+    for (;;) {
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("taken") });
+      if (server.port <= 65500) return server;
+      server.stop(true);
+    }
+  }
+
+  // Reads stdout until the dev server prints its URL or exits. The unfixed
+  // behaviour (serving on another port) shows up as a URL here instead of
+  // as a test timeout.
+  async function urlOrExit(proc: Subprocess<"ignore", "pipe", "pipe">) {
+    const decoder = new TextDecoder();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      const match = stdout.match(/http:\/\/\S+/);
+      if (match && URL.canParse(match[0])) return { stdout, url: new URL(match[0]) };
+    }
+    return { stdout, url: undefined };
+  }
+
+  test.concurrent("an explicit --port fails instead of moving to another port", async () => {
+    using taken = takePort();
+    await using dir = tempDir("html-port-taken-flag", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.html", `--port=${taken.port}`, "--hostname=127.0.0.1"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const { url } = await urlOrExit(proc);
+    if (url) proc.kill();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(url?.href).toBeUndefined();
+    expect(stderr.trim()).toBe(`error: Failed to start server. Is port ${taken.port} in use?`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("an explicit PORT fails instead of moving to another port", async () => {
+    using taken = takePort();
+    await using dir = tempDir("html-port-taken-env", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.html", "--hostname=127.0.0.1"],
+      env: { ...env, PORT: String(taken.port) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const { url } = await urlOrExit(proc);
+    if (url) proc.kill();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(url?.href).toBeUndefined();
+    expect(stderr.trim()).toBe(`error: Failed to start server. Is port ${taken.port} in use?`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a default port moves to the next free one and says so", async () => {
+    using taken = takePort();
+    // `serve.port` replaces the built-in default of 3000, so this exercises the
+    // same path as a taken port 3000 without depending on that port in CI.
+    await using dir = tempDir("html-port-taken-default", {
+      ...files,
+      "bunfig.toml": `[serve]\nport = ${taken.port}\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.html", "--hostname=127.0.0.1"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const { url, stdout } = await urlOrExit(proc);
+    expect(url?.href, stdout).toBeDefined();
+    try {
+      const response = await fetch(url!);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("<h1>Hello</h1>");
+    } finally {
+      proc.kill();
+    }
+    const stderr = await proc.stderr.text();
+
+    expect(Number(url!.port)).not.toBe(taken.port);
+    expect(stderr.trim()).toBe(`warn: Port ${taken.port} is in use, using port ${url!.port} instead.`);
+  });
 });

@@ -1991,6 +1991,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 port,
                 hostname: _hostname,
             } => {
+                // Same own property as node's listen errors, so a caller that let
+                // Bun.serve() pick the port can tell which one was refused.
+                let with_port = |error_instance: JSValue| {
+                    if *port != 0 {
+                        error_instance.put(
+                            global,
+                            b"port",
+                            JSValue::js_number_from_int32(i32::from(*port)),
+                        );
+                    }
+                    error_instance
+                };
                 // Rust's `target_os = "linux"` excludes
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2011,7 +2023,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             syscall: bun_core::String::static_("listen"),
                             ..Default::default()
                         };
-                        let _ = global.throw_value(err.to_error_instance(global));
+                        let _ = global.throw_value(with_port(err.to_error_instance(global)));
                         return;
                     }
                     // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
@@ -2022,20 +2034,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
                                 .to_system_error(),
                         );
-                        let _ = global.throw_value(err.to_error_instance(global));
+                        let _ = global.throw_value(with_port(err.to_error_instance(global)));
                         return;
                     }
                 }
-                jsc::SystemError {
-                    message: bun_core::String::create_format(format_args!(
-                        "Failed to start server. Is port {} in use?",
-                        port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
-                }
-                .to_error_instance(global)
+                with_port(
+                    jsc::SystemError {
+                        message: bun_core::String::create_format(format_args!(
+                            "Failed to start server. Is port {} in use?",
+                            port
+                        )),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
+                        ..Default::default()
+                    }
+                    .to_error_instance(global),
+                )
             }
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();

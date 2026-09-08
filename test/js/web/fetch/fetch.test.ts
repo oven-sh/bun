@@ -3158,7 +3158,7 @@ it("fetch() does not forward a caller-supplied Content-Length on a request witho
   expect(withBodyHeaders.filter(line => line.startsWith("content-length:"))).toEqual(["content-length: 2"]);
 });
 
-it("fetch() frames a streaming body with a caller-supplied Content-Length only when it can honor it", async () => {
+it("fetch() frames a streaming body itself: a caller Content-Length only when it can honor it, never a caller Transfer-Encoding", async () => {
   // fetch() cannot measure a ReadableStream, an async generator or a node
   // stream.Readable body, so a caller-supplied Content-Length for one of those
   // describes bytes fetch() has not seen yet, and fetch() sends the body unframed
@@ -3168,7 +3168,9 @@ it("fetch() frames a streaming body with a caller-supplied Content-Length only w
   // fetch() does honor must match the body, otherwise the request fails: a
   // surplus byte lands on the connection after the declared end, where a
   // keep-alive peer reads it as the start of the next request, and a missing byte
-  // leaves the peer waiting for a body that never completes.
+  // leaves the peer waiting for a body that never completes. A caller
+  // Transfer-Encoding never reaches the wire either: fetch() writes the one
+  // framing header that describes the bytes it produces.
   type RawRequest = { head: string[]; body: string };
   const queue: RawRequest[] = [];
   const waiting: ((request: RawRequest) => void)[] = [];
@@ -3246,11 +3248,13 @@ it("fetch() frames a streaming body with a caller-supplied Content-Length only w
   expect(await nextRequest()).toMatchObject({ body: "" });
 
   // A body shorter than the count: the request fails instead of leaving the peer
-  // waiting for the 43 bytes that never come.
+  // waiting for the 43 bytes that never come. The peer sees the connection
+  // reset mid-message (how much of the 7 bytes it read before the reset is up
+  // to its TCP stack, so only the close is asserted).
   await expect(post({ "Content-Length": "50" }, streamBody)).rejects.toMatchObject({
     code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
   });
-  expect(await nextRequest()).toMatchObject({ body });
+  expect((await nextRequest()).body.length).toBeLessThanOrEqual(body.length);
 
   // An async generator body and a node stream.Readable body take the same path.
   for (const makeBody of [
@@ -3282,6 +3286,23 @@ it("fetch() frames a streaming body with a caller-supplied Content-Length only w
   joined.append("Content-Length", "7");
   expect(await (await post(joined, streamBody)).text()).toBe("OK");
   expect(framingOf(await nextRequest())).toEqual(["transfer-encoding: chunked"]);
+
+  // A caller Transfer-Encoding is never forwarded: fetch() produces chunked
+  // bytes and says so itself, whatever coding the caller named. Next to one, a
+  // caller Content-Length is not honored either (chunked wins, as before).
+  for (const headers of [
+    { "Transfer-Encoding": "identity" },
+    { "Transfer-Encoding": "gzip" },
+    { "Transfer-Encoding": "Chunked" },
+    { "Transfer-Encoding": "gzip, chunked" },
+    { "Transfer-Encoding": "chunked", "Content-Length": String(body.length) },
+    { "Transfer-Encoding": "chunked", "Content-Length": "2" },
+  ]) {
+    expect(await (await post(headers, streamBody)).text()).toBe("OK");
+    const request = await nextRequest();
+    expect(framingOf(request)).toEqual(["transfer-encoding: chunked"]);
+    expect(request.body).toBe(`${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`);
+  }
 
   // A blob-backed stream still reports the size fetch() computes, not the
   // caller's value.

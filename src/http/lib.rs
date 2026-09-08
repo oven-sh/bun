@@ -2362,7 +2362,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut connection_close_requested = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2441,13 +2440,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
-                        continue;
-                    }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
+                    // This client frames every body itself (below), so a caller
+                    // Transfer-Encoding can only contradict that framing.
+                    continue;
                 }
                 _ => {}
             }
@@ -2491,16 +2486,16 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                // The producer decided the framing when it created the stream (from
-                // the caller's Content-Length and Transfer-Encoding) and fills the
-                // buffer to match, so announce that decision, not the raw caller
-                // value consumed above.
+                // The producer decided the framing when it created the stream and
+                // fills the buffer to match: exactly `content_length` raw bytes, or
+                // chunk-encoded bytes when it declared none. Announce that decision,
+                // not the raw caller value consumed above. An upgrade request
+                // tunnels the bytes instead, unframed.
                 let declared = match &self.state.original_request_body {
                     HTTPRequestBody::Stream(stream) => stream.content_length,
                     _ => None,
                 };
                 if let Some(content_length) = declared {
-                    debug_assert!(add_transfer_encoding);
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
                         &mut self.request_content_len_buf,
                         content_length,
@@ -2510,14 +2505,10 @@ impl<'a> HTTPClient<'a> {
                     request_headers_buf[header_count] =
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                     header_count += 1;
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
-                {
+                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }
-                // Otherwise the caller's own Transfer-Encoding row, kept above,
-                // frames the chunk-encoded bytes the producer writes.
             } else {
                 let value: &[u8] =
                     bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);

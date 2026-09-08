@@ -98,8 +98,7 @@ pub(crate) fn is_css_module_path(pretty_path: &[u8]) -> bool {
     pretty_path.len() > CSS_MODULE_SUFFIX.len() && pretty_path.ends_with(CSS_MODULE_SUFFIX)
 }
 
-/// A CSS module whose class-name map the dev server ships as an HMR module,
-/// next to the stylesheet asset. Server-side CSS stays a stylesheet only.
+/// A CSS module whose class-name map the dev server ships to the browser as an HMR module.
 pub(crate) fn is_client_css_module(target: Target, pretty_path: &[u8]) -> bool {
     target == Target::Browser && is_css_module_path(pretty_path)
 }

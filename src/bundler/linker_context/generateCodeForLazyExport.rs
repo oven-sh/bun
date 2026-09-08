@@ -18,10 +18,7 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-/// Fills the lazy-export object of a CSS file's JS stub with the file's
-/// class-name map (`local_scope` plus `composes`). A no-op for other
-/// lazy-export files. The dev server calls this on its own because it skips
-/// `generate_code_for_lazy_export` and prints the `SLazyExport` directly.
+/// Fills a CSS file's lazy-export object with its class-name map. A no-op for other lazy exports.
 pub(crate) fn populate_css_module_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
@@ -361,11 +358,7 @@ pub(crate) fn generate_code_for_lazy_export(
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    // The dev server's module format represents lazy-export modules (JSON,
-    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
-    // runtime, so always generate the `module.exports = ...` form below.
-    // The ESM form would synthesize `export` parts that
-    // `print_dev_server_module` cannot represent.
+    // `print_dev_server_module` only has a CommonJS form (`module.exports = ...`) for lazy exports.
     if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
         && exports_kind != bun_ast::ExportsKind::Cjs
     {

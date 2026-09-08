@@ -4167,8 +4167,7 @@ pub(super) fn finalize_bundle(
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
     for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
-        // The class-name map of a CSS module. Its import records belong to the
-        // stylesheet, and the CSS chunk loop below attaches those edges.
+        // A CSS module's stub: its records are the stylesheet's, which the CSS loop below handles.
         if input_file_loaders[part_range.source_index.get() as usize].is_css() {
             continue;
         }

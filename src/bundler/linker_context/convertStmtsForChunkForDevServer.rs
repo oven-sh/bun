@@ -57,9 +57,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
-    // A CSS file's records belong to its stylesheet (`@import`, `composes`,
-    // `url()`), which the CSS chunk reads on another thread. Its JS stub has
-    // no import statements, so there is nothing to rewrite.
+    // A CSS file's own records belong to the CSS chunk (another thread); its stub imports nothing.
     if ast.css.is_none() {
         let targets = c.graph.ast.items_target();
         for record in ast.import_records.as_mut_slice() {
@@ -69,8 +67,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
             if record.source_index.is_valid() {
                 let imported = record.source_index.get() as usize;
                 let is_css = loaders[imported] == Loader::Css;
-                // A stylesheet reaches the page through a <link> tag, not
-                // through the module registry.
+                // A plain stylesheet reaches the page through a <link> tag, not the module registry.
                 if is_css
                     && !crate::is_client_css_module(
                         targets[imported],
@@ -82,9 +79,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 }
                 // Make sure the printer gets the resolved path
                 record.path = sources[imported].path;
-                // The class-name map of a client CSS module is a module in the
-                // registry, keyed by this path. Link to it at runtime like to
-                // any other module, so that `require()` and `import()` work too.
+                // A CSS module's class-name map is a registry module; link it at runtime like JS.
                 if is_css {
                     record.source_index = bun_ast::Index::INVALID;
                 }

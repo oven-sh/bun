@@ -390,12 +390,9 @@ pub mod bv2_impl {
             Unknown = 0,
             Js = 1,
             Asset = 2,
-            /// A stylesheet. The page loads it through a `<link>` tag, so an
-            /// import of it from JS carries no binding.
+            /// A stylesheet the page loads through a `<link>` tag; a JS import of it binds nothing.
             Css = 3,
-            /// A client CSS module: a stylesheet as above, plus a module in
-            /// the HMR registry (keyed by the file's path) that exports the
-            /// class-name map. An import of it from JS stays a dependency.
+            /// A stylesheet plus an HMR module, keyed by the file's path, that exports its class names.
             CssModule = 4,
         }
         #[derive(Copy, Clone)]
@@ -5664,9 +5661,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // A client CSS module also ships its class-name map as a module in
-                // the JS chunk, so `import styles from "./x.module.css"` resolves in
-                // the HMR runtime.
+                // A client CSS module also ships a module with its class-name map in the JS chunk.
                 for entry_point in start.css_entry_points.keys() {
                     let idx = entry_point.get() as usize;
                     // SAFETY: `idx < ast.len()`; see the column aliasing note above.
@@ -5723,8 +5718,7 @@ pub mod bv2_impl {
                     .map_err(|_| AllocError)?;
             }
 
-            // The full link fills a CSS module's class-name map in
-            // `generate_code_for_lazy_export`, which this pipeline skips.
+            // This pipeline skips `generate_code_for_lazy_export`, so fill the class-name maps here.
             for source_index in &css_module_stubs {
                 self.linker
                     .populate_css_module_lazy_export(source_index.get())?;

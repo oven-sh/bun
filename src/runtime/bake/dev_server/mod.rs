@@ -44,8 +44,7 @@ pub use super::dev_server_body::{
     TestingBatchEvents, deferred_request, entry_point_list,
 };
 
-/// `DevServer.FileKind`. `File::cache_kind` maps it to what the bundler sees,
-/// `bun_bundler::bake_types::CacheKind`.
+/// `DevServer.FileKind`. `File::cache_kind` maps it to the bundler's `CacheKind`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FileKind {

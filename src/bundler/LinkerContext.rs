@@ -946,9 +946,7 @@ impl<'a> LinkerContext<'a> {
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
                     bits.set(1);
                 }
-                // Same for the JS stub of a client CSS module in the dev format:
-                // tree shaking short-circuits for CSS files and dev imports link
-                // at runtime, so nothing else marks the stub live.
+                // Likewise for a client CSS module's stub: the dev format links imports at runtime.
                 if is_bake_dev
                     && parts.len() > 1
                     && loaders.get(i).is_some_and(|l| l.is_css())

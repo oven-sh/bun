@@ -87,9 +87,7 @@ pub enum Content {
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
     CssRoot(u64),
-    /// A `CssRoot` that is a client CSS module. Next to the stylesheet asset
-    /// it holds the module that exports the class-name map, so that
-    /// `import styles from "./x.module.css"` resolves in the HMR runtime.
+    /// A `CssRoot` that is a client CSS module: also holds the module that exports its class names.
     CssModule {
         css: u64,
         code: Box<[u8]>,
@@ -151,9 +149,7 @@ impl File {
         self.kind
     }
 
-    /// What an importer may link to without this file being bundled again.
-    /// `None` when there is nothing: a stylesheet that was only reached
-    /// through `@import` or `composes` has no asset and no module of its own.
+    /// What an importer may link to without bundling this file again; a `CssChild` has nothing.
     pub(crate) fn cache_kind(&self) -> Option<bun_bundler::bake_types::CacheKind> {
         use bun_bundler::bake_types::CacheKind;
         Some(match self.content {
@@ -636,9 +632,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
-                // A client CSS module receives two chunks per bundle: the module
-                // with its class-name map in the JS pass, then its stylesheet in
-                // the CSS pass. Each pass keeps the half that the other one owns.
+                // A client CSS module gets a JS pass, then a CSS pass; each keeps the other's half.
                 let mut css_module_code: Option<(Box<[u8]>, packed_map::Shared)> = None;
                 let mut css_root: Option<u64> = None;
 
@@ -683,9 +677,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     ReceiveChunkContent::Js { code, source_map } => {
                         let len = code.len();
                         let loader = ctx.loaders[index.get() as usize];
-                        // An unchanged class-name map stays out of the hot
-                        // update, so that a style-only edit of a CSS module
-                        // swaps the stylesheet without re-evaluating importers.
+                        // An unchanged class-name map stays out of the hot update: the edit was style-only.
                         let unchanged = css_module_code
                             .as_ref()
                             .is_some_and(|(prior, _)| strings::eql(prior, &code));
@@ -1309,8 +1301,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 }
                                 _ => {}
                             }
-                            // The edges of a CSS file lead to stylesheets and
-                            // assets, never to modules; trace is done.
+                            // A CSS file's edges lead to stylesheets and assets only; trace is done.
                             return Ok(());
                         }
                         _ => {}

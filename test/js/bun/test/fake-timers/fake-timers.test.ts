@@ -212,6 +212,105 @@ describe("clearAllTimers", () => {
     expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
   });
 });
+describe("timer controls called from inside a timer callback", () => {
+  // A nested call can move the fake clock past timers that the outer call still
+  // has to fire. Those fire late, at the current time: the clock never runs
+  // backwards.
+  const T0 = 1_000_000;
+
+  test("advanceTimersByTime() in a setInterval callback during runAllTimers()", () => {
+    vi.useFakeTimers({ now: T0 });
+    const seen: [string, number, number][] = [];
+    let n = 0;
+    const interval = setInterval(() => {
+      n++;
+      seen.push(["interval " + n, Date.now() - T0, performance.now()]);
+      // An interval is not pending while its own callback runs, so this fires
+      // nothing and only moves the clock.
+      if (n == 1) vi.advanceTimersByTime(50);
+      if (n == 3) clearInterval(interval);
+    }, 10);
+    vi.runAllTimers();
+    // Tick 2 was due at 20, after tick 1 had moved the clock to 60.
+    expect(seen).toEqual([
+      ["interval 1", 10, 10],
+      ["interval 2", 60, 60],
+      ["interval 3", 70, 70],
+    ]);
+    expect(Date.now() - T0).toBe(70);
+    expect(performance.now()).toBe(70);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("runOnlyPendingTimers() in a setInterval callback during advanceTimersByTime()", () => {
+    vi.useFakeTimers({ now: T0 });
+    const seen: [string, number, number][] = [];
+    let n = 0;
+    const interval = setInterval(() => {
+      n++;
+      seen.push(["interval " + n, Date.now() - T0, performance.now()]);
+      if (n == 4) clearInterval(interval);
+      vi.runOnlyPendingTimers();
+    }, 1);
+    setTimeout(() => seen.push(["timeout", Date.now() - T0, performance.now()]), 10);
+    vi.advanceTimersByTime(10);
+    // Tick 1's runOnlyPendingTimers() fires the 10 ms timeout. Tick 2 was due
+    // at 2, so it fires late at 10 and reschedules for 11, past this advance.
+    expect(seen).toEqual([
+      ["interval 1", 1, 1],
+      ["timeout", 10, 10],
+      ["interval 2", 10, 10],
+    ]);
+    expect(Date.now() - T0).toBe(10);
+    expect(performance.now()).toBe(10);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(seen.slice(3)).toEqual([["interval 3", 11, 11]]);
+    clearInterval(interval);
+  });
+
+  test.each([
+    ["advanceTimersByTime", 105],
+    ["advanceTimersToNextTimer", 50],
+    ["runOnlyPendingTimers", 50],
+    ["runAllTimers", 50],
+  ] as const)("%s() in a setTimeout callback during advanceTimersByTime()", (method, end) => {
+    vi.useFakeTimers({ now: T0 });
+    const seen: [string, number, number][] = [];
+    setTimeout(() => {
+      seen.push(["a", Date.now() - T0, performance.now()]);
+      if (method == "advanceTimersByTime") vi.advanceTimersByTime(100);
+      else vi[method]();
+      seen.push(["a after", Date.now() - T0, performance.now()]);
+    }, 5);
+    setTimeout(() => seen.push(["b", Date.now() - T0, performance.now()]), 50);
+    vi.advanceTimersByTime(10);
+    seen.push(["end", Date.now() - T0, performance.now()]);
+    // The nested call left the clock past the 10 ms mark this call advances
+    // to, so the clock stays where it is.
+    expect(seen).toEqual([
+      ["a", 5, 5],
+      ["b", 50, 50],
+      ["a after", end, end],
+      ["end", end, end],
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("useRealTimers() in a setTimeout callback during advanceTimersByTime()", () => {
+    const realDate = Date.now();
+    const realUptime = performance.now();
+    vi.useFakeTimers({ now: T0 });
+    setTimeout(() => vi.useRealTimers(), 5);
+    vi.advanceTimersByTime(2 ** 31);
+    expect(vi.isFakeTimers()).toBe(false);
+    // The end of advanceTimersByTime() must not pin the clock to the fake
+    // 2^31 ms mark: useRealTimers() already put the real clock back.
+    expect(Date.now()).toBeGreaterThanOrEqual(realDate);
+    expect(performance.now()).toBeGreaterThanOrEqual(realUptime);
+    expect(performance.now()).toBeLessThan(2 ** 31);
+  });
+});
 describe("AbortSignal.timeout", () => {
   const N = 500;
 

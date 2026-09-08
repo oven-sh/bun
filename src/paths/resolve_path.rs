@@ -1428,7 +1428,7 @@ pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
 
 #[inline]
 fn join_needed(parts: &[&[u8]]) -> usize {
-    parts.iter().map(|p| p.len() + 1).sum::<usize>() + 1
+    parts.iter().map(|p| p.len() + 1).sum::<usize>().max(1) + 1
 }
 
 /// [`join_z_buf`] into `buf` when the result fits, otherwise into `spill`

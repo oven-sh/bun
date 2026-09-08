@@ -267,6 +267,26 @@ describe.concurrent("long import path overflow", () => {
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  it("tsconfig extends longer than PATH_MAX", async () => {
+    const parent = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".json";
+    using dir = tempDir("resolve-long-extends", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "tsconfig.json": JSON.stringify({ extends: parent, compilerOptions: {} }),
+      "e.ts": `console.log("ok");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "e.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`

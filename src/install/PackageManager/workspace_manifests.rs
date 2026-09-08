@@ -77,8 +77,7 @@ impl ScratchManifests {
         Ok(pkg)
     }
 
-    /// The package.json behind package `pkg_id` of `manager.lockfile`: the root's (already parsed by `parse_root`, not
-    /// parsed again), or a workspace member's, read from the path its `workspace:` resolution stores.
+    /// Root: what `parse_root` parsed. Workspace: parsed from the path its `workspace:` resolution stores.
     pub(crate) fn parse_lockfile_package(
         &mut self,
         manager: &mut PackageManager,
@@ -94,8 +93,7 @@ impl ScratchManifests {
     }
 }
 
-/// Whether bun.lock row `row` is the one the last install wrote for package.json dependency `scratch` of the same
-/// package. A name listed in two groups (`dependencies` and `peerDependencies`) has one row per group.
+/// A name listed in two groups (`dependencies` and `peerDependencies`) has one row per group, so the group counts.
 pub(crate) fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
     row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
 }
@@ -111,10 +109,7 @@ pub struct DeclaredDependency {
     pub package_id: PackageID,
 }
 
-/// The npm dependencies that the package.json files declare now, for the commands that report on direct
-/// dependencies (`bun outdated`, `bun update -i`). bun.lock keeps the names, groups and ranges of the last
-/// install, so only the installed package is taken from it. A dependency that is declared but not installed
-/// yet has no row.
+/// The npm dependencies the package.json files declare now; bun.lock only supplies what is installed for each.
 pub struct DeclaredDependencies {
     /// The package.json parse: dependency rows, their strings and the root catalogs. No packages.
     lockfile: Lockfile,
@@ -122,9 +117,7 @@ pub struct DeclaredDependencies {
 }
 
 impl DeclaredDependencies {
-    /// Parses the root package.json and the package.json of each of `workspace_pkg_ids` the way `bun install`
-    /// does, and exits with its errors when one does not parse. Rows keep the order of `workspace_pkg_ids`, then
-    /// package.json order (group, then name).
+    /// Exits with `bun install`'s errors when a package.json does not parse. Declared but not installed: no row.
     pub fn load(manager: &mut PackageManager, workspace_pkg_ids: &[PackageID]) -> Self {
         let mut scratch = ScratchManifests::new();
         if let Err(err) = scratch.parse_root(manager) {
@@ -192,8 +185,7 @@ impl DeclaredDependencies {
         &self.lockfile.buffers.dependencies[row.dep_id as usize]
     }
 
-    /// The declared range with a `catalog:` reference resolved through the root package.json: an npm range or a
-    /// dist tag.
+    /// An npm range or a dist tag, `catalog:` references resolved through the root package.json.
     pub fn range(&self, row: &DeclaredDependency) -> &DependencyVersion {
         self.lockfile
             .catalogs
@@ -226,8 +218,7 @@ impl DeclaredDependencies {
     }
 }
 
-/// The bun.lock row, out of one package's `rows`, that the last install wrote for package.json dependency `dep` of
-/// that package. A dependency that moved to another group since then still finds its old row.
+/// Falls back to a row of the same name when `dep` moved to another group since the last install.
 fn installed_row(
     lockfile: &Lockfile,
     rows: DependencySlice,

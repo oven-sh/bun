@@ -343,8 +343,6 @@ impl OutdatedCommand {
 
         let mut version_buf: String = String::new();
 
-        // Names, groups and ranges come from each package.json as it is now; bun.lock keeps the ones of the
-        // last install and only says which version that installed.
         let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
         let mut outdated_ids: Vec<DeclaredDependency> = Vec::new();
 

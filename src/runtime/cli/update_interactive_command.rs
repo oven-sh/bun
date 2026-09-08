@@ -844,8 +844,6 @@ impl UpdateInteractiveCommand {
 
         let mut version_buf: String = String::new();
 
-        // Names, groups and ranges come from each package.json as it is now; bun.lock keeps the ones of the
-        // last install and only says which version that installed.
         let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
         let checked = declared.rows().len();
 
@@ -897,7 +895,6 @@ impl UpdateInteractiveCommand {
 
             // Skip only if both the constrained update AND the latest version are the same as current
             // This ensures we show packages where latest is newer even if constrained update isn't
-            // `DeclaredDependencies` only has rows installed from npm.
             let current_ver = resolution.npm().version;
             let update_ver = update_version.version;
             let latest_ver = latest.version;

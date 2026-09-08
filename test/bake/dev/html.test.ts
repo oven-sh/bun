@@ -96,6 +96,39 @@ devTest("image tag", {
     await dev.fetch(url).expect404(); // TODO
   },
 });
+devTest("srcset and imagesrcset candidates are served", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head>
+      <link rel="preload" as="image" href="one.png" imagesrcset="one.png 1x, two.png 2x" imagesizes="100vw">
+      </head><body>
+      <img srcset="one.png 300w, two.png 600w, https://example.com/three.png 900w" sizes="50vw">
+      </body></html>
+    `,
+    "one.png": "ONE",
+    "two.png": "TWO",
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const srcset = html.match(/ srcset="([^"]*)"/)![1];
+    const imagesrcset = html.match(/imagesrcset="([^"]*)"/)![1];
+    const href = html.match(/href="([^"]*)" imagesrcset/)![1];
+
+    const candidates = (list: string) => list.split(", ").map(candidate => candidate.split(" "));
+    const [[one, w1], [two, w2], [three, w3]] = candidates(srcset);
+    expect([w1, w2, three, w3]).toEqual(["300w", "600w", "https://example.com/three.png", "900w"]);
+    expect(candidates(imagesrcset)).toEqual([
+      [one, "1x"],
+      [two, "2x"],
+    ]);
+    expect(href).toBe(one);
+    expect(html).toContain('imagesizes="100vw"');
+    expect(html).toContain('sizes="50vw"');
+
+    await dev.fetch(one).expect.toBe("ONE");
+    await dev.fetch(two).expect.toBe("TWO");
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

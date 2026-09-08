@@ -352,6 +352,35 @@ body { color: blue; }`,
     expect(html).toContain('console.log("with image")');
   });
 
+  test("inlines each srcset / imagesrcset candidate as a data: URI", async () => {
+    using dir = tempDir("compile-browser-srcset", {
+      "index.html": `<!DOCTYPE html>
+<html><head><link rel="preload" as="image" imagesrcset="./one.png 1x, ./two.png 2x" imagesizes="100vw"></head>
+<body><img src="./one.png" srcset="./one.png 300w, ./two.png 600w, https://example.com/three.png 900w" sizes="50vw"><script src="./app.js"></script></body></html>`,
+      "one.png": "one",
+      "two.png": "two",
+      "app.js": `console.log("with srcset");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    const html = await result.outputs[0].text();
+    const one = `data:image/png;base64,${btoa("one")}`;
+    const two = `data:image/png;base64,${btoa("two")}`;
+    expect(html).toContain(`imagesrcset="${one} 1x, ${two} 2x" imagesizes="100vw"`);
+    expect(html).toContain(
+      `src="${one}" srcset="${one} 300w, ${two} 600w, https://example.com/three.png 900w" sizes="50vw"`,
+    );
+    expect(html).toContain('console.log("with srcset")');
+  });
+
   test("handles CSS url() references", async () => {
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",

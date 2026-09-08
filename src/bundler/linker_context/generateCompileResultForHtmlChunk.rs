@@ -9,7 +9,7 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, UrlAction};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
@@ -89,18 +89,6 @@ struct HTMLLoader<'a> {
     added_body_script: bool,
 }
 
-/// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
-/// fail the same way an invalid attribute name does.
-fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
-    let ok = match (core::str::from_utf8(name), core::str::from_utf8(value)) {
-        (Ok(name), Ok(value)) => element.set_attribute(name, value).is_ok(),
-        _ => false,
-    };
-    if !ok {
-        panic!("unexpected error from Element.setAttribute");
-    }
-}
-
 impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_write_html(&mut self, bytes: &[u8]) {
         self.output.extend_from_slice(bytes);
@@ -113,16 +101,10 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         ));
     }
 
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        _path: &[u8],
-        url_attribute: &[u8],
-        _kind: ImportKind,
-    ) {
+    fn on_url(&mut self, _path: &[u8], _kind: ImportKind) -> UrlAction<'_> {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
-                "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
+                "Assertion failure in HTMLLoader.onUrl: current_import_record_index ({}) >= import_records.len ({})",
                 self.current_import_record_index,
                 self.import_records.len()
             ));
@@ -154,21 +136,20 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving external import: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return UrlAction::Keep;
         }
 
         if self.linker.dev_server.is_some() {
-            if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
+            return if !unique_key_for_additional_files.is_empty() {
+                UrlAction::Replace(unique_key_for_additional_files)
             } else if import_record.path.is_disabled
                 || loader.is_javascript_like()
                 || loader.is_css()
             {
-                element.remove();
+                UrlAction::Remove
             } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
-            }
-            return;
+                UrlAction::Replace(import_record.path.pretty)
+            };
         }
 
         if import_record.source_index.is_invalid() {
@@ -176,13 +157,12 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving import with invalid source index: {}",
                 BStr::new(import_record.path.text)
             );
-            return;
+            return UrlAction::Keep;
         }
 
         if loader.is_javascript_like() || loader.is_css() {
             // Remove the original non-external tags
-            element.remove();
-            return;
+            return UrlAction::Remove;
         }
 
         if self.compile_to_standalone_html && import_record.source_index.is_valid() {
@@ -190,16 +170,16 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
-                return;
+                return UrlAction::Replace(url_for_css);
             }
         }
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
-            return;
+            return UrlAction::Replace(unique_key_for_additional_files);
         }
+
+        UrlAction::Keep
     }
 
     fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {

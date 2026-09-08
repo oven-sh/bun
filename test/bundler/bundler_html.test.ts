@@ -122,6 +122,127 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/19529
+  // `srcset` / `imagesrcset` hold a comma-separated list of image candidates
+  // ("<url> <descriptor>"), not one URL. Each candidate URL is resolved, hashed
+  // and emitted on its own, descriptors survive, and external candidates are
+  // left alone.
+  itBundled("html/srcset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="image" href="./fallback.png" imagesrcset="./small.png 1x, ./big.png 2x" imagesizes="100vw">
+    <link rel="preload" as="image" imagesrcset="./big.png 480w" imagesizes="(max-width: 600px) 480px, 800px">
+  </head>
+  <body>
+    <img srcset="./small.png 1x, ./big.png 2x">
+    <picture>
+      <source srcset="./small.png 480w, ./big.png 800w" media="(min-width: 800px)" type="image/png">
+      <img src="./small.png" alt="image">
+    </picture>
+    <img srcset="./small.png 2x">
+    <img srcset="
+      ./small.png 480w,
+      ./big.png   800w
+    " sizes="50vw">
+    <img srcset="./small.png, ./big.png">
+    <img srcset="https://example.com/ext.png 1x, ./big.png 2x">
+    <img srcset="./small.png">
+    <img srcset="https://example.com/a.png  1x ,  http://example.com/b.png 2x">
+    <img srcset="">
+    <img srcset=" , ">
+  </body>
+</html>`,
+      "/fallback.png": "fallback",
+      "/small.png": "smallsmall",
+      "/big.png": "bigbigbigbig",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const small = String.raw`\./small-[a-z0-9]+\.png`;
+      const big = String.raw`\./big-[a-z0-9]+\.png`;
+
+      expect([...html.matchAll(/imagesrcset="([^"]*)"/g)].map(m => m[1])).toEqual([
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
+        expect.stringMatching(new RegExp(`^${big} 480w$`)),
+      ]);
+      // The legacy `href` fallback next to `imagesrcset` is still rewritten,
+      // and the non-URL attributes are untouched.
+      expect(html).toMatch(/href="\.\/fallback-[a-z0-9]+\.png" imagesrcset="[^"]+" imagesizes="100vw">/);
+      expect(html).toContain(`imagesizes="(max-width: 600px) 480px, 800px">`);
+
+      expect([...html.matchAll(/ srcset="([^"]*)"/g)].map(m => m[1])).toEqual([
+        // Density descriptors.
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
+        // <source> with width descriptors.
+        expect.stringMatching(new RegExp(`^${small} 480w, ${big} 800w$`)),
+        // Single candidate with a descriptor.
+        expect.stringMatching(new RegExp(`^${small} 2x$`)),
+        // Newlines and runs of whitespace between candidates are normalized.
+        expect.stringMatching(new RegExp(`^${small} 480w, ${big} 800w$`)),
+        // No descriptors: the comma directly follows each URL.
+        expect.stringMatching(new RegExp(`^${small}, ${big}$`)),
+        // External candidate is left alone, local one is hashed.
+        expect.stringMatching(new RegExp(`^https://example\\.com/ext\\.png 1x, ${big} 2x$`)),
+        // Bare single URL.
+        expect.stringMatching(new RegExp(`^${small}$`)),
+        // Nothing to rewrite: the attribute is left byte-for-byte as written.
+        "https://example.com/a.png  1x ,  http://example.com/b.png 2x",
+        "",
+        " , ",
+      ]);
+      api.expectFile("out/index.html").toContain(`media="(min-width: 800px)" type="image/png">`);
+      api.expectFile("out/index.html").toContain(`" sizes="50vw">`);
+      api.expectFile("out/index.html").toMatch(new RegExp(`<img src="${small}" alt="image">`));
+
+      // Every candidate file was emitted exactly once, under the name the HTML references.
+      const [, smallFile, bigFile] = html.match(
+        new RegExp(`srcset="\\./(small-[a-z0-9]+\\.png) 1x, \\./(big-[a-z0-9]+\\.png) 2x"`),
+      )!;
+      expect(api.readFile(`out/${smallFile}`)).toBe("smallsmall");
+      expect(api.readFile(`out/${bigFile}`)).toBe("bigbigbigbig");
+      expect(new Set(html.match(/small-[a-z0-9]+\.png/g))).toEqual(new Set([smallFile]));
+      expect(new Set(html.match(/big-[a-z0-9]+\.png/g))).toEqual(new Set([bigFile]));
+    },
+  });
+
+  itBundled("html/srcset-public-path", {
+    outdir: "out/",
+    publicPath: "https://cdn.example.com/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><link rel="preload" as="image" imagesrcset="./a.png 1x,./b.png 2x"></head><body><img src="./a.png" srcset="./a.png 1x, ./b.png 2x"></body></html>`,
+      "/a.png": "aaaa",
+      "/b.png": "bbbbbbbb",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const list =
+        /^https:\/\/cdn\.example\.com\/a-[a-z0-9]+\.png 1x, https:\/\/cdn\.example\.com\/b-[a-z0-9]+\.png 2x$/;
+      expect(html.match(/imagesrcset="([^"]*)"/)![1]).toMatch(list);
+      expect(html.match(/ srcset="([^"]*)"/)![1]).toMatch(list);
+      expect(html).toMatch(/src="https:\/\/cdn\.example\.com\/a-[a-z0-9]+\.png"/);
+    },
+  });
+
+  // A candidate that does not exist is a resolve error naming that candidate,
+  // not the whole attribute value.
+  itBundled("html/srcset-unresolved-candidate", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><body><img srcset="./here.png 1x, ./missing.png 2x"></body></html>`,
+      "/here.png": "here",
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [`Could not resolve: "./missing.png"`],
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

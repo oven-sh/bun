@@ -215,7 +215,7 @@ void CryptoAlgorithmChaCha20Poly1305::exportKey(CryptoKeyFormat format, Ref<Cryp
         jwk.kty = "oct"_s;
         jwk.k = Bun::base64URLEncodeToString(rawKey.key());
         jwk.alg = String(ALG);
-        jwk.key_ops = rawKey.usages();
+        jwk.key_ops = toJwkKeyOps(rawKey.usages());
         jwk.ext = rawKey.extractable();
         result = WTF::move(jwk);
         break;

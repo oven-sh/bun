@@ -85,6 +85,8 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::importJwk(CryptoAlgorithmIdentifier identifier,
 {
     if (keyData.kty != "EC"_s)
         return nullptr;
+    if (hasDuplicateJwkKeyOps(keyData.key_ops))
+        return nullptr;
     if (keyData.key_ops && ((keyData.usages & usages) != usages))
         return nullptr;
     if (keyData.ext && !keyData.ext.value() && extractable)
@@ -160,7 +162,7 @@ ExceptionOr<JsonWebKey> CryptoKeyEC::exportJwk() const
         result.crv = P521;
         break;
     }
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
     if (!platformAddFieldElements(result))
         return Exception { OperationError };

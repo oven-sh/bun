@@ -88,6 +88,8 @@ RefPtr<CryptoKeyAES> CryptoKeyAES::importJwk(CryptoAlgorithmIdentifier algorithm
         return nullptr;
     if (usages && !keyData.use.isNull() && keyData.use != "enc"_s)
         return nullptr;
+    if (hasDuplicateJwkKeyOps(keyData.key_ops))
+        return nullptr;
     if (keyData.key_ops && ((keyData.usages & usages) != usages))
         return nullptr;
     if (keyData.ext && !keyData.ext.value() && extractable)
@@ -101,7 +103,7 @@ JsonWebKey CryptoKeyAES::exportJwk() const
     JsonWebKey result {};
     result.kty = "oct"_s;
     result.k = Bun::base64URLEncodeToString(m_key);
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
     return result;
 }

@@ -142,6 +142,8 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)
             return nullptr;
+        if (hasDuplicateJwkKeyOps(keyData.key_ops))
+            return nullptr;
         if (keyData.key_ops && ((keyData.usages & usages) != usages))
             return nullptr;
         if (keyData.ext && !keyData.ext.value() && extractable)
@@ -153,6 +155,8 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
         if (keyData.crv != "X25519"_s)
             return nullptr;
         if (usages && !keyData.use.isEmpty() && keyData.use != "enc"_s)
+            return nullptr;
+        if (hasDuplicateJwkKeyOps(keyData.key_ops))
             return nullptr;
         if (keyData.key_ops && ((keyData.usages & usages) != usages))
             return nullptr;
@@ -203,7 +207,7 @@ ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const
         break;
     }
 
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
 
     switch (type()) {

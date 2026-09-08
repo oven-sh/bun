@@ -150,12 +150,12 @@ describe("Web Crypto", () => {
     });
 
     // Previously this promise never settled: the error thrown during
-    // JsonWebKey dictionary conversion (here an invalid key_ops enum entry)
-    // escaped as an uncaught exception and the DeferredPromise was left in
-    // m_pendingPromises forever. kty is optional now, so an invalid enum is
-    // what still reaches the conversion-exception branch.
+    // JsonWebKey dictionary conversion escaped as an uncaught exception and
+    // the DeferredPromise was left in m_pendingPromises forever. kty is
+    // optional and key_ops entries are plain strings, so a key_ops value that
+    // is not a sequence is what still reaches the conversion-exception branch.
     it("settles when JsonWebKey dictionary conversion itself throws", async () => {
-      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })));
+      const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: "sign" })));
       const err = await crypto.subtle
         .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])
         .then(
@@ -163,7 +163,7 @@ describe("Web Crypto", () => {
           e => e,
         );
       expect(err).toBeInstanceOf(TypeError);
-      expect(err.message).toBe("value must be enumeration (string)");
+      expect(err.message).toBe("Value is not a sequence");
     });
 
     it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
@@ -179,13 +179,13 @@ describe("Web Crypto", () => {
         const key = await crypto.subtle.importKey("raw", keyData, { name: "AES-GCM" }, false, [
           "encrypt", "decrypt", "wrapKey", "unwrapKey",
         ]);
-        // key_ops with an invalid enum entry throws during dictionary
+        // A key_ops value that is not a sequence throws during dictionary
         // conversion, which is the leaky branch this fixture guards (a
-        // merely-unusable JWK now converts fine and rejects downstream).
+        // merely-unusable JWK converts fine and rejects downstream).
         const wrapped = await crypto.subtle.encrypt(
           { name: "AES-GCM", iv },
           key,
-          new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })),
+          new TextEncoder().encode(JSON.stringify({ key_ops: "sign" })),
         );
         async function once() {
           await crypto.subtle
@@ -1141,6 +1141,138 @@ describe("X25519 JWK import", () => {
       extFalse: await outcome({ ...x25519Public, ext: false }, true, []),
       extTrue: await outcome({ ...x25519Public, ext: true }, true, []),
     }).toEqual({ extFalse: "DataError", extTrue: "imported" });
+  });
+});
+
+// JsonWebKey.key_ops is `sequence<DOMString>` in the WebCrypto IDL, and RFC 7517
+// section 4.3 allows key_ops values that WebCrypto does not define. The jwk
+// import steps only require key_ops to be duplicate-free and to contain the
+// requested usages, which is what Node and Chromium implement. Converting the
+// member as `sequence<KeyUsage>` instead makes a JWK minted by another stack
+// fail with a TypeError before the import algorithm runs.
+describe("JWK key_ops entries that are not a KeyUsage", () => {
+  const k = "AAECAwQFBgcICQoLDA0ODw";
+  const rsaPublic = {
+    kty: "RSA",
+    n: "ylJkPUUI1WdwPhfxioPyUeFOVdmpIAMNID4uCvhtnqdH3P-yDl4V9Qvcjvb4SnB1eHOWKpXhpkA1uD3gmmebqvmRJB242EbTaf89mLr6BxFvSDUBwHxMzYgewnXFUJiA85rOUrVL9mDZcwwVvpCT3836iq4_RfDIuQEKOi5OntU",
+    e: "AQAB",
+  };
+  const ecPublic = {
+    kty: "EC",
+    crv: "P-256",
+    x: "3DyR3pdz7BDZtoAVvm4Mn55Ashdl84LCJB9kcUI3IrQ",
+    y: "r6xDaTpWl7d958Y4HMq6OR4F8PLe1wl7m41I2ZX1yoU",
+  };
+  const okpPublic = { kty: "OKP", crv: "Ed25519", x: "S89QWE7a6JwjIPX04rf9qxlJ9vQxs5bSW1NxjR03mls" };
+  const outcome = (p: Promise<CryptoKey>) =>
+    p.then(
+      key => `imported ${JSON.stringify(key.usages)}`,
+      e => e.name,
+    );
+  const aes = (key_ops: unknown) =>
+    outcome(crypto.subtle.importKey("jwk", { kty: "oct", k, key_ops } as JsonWebKey, "AES-GCM", true, ["encrypt"]));
+  const rsa = (key_ops: unknown) =>
+    outcome(
+      crypto.subtle.importKey(
+        "jwk",
+        { ...rsaPublic, key_ops } as JsonWebKey,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        true,
+        ["encrypt"],
+      ),
+    );
+  const ec = (key_ops: unknown, usages: KeyUsage[] = ["verify"]) =>
+    outcome(
+      crypto.subtle.importKey(
+        "jwk",
+        { ...ecPublic, key_ops } as JsonWebKey,
+        { name: usages.length ? "ECDSA" : "ECDH", namedCurve: "P-256" },
+        true,
+        usages,
+      ),
+    );
+  const okp = (key_ops: unknown) =>
+    outcome(crypto.subtle.importKey("jwk", { ...okpPublic, key_ops } as JsonWebKey, "Ed25519", true, ["verify"]));
+  const hmac = (key_ops: unknown) =>
+    outcome(
+      crypto.subtle.importKey(
+        "jwk",
+        { kty: "oct", k, key_ops } as JsonWebKey,
+        { name: "HMAC", hash: "SHA-256" },
+        true,
+        ["sign"],
+      ),
+    );
+
+  it("are ignored on import when key_ops still covers the requested usages", async () => {
+    expect({
+      foreign: await aes(["encrypt", "fly"]),
+      unrequestedUsageAndForeign: await aes(["encrypt", "deriveBits", "x-custom"]),
+      // sequence<DOMString> stringifies these instead of throwing.
+      number: await aes([1, "encrypt"]),
+      null: await aes(["encrypt", null]),
+      onlyForeign: await aes(["fly"]),
+      onlyForeignNoUsages: await ec(["fly"], []),
+      empty: await aes([]),
+      notASequence: await aes("encrypt"),
+      rsa: await rsa(["encrypt", "urn:example:op"]),
+      ec: await ec(["verify", "urn:example:op"]),
+      okp: await okp(["verify", "urn:example:op"]),
+      hmac: await hmac(["sign", "urn:example:op"]),
+    }).toEqual({
+      foreign: `imported ["encrypt"]`,
+      unrequestedUsageAndForeign: `imported ["encrypt"]`,
+      number: `imported ["encrypt"]`,
+      null: `imported ["encrypt"]`,
+      onlyForeign: "DataError",
+      onlyForeignNoUsages: "imported []",
+      empty: "DataError",
+      notASequence: "TypeError",
+      rsa: `imported ["encrypt"]`,
+      ec: `imported ["verify"]`,
+      okp: `imported ["verify"]`,
+      hmac: `imported ["sign"]`,
+    });
+  });
+
+  // RFC 7517 section 4.3: "Duplicate key operation values MUST NOT be present
+  // in the array." This holds for values WebCrypto does not know, as in Chromium.
+  it("must still be unique, for every key class", async () => {
+    expect({
+      aes: await aes(["encrypt", "encrypt"]),
+      aesForeign: await aes(["encrypt", "fly", "fly"]),
+      rsa: await rsa(["encrypt", "wrapKey", "encrypt"]),
+      ec: await ec(["verify", "verify"]),
+      okp: await okp(["verify", "verify"]),
+      hmac: await hmac(["sign", "verify", "sign"]),
+    }).toEqual({
+      aes: "DataError",
+      aesForeign: "DataError",
+      rsa: "DataError",
+      ec: "DataError",
+      okp: "DataError",
+      hmac: "DataError",
+    });
+  });
+
+  it("survive unwrapKey, and exportKey emits only the key's usages", async () => {
+    const iv = new Uint8Array(12).fill(2);
+    const wrappingKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-GCM", false, [
+      "encrypt",
+      "unwrapKey",
+    ]);
+    const wrapped = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      wrappingKey,
+      new TextEncoder().encode(JSON.stringify({ kty: "oct", k, key_ops: ["decrypt", "JOSE-only-op", 7, "encrypt"] })),
+    );
+    const key = await crypto.subtle.unwrapKey("jwk", wrapped, wrappingKey, { name: "AES-GCM", iv }, "AES-GCM", true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    expect(key.usages).toEqual(["encrypt", "decrypt"]);
+    const exported = await crypto.subtle.exportKey("jwk", key);
+    expect(exported.key_ops).toEqual(["encrypt", "decrypt"]);
   });
 });
 

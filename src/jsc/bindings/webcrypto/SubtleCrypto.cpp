@@ -40,6 +40,7 @@
 #include "JSCryptoAlgorithmParameters.h"
 #include "JSCryptoKey.h"
 #include "JSCryptoKeyPair.h"
+#include "JSCryptoKeyUsage.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSDOMWrapper.h"
 #include "JSEcKeyParams.h"
@@ -583,8 +584,16 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
 
 static void normalizeJsonWebKey(JsonWebKey& webKey)
 {
-    // Maybe we shouldn't silently bypass duplicated usages?
-    webKey.usages = webKey.key_ops ? SubtleCrypto::toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
+    // Importers only test that key_ops covers the requested usages, so entries
+    // that are not a KeyUsage (valid per RFC 7517) drop out of the bitmap.
+    // hasDuplicateJwkKeyOps() still sees them in key_ops.
+    webKey.usages = 0;
+    if (!webKey.key_ops)
+        return;
+    for (auto& op : *webKey.key_ops) {
+        if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(op))
+            webKey.usages |= WebCore::toCryptoKeyUsageBitmap(*usage);
+    }
 }
 
 // FIXME: This returns an std::optional<KeyData> and takes a promise, rather than returning an

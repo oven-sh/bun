@@ -23,53 +23,33 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-#include "CryptoKeyUsage.h"
-#include "RsaOtherPrimesInfo.h"
-#include <wtf/Vector.h>
+#include "config.h"
+#include "JsonWebKey.h"
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "JSCryptoKeyUsage.h"
+#include <wtf/HashSet.h>
+#include <wtf/text/StringHash.h>
+
 namespace WebCore {
 
-struct JsonWebKey {
-    String kty;
-    String use;
-    // RFC 7517 section 4.3: key_ops can hold values that are not WebCrypto
-    // usages. `usages` is the recognized subset, set by normalizeJsonWebKey().
-    std::optional<Vector<String>> key_ops;
-    CryptoKeyUsageBitmap usages;
-    String alg;
+Vector<String> toJwkKeyOps(const Vector<CryptoKeyUsage>& usages)
+{
+    return usages.map([](CryptoKeyUsage usage) { return convertEnumerationToString(usage); });
+}
 
-    std::optional<bool> ext;
-
-    String crv;
-    String x;
-    String y;
-    String d;
-    String n;
-    String e;
-    String p;
-    String q;
-    String dp;
-    String dq;
-    String qi;
-    std::optional<Vector<RsaOtherPrimesInfo>> oth;
-    String k;
-    // JWK "AKP" key type (ML-DSA / ML-KEM), RFC draft-ietf-cose-dilithium.
-    String pub;
-    String priv;
-};
-
-// The key_ops member for an exported key: its usages, in KeyUsage enum order.
-Vector<String> toJwkKeyOps(const Vector<CryptoKeyUsage>&);
-
-// RFC 7517 section 4.3: "Duplicate key operation values MUST NOT be present",
-// whether or not WebCrypto knows the value (Chromium enforces both, Node only
-// the values it knows). Importers check this before the key_ops/usages
-// mismatch, in Node's order.
-bool hasDuplicateJwkKeyOps(const std::optional<Vector<String>>&);
+bool hasDuplicateJwkKeyOps(const std::optional<Vector<String>>& keyOps)
+{
+    if (!keyOps)
+        return false;
+    HashSet<String> seenOps;
+    for (auto& op : *keyOps) {
+        if (!seenOps.add(op).isNewEntry)
+            return true;
+    }
+    return false;
+}
 
 } // namespace WebCore
 

@@ -103,7 +103,7 @@ JsonWebKey CryptoKeyHMAC::exportJwk() const
     JsonWebKey result {};
     result.kty = "oct"_s;
     result.k = Bun::base64URLEncodeToString(m_key);
-    result.key_ops = usages();
+    result.key_ops = toJwkKeyOps(usages());
     result.ext = extractable();
     return result;
 }

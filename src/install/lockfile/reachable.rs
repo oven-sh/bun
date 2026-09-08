@@ -1,6 +1,7 @@
 use crate::dependency::{Behavior, Dependency};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
+use crate::lockfile::tree::optional_peer_group_enabled;
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, OperatingSystem};
 use crate::{PackageID, PackageManager};
@@ -196,9 +197,17 @@ impl<'a> Walk<'a> {
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
             let slice = self.dep_slices[parent as usize];
+            let siblings = slice.get(self.deps);
             for dep_id in slice.begin() as usize..slice.end() as usize {
-                if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
-                    continue;
+                if !self.follow_all {
+                    let dep = &self.deps[dep_id];
+                    if !self.follows(dep.behavior)
+                        || optional_peer_group_enabled(dep, siblings, |behavior| {
+                            self.follows(behavior)
+                        }) == Some(false)
+                    {
+                        continue;
+                    }
                 }
                 self.admit(self.resolutions[dep_id], seen, worklist);
             }

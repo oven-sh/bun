@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{ReachedPackages, is_filtered_dependency_or_workspace};
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
@@ -1771,6 +1771,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
     let mut direct: Vec<Box<[u8]>> = Vec::new();
+    let mut reached = ReachedPackages::default();
     for dep_id in slice.begin()..slice.end() {
         if is_filtered_dependency_or_workspace(
             dep_id,
@@ -1780,6 +1781,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
             manager,
             lockfile,
             resolutions,
+            &mut reached,
         ) {
             continue;
         }

@@ -810,6 +810,119 @@ describe("text lockfile", () => {
     });
   }
 
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    async function install(...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", `--linker=${linker}`, ...args],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return err;
+    }
+
+    // Where a linker puts a registry package: hoisted into node_modules, isolated into the store.
+    const installed = (pkg: string, version: string) =>
+      exists(
+        linker === "hoisted"
+          ? join(packageDir, "node_modules", pkg)
+          : join(packageDir, "node_modules", ".bun", `${pkg}@${version}`),
+      );
+    const lockfileText = async () =>
+      (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+
+    // The plugin idiom: test against a package (devDependency) that the consumer may bring
+    // (optional peerDependency). The optional peer row must not keep the package once its
+    // other group is omitted; npm does the same. A required peer is still installed, because
+    // bun installs peerDependencies by default.
+    test("--omit omits a dev or optional dependency that is also an optional peerDependency", async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+          optionalDependencies: { "basic-1": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1", "basic-1": "^1.0.0" },
+          peerDependenciesMeta: { "no-deps": { optional: true }, "basic-1": { optional: true } },
+        }),
+      );
+      const installedNow = async () => ({
+        "no-deps": await installed("no-deps", "1.0.0"),
+        "a-dep": await installed("a-dep", "1.0.1"),
+        "basic-1": await installed("basic-1", "1.0.0"),
+      });
+
+      expect(await install("--save-text-lockfile")).toContain("Saved lockfile");
+      expect(await installedNow()).toEqual({ "no-deps": true, "a-dep": true, "basic-1": true });
+      const fullLockfile = await lockfileText();
+
+      // from the full lockfile
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await install("--frozen-lockfile", "--omit=dev");
+      expect(await installedNow()).toEqual({ "no-deps": false, "a-dep": true, "basic-1": true });
+
+      // without a lockfile: same node_modules, and the lockfile written is the full one
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lock"));
+      expect(await install("--save-text-lockfile", "--omit=dev")).toContain("Saved lockfile");
+      expect(await installedNow()).toEqual({ "no-deps": false, "a-dep": true, "basic-1": true });
+      expect(await lockfileText()).toBe(fullLockfile);
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await install("--frozen-lockfile", "--omit=optional");
+      expect(await installedNow()).toEqual({ "no-deps": true, "a-dep": true, "basic-1": false });
+
+      // `--omit=peer` alone leaves the other group in charge
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await install("--frozen-lockfile", "--omit=peer");
+      expect(await installedNow()).toEqual({ "no-deps": true, "a-dep": true, "basic-1": true });
+    });
+
+    test("--omit=dev keeps an optional peer + devDependency that the install still reaches", async () => {
+      // lib tests against both peers; only "no-deps" is also brought by its consumer
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+        write(
+          join(packageDir, "packages", "lib", "package.json"),
+          JSON.stringify({
+            name: "lib",
+            version: "1.0.0",
+            devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+            peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+            peerDependenciesMeta: { "no-deps": { optional: true }, "a-dep": { optional: true } },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "app", "package.json"),
+          JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: { lib: "workspace:*", "no-deps": "1.0.0" },
+          }),
+        ),
+      ]);
+
+      expect(await install("--save-text-lockfile")).toContain("Saved lockfile");
+      expect(await Promise.all([installed("no-deps", "1.0.0"), installed("a-dep", "1.0.1")])).toEqual([true, true]);
+      const fullLockfile = await lockfileText();
+
+      for (const dir of ["", join("packages", "lib"), join("packages", "app")]) {
+        await rm(join(packageDir, dir, "node_modules"), { recursive: true, force: true });
+      }
+      await install("--frozen-lockfile", "--omit=dev");
+      expect(await Promise.all([installed("no-deps", "1.0.0"), installed("a-dep", "1.0.1")])).toEqual([true, false]);
+      if (linker === "isolated") {
+        // lib still gets the peer its consumer provides, as it would without the devDependency
+        expect(await readdirSorted(join(packageDir, "packages", "lib", "node_modules"))).toEqual(["no-deps"]);
+      }
+      expect(await lockfileText()).toBe(fullLockfile);
+    });
+  });
+
   test("optionalPeers", async () => {
     await Promise.all([
       write(

@@ -8,6 +8,7 @@ use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::reachable;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
@@ -443,6 +444,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+    pub(crate) reached: ReachedPackages,
 }
 
 pub struct BuilderEntry {
@@ -537,6 +539,28 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The packages a `--production` / `--omit` install still reaches, computed the
+/// first time `is_filtered_dependency_or_workspace` needs it. One per pass over
+/// a fixed `resolutions` buffer.
+#[derive(Default)]
+pub(crate) struct ReachedPackages(Option<DynamicBitSet>);
+
+impl ReachedPackages {
+    fn contains(
+        &mut self,
+        lockfile: &Lockfile,
+        resolutions: &[PackageID],
+        manager: &PackageManager,
+        pkg_id: PackageID,
+    ) -> bool {
+        self.0
+            .get_or_insert_with(|| {
+                reachable::packages(lockfile, resolutions, reachable::Options::install(manager))
+            })
+            .is_set(pkg_id as usize)
+    }
+}
+
 // `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
 // `Builder.lockfile` safety contract), so callers must thread `resolutions`
 // explicitly to avoid an aliasing read through the shared `&Lockfile`.
@@ -548,6 +572,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
+    reached: &mut ReachedPackages,
 ) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
@@ -605,6 +630,18 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
+    if dep.behavior.is_optional_peer() {
+        let siblings = pkgs.items_dependencies()[parent_pkg_id as usize]
+            .get(lockfile.buffers.dependencies.as_slice());
+        if optional_peer_group_enabled(dep, siblings, |behavior| behavior.is_enabled(dep_features))
+            == Some(false)
+        {
+            // The omitted group is what resolved this package. Keep the optional peer
+            // only when the install still reaches the package through other edges.
+            return !reached.contains(lockfile, resolutions, manager, pkg_id);
+        }
+    }
+
     if parent_pkg_id != 0 {
         return false;
     }
@@ -618,6 +655,32 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
+}
+
+/// A package.json can list one name under `peerDependencies` and under another
+/// group, e.g. an optional peer that is also a devDependency. The optional peer
+/// row resolved only because the other row did, so it must not keep the package
+/// by itself once that group is omitted. `Some(false)` when every same-name row
+/// from another group is omitted, `None` when there is no such row.
+pub(crate) fn optional_peer_group_enabled(
+    dep: &Dependency,
+    siblings: &[Dependency],
+    enabled: impl Fn(crate::Behavior) -> bool,
+) -> Option<bool> {
+    if !dep.behavior.is_optional_peer() {
+        return None;
+    }
+    let mut found = None;
+    for sibling in siblings {
+        if sibling.name_hash != dep.name_hash || sibling.behavior.is_peer() {
+            continue;
+        }
+        if enabled(sibling.behavior) {
+            return Some(true);
+        }
+        found = Some(false);
+    }
+    found
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -716,6 +779,7 @@ impl Tree {
                     builder.manager.expect("manager set when METHOD == Filter"),
                     lockfile,
                     &*builder.resolutions,
+                    &mut builder.reached,
                 ) {
                     continue;
                 }

@@ -1460,8 +1460,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // initial 3). Without this the box leaks: the later
                     // `on_abort` socket-close path early-returns once
                     // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                    // A response the handler did end, whose body is still
-                    // draining, completes from on_drain / on_abort instead.
+                    // An ended response still draining completes from on_drain/on_abort.
                     if !nhr_flags.contains(NhrFlags::ENDED) {
                         nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
                         nhr.on_request_complete();

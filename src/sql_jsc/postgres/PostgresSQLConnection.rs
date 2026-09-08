@@ -33,6 +33,7 @@ use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::socket_teardown;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -1485,11 +1486,13 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        // A copy: the close dispatches `on_close`, which detaches `self.socket`.
+        let socket = *self.socket.get();
+        if !socket.is_closed() {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            socket_teardown::close_now(&socket);
         }
 
         // cleanup requests

@@ -296,6 +296,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Always true for a plain TCP socket. False while connecting or once detached.
+    pub fn is_ssl_handshake_finished(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.is_ssl_handshake_finished(),
+            duplex d => d.is_established(),
+            pipe p => p.is_established(),
+            else => false,
+        )
+    }
+
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
@@ -954,6 +964,7 @@ impl AnySocket {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
+        fn is_ssl_handshake_finished(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);

@@ -675,7 +675,7 @@ it("delete process.env.BUN_CONFIG_VERBOSE_FETCH stops verbose logging and keeps 
     await go("set0");
   `;
   const { BUN_CONFIG_VERBOSE_FETCH: _, ...env } = bunEnv;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "ignore", stderr: "pipe" });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   const logged = tag => new RegExp(String.raw`HTTP/1\.1 GET http://127\.0\.0\.1:\d+/${tag}\b`).test(stderr);
   expect({

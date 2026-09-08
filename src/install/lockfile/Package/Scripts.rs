@@ -242,7 +242,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
-                cwd_is_from_cache: resolution_tag.can_enqueue_install_task(),
+                resolution_tag,
             });
         }
 
@@ -418,8 +418,7 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
-    /// `cwd` is bun's copy out of the cache (npm/git/tarball), not a user directory (root, workspace, `link:`, folder).
-    pub(crate) cwd_is_from_cache: bool,
+    pub(crate) resolution_tag: ResolutionTag,
 }
 
 fn scripts_pending_file_path(package_dir: &[u8]) -> Option<bun_paths::AutoAbsPath> {
@@ -433,11 +432,11 @@ pub fn mark_scripts_pending(package_dir: &[u8]) {
     let Some(path) = scripts_pending_file_path(package_dir) else {
         return;
     };
-    // dropping the `File` closes it
+    // NOFOLLOW: never write through a symlink the package shipped under this name. Dropping the `File` closes it.
     let _ = bun_sys::File::openat(
         Fd::cwd(),
         path.slice(),
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NOFOLLOW,
         0o644,
     );
 }
@@ -451,14 +450,24 @@ pub fn clear_scripts_pending(package_dir: &[u8]) {
 }
 
 impl List {
+    /// `cwd` is bun's copy of the package out of its cache (npm, git, tarball): only those are marked.
+    pub fn cwd_is_from_cache(&self) -> bool {
+        self.resolution_tag.can_enqueue_install_task()
+    }
+
+    /// A cache copy or a `file:` folder copy; the root, a workspace, or a `link:` target is the user's own directory.
+    pub fn cwd_is_created_by_bun(&self) -> bool {
+        self.cwd_is_from_cache() || self.resolution_tag == ResolutionTag::Folder
+    }
+
     pub fn mark_scripts_pending(&self) {
-        if self.cwd_is_from_cache {
+        if self.cwd_is_from_cache() {
             mark_scripts_pending(self.cwd.as_bytes());
         }
     }
 
     pub fn clear_scripts_pending(&self) {
-        if self.cwd_is_from_cache {
+        if self.cwd_is_from_cache() {
             clear_scripts_pending(self.cwd.as_bytes());
         }
     }

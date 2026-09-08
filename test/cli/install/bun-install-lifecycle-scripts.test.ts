@@ -1507,9 +1507,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
         await writeFile(packageJson, JSON.stringify(packageJsonContents));
 
-        const spawnInstall = (extraEnv: Record<string, string> = {}) =>
+        const spawnInstall = (extraEnv: Record<string, string> = {}, extraArgs: string[] = []) =>
           spawn({
-            cmd: [bunExe(), "install", "--linker", linker],
+            cmd: [bunExe(), "install", "--linker", linker, ...extraArgs],
             cwd: packageDir,
             stdout: "pipe",
             stdin: "ignore",
@@ -1517,9 +1517,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: { ...testEnv, ...extraEnv },
           });
 
-        const install = async (extraEnv: Record<string, string> = {}) => {
-          const { stdout, stderr, exited } = spawnInstall(extraEnv);
-          return { out: await stdout.text(), err: await stderr.text(), exitCode: await exited };
+        const install = async (extraEnv: Record<string, string> = {}, extraArgs: string[] = []) => {
+          const { stdout, stderr, exited } = spawnInstall(extraEnv, extraArgs);
+          const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+          return { out, err, exitCode };
         };
 
         return { ctx, packageDir, spawnInstall, install };
@@ -1564,12 +1565,20 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(exitCode).toBe(7);
         }
 
-        // Once the script can succeed, the next install installs the package, runs the
-        // script, and saves the lockfile.
+        // `--ignore-scripts` neither runs the script nor forgets that it still has to run.
+        {
+          const { err, exitCode } = await install({ LIFECYCLE_TOOLCHAIN: "1" }, ["--ignore-scripts"]);
+          expect(err).not.toContain("error:");
+          expect(err).toContain("Saved lockfile");
+          expect(await exists(join(pkgDir, "built.txt"))).toBe(false);
+          expect(exitCode).toBe(0);
+        }
+
+        // Once the script can succeed, the next install installs the package again and
+        // runs it.
         {
           const { out, err, exitCode } = await install({ LIFECYCLE_TOOLCHAIN: "1" });
           expect(err).not.toContain("error:");
-          expect(err).toContain("Saved lockfile");
           expect(out).toContain("1 package installed");
           expect(await file(join(pkgDir, "built.txt")).text()).toBe("ok");
           expect(exitCode).toBe(0);

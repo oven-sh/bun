@@ -1610,9 +1610,10 @@ impl<'a> PackageInstaller<'a> {
             || !needs_verify
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder)
-            // only a trusted package can have had scripts enqueued, so only it pays the stat
+            // only a trusted package has a mark; `--ignore-scripts` leaves it for a later install to honor
             || (is_trusted
                 && resolution.tag.can_enqueue_install_task()
+                && self.manager().options.do_.run_scripts()
                 && installer.has_pending_scripts(&self.root_node_modules_folder));
 
         if needs_install {

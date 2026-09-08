@@ -894,6 +894,8 @@ impl Task {
             }
             let string_buf = lockfile.buffers.string_bytes.as_slice();
             let dep = &lockfile.buffers.dependencies[dep_id as usize];
+            // another task's `RunPreinstall` may be inserting a `--trust`ed name into the map
+            let _unlock = installer.trusted_dependencies_mutex.lock_guard();
             if lockfile.has_trusted_dependency(
                 dep.name.slice(string_buf),
                 pkg_name.slice(string_buf),

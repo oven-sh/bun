@@ -2295,14 +2295,18 @@ pub(crate) fn install_isolated_packages(
                                 }
                             }
                         })
-                        // `SCRIPTS_PENDING_FILE`; only a trusted project-local entry can have one
+                        // `SCRIPTS_PENDING_FILE`; only a trusted project-local entry has one, and `--ignore-scripts` leaves it for later
                         || (!uses_global_store
-                            && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id)
-                                || lockfile_ro.has_trusted_dependency(
+                            && installer.manager().options.do_.run_scripts()
+                            && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id) || {
+                                // a started task's `RunPreinstall` may be inserting a `--trust`ed name
+                                let _unlock = installer.trusted_dependencies_mutex.lock_guard();
+                                lockfile_ro.has_trusted_dependency(
                                     lockfile_ro.buffers.dependencies[dep_id as usize].name.slice(string_buf),
                                     pkg_name.slice(string_buf),
                                     &pkg_res,
-                                ))
+                                )
+                            })
                             && {
                                 let mut marker: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
                                 installer.append_store_path(&mut marker, entry_id);

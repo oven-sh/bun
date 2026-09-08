@@ -1057,8 +1057,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {
-        // a workspace, `link:` or folder package's cwd is the user's own directory
-        if !self.scripts.cwd_is_from_cache {
+        // a workspace or `link:` package's cwd is the user's own directory (on Windows the resolved link target)
+        if !self.scripts.cwd_is_created_by_bun() {
             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             return;

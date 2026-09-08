@@ -1421,17 +1421,27 @@ impl<'a> SpawnArgs<'a> {
     }
 }
 
-/// `$PATH` to search for a command when the shell environment has none, as
-/// for a shell started without `PATH`: `_PATH_DEFPATH` on POSIX (what
-/// `execvp` and libuv use; Android often has no `PATH`), nothing on Windows.
-/// An explicit `PATH=` is not this case: it stays empty and searches nothing.
-pub(crate) fn default_path_for_unset_env() -> &'static [u8] {
-    if cfg!(unix) {
+/// `$PATH` to search for a command when the shell environment has none, the
+/// same search `node:child_process` (libuv) does for an `env` without `PATH`:
+/// `_PATH_DEFPATH` on POSIX (Android often has no `PATH` at all), and on
+/// Windows the process's current `PATH`, which libuv also copies into such a
+/// child's environment block. An explicit `PATH=` is not this case: it stays
+/// empty and searches nothing. Deref the result.
+pub(crate) fn default_path_for_unset_env() -> sh::EnvStr {
+    #[cfg(windows)]
+    {
+        match bun_sys::windows::getenv_w(bun_core::w!("PATH\0")) {
+            Some(path) => sh::EnvStr::init_ref_counted(
+                bun_core::strings::to_utf8_alloc(&path).into_boxed_slice(),
+            ),
+            None => sh::EnvStr::init_slice(b""),
+        }
+    }
+    #[cfg(not(windows))]
+    {
         // SAFETY: `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string
         // constant with static storage.
-        unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
-    } else {
-        b""
+        sh::EnvStr::init_slice(unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes())
     }
 }
 

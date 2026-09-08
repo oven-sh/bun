@@ -46,13 +46,19 @@ declare module "bun" {
     /**
      * Change the default environment variables for shells created by this instance.
      *
+     * The object replaces the whole environment. It does not add to
+     * `process.env`. Spread `process.env` to keep variables such as `PATH`.
+     * Without a `PATH`, commands are looked up like `node:child_process`
+     * does: in `/usr/bin:/bin` on POSIX, and on the current `PATH` of this
+     * process on Windows.
+     *
      * @param newEnv Default environment variables to use for shells created by this instance
      * @default process.env
      *
      * @example
      * ```js
      * import {$} from 'bun';
-     * $.env({ BUN: "bun" });
+     * $.env({ ...process.env, BUN: "bun" });
      * await $`echo $BUN`;
      * // "bun"
      * ```
@@ -98,6 +104,10 @@ declare module "bun" {
 
       /**
        * Set environment variables for the shell.
+       *
+       * The object replaces the whole environment. It does not add to
+       * `process.env`. Spread `process.env` to keep variables such as `PATH`.
+       *
        * @param newEnv The new environment variables
        *
        * @example

@@ -3566,8 +3566,9 @@ test.skipIf(isWindows)("external command resolution without a PATH does not use 
 });
 
 // Windows spells the variable `Path`, and the shell env map is case-insensitive
-// there, so the lookup must not depend on the key casing. It must also not fall
-// back to the launch PATH when the shell environment has no PATH under any casing.
+// there, so the lookup must not depend on the key casing. With no PATH under any
+// casing, the lookup uses the process's current PATH (what libuv also gives the
+// child), never the environment snapshot taken at startup.
 describe.concurrent.skipIf(!isWindows)("external command resolution on Windows", () => {
   const envWithoutPath: Record<string, string> = {};
   for (const [key, value] of Object.entries(bunEnv)) {
@@ -3599,9 +3600,11 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
     expect(exitCode).toBe(0);
   });
 
-  test("process.env.PATH changed or deleted at runtime, .env() without PATH", async () => {
-    using launchDir = toolDir("onlyintool-launch", "should-not-run");
+  test("process.env.PATH changed or deleted at runtime, with and without PATH in .env()", async () => {
+    using launchDir = toolDir("onlyintool-launch", "from-launch");
     using runtimeDir = toolDir("onlyintool-runtime", "from-runtime");
+    // `onlyintool-launch` is on the PATH the fixture starts with, `onlyintool-runtime`
+    // only on the PATH it sets at runtime.
     const fixture = /* ts */ `
       import { $ } from "bun";
       const results = {};
@@ -3610,11 +3613,12 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
         results[label] = { exitCode, stdout: stdout.toString().trim(), stderr: stderr.toString().trim() };
       };
       const envWithoutPath = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"));
-      await run("env() without PATH", $\`onlyintool-launch\`.env(envWithoutPath).quiet().nothrow());
       process.env.PATH = ${JSON.stringify(String(runtimeDir))} + ";" + process.env.PATH;
       await run("runtime PATH", $\`onlyintool-runtime\`.quiet().nothrow());
+      await run("runtime PATH, env() without PATH", $\`onlyintool-runtime\`.env(envWithoutPath).quiet().nothrow());
       delete process.env.PATH;
       await run("deleted PATH", $\`onlyintool-launch\`.quiet().nothrow());
+      await run("deleted PATH, env() without PATH", $\`onlyintool-launch\`.env(envWithoutPath).quiet().nothrow());
       console.log(JSON.stringify(results));
     `;
     await using proc = Bun.spawn({
@@ -3626,9 +3630,10 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      "env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
       "runtime PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
+      "runtime PATH, env() without PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
       "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
+      "deleted PATH, env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
     });
     expect(exitCode).toBe(0);
   });

@@ -234,8 +234,7 @@ pub(crate) fn run_as_coordinator(
 /// `--only-failures` since the worker formats result lines and the coordinator
 /// prints them verbatim. `--reporter=junit` is forwarded (without the outfile)
 /// so workers attach the per-test detail the coordinator's JunitReporter
-/// needs. Runtime flags arrive in `test_options.parallel_forwarded_argv`.
-/// Coordinator-only concerns — file discovery
+/// needs. Coordinator-only concerns — file discovery
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.

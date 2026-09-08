@@ -468,7 +468,7 @@ describe.concurrent("code frame clamps a long source line on a character boundar
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const s = "${filler}"; throw new Error("boom");`],
       env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);

@@ -2448,6 +2448,51 @@ it("does propagate type for Blob", async () => {
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
 });
 
+it("derives the same content-type when .body was read before the Response is returned", async () => {
+  // `new Response(res.body, res)` is the usual middleware shape for adding headers or
+  // logging, and `if (res.body)` a null-body check. Both wrap the body in a
+  // ReadableStream that nothing reads before Bun.serve gets the Response.
+  const bodies = {
+    "string": () => new Response("hello"),
+    "string-non-ascii": () => new Response("héllo ☃"),
+    "blob-typed": () => new Response(new Blob(["hello"], { type: "text/html" })),
+    "bytes": () => new Response(new TextEncoder().encode("hello")),
+  };
+  const modes = {
+    "direct": (res: Response) => res,
+    "rewrap": (res: Response) => new Response(res.body, res),
+    "rewrap-body-only": (res: Response) => new Response(res.body),
+    "headers-then-rewrap": (res: Response) => (res.headers, new Response(res.body, res)),
+    "bodycheck": (res: Response) => (res.body, res),
+  };
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const [, body, mode] = new URL(req.url).pathname.split("/");
+      return modes[mode](bodies[body]());
+    },
+  });
+
+  const actual = {};
+  const expected = {};
+  for (const body of Object.keys(bodies)) {
+    for (const mode of Object.keys(modes)) {
+      const res = await fetch(`${server.url.origin}/${body}/${mode}`);
+      actual[`${body} ${mode}`] = { type: res.headers.get("content-type"), text: await res.text() };
+      expected[`${body} ${mode}`] = {
+        type: {
+          "string": "text/plain;charset=utf-8",
+          "string-non-ascii": "text/plain;charset=utf-8",
+          "blob-typed": "text/html;charset=utf-8",
+          "bytes": "application/octet-stream",
+        }[body],
+        text: body === "string-non-ascii" ? "héllo ☃" : "hello",
+      };
+    }
+  }
+  expect(actual).toEqual(expected);
+});
+
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
   using server = Bun.serve({

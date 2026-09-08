@@ -19,6 +19,11 @@ pub struct ByteBlobLoader {
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
     pub(crate) content_type: blob::BlobContentType,
+    /// Same round trip for a string body (`Body::Value::WTFStringImpl` /
+    /// `InternalBlob { was_string }`), which `.body` wraps in an untyped Blob: lets
+    /// `to_any_blob` hand back `InternalBlob { was_string: true }`, the form Bun.serve
+    /// derives `text/plain` from, instead of anonymous bytes.
+    pub(crate) was_string: bool,
 }
 
 impl Default for ByteBlobLoader {
@@ -30,6 +35,7 @@ impl Default for ByteBlobLoader {
             remain: 1024 * 1024 * 2,
             done: false,
             content_type: blob::BlobContentType::default(),
+            was_string: false,
         }
     }
 }
@@ -95,6 +101,7 @@ impl ByteBlobLoader {
             remain: size,
             done: false,
             content_type,
+            was_string: false,
         };
     }
 
@@ -149,8 +156,11 @@ impl ByteBlobLoader {
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
             // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
+            if let Some(mut blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
                 drop(store);
+                if let blob::Any::InternalBlob(internal) = &mut blob {
+                    internal.was_string = self.was_string;
+                }
                 return Some(blob);
             }
         }
@@ -193,6 +203,7 @@ impl ByteBlobLoader {
 
     fn clear_data(&mut self) {
         self.content_type = blob::BlobContentType::default();
+        self.was_string = false;
 
         if let Some(store) = self.store.take() {
             drop(store); // store.deref()

@@ -374,6 +374,7 @@ class StreamAsyncContextScope {
 
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
+    StreamAsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot);
     ~StreamAsyncContextScope();
 
 private:

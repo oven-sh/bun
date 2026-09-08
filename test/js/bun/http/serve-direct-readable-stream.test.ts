@@ -1032,6 +1032,91 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
   expect((counts.ReadableStream ?? 0) - baseline).toBeLessThan(10);
 });
 
+// The server drives a Response body's pull() natively, after the fetch handler
+// (and any AsyncLocalStorage.run() around it) has returned. The stream snapshots
+// the async context when it is constructed; the pull must run in that snapshot.
+describe("AsyncLocalStorage context of a direct Response body", () => {
+  const als = new AsyncLocalStorage<string>();
+
+  async function serveAndCollect(body: (seen: string[]) => BodyInit): Promise<{ text: string; seen: string[] }> {
+    const seen: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return als.run("request", () => new Response(body(seen)));
+      },
+    });
+    const res = await fetch(server.url);
+    const text = await res.text();
+    return { text, seen };
+  }
+
+  test("async generator body sees the store at every step", async () => {
+    const { text, seen } = await serveAndCollect(seen => {
+      async function* body() {
+        seen.push(`start:${als.getStore()}`);
+        yield "a";
+        seen.push(`after-yield:${als.getStore()}`);
+        await Bun.sleep(0);
+        seen.push(`after-await:${als.getStore()}`);
+        yield "b";
+        seen.push(`end:${als.getStore()}`);
+      }
+      return body();
+    });
+    expect({ text, seen }).toEqual({
+      text: "ab",
+      seen: ["start:request", "after-yield:request", "after-await:request", "end:request"],
+    });
+  });
+
+  test("direct stream pull() sees the store", async () => {
+    const { text, seen } = await serveAndCollect(
+      seen =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            seen.push(`pull:${als.getStore()}`);
+            await c.write("x");
+            seen.push(`after-write:${als.getStore()}`);
+            c.close();
+          },
+        }),
+    );
+    expect({ text, seen }).toEqual({ text: "x", seen: ["pull:request", "after-write:request"] });
+  });
+
+  test("a direct stream with no pull() runs cancel() in the store", async () => {
+    const { text, seen } = await serveAndCollect(
+      seen =>
+        new ReadableStream({
+          type: "direct",
+          cancel() {
+            seen.push(`cancel:${als.getStore()}`);
+          },
+        } as any),
+    );
+    expect({ text, seen }).toEqual({ text: "", seen: ["cancel:request"] });
+  });
+
+  test("a Response constructed outside any store keeps no store", async () => {
+    const seen: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        async function* body() {
+          seen.push(`start:${als.getStore()}`);
+          yield "a";
+          seen.push(`end:${als.getStore()}`);
+        }
+        return new Response(body());
+      },
+    });
+    const res = await fetch(server.url);
+    expect({ text: await res.text(), seen }).toEqual({ text: "a", seen: ["start:undefined", "end:undefined"] });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/36940
 // close() while the sink still holds unflushed bytes deferred the final send
 // to the auto-flusher, which ended the response through uWS (writing the

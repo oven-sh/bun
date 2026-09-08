@@ -9,6 +9,7 @@ import {
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -594,6 +595,83 @@ it("ReadableStream (direct): controller.close() outside pull with a throwing clo
   expect(first.done).toBe(false);
   expect(new TextDecoder().decode(first.value)).toBe("late");
   expect((await reader.read()).done).toBe(true);
+});
+
+// A direct stream snapshots the AsyncLocalStorage context at construction. Its
+// pull() and close() hooks run in that snapshot, wherever the consumer reads from.
+it("ReadableStream (direct): pull() and close() run in the AsyncLocalStorage context of the constructor", async () => {
+  const als = new AsyncLocalStorage();
+  const seen = [];
+  let controller;
+  const pulled = Promise.withResolvers();
+  const stream = als.run("ctor", () => {
+    return new ReadableStream({
+      type: "direct",
+      pull(c) {
+        seen.push(`pull:${als.getStore()}`);
+        controller = c;
+        pulled.resolve();
+      },
+      close() {
+        seen.push(`close:${als.getStore()}`);
+      },
+    });
+  });
+  const reader = stream.getReader();
+  const pending = reader.read();
+  await pulled.promise;
+  controller.write("x");
+  controller.close();
+  expect(new TextDecoder().decode((await pending).value)).toBe("x");
+  expect((await reader.read()).done).toBe(true);
+  expect(seen).toEqual(["pull:ctor", "close:ctor"]);
+});
+
+it("ReadableStream (direct): the one-shot ArrayBuffer consumer runs pull() in the AsyncLocalStorage context of the constructor", async () => {
+  const als = new AsyncLocalStorage();
+  const seen = [];
+  const make = tag =>
+    als.run("ctor", () => {
+      return new ReadableStream({
+        type: "direct",
+        pull(c) {
+          seen.push(`${tag}:${als.getStore()}`);
+          c.write("x");
+          c.close();
+        },
+      });
+    });
+  const lengths = [
+    (await readableStreamToArrayBuffer(make("arrayBuffer"))).byteLength,
+    (await readableStreamToBytes(make("bytes"))).byteLength,
+    (await new Response(make("response")).arrayBuffer()).byteLength,
+  ];
+  expect({ lengths, seen }).toEqual({ lengths: [1, 1, 1], seen: ["arrayBuffer:ctor", "bytes:ctor", "response:ctor"] });
+});
+
+it("ReadableStream (direct): the one-shot ArrayBuffer consumer runs close() in the AsyncLocalStorage context of the constructor", async () => {
+  const als = new AsyncLocalStorage();
+  const seen = [];
+  let controller;
+  const pulled = Promise.withResolvers();
+  const stream = als.run("ctor", () => {
+    return new ReadableStream({
+      type: "direct",
+      pull(c) {
+        controller = c;
+        pulled.resolve();
+        return pulled.promise;
+      },
+      close() {
+        seen.push(`close:${als.getStore()}`);
+      },
+    });
+  });
+  const result = readableStreamToArrayBuffer(stream);
+  await pulled.promise;
+  controller.write("x");
+  controller.close();
+  expect({ byteLength: (await result).byteLength, seen }).toEqual({ byteLength: 1, seen: ["close:ctor"] });
 });
 
 it("ReadableStream (bytes)", async () => {

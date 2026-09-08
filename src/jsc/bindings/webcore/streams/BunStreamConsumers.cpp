@@ -1028,6 +1028,7 @@ static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSValu
     }
     MarkedArgumentBuffer arguments;
     arguments.append(sink);
+    StreamAsyncContextScope asyncContextScope(globalObject, sink->m_stream.get());
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, callData, jsUndefined(), arguments));
 }
 
@@ -1705,7 +1706,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalO
             return {};
         }
         MarkedArgumentBuffer noArguments;
-        JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+        {
+            StreamAsyncContextScope asyncContextScope(globalObject, sink->m_stream.get());
+            JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+        }
         RETURN_IF_EXCEPTION(scope, {});
     }
     MarkedArgumentBuffer noArguments;

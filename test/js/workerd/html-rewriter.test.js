@@ -1508,6 +1508,51 @@ describe("HTMLRewriter", () => {
     expect(await res.text()).toBe("test");
   });
 
+  // The documented contract (docs/runtime/html-rewriter.mdx "Text vs. HTML
+  // content", ContentOptions.html in packages/bun-types/html-rewriter.d.ts):
+  // text insertion escapes <, > and & in every element, <script> and <style>
+  // included, as Cloudflare Workers does. A browser does not decode entities
+  // there, so the documented route for script/style source is { html: true }.
+  it("escapes text content inside <script> and <style> too; { html: true } is the documented route", () => {
+    const insert = (selector, input, fn) =>
+      new HTMLRewriter()
+        .on(selector, {
+          element(el) {
+            fn(el);
+          },
+        })
+        .transform(input);
+
+    expect({
+      script: insert("script", "<script>var a=1;</script>", el => el.append("if(a<2&&a>0)a&=1;")),
+      style: insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ")),
+      endTag: insert("script", "<script>var a=1;</script>", el => el.onEndTag(end => end.before("a<2;"))),
+      // RCDATA: a browser decodes these, so escaping is what textContent= would serialize to.
+      textarea: insert("textarea", "<textarea>x</textarea>", el => el.setInnerContent("a<b && c>d")),
+    }).toEqual({
+      script: "<script>var a=1;if(a&lt;2&amp;&amp;a&gt;0)a&amp;=1;</script>",
+      style: "<style>ul&gt;li{color:red} b{}</style>",
+      endTag: "<script>var a=1;a&lt;2;</script>",
+      textarea: "<textarea>a&lt;b &amp;&amp; c&gt;d</textarea>",
+    });
+
+    // The recipes from the docs.
+    const config = { html: "</script><script>alert(1)</script><!--", n: 1 };
+    const json = insert('script[type="application/json"]', '<script type="application/json"></script><p>n</p>', el =>
+      el.setInnerContent(JSON.stringify(config).replaceAll("<", "\\u003c"), { html: true }),
+    );
+    expect(json).toBe(
+      String.raw`<script type="application/json">{"html":"\u003c/script>\u003cscript>alert(1)\u003c/script>\u003c!--","n":1}</script><p>n</p>`,
+    );
+    expect(JSON.parse(json.slice('<script type="application/json">'.length, json.indexOf("</script>")))).toEqual(
+      config,
+    );
+
+    expect(insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ", { html: true }))).toBe(
+      "<style>ul>li{color:red} b{}</style>",
+    );
+  });
+
   it("handles element class properties", async () => {
     class Handler {
       constructor(content) {

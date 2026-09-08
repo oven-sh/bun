@@ -48,7 +48,18 @@ declare namespace HTMLRewriterTypes {
   }
 
   interface ContentOptions {
-    /** Whether to parse the content as HTML */
+    /**
+     * If `true`, the content is written as raw HTML.
+     *
+     * Otherwise (the default) the content is text: `<`, `>` and `&` are
+     * written as `&lt;`, `&gt;` and `&amp;`, so it can never add markup.
+     * This is also the case inside `<script>` and `<style>`, where a browser
+     * does not decode entities. To insert script or style source, pass
+     * `{ html: true }` and make sure the string cannot contain `</script` or
+     * `</style` (for JSON, `JSON.stringify(v).replaceAll("<", "\\u003c")`).
+     *
+     * @default false
+     */
     html?: boolean;
   }
 

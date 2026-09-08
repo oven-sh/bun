@@ -3538,29 +3538,6 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // Count async dependencies to determine if we need __promiseAll
-                let mut async_import_count: usize = 0;
-                {
-                    let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
-                    let meta_flags = self.graph.meta.items_flags();
-
-                    for record in import_records {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        let other_flags = meta_flags[record.source_index.get() as usize];
-                        if other_flags.is_async_or_has_async_dependency {
-                            async_import_count += 1;
-                            if async_import_count >= 2 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let needs_promise_all = async_import_count >= 2;
-
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
@@ -3569,25 +3546,9 @@ impl<'a> LinkerContext<'a> {
                     &[]
                 };
 
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
+                // generate a dummy part that depends on the "__esm" symbol
+                let mut dependencies = DependencyList::init_capacity(esm_parts.len());
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
-                }
-                for &part in promise_all_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
                         source_index: bun_ast::Index::RUNTIME,
@@ -3626,19 +3587,6 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
                 }
             }
             WrapKind::None => {}

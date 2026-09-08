@@ -1068,11 +1068,15 @@ pub(crate) fn scan_imports_and_exports(
             );
 
             let parts_len = col_ref!(parts_list)[id].len() as usize;
+            // Counted across the whole file: `InsideWrapperPrefix::append_async_dependency`
+            // joins every `await init_x()` after the first into one `await __promiseAll([...])`.
+            let mut async_esm_init_count: u32 = 0;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
                 let mut preload_uses: u32 = 0;
+                let mut promise_all_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -1205,6 +1209,16 @@ pub(crate) fn scan_imports_and_exports(
                                 1,
                                 Index::source(other_source_index),
                             )?;
+
+                            if kind == ImportKind::Stmt
+                                && other_flags.wrap == WrapKind::Esm
+                                && other_flags.is_async_or_has_async_dependency
+                            {
+                                async_esm_init_count += 1;
+                                if async_esm_init_count >= 2 {
+                                    promise_all_uses = 1;
+                                }
+                            }
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
@@ -1405,6 +1419,13 @@ pub(crate) fn scan_imports_and_exports(
                         Index::part(part_index as u32),
                         b"__preload",
                         preload_uses,
+                    )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__promiseAll",
+                        promise_all_uses,
                     )?;
                 }
             }

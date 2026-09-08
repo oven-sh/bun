@@ -2801,11 +2801,10 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
-/// The sections of bun.lock that come from the manifests rather than from resolution, as
-/// `bun_lock::Stringifier::save_from_binary` writes them: each workspace's dependency lists, and
-/// the `trustedDependencies` names and `patchedDependencies` entries that apply to a package placed
-/// in the tree. Not included: overrides and catalogs (the differ flags those), and workspace
-/// names, versions and bins (release tooling bumps versions without an install).
+/// What bun.lock records from the manifests, as `bun_lock::Stringifier::save_from_binary` writes
+/// it: each workspace's dependency entries, and the `trustedDependencies` names and
+/// `patchedDependencies` entries that apply to the tree. Overrides, catalogs and workspace
+/// versions are deliberately not part of it.
 pub(crate) struct ManifestSections {
     /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
     workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
@@ -2816,12 +2815,9 @@ pub(crate) struct ManifestSections {
 }
 
 impl ManifestSections {
-    /// The section to name, and the directory of the package.json it is in, when `self` (the
-    /// lockfile about to be installed) no longer matches `loaded` (the one read from disk).
-    ///
-    /// `trustedDependencies` and `patchedDependencies` are only compared against a list the loaded
-    /// lockfile recorded: `turbo prune` releases have dropped either section while copying the
-    /// root package.json that declares it (vercel/turborepo#11027, vercel/turborepo#13740).
+    /// The changed section and the directory of its package.json, if `self` (about to be
+    /// installed) differs from `loaded`. Trusted and patched lists are only compared when
+    /// `loaded` recorded one, since older `turbo prune` output dropped both sections.
     pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
         if self.workspaces.len() != loaded.workspaces.len() {
             return Some(("workspaces", b""));
@@ -2837,9 +2833,8 @@ impl ManifestSections {
             let added = declared
                 .iter()
                 .any(|name| recorded.binary_search(name).is_err());
-            // The recorded list is the union over every workspace's package.json, so a checkout
-            // without one of those workspaces declares fewer names: with workspaces only an added
-            // name counts, like a catalog entry.
+            // With workspaces the recorded list is their union, which a checkout missing one of
+            // them cannot reproduce, so only an added name counts there.
             let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
             if added || removed {
                 return Some(("trustedDependencies", b""));

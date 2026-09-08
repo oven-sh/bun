@@ -236,9 +236,8 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                // Taken before package.json's sections are copied over the loaded ones below. A
-                // lockfile migrated in this run is written even when frozen, so it is not held
-                // against package.json.
+                // Before package.json's sections replace the loaded ones below. A migrated
+                // lockfile is rewritten even when frozen, so it is not compared.
                 if had_any_diffs
                     && manager.options.enable.frozen_lockfile()
                     && ok.format == lockfile::Format::Text
@@ -810,9 +809,7 @@ pub fn install_with_manager(
                         &lockfile_before_clean,
                         lockfile_before_clean.loaded_package_count as usize,
                     )) {
-                        // Every package resolved as locked. A plain install would still rewrite
-                        // bun.lock for a retyped specifier, a dependency that changed group, or a
-                        // trustedDependencies / patchedDependencies edit, so those fail too.
+                        // Resolved as locked; a manifest section bun.lock records may still differ.
                         if let Some(loaded) = &loaded_manifest_sections {
                             changed_section = manager
                                 .lockfile

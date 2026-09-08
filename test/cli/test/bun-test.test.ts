@@ -781,13 +781,17 @@ describe("bun test", () => {
         {
           filename: "wrapped.test.ts",
           contents: [
-            /* 1 */ `import { describe, test } from "bun:test";`,
+            /* 1 */ `import { beforeEach, describe, test } from "bun:test";`,
             /* 2 */ `import { defineSlowBeforeAll, defineSlowTest } from "./define";`,
             /* 3 */ `defineSlowTest("wrapped");`,
             /* 4 */ `describe("group", () => {`,
             /* 5 */ `  defineSlowBeforeAll();`,
             /* 6 */ `  test("after the hook", () => {});`,
             /* 7 */ `});`,
+            /* 8 */ `describe("each", () => {`,
+            /* 9 */ `  beforeEach(() => Bun.sleep(1000), 1);`,
+            /* 10 */ `  test(() => {});`,
+            /* 11 */ `});`,
           ].join("\n"),
         },
       ]);
@@ -799,12 +803,16 @@ describe("bun test", () => {
         },
         expectExitCode: 1,
       });
+      // A beforeAll hook that times out is reported on its own line; a beforeEach
+      // hook that times out is reported on its test, here one without a name.
       const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
       expect(annotations).toEqual([
         `::error file=wrapped.test.ts,line=3,title=error: Test "wrapped" timed out after 1ms::`,
         `::error file=wrapped.test.ts,line=5,title=error: A beforeAll/afterAll hook in "group" timed out::`,
+        `::error file=wrapped.test.ts,line=10,title=error: A beforeEach/afterEach hook timed out for test "each > (unnamed)"::`,
       ]);
       expect(stderr).toContain("a beforeAll/afterAll hook timed out.");
+      expect(stderr).toContain("a beforeEach/afterEach hook timed out for this test.");
     });
     test("should anchor the annotation at the test file when the error is thrown inside node_modules", () => {
       const cwd = createTest([

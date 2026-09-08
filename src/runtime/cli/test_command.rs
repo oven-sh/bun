@@ -1166,7 +1166,8 @@ impl CommandLineReporter {
                         test_entry.timeout
                     );
                 }
-                R::FailBecauseHookTimeout if test_entry.base.name.is_none() => {
+                // A beforeAll/afterAll hook runs in a sequence with no test.
+                R::FailBecauseHookTimeout if sequence.test_entry.is_none() => {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
@@ -1193,7 +1194,7 @@ impl CommandLineReporter {
                         writer,
                         colors,
                         "  <d>^<r> <red>a {} hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n",
-                        if test_entry.base.name.is_none() {
+                        if sequence.test_entry.is_none() {
                             "beforeAll/afterAll"
                         } else {
                             "beforeEach/afterEach"
@@ -1240,9 +1241,9 @@ impl CommandLineReporter {
                 name.extend_from_slice(b" > ");
             }
         }
-        // A beforeAll/afterAll hook runs in a sequence of its own, so on timeout the
-        // reported entry is the unnamed hook; a beforeEach/afterEach timeout reports its test.
-        let all_hook = test_entry.base.name.is_none()
+        // A beforeAll/afterAll hook runs in a sequence with no test, so on timeout the
+        // reported entry is the hook; a beforeEach/afterEach timeout reports its test.
+        let all_hook = sequence.test_entry.is_none()
             && matches!(
                 status,
                 R::FailBecauseHookTimeout | R::FailBecauseHookTimeoutWithDoneCallback

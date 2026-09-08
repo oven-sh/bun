@@ -21,11 +21,13 @@ import { depBuildDir } from "../source.ts";
 
 const LIBARCHIVE_COMMIT = "ded82291ab41d5e355831b96b0e1ff49e24d8939";
 
-// The unconditional list from libarchive/CMakeLists.txt + the two blake2
-// reference impls (added when libb2 isn't linked, which it never is here).
-// All formats/filters compile even though most are stubbed at runtime —
-// bun's bindings call archive_read_support_{format,filter}_all, which
-// reference every registration symbol.
+// The unconditional list from libarchive/CMakeLists.txt, minus the read
+// formats/filters bun never registers (it only registers tar/gnutar/gzip,
+// and select-registered-only.patch stops set_format/append_filter from
+// pulling the rest in). Kept even though unused: format_empty/format_raw
+// (archive_match.c), ppmd7 (write_set_format_7zip), filter_program
+// (append_filter_program_signature) — dead code that other kept files
+// still reference by name.
 // prettier-ignore
 const SOURCES = [
   "archive_acl", "archive_check_magic", "archive_cmdline", "archive_cryptor",
@@ -33,32 +35,18 @@ const SOURCES = [
   "archive_entry_link_resolver", "archive_entry_sparse", "archive_entry_stat",
   "archive_entry_strmode", "archive_entry_xattr", "archive_hmac", "archive_match",
   "archive_options", "archive_pack_dev", "archive_parse_date", "archive_pathmatch",
-  "archive_ppmd8", "archive_ppmd7", "archive_random", "archive_rb", "archive_read",
+  "archive_ppmd7", "archive_random", "archive_rb", "archive_read",
   "archive_read_add_passphrase", "archive_read_append_filter",
   "archive_read_data_into_fd", "archive_read_disk_entry_from_file",
   "archive_read_disk_posix", "archive_read_disk_set_standard_lookup",
   "archive_read_extract", "archive_read_extract2", "archive_read_open_fd",
   "archive_read_open_file", "archive_read_open_filename", "archive_read_open_memory",
   "archive_read_set_format", "archive_read_set_options",
-  "archive_read_support_filter_all", "archive_read_support_filter_by_code",
-  "archive_read_support_filter_bzip2", "archive_read_support_filter_compress",
-  "archive_read_support_filter_gzip", "archive_read_support_filter_grzip",
-  "archive_read_support_filter_lrzip", "archive_read_support_filter_lz4",
-  "archive_read_support_filter_lzop", "archive_read_support_filter_none",
-  "archive_read_support_filter_program", "archive_read_support_filter_rpm",
-  "archive_read_support_filter_uu", "archive_read_support_filter_xz",
-  "archive_read_support_filter_zstd", "archive_read_support_format_7zip",
-  "archive_read_support_format_all", "archive_read_support_format_ar",
-  "archive_read_support_format_by_code", "archive_read_support_format_cab",
-  "archive_read_support_format_cpio", "archive_read_support_format_empty",
-  "archive_read_support_format_iso9660", "archive_read_support_format_lha",
-  "archive_read_support_format_mtree", "archive_read_support_format_rar",
-  "archive_read_support_format_rar5", "archive_read_support_format_raw",
-  "archive_read_support_format_tar", "archive_read_support_format_warc",
-  "archive_read_support_format_xar", "archive_read_support_format_zip",
-  "archive_string", "archive_string_sprintf", "archive_time", "archive_util",
-  "archive_version_details", "archive_virtual", "archive_write",
-  "archive_write_disk_posix", "archive_write_disk_set_standard_lookup",
+  "archive_read_support_filter_gzip", "archive_read_support_filter_program",
+  "archive_read_support_format_empty", "archive_read_support_format_raw",
+  "archive_read_support_format_tar", "archive_string", "archive_string_sprintf",
+  "archive_time", "archive_util", "archive_version_details", "archive_virtual",
+  "archive_write", "archive_write_disk_posix", "archive_write_disk_set_standard_lookup",
   "archive_write_open_fd", "archive_write_open_file", "archive_write_open_filename",
   "archive_write_open_memory", "archive_write_add_filter",
   "archive_write_add_filter_b64encode", "archive_write_add_filter_by_name",
@@ -78,9 +66,8 @@ const SOURCES = [
   "archive_write_set_format_shar", "archive_write_set_format_ustar",
   "archive_write_set_format_v7tar", "archive_write_set_format_warc",
   "archive_write_set_format_xar", "archive_write_set_format_zip",
-  "archive_write_set_options", "archive_write_set_passphrase",
-  "filter_fork_posix", "xxhash",
-  "archive_blake2sp_ref", "archive_blake2s_ref",
+  "archive_write_set_options", "archive_write_set_passphrase", "filter_fork_posix",
+  "xxhash",
 ];
 
 const SOURCES_WIN = [
@@ -103,6 +90,11 @@ export const libarchive: Dependency = {
 
   patches: [
     "patches/libarchive/archive_write_add_filter_gzip.c.patch",
+    // archive_read_set_format/append_filter register by code through a
+    // switch over every reader/filter, which keeps them all linked. Bun
+    // registers tar/gnutar/gzip itself, so make those calls only select
+    // an already-registered one.
+    "patches/libarchive/select-registered-only.patch",
     // Propagate ARCHIVE_RETRY from the client read callback up through
     // the gzip filter and tar reader so the worker-thread extract loop
     // in `bun install` can yield and resume as HTTP chunks arrive. See

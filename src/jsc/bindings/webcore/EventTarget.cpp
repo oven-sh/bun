@@ -39,16 +39,8 @@
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "EventTargetConcrete.h"
-// #include "HTMLBodyElement.h"
-// #include "HTMLHtmlElement.h"
-// #include "InspectorInstrumentation.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
-// #include "Logging.h"
-// #include "Quirks.h"
-// #include "ScriptController.h"
-// #include "ScriptDisallowedScope.h"
-// #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -72,16 +64,6 @@ EventTarget::~EventTarget()
     // The WeakPtrImpl (and its EventTargetData) can outlive this object.
     if (auto* data = this->eventTargetData())
         data->clear();
-}
-
-bool EventTarget::isNode() const
-{
-    return false;
-}
-
-bool EventTarget::isContextStopped() const
-{
-    return !scriptExecutionContext();
 }
 
 bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
@@ -196,7 +178,7 @@ JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType
             continue;
 
         auto& jsListener = downcast<JSEventListener>(listener);
-        if (jsListener.isAttribute() && &jsListener.isolatedWorld() == &isolatedWorld)
+        if (jsListener.isAttribute() && jsListener.isolatedWorld() == &isolatedWorld)
             return &jsListener;
     }
 
@@ -237,7 +219,6 @@ void EventTarget::dispatchEvent(Event& event)
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
-    event.resetBeforeDispatch();
     event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
@@ -273,9 +254,6 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
     ASSERT(scriptExecutionContext());
 
     auto& context = *scriptExecutionContext();
-    // bool contextIsDocument = is<Document>(context);
-    // if (contextIsDocument)
-    //     InspectorInstrumentation::willDispatchEvent(downcast<Document>(context), event);
 
     for (auto& registeredListener : listeners) {
         if (registeredListener->wasRemoved()) [[unlikely]]

@@ -1,8 +1,8 @@
-//! This file is mostly the API schema but with all the options normalized.
-//! Normalization is necessary because most fields in the API schema are optional
+//! `TransformOptions` (CLI/bunfig input, mostly optional fields) normalized
+//! into the concrete `BundleOptions` the bundler and runtime consume.
 
 use bun_analytics as analytics;
-use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
@@ -21,6 +21,7 @@ pub use defines::Define;
 // traits into scope so the associated-fn call syntax below resolves.
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
+pub use bun_options_types::offline_mode::OfflineMode;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
@@ -358,9 +359,12 @@ impl LoaderExt for Loader {
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
-            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                MimeType::JSON
-            }
+            Loader::Toml
+            | Loader::Yaml
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Xml => MimeType::JSON,
             Loader::Wasm => MimeType::WASM,
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
@@ -516,7 +520,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_file_name(blob) {
+            if let Some(filename) = jsc_vm.blob_store_path(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
@@ -599,6 +603,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".html", Loader::Html),
     (b".jsonc", Loader::Jsonc),
     (b".json5", Loader::Json5),
+    (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
 ];
@@ -610,7 +615,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 22 keys bucketing into 5 distinct lengths
+/// lookup). With only 23 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -650,6 +655,7 @@ impl DefaultLoaders {
                 b".cts" => Some(&Loader::Ts),
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
+                b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
                 _ => None,
             },
@@ -869,18 +875,9 @@ pub(crate) fn defines_from_transform_options(
             break 'load_env;
         }
 
-        // flatten `api::StringMap` into parallel borrowed slices.
-        // `api::DotEnvBehavior` is the same type as `DotEnv::DotEnvBehavior`
-        // (re-export), so no conversion needed.
-        let api_defaults = framework.to_api().defaults;
-        let default_keys: Vec<&[u8]> = api_defaults.keys.iter().map(|k| k.as_ref()).collect();
-        let default_values: Vec<&[u8]> = api_defaults.values.iter().map(|v| v.as_ref()).collect();
         defines::copy_env_for_define(
             env,
-            &mut user_defines,
             &mut environment_defines,
-            &default_keys,
-            &default_values,
             behavior,
             &framework.prefix,
             bump,
@@ -949,12 +946,31 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    let user_hash = defines::Define::hash_user_inputs(
+        user_defines
+            .keys()
+            .iter()
+            .zip(user_defines.values().iter())
+            .map(|(k, v)| (k.as_ref(), v.as_ref())),
+        environment_defines
+            .keys()
+            .iter()
+            .zip(environment_defines.values().iter())
+            .filter_map(|(k, v)| match &v.value {
+                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
+                _ => None,
+            }),
+        drop.iter().copied(),
+    );
+
+    let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    define.user_hash = user_hash;
+    Ok(define)
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -1116,6 +1132,38 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `--compile --bytecode`: the executable whose internal JS modules (node:fs, ...) get ahead-of-time bytecode. Their
+/// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
+/// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
+/// bytecode.
+#[derive(Clone, Default)]
+pub enum CompileTargetBuiltins {
+    #[default]
+    Host,
+    Target(std::sync::Arc<[u8]>),
+    None,
+}
+
+/// What `--compile` resolved to for this bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompileMode {
+    #[default]
+    None,
+    Executable,
+    StandaloneHtml,
+}
+
+impl CompileMode {
+    #[inline]
+    pub const fn is_executable(self) -> bool {
+        matches!(self, CompileMode::Executable)
+    }
+    #[inline]
+    pub const fn is_standalone_html(self) -> bool {
+        matches!(self, CompileMode::StandaloneHtml)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackagesOption {
     Bundle,
@@ -1146,7 +1194,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1163,6 +1210,7 @@ pub struct BundleOptions<'a> {
     pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
     pub auto_import_jsx: bool,
     pub allow_runtime: bool,
 
@@ -1215,11 +1263,11 @@ pub struct BundleOptions<'a> {
     pub import_path_format: ImportPathFormat,
     pub(crate) defines_loaded: bool,
     pub env: Env,
-    /// The raw API struct as passed to `from_api`. Kept around because a
+    /// The raw `TransformOptions` as passed to `from_api`. Kept around because a
     /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
     /// `configure_defines`, runtime VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
-    /// pointer-clone instead of a deep clone of the (large) peechy struct —
+    /// pointer-clone instead of a deep clone of the (large) struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
@@ -1236,14 +1284,17 @@ pub struct BundleOptions<'a> {
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
+    /// With `code_splitting`, target bun: `require()` of a bundled ESM file
+    /// becomes a chunk of its own, loaded synchronously at the call. On by
+    /// default; `--no-split-require` / `splitRequire: false` opts out.
+    pub split_require: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
 
     pub disable_transpilation: bool,
 
     pub global_cache: GlobalCache,
-    pub prefer_offline_install: bool,
-    pub prefer_latest_install: bool,
+    pub install_preference: OfflineMode,
     /// Stored as a raw
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
@@ -1265,16 +1316,32 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Code splitting: also fold side-effect-free chunks whose source is
+    /// smaller than this many bytes into a chunk more entry points load.
+    /// 0 disables that; chunks with identical load conditions always fold.
+    /// `None` picks `default_min_chunk_size(target)`.
+    pub min_chunk_size: Option<u64>,
+    /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
+    pub module_preload: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
+    /// Namespace objects (`import *`, `export * as`) get a setter per export so
+    /// assigning to them is silently accepted instead of throwing. Deprecated;
+    /// off makes them getter-only like real module namespace objects.
+    pub deprecated_namespace_object_setters: bool,
     pub bytecode: bool,
+    /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
+    pub bytecode_depth: u32,
+    /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
+    pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
     pub debugger: bool,
 
-    pub compile: bool,
-    pub compile_to_standalone_html: bool,
+    pub compile_mode: CompileMode,
+    /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
+    pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1346,6 +1413,14 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    pub(crate) fn forced_jsx_development(&self) -> bool {
+        match self.force_node_env {
+            ForceNodeEnv::Development => true,
+            ForceNodeEnv::Production => false,
+            ForceNodeEnv::Unspecified => self.jsx.development,
+        }
+    }
+
     /// Per-worker deep clone — replaces the prior bitwise
     /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
     /// every `Box`/`Vec` in here between parent and worker; reassigning any of
@@ -1358,7 +1433,7 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn for_worker(&self) -> BundleOptions<'a> {
         debug_assert!(
             self.defines_loaded,
-            "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
+            "BundleOptions::for_worker requires configure_defines() to have run on the parent",
         );
         BundleOptions {
             footer: self.footer.clone(),
@@ -1366,7 +1441,9 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
+                user_hash: self.define.user_hash,
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1377,6 +1454,7 @@ impl<'a> BundleOptions<'a> {
             jsx: self.jsx.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
+            use_define_for_class_fields: self.use_define_for_class_fields,
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
@@ -1415,16 +1493,7 @@ impl<'a> BundleOptions<'a> {
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
-            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
-            // it (`configure_defines` early-returns on `defines_loaded`), so
-            // carry the scalars + an empty list.
-            env: Env {
-                behavior: self.env.behavior,
-                prefix: self.env.prefix.clone(),
-                defaults: Default::default(),
-                files: self.env.files.clone(),
-                disable_default_env_files: self.env.disable_default_env_files,
-            },
+            env: self.env.clone(),
             transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
@@ -1442,12 +1511,12 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
+            split_require: self.split_require,
             source_map: self.source_map,
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
             global_cache: self.global_cache,
-            prefer_offline_install: self.prefer_offline_install,
-            prefer_latest_install: self.prefer_latest_install,
+            install_preference: self.install_preference,
             install: self.install,
             inlining: self.inlining,
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
@@ -1458,13 +1527,18 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            min_chunk_size: self.min_chunk_size,
+            module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
+            deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
+            bytecode_depth: self.bytecode_depth,
+            compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
-            compile: self.compile,
-            compile_to_standalone_html: self.compile_to_standalone_html,
+            compile_mode: self.compile_mode,
+            compile_entry_point_name: self.compile_entry_point_name.clone(),
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1528,14 +1602,6 @@ impl<'a> BundleOptions<'a> {
         b"react-server",
         b"react-refresh",
     ];
-
-    #[inline]
-    pub(crate) fn css_import_behavior(&self) -> api::CssInJsBehavior {
-        match self.target {
-            Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
-            _ => api::CssInJsBehavior::Facade,
-        }
-    }
 
     pub(crate) fn load_defines(
         &mut self,
@@ -1630,11 +1696,7 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define {
-                identifiers: Default::default(),
-                dots: Default::default(),
-                drop_debugger: false,
-            }),
+            define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
@@ -1642,15 +1704,18 @@ impl<'a> BundleOptions<'a> {
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
-            env: Env::init(),
+            env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            min_chunk_size: None,
+            module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
             jsx: jsx::Pragma::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,
@@ -1696,12 +1761,12 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
+            split_require: true,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
             global_cache: GlobalCache::disable,
-            prefer_offline_install: false,
-            prefer_latest_install: false,
+            install_preference: OfflineMode::Online,
             install: None,
             inlining: false,
             inline_entrypoint_import_meta_main: false,
@@ -1713,11 +1778,14 @@ impl<'a> BundleOptions<'a> {
             repl_mode: false,
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
+            deprecated_namespace_object_setters: true,
             bytecode: false,
+            bytecode_depth: u32::MAX,
+            compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
-            compile: false,
-            compile_to_standalone_html: false,
+            compile_mode: CompileMode::None,
+            compile_entry_point_name: Box::default(),
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
@@ -1758,7 +1826,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
 
         if !transform.extension_order.is_empty() {
@@ -1863,7 +1931,7 @@ impl<'a> BundleOptions<'a> {
             let handle = open_output_dir(&opts.output_dir)?;
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
@@ -1938,7 +2006,7 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let len = output_dir.len().min(buf.0.len() - 1);
             buf.0[..len].copy_from_slice(&output_dir[..len]);
             buf.0[len] = 0;
@@ -1999,20 +2067,10 @@ impl TransformResult {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EnvEntry {
-    pub key: Box<[u8]>,
-    pub value: Box<[u8]>,
-}
-
-type EnvList = MultiArrayList<EnvEntry>;
-
-// `Debug` derive dropped — `MultiArrayList<T>` is not `Debug`.
+#[derive(Clone, Debug)]
 pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
-    pub(crate) defaults: EnvList,
-    // arena: dropped (global mimalloc)
     /// List of explicit env files to load (e..g specified by --env-file args)
     pub(crate) files: Box<[Box<[u8]>]>,
 
@@ -2025,34 +2083,8 @@ impl Default for Env {
         Env {
             behavior: api::DotEnvBehavior::disable,
             prefix: Box::default(),
-            defaults: EnvList::default(),
             files: Box::default(),
             disable_default_env_files: false,
-        }
-    }
-}
-
-impl Env {
-    pub(crate) fn init() -> Env {
-        Env {
-            defaults: EnvList::default(),
-            prefix: Box::default(),
-            behavior: api::DotEnvBehavior::disable,
-            files: Box::default(),
-            disable_default_env_files: false,
-        }
-    }
-
-    pub(crate) fn to_api(&self) -> api::LoadedEnvConfig {
-        let slice = self.defaults.slice();
-
-        api::LoadedEnvConfig {
-            dotenv: self.behavior,
-            prefix: self.prefix.clone(),
-            defaults: api::StringMap {
-                keys: slice.items::<"key", Box<[u8]>>().to_vec(),
-                values: slice.items::<"value", Box<[u8]>>().to_vec(),
-            },
         }
     }
 }
@@ -2079,10 +2111,43 @@ fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
         PlaceholderField::Ext => b"[ext]",
-        PlaceholderField::Hash => b"[hash]",
+        PlaceholderField::Hash => return path_template_hash_len(data).is_some(),
         PlaceholderField::Target => b"[target]",
     };
     strings::contains(data, needle)
+}
+
+/// `[hash]` or `[hashN]`: the field and how many characters it prints.
+fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
+    if let Some(field) = PLACEHOLDER_MAP.get(name).copied() {
+        return Some((field, bun_core::fmt::ContentHash::DEFAULT_LEN));
+    }
+    let digits = name.strip_prefix(b"hash")?;
+    if digits.is_empty() || digits.len() > 2 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let len = digits
+        .iter()
+        .fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
+    if len == 0 {
+        return None;
+    }
+    Some((PlaceholderField::Hash, len))
+}
+
+/// The width of the first `[hash]`/`[hashN]` placeholder in `data`, if any.
+pub(crate) fn path_template_hash_len(data: &[u8]) -> Option<usize> {
+    let mut remain = data;
+    while let Some(open) = strings::index_of(remain, b"[hash") {
+        remain = &remain[open + 1..];
+        let Some(close) = strings::index_of_char(remain, b']') else {
+            break;
+        };
+        if let Some((PlaceholderField::Hash, len)) = placeholder_field(&remain[..close as usize]) {
+            return Some(bun_core::fmt::ContentHash::new(0, len).len());
+        }
+    }
+    None
 }
 
 /// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
@@ -2121,7 +2186,7 @@ fn path_template_print<W: bun_io::Write>(
     dir: &[u8],
     name: &[u8],
     ext: &[u8],
-    hash: Option<u64>,
+    hash: Option<bun_core::fmt::ContentHash>,
     target: &[u8],
     sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
@@ -2155,7 +2220,7 @@ fn path_template_print<W: bun_io::Write>(
 
         let placeholder = &remain[0..end_len];
 
-        let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+        let Some((field, hash_len)) = placeholder_field(placeholder) else {
             // Unknown placeholder: keep `[placeholder]` verbatim in the output.
             writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
@@ -2183,7 +2248,10 @@ fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Ext => PathTemplate::write_replacing_slashes_on_windows(writer, ext)?,
             PlaceholderField::Hash => {
                 if let Some(hash) = hash {
-                    writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                    writer.write_fmt(format_args!(
+                        "{}",
+                        bun_core::fmt::ContentHash::new(hash.value, hash_len.max(hash.len()))
+                    ))?;
                 }
             }
             PlaceholderField::Target => {
@@ -2296,6 +2364,22 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
+    /// The width this template's `[hash]`/`[hashN]` asks for.
+    pub(crate) fn hash_len(&self) -> usize {
+        path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
+    }
+
+    /// `hash` at the width this template prints its own hash: what `[hashN]`
+    /// asks for, or wider if the linker widened it to keep names distinct.
+    pub(crate) fn content_hash(&self, hash: u64) -> bun_core::fmt::ContentHash {
+        bun_core::fmt::ContentHash::new(
+            hash,
+            self.placeholder
+                .hash
+                .map_or_else(|| self.hash_len(), |h| h.len()),
+        )
+    }
+
     #[inline]
     fn write_replacing_slashes_on_windows<W: bun_io::Write>(
         w: &mut W,
@@ -2383,7 +2467,7 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
 }
 
@@ -2410,7 +2494,7 @@ pub struct PlaceholderConst {
     pub(crate) dir: &'static [u8],
     pub(crate) name: &'static [u8],
     pub(crate) ext: &'static [u8],
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: &'static [u8],
 }
 
@@ -2476,4 +2560,13 @@ impl From<PathTemplateConst> for PathTemplate {
             },
         }
     }
+}
+
+/// `--min-chunk-size` when none was given: off for now. In a browser every
+/// chunk is a request and what an entry point can gain is bounded (see
+/// `merge_small_chunks`), so `Target::Browser` is meant to default to 16 KiB
+/// once the pass has shipped opt-in for a release or two.
+pub fn default_min_chunk_size(target: Target) -> u64 {
+    let _ = target;
+    0
 }

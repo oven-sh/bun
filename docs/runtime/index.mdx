@@ -7,7 +7,7 @@ import Run from "/snippets/cli/run.mdx";
 
 The Bun Runtime is designed to start fast and run fast.
 
-Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), developed by Apple for Safari. It usually starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers. Bun's transpiler and runtime are written in Rust. On Linux, Bun starts [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
+Bun uses the [JavaScriptCore engine](https://developer.apple.com/documentation/javascriptcore), developed by Apple for Safari. JavaScriptCore usually starts and runs faster than V8, the engine used by Node.js and Chromium-based browsers. Bun's transpiler and runtime are written in Rust. On Linux, Bun starts [4x faster](https://twitter.com/jarredsumner/status/1499225725492076544) than Node.js.
 
 | Command         | Time     |
 | --------------- | -------- |
@@ -56,7 +56,7 @@ bun --watch run dev # ✔️ do this
 bun run dev --watch # ❌ don't do this
 ```
 
-Flags at the end of the command are ignored by `bun` and passed through to the `"dev"` script itself.
+`bun` ignores flags at the end of the command and passes them through to the `"dev"` script itself.
 
 </Note>
 
@@ -90,7 +90,6 @@ rm -rf dist && echo 'Done.'
 ```
 
 ```txt
-Cleaning...
 Done.
 ```
 
@@ -111,15 +110,13 @@ bun run
 ```
 
 ```txt
-quickstart scripts:
+...
+package.json scripts (2 found):
+  $ bun run clean
+    rm -rf dist && echo 'Done.'
 
- bun run clean
-   rm -rf dist && echo 'Done.'
-
- bun run dev
-   bun server.ts
-
-2 scripts
+  $ bun run dev
+    bun server.ts
 ```
 
 Bun respects lifecycle hooks. For instance, `bun run clean` runs `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun does not run the script itself.
@@ -144,7 +141,7 @@ bun run --bun vite
 
 In a monorepo, the `--filter` argument runs a script in many packages at once.
 
-`bun run --filter <name_pattern> <script>` executes `<script>` in every package whose name matches `<name_pattern>`.
+`bun run --filter <pattern> <script>` executes `<script>` in every package selected by `<pattern>`. The pattern can be a package name glob, a `./path`, a `{dir}` directory or a dependency relation like `foo...`.
 For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running
 
 ```bash terminal icon="terminal"
@@ -188,7 +185,7 @@ Control the depth of object inspection in console output with the `--console-dep
 bun --console-depth 5 run index.tsx
 ```
 
-`--console-depth` sets how deeply nested objects are displayed in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
+`--console-depth` sets how deeply Bun displays nested objects in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
 
 ```ts console.ts icon="/icons/typescript.svg"
 const nested = { a: { b: { c: { d: "deep" } } } };
@@ -205,11 +202,11 @@ In memory-constrained environments, use the `--smol` flag to reduce memory usage
 bun --smol run index.tsx
 ```
 
-`--smol` makes the garbage collector run more frequently, which can slow down execution. Bun adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so the flag is mostly useful when you want the heap to grow more slowly.
+`--smol` makes the garbage collector run more frequently, which can slow down execution. Bun adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag. The flag is therefore mostly useful when you want the heap to grow more slowly.
 
 ## Resolution order
 
-Absolute paths and paths starting with `./` or `.\\` are always executed as source files. Unless you use `bun run`, a name with an allowed extension resolves to the file rather than a `package.json` script.
+Bun always executes absolute paths and paths starting with `./` or `.\\` as source files. Unless you use `bun run`, a name with an allowed extension resolves to the file rather than a `package.json` script.
 
 When a `package.json` script and a file have the same name, `bun run` prefers the script. The full resolution order is:
 

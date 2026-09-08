@@ -38,6 +38,7 @@ use bun_resolver::fs::FileSystem;
 
 type CoreError = crate::Error;
 
+use bun_collections::index_sort;
 use bun_core::HashedString;
 use bun_ptr::Interned;
 
@@ -136,7 +137,7 @@ struct RouteIndex {
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
-pub struct RouteIndexList {
+struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
@@ -488,8 +489,9 @@ impl<'a> RouteLoader<'a> {
             };
         }
 
-        this.all_routes
-            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
+        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
+            sorter::sort_by_name_cmp(a, b)
+        });
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -1143,7 +1145,7 @@ pub trait ResolverLike {
 pub mod pattern {
     use super::*;
 
-    pub type RoutePathInt = u16;
+    type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
     pub struct Pattern {
@@ -1170,8 +1172,8 @@ pub mod pattern {
 
                 match pattern.value {
                     Value::Static(str_) => {
-                        let segment =
-                            &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
+                        let segment = &path_
+                            [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
                             params.clear(); // shrinkRetainingCapacity(0)
                             return false;
@@ -1188,7 +1190,7 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        if let Some(i) = path_.iter().position(|&b| b == b'/') {
+                        if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
                                 value: &path_[0..i],

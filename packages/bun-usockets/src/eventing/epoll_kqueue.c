@@ -18,6 +18,7 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <time.h>
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
@@ -73,10 +74,6 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     loop->num_polls--;
     us_free(p);
-}
-
-__attribute__((always_inline)) void *us_poll_ext(struct us_poll_t *p) {
-    return p + 1;
 }
 
 /* Todo: why have us_poll_create AND us_poll_init!? libuv legacy! */
@@ -263,7 +260,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
              * forwarded as a libus close code, and a raw EPOLLERR (8) would
              * read as errno 8 (ENOEXEC) in the JS error path. */
             const int error = !!(events & EPOLLERR);
-            const int eof = events & EPOLLHUP;
+            /* A read-side FIN is EPOLLIN + recv()==0; EPOLLHUP means both directions
+             * are down and is level-triggered, so tag it for the dispatch to close. */
+            const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : 0;
             events &= us_poll_events(poll);
             if (events || error || eof) {
                 us_internal_dispatch_ready_poll(poll, error, eof, events);
@@ -280,8 +279,10 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         uint8_t writable : 1;
         uint8_t error    : 1;
         uint8_t eof      : 1;
+        uint8_t send_eof : 1;
+        uint8_t send_eof_err : 1;
+        uint8_t eof_err  : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 3;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -305,7 +306,15 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
-            .eof = !!(flags & EV_EOF),
+            /* EV_EOF on EVFILT_READ is the peer's FIN; on EVFILT_WRITE it is SS_CANTSENDMORE (peer gone, or our own shutdown) - not a read EOF (libuv kqueue.c ignores it there too). */
+            .eof = (flags & EV_EOF) && filter == EVFILT_READ,
+            .send_eof = (flags & EV_EOF) && filter == EVFILT_WRITE,
+            /* kevent(2): with EV_EOF, fflags carries the socket error. Nonzero
+             * alongside a write-filter EV_EOF means the connection died hard,
+             * not just that our own shutdown() set SS_CANTSENDMORE. */
+            .send_eof_err = (flags & EV_EOF) && filter == EVFILT_WRITE && loop->ready_polls[i].fflags != 0,
+            /* Same on the read filter: a reset, which epoll reports as EPOLLERR. */
+            .eof_err = (flags & EV_EOF) && filter == EVFILT_READ && loop->ready_polls[i].fflags != 0,
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -317,6 +326,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].writable |= bits.writable;
                 coalesced[j].error |= bits.error;
                 coalesced[j].eof |= bits.eof;
+                coalesced[j].send_eof |= bits.send_eof;
+                coalesced[j].send_eof_err |= bits.send_eof_err;
+                coalesced[j].eof_err |= bits.eof_err;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -344,9 +356,38 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         int events = (bits.readable ? LIBUS_SOCKET_READABLE : 0)
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
+        int error = bits.error;
+        int eof = bits.eof;
+        if (bits.send_eof || bits.eof_err) {
+            int type = us_internal_poll_type(poll);
+            if (type == POLL_TYPE_SOCKET || type == POLL_TYPE_SEMI_SOCKET) {
+                /* Write side dead without our own shutdown() (peer reset /
+                 * connect refused), or a read-filter EV_EOF carrying the
+                 * socket error in fflags: both are epoll's EPOLLERR. */
+                if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
+                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    /* fflags==0 with reads paused is AF_UNIX's graceful peer
+                     * close (TCP only gets SS_CANTSENDMORE from RST, which
+                     * carries the error): the receive buffer survives, so
+                     * defer like epoll's EPOLLHUP - resume() delivers the
+                     * tail + end instead of an error close discarding it. */
+                    eof = 1;
+                } else {
+                    error = 1;
+                }
+            } else if (type == POLL_TYPE_SOCKET_SHUT_DOWN) {
+                /* Our own shutdown() sets SS_CANTSENDMORE, so a write-side
+                 * EV_EOF alone proves nothing here; a socket error in fflags
+                 * (either filter) is the peer dying hard: EPOLLERR parity. */
+                if (bits.send_eof_err || bits.eof_err) {
+                    error = 1;
+                }
+            }
+        }
+
         events &= us_poll_events(poll);
-        if (events || bits.error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, bits.error, bits.eof, events);
+        if (events || error || eof) {
+            us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
 #endif
@@ -530,43 +571,71 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 /* Poll */
 
 #ifdef LIBUS_USE_KQUEUE
-/* Helper function for setting or updating EVFILT_READ and EVFILT_WRITE */
-int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data) {
-    struct kevent64_s change_list[2];
+static int kqueue_is_socket_poll(struct us_poll_t *p) {
+    int type = us_internal_poll_type(p);
+    return type == POLL_TYPE_SOCKET || type == POLL_TYPE_SOCKET_SHUT_DOWN;
+}
+
+/* Registers the difference between old_events and new_events for fd.
+ *
+ * With keep_read_knote (us_poll_change passes it for socket polls) the EVFILT_READ knote
+ * stays registered while the socket does not poll for reads (paused, half-open after the
+ * peer's FIN, shut down with reads off, parked as low priority), re-added with EV_CLEAR.
+ * It is kqueue's stand-in for epoll's implicit EPOLLHUP/EPOLLERR: the peer's FIN or RST
+ * still reaches the dispatcher as eof/error (us_poll_events masks the readable bit out).
+ * NOTE_LOWAT with an unreachable low-water mark keeps arriving data from waking the loop
+ * while reads are off (the socket filter reports EOF and so_error before it consults the
+ * mark; xnu clamps the mark to the receive buffer size, so there it can fire once more when
+ * the buffer fills), and EV_CLEAR keeps a consumed EOF from re-firing. Nothing else
+ * reports them: the one-shot write filter is consumed by the first, immediate, writable
+ * event, so a reset of a paused socket went unreported until resume(), unlike on epoll
+ * and libuv. EV_ADD on an existing knote updates its udata but keeps its flags (and would
+ * reset the sentinel's NOTE_LOWAT), so each switch between the two modes, and the udata
+ * move in us_poll_resize, deletes the knote and adds a new one. */
+int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_data, int keep_read_knote) {
+    struct kevent64_s change_list[3];
     int change_length = 0;
 
-    /* Do they differ in readable? */
-    int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
-    int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
-    if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+    int is_readable = (new_events & LIBUS_SOCKET_READABLE);
+    if (is_readable != (old_events & LIBUS_SOCKET_READABLE)) {
+        if (keep_read_knote) {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_DELETE, 0, 0, 0, 0, 0);
+            if (is_readable) {
+                EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            } else {
+                EV_SET64(&change_list[change_length++], fd, EVFILT_READ, EV_ADD | EV_CLEAR, NOTE_LOWAT, INT_MAX, (uint64_t)(void*)user_data, 0, 0);
+            }
+        } else {
+            EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        }
     }
 
-    if(!is_readable && !is_writable) {
-        if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
-            // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
-        }
-    } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
-        /* Do they differ in writable? */
+    if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
+
     int ret;
     do {
         ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
 
-    // ret should be 0 in most cases (not guaranteed when removing async)
-
-    /* KEVENT_FLAG_ERROR_EVENTS reports per-filter failures as EV_ERROR entries
-     * with the errno in .data; kevent64 itself returns the count and does not
-     * set errno. Mirror epoll's contract so us_poll_start_rc callers can read it. */
-    if (ret > 0) {
-        errno = (int) change_list[0].data;
+    /* KEVENT_FLAG_ERROR_EVENTS reports each failed change as an EV_ERROR entry with the
+     * errno in .data while the other changes still apply; kevent64 itself returns their
+     * count and does not set errno. A delete of a filter that is not registered (a write
+     * one-shot the kernel already consumed) leaves the fd in the state asked for and is not
+     * a failure. Anything else mirrors epoll's contract so us_poll_start_rc callers can
+     * read errno. */
+    for (int i = 0; i < ret; i++) {
+        if ((change_list[i].flags & EV_DELETE) && change_list[i].data == ENOENT) {
+            continue;
+        }
+        errno = (int) change_list[i].data;
+        return 1;
     }
 
-    return ret;
+    return ret < 0 ? ret : 0;
 }
+
 #endif
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int old_ext_size, unsigned int ext_size) {
@@ -588,8 +657,10 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     new_p->state.poll_type = us_internal_poll_type(new_p);
     us_poll_change(new_p, loop, events);
 #else
-    /* Forcefully update poll by resetting them with new_p as user data */
-    kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+    /* Move the udata to new_p: re-register the polled filters, and for a socket poll re-create
+     * its read knote in its current mode (it has one whether or not it reads, see kqueue_change). */
+    const int is_socket = kqueue_is_socket_poll(new_p);
+    kqueue_change(loop->fd, new_p->state.fd, is_socket ? (~events & LIBUS_SOCKET_READABLE) : 0, events, new_p, is_socket);
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
     us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
@@ -627,7 +698,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     } while (IS_EINTR(ret));
     return ret;
 #else
-    return kqueue_change(loop->fd, p->state.fd, 0, events, p);
+    /* A socket that starts without read interest (LIBUS_SOCKET_OPEN_PAUSED) takes the same
+     * transition as one that pauses, so it too keeps the read knote that reports the peer's
+     * FIN or RST while it is paused (see kqueue_change). */
+    int starts_paused = kqueue_is_socket_poll(p) && !(events & LIBUS_SOCKET_READABLE);
+    return kqueue_change(loop->fd, p->state.fd, starts_paused ? LIBUS_SOCKET_READABLE : 0, events, p, starts_paused);
 #endif
 }
 
@@ -635,31 +710,39 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
 
-void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
+    int rc = 0;
     if (old_events != events) {
 
         p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
+        event.events = events;
         if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
             /* See us_poll_start_rc: EPOLLHUP/EPOLLERR are implicit; never add
              * EPOLLRDHUP for an already-half-closed socket or the loop spins. */
-            events |= EPOLLHUP | EPOLLERR;
+            event.events |= EPOLLHUP | EPOLLERR;
         }
-        event.events = events;
         event.data.ptr = p;
-        int rc;
         do {
             rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
         } while (IS_EINTR(rc));
+        /* A paused socket that hung up was taken out of epoll by the dispatcher
+         * (loop.c); this is the resume putting it back. Registering anew can
+         * fail like any first registration, so it goes through the same path
+         * and the caller gets the verdict (us_socket_resume closes on it). */
+        if (rc == -1 && errno == ENOENT) {
+            rc = us_poll_start_rc(p, loop, events);
+        }
 #else
-        kqueue_change(loop->fd, p->state.fd, old_events, events, p);
+        kqueue_change(loop->fd, p->state.fd, old_events, events, p, kqueue_is_socket_poll(p));
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
         us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
+    return rc;
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
@@ -672,8 +755,11 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
          rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
     } while (IS_EINTR(rc));
 #else
-    if (old_events) {
-        kqueue_change(loop->fd, p->state.fd, old_events, new_events, NULL);
+    /* A socket poll has a read knote in both of its modes (see kqueue_change), so there is
+     * one to delete even when it was not polling for reads. */
+    int registered = kqueue_is_socket_poll(p) ? old_events | LIBUS_SOCKET_READABLE : old_events;
+    if (registered) {
+        kqueue_change(loop->fd, p->state.fd, registered, new_events, NULL, 0);
     }
 #endif
 

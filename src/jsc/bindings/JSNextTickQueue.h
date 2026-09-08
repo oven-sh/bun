@@ -18,15 +18,6 @@ public:
     static JSNextTickQueue* create(JSC::JSGlobalObject* globalObject);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsNumber(-1),
-            jsUndefined(),
-            jsUndefined(),
-        } };
-    }
-
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
@@ -35,5 +26,8 @@ public:
 
     bool isEmpty();
     void drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    // Teardown: whatever was queued no longer runs (field 0 = scheduled flag, field 2 = the JS
+    // drain function). The queued callbacks go with the heap.
+    void discard(JSC::VM& vm);
 };
 }

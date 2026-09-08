@@ -22,59 +22,13 @@
 // IN THE SOFTWARE.
 
 #include "root.h"
-#include "ErrorCode.h"
-#include "BunCommonStrings.h"
-#include "JavaScriptCore/JSArrayBufferView.h"
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSCast.h"
 #include "ZigGlobalObject.h"
-#include "webcrypto/JSCryptoKey.h"
-#include "webcrypto/JSSubtleCrypto.h"
 #include "webcrypto/CryptoKeyAKP.h"
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyEC.h"
 #include "webcrypto/CryptoKeyRSA.h"
-#include "webcrypto/CryptoKeyAES.h"
-#include "webcrypto/CryptoKeyHMAC.h"
-#include "webcrypto/CryptoKeyRaw.h"
-#include "webcrypto/CryptoKeyUsage.h"
-#include "webcrypto/JsonWebKey.h"
-#include "webcrypto/JSJsonWebKey.h"
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "headers-handwritten.h"
 #include <openssl/evp.h>
-#include <openssl/mem.h>
-#include <openssl/x509.h>
-#include <openssl/pem.h>
-#include <openssl/curve25519.h>
-#include "JSBuffer.h"
-#include "CryptoAlgorithmHMAC.h"
-#include "CryptoAlgorithmEd25519.h"
-#include "CryptoAlgorithmRSA_OAEP.h"
-#include "CryptoAlgorithmRSA_PSS.h"
-#include "CryptoAlgorithmRSASSA_PKCS1_v1_5.h"
-#include "CryptoAlgorithmECDSA.h"
-#include "CryptoAlgorithmEcdsaParams.h"
-#include "CryptoAlgorithmRsaOaepParams.h"
-#include "CryptoAlgorithmRsaPssParams.h"
-#include "CryptoAlgorithmRegistry.h"
-#include "wtf/ForbidHeapAllocation.h"
-#include "wtf/Noncopyable.h"
-#include "ncrypto.h"
 #include "AsymmetricKeyValue.h"
-using namespace JSC;
-using namespace Bun;
-using JSGlobalObject = JSC::JSGlobalObject;
-using Exception = JSC::Exception;
-using JSValue = JSC::JSValue;
-using JSString = JSC::JSString;
-using JSModuleLoader = JSC::JSModuleLoader;
-using JSModuleRecord = JSC::JSModuleRecord;
-using Identifier = JSC::Identifier;
-using SourceOrigin = JSC::SourceOrigin;
-using JSObject = JSC::JSObject;
-using JSNonFinalObject = JSC::JSNonFinalObject;
 
 namespace WebCore {
 

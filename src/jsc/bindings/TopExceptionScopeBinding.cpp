@@ -1,4 +1,5 @@
 #include <root.h>
+#include "BunClientData.h"
 
 using JSC::TopExceptionScope;
 
@@ -41,7 +42,8 @@ extern "C" void TopExceptionScope__construct(
 extern "C" JSC::Exception* TopExceptionScope__pureException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
-    return static_cast<TopExceptionScope*>(ptr)->exception();
+    auto* scope = static_cast<TopExceptionScope*>(ptr);
+    return scope->exception();
 }
 
 extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
@@ -55,11 +57,24 @@ extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
     return nullptr;
 }
 
+extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    auto* scope = static_cast<TopExceptionScope*>(ptr);
+    return Bun::takeTerminationOutsideScript(scope->vm(), *scope);
+}
+
 extern "C" void TopExceptionScope__clearException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
     scope->clearException();
+}
+
+extern "C" void TopExceptionScope__clearExceptionExceptTermination(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    static_cast<TopExceptionScope*>(ptr)->clearExceptionExceptTermination();
 }
 
 extern "C" void TopExceptionScope__destruct(void* ptr)

@@ -1,7 +1,7 @@
 //! Node-API (N-API) implementation.
 //!
 //! The full implementation lives in `napi_body.rs` and depends on
-//! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
+//! `bun_jsc::{ConcurrentTask, Debugger, EventLoop, Strong, Task,
 //! VirtualMachine}` method surface, `bun_collections::LinearFifo`,
 //! `bun_threading::{Condvar, Mutex, WorkPool}`, `bun_output` macros.
 
@@ -11,6 +11,8 @@ pub use napi_body::NapiStatus;
 pub(crate) use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };
+
+pub(crate) mod libc_check;
 
 // ─── compiling free items ────────────────────────────────────────────────────
 

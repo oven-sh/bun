@@ -4,7 +4,6 @@
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
@@ -526,11 +525,10 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
-// Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
+// Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
 // one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
 pub type StmtNodeList = StoreSlice<Stmt>;
-pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -880,9 +878,6 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
-
-    // `to_module_type()` lives in `bun_options_types` as
-    // `impl From<ExportsKind> for ModuleType` (would cycle here).
 }
 
 #[derive(Copy, Clone)]
@@ -1023,15 +1018,6 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            source_index: Index::INVALID,
-            part_index: 0,
-        }
-    }
-}
-
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
@@ -1093,8 +1079,6 @@ pub enum PartTag {
     None,
     JsxImport,
     Runtime,
-    CjsImports,
-    ReactFastRefresh,
     ReactCompiler,
     DirnameFilename,
     BunTest,
@@ -1106,10 +1090,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {
@@ -1191,20 +1183,6 @@ pub struct NamedImport {
     pub is_exported: bool,
 }
 
-impl Default for NamedImport {
-    fn default() -> Self {
-        Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-            alias: None,
-            alias_loc: crate::Loc::EMPTY,
-            namespace_ref: Ref::NONE,
-            import_record_index: 0,
-            alias_is_star: false,
-            is_exported: false,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
@@ -1229,10 +1207,8 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 

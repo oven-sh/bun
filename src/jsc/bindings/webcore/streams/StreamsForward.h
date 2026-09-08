@@ -78,6 +78,8 @@ class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSTextEncoderStream;
 class JSTextDecoderStream;
+class JSCompressionStream;
+class JSDecompressionStream;
 
 } // namespace WebCore
 
@@ -135,6 +137,18 @@ enum class TransformerKind : uint8_t {
     Identity, // new TransformStream() with no `transform` member: enqueue the chunk unchanged
     TextEncoder, // TextEncoderStream (context = the JSTextEncoderStream cell)
     TextDecoder, // TextDecoderStream (context = the JSTextDecoderStream cell)
+    Compression, // CompressionStream   (context = the JSCompressionStream cell)
+    Decompression, // DecompressionStream (context = the JSDecompressionStream cell)
+};
+
+// CompressionStream / DecompressionStream format. Matches the `Format` enum in
+// CompressionStreamCoder.rs.
+enum class CompressionFormat : uint8_t {
+    Deflate = 0,
+    DeflateRaw = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
 };
 
 // JSReadableStream Bun-mode members
@@ -224,12 +238,6 @@ enum class ReadableStreamType : uint8_t { Bytes };
 // WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
-// Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk,
-    Pull,
-    Error,
-    Close };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -238,7 +246,6 @@ enum class CrossRealmMessageType : uint8_t { Chunk,
 namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
-using Bun::WebStreams::CrossRealmMessageType;
 using Bun::WebStreams::DirectSinkKind;
 using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;

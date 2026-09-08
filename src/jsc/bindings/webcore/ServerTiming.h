@@ -38,9 +38,6 @@ struct ServerTiming {
     bool descriptionSet = false;
 
     ServerTiming(String&& name, double duration, String&& description, bool durationSet, bool descriptionSet);
-
-    ServerTiming isolatedCopy() const&;
-    ServerTiming isolatedCopy() &&;
 };
 
 inline ServerTiming::ServerTiming(String&& name, double duration, String&& description, bool durationSet, bool descriptionSet)

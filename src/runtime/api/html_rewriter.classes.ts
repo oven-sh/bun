@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -30,7 +30,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -69,7 +69,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -101,7 +101,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -118,7 +118,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -154,7 +154,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -183,7 +183,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -204,7 +204,7 @@ export default [
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
-    finalize: true,
+    refCounted: true,
     JSType: "0b11101110",
     configurable: false,
     noConstructor: true,
@@ -288,5 +288,20 @@ export default [
         getter: "getAttributes",
       },
     },
+  }),
+  // Not user-visible. One per `transform()` call; the output Response roots it
+  // via its `values: [..., "transform"]` slot, and it is the `.then()` context
+  // for a suspended handler's promise. Its finalizer owns the native
+  // `RewriterPipe` box and the boxed lol-html rewriter.
+  define({
+    name: "HTMLRewriterTransform",
+    construct: false,
+    noConstructor: true,
+    refCounted: true,
+    klass: {},
+    proto: {},
+    // WriteBarrier slots: everything the pipe must keep reachable and that
+    // would otherwise need a StrongOptional root.
+    values: ["response", "inputStream", "outputStream", "pendingPromise", "handlerError", "suspensionPromise"],
   }),
 ];

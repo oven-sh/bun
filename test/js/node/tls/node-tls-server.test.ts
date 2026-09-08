@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -649,6 +649,20 @@ it("tls.rootCertificates should exists", () => {
   expect(typeof rootCertificates[0]).toBe("string");
 });
 
+// https://github.com/oven-sh/bun/issues/40917
+it("createServer registers the callback as a regular 'secureConnection' listener", () => {
+  const cb = () => {};
+  const withOptions = createServer(COMMON_CERT, cb);
+  expect(withOptions.listenerCount("secureConnection")).toBe(1);
+  expect(withOptions.listeners("secureConnection")).toContain(cb);
+  withOptions.close();
+
+  const withoutOptions = createServer(cb);
+  expect(withoutOptions.listenerCount("secureConnection")).toBe(1);
+  expect(withoutOptions.listeners("secureConnection")).toContain(cb);
+  withoutOptions.close();
+});
+
 it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
   let count = 0;
   const promises = [];
@@ -740,6 +754,72 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
   expect(true).toBe(true);
 });
 
+it("writing to the socket from inside SNICallback or ALPNCallback delivers the data after the handshake", async () => {
+  // Same callbacks as above: they run from inside the native read that is
+  // processing the ClientHello. A write issued there has to be held until that
+  // call unwinds and the handshake completes; encrypting it on the spot
+  // re-enters the TLS engine mid-handshake and the client gets
+  // TLSV1_ALERT_INTERNAL_ERROR instead of a connection.
+  const connections: TLSSocket[] = [];
+  const cases: Array<[string, tls.TlsOptions, string | false]> = [
+    [
+      "ALPNCallback",
+      {
+        ALPNCallback({ protocols }) {
+          connections.at(-1)!.write("from-callback;");
+          return protocols[0];
+        },
+      },
+      "x/1",
+    ],
+    [
+      "SNICallback",
+      {
+        SNICallback(_name, cb) {
+          connections.at(-1)!.write("from-callback;");
+          cb(null, undefined);
+        },
+      },
+      false,
+    ],
+  ];
+  for (const [label, extra, expectedAlpn] of cases) {
+    connections.length = 0;
+    const tlsClientErrors: Error[] = [];
+    const server = createServer({ ...COMMON_CERT, ...extra }, socket => socket.end("after-handshake;"));
+    server.on("connection", socket => connections.push(socket as TLSSocket));
+    server.on("tlsClientError", err => tlsClientErrors.push(err));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let received = "";
+    const client = connect({
+      port,
+      host: "127.0.0.1",
+      ca: COMMON_CERT.cert,
+      servername: "localhost",
+      ALPNProtocols: ["x/1"],
+    });
+    client.setEncoding("utf8");
+    client.on("data", chunk => (received += chunk));
+    client.on("end", () => resolve(received));
+    client.on("error", err => resolve(`client error: ${err.message}`));
+    const data = await promise;
+    client.end();
+    server.close();
+    await once(server, "close");
+
+    expect({ label, data, alpn: client.alpnProtocol, tlsClientErrors: tlsClientErrors.map(e => e.message) }).toEqual({
+      label,
+      data: "from-callback;after-handshake;",
+      alpn: expectedAlpn,
+      tlsClientErrors: [],
+    });
+  }
+});
+
 it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
   // A server that never requested a client certificate must not report the
   // connection as authorized (matches Node.js fail-closed semantics).
@@ -810,6 +890,119 @@ it("leaves socket.authorized false unless a client certificate was requested and
       server.close();
     }
   }
+});
+
+it("keeps socket.authorized false when a client without a certificate resumes a TLSv1.3 session", async () => {
+  type Verdict = { reused: boolean; authorized: boolean; authorizationError: unknown };
+  const verdicts: Verdict[] = [];
+  const twoConnections = Promise.withResolvers<void>();
+  await using server = createServer(
+    { ...COMMON_CERT, requestCert: true, rejectUnauthorized: false, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
+    socket => {
+      verdicts.push({
+        reused: socket.isSessionReused(),
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError,
+      });
+      if (verdicts.length === 2) twoConnections.resolve();
+      socket.on("data", () => {});
+      socket.write("x");
+    },
+  );
+  server.on("error", twoConnections.reject);
+  server.on("tlsClientError", twoConnections.reject);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const opts = {
+    port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  } as const;
+
+  const first = connect(opts);
+  first.on("error", twoConnections.reject);
+  first.on("data", () => {});
+  const [session] = await once(first, "session");
+  const firstProtocol = first.getProtocol();
+  first.destroy();
+  await once(first, "close");
+  expect(firstProtocol).toBe("TLSv1.3");
+  expect(Buffer.isBuffer(session)).toBe(true);
+
+  const second = connect({ ...opts, session });
+  second.on("error", twoConnections.reject);
+  second.on("data", () => {});
+  await once(second, "secureConnect");
+  const clientReused = second.isSessionReused();
+  await twoConnections.promise;
+  second.destroy();
+  await once(second, "close");
+
+  expect(clientReused).toBe(true);
+  expect(verdicts).toEqual([
+    { reused: false, authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+    { reused: true, authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+  ]);
+});
+
+it("keeps socket.authorized false when a client without a certificate resumes a TLSv1.3 session against an https server", async () => {
+  type Verdict = { authorized: boolean | undefined; authorizationError: unknown };
+  const verdicts: Verdict[] = [];
+  await using server = https.createServer(
+    { ...COMMON_CERT, requestCert: true, rejectUnauthorized: false },
+    (req, res) => {
+      const socket = req.socket as TLSSocket;
+      verdicts.push({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+      const body = String(socket.authorized);
+      res.writeHead(200, { "Connection": "close", "Content-Length": String(body.length) });
+      res.end(body);
+    },
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const opts = {
+    port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  } as const;
+
+  async function request(session?: Buffer) {
+    const socket = connect(session ? { ...opts, session } : opts);
+    const gotSession = session ? Promise.resolve([session]) : once(socket, "session");
+    const closed = once(socket, "close");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    await once(socket, "secureConnect");
+    const protocol = socket.getProtocol();
+    const reused = socket.isSessionReused();
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const [ticket] = await gotSession;
+    await closed;
+    const body = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n")[1];
+    return { protocol, reused, ticket: ticket as Buffer, body };
+  }
+
+  const first = await request();
+  expect(first.protocol).toBe("TLSv1.3");
+  expect(first.reused).toBe(false);
+  expect(first.body).toBe("false");
+  expect(Buffer.isBuffer(first.ticket)).toBe(true);
+
+  const second = await request(first.ticket);
+  expect(second.protocol).toBe("TLSv1.3");
+  expect(second.reused).toBe(true);
+  expect(second.body).toBe("false");
+
+  expect(verdicts).toEqual([
+    { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+    { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+  ]);
 });
 
 it("keeps req.socket.authorized false for an unverified client after the server socket shuts down", async () => {
@@ -2275,6 +2468,220 @@ describe("deferred spill-close", () => {
       expect(Buffer.concat(serverGot).toString()).toBe("late-peer-data");
     } finally {
       server.close();
+    }
+  });
+});
+
+describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
+  // The peer sends data while the accepted socket is paused, then resets the
+  // connection (RST) instead of ending it. Node reports that as a read
+  // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
+  // after an 'end', so a reset misreported as an orderly end strands it.
+  async function acceptPausedSocketAndFill() {
+    const accepted = Promise.withResolvers<net.Socket>();
+    const onConnection = (socket: net.Socket) => {
+      socket.pause();
+      accepted.resolve(socket);
+    };
+    const server =
+      transport === "tls"
+        ? createServer({ ...COMMON_CERT, allowHalfOpen: true }, onConnection)
+        : net.createServer({ allowHalfOpen: true }, onConnection);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const peerReady = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: transport === "tls" ? { ca: COMMON_CERT.cert } : undefined,
+      socket: {
+        open() {
+          if (transport !== "tls") peerReady.resolve();
+        },
+        handshake(_peer, success, verifyError) {
+          if (success) peerReady.resolve();
+          else peerReady.reject(verifyError ?? new Error("handshake failed"));
+        },
+        data() {},
+        close() {},
+        error(_peer, error) {
+          peerReady.reject(error);
+        },
+        connectError(_peer, error) {
+          peerReady.reject(error);
+        },
+      },
+    });
+    const socket = await accepted.promise;
+    await peerReady.promise;
+
+    const events: string[] = [];
+    let bytes = 0;
+    // Settles on 'close', or on the 'end' that must not happen, so a failure does
+    // not wait for the test timeout on a socket left half-open.
+    const settled = Promise.withResolvers<void>();
+    socket.on("data", chunk => (bytes += chunk.length));
+    socket.on("end", () => {
+      events.push("end");
+      settled.resolve();
+    });
+    socket.on("error", error => events.push(`error ${(error as NodeJS.ErrnoException).code}`));
+    socket.on("close", hadError => {
+      events.push(`close hadError=${hadError}`);
+      settled.resolve();
+    });
+    // Paused again: the 'data' listener above switched the stream to flowing.
+    socket.pause();
+
+    const t = {
+      socket,
+      peer,
+      events,
+      bytesRead: () => bytes,
+      settled: settled.promise,
+      [Symbol.dispose]() {
+        socket.destroy();
+        server.close();
+      },
+    };
+    // One chunk that fits: it is queued ahead of the reset and the receive window
+    // stays open. macOS drops an RST that arrives at a zero window, so filling
+    // the buffers would strand the socket there.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    const written = peer.write(chunk);
+    if (written !== chunk.length) {
+      t[Symbol.dispose]();
+      throw new Error(`short write: ${written} of ${chunk.length}`);
+    }
+    return t;
+  }
+
+  it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // The data queued ahead of the reset was read off the socket before it closed
+    // (kept in the paused stream's buffer), not discarded with the fd. Windows
+    // discards the receive queue on a reset.
+    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+  });
+
+  it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    // Both happen before the event loop runs again, so the socket's next read
+    // event carries the queued data and the reset together: the read loop drains
+    // the data and then gets the error from recv().
+    t.socket.resume();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // Windows discards the receive queue on a reset. Linux and macOS keep it, and
+    // like node, the data is delivered before the error.
+    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
+  });
+});
+
+describe.each(["tls", "net"])("%s server socket that unpipe() paused after it end()ed", transport => {
+  // A front server pipes each accepted socket to an upstream connection and back.
+  // The upstream replies and closes: inner.pipe(sock) end()s sock, and the cleanup
+  // of sock.pipe(inner) unpipes sock, which pauses it with nothing left to resume
+  // it. The peer then closes. Node delivers 'end' and 'close' to the paused
+  // socket, so the connection count drops and server.close() calls back.
+  it("still emits 'end' and 'close' when the peer closes, and server.close() completes", async () => {
+    const upstream = net.createServer(s => s.on("data", () => s.end("reply")));
+    await once(upstream.listen(0, "127.0.0.1"), "listening");
+    const serverEvents: string[] = [];
+    const serverSocketClosed = Promise.withResolvers<void>();
+    const onConnection = (sock: net.Socket) => {
+      const inner = net.connect((upstream.address() as AddressInfo).port, "127.0.0.1", () => {
+        sock.pipe(inner);
+        inner.pipe(sock);
+      });
+      inner.on("close", () => serverEvents.push(`upstream closed, paused=${sock.isPaused()}`));
+      sock.on("end", () => serverEvents.push("end"));
+      sock.on("close", hadError => {
+        serverEvents.push(`close hadError=${hadError}`);
+        serverSocketClosed.resolve();
+      });
+      sock.on("error", serverSocketClosed.reject);
+    };
+    const front = transport === "tls" ? createServer(COMMON_CERT, onConnection) : net.createServer(onConnection);
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const frontClosed = Promise.withResolvers<void>();
+    const upstreamClosed = Promise.withResolvers<void>();
+    try {
+      const port = (front.address() as AddressInfo).port;
+      const clientEvents: string[] = [];
+      const clientClosed = Promise.withResolvers<void>();
+      const onConnect = () => client.write("hi");
+      const client: net.Socket =
+        transport === "tls"
+          ? connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, onConnect)
+          : net.connect({ port, host: "127.0.0.1" }, onConnect);
+      client.setEncoding("utf8");
+      client.on("data", chunk => clientEvents.push(`data ${chunk}`));
+      client.on("end", () => clientEvents.push("end"));
+      client.on("close", () => {
+        clientEvents.push("close");
+        clientClosed.resolve();
+      });
+      client.on("error", clientClosed.reject);
+      await Promise.all([clientClosed.promise, serverSocketClosed.promise]);
+      expect({ clientEvents, serverEvents }).toEqual({
+        clientEvents: ["data reply", "end", "close"],
+        serverEvents: ["upstream closed, paused=true", "end", "close hadError=false"],
+      });
+    } finally {
+      front.close(err => (err ? frontClosed.reject(err) : frontClosed.resolve()));
+      upstream.close(err => (err ? upstreamClosed.reject(err) : upstreamClosed.resolve()));
+    }
+    // Both connections are gone, so both servers call back.
+    await Promise.all([frontClosed.promise, upstreamClosed.promise]);
+  });
+});
+
+describe("pauseOnConnect", () => {
+  it("hands out the accepted socket paused after the handshake and reads nothing until resume()", async () => {
+    const server = createServer({ ...COMMON_CERT, pauseOnConnect: true });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    server.on("secureConnection", accepted.resolve);
+    server.on("tlsClientError", accepted.reject);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // A second connection is the barrier: its bytes reach this process after the
+    // client's "hello" reached the paused socket's receive buffer.
+    const probe = net.createServer();
+    const probed = Promise.withResolvers<void>();
+    probe.on("connection", socket => socket.once("data", () => probed.resolve()));
+    await once(probe.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    const clientSecure = once(client, "secureConnect");
+    try {
+      const socket = await accepted.promise;
+      expect(socket.isPaused()).toBe(true);
+      await clientSecure;
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
+      const probeClient = net.connect((probe.address() as AddressInfo).port, "127.0.0.1", () => probeClient.end("x"));
+      await probed.promise;
+      // Node's TLSWrap reads ahead here (bytesRead would be 5). Ours stops reading once the
+      // handshake completed, so bytes sent after it stay in the kernel (app data that shares
+      // a segment with the client's Finished is still decrypted and buffered).
+      expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+      const received = once(socket, "data");
+      socket.resume();
+      const [chunk] = await received;
+      expect(String(chunk)).toBe("hello");
+      const clientClosed = once(client, "close");
+      socket.end();
+      client.end();
+      await clientClosed;
+    } finally {
+      server.close();
+      probe.close();
     }
   });
 });

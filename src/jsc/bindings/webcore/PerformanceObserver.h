@@ -28,6 +28,7 @@
 #include "ExceptionOr.h"
 #include "PerformanceEntry.h"
 #include "PerformanceObserverCallback.h"
+#include "ScriptWrappable.h"
 #include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
@@ -38,7 +39,9 @@ namespace WebCore {
 class Performance;
 class ScriptExecutionContext;
 
-class PerformanceObserver : public RefCounted<PerformanceObserver> {
+class PerformanceObserver : public ScriptWrappable, public RefCounted<PerformanceObserver> {
+    WTF_MAKE_TZONE_ALLOCATED(PerformanceObserver);
+
 public:
     struct Init {
         std::optional<Vector<String>> entryTypes;

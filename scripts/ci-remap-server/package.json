@@ -1,0 +1,8 @@
+{
+  "name": "ci-remap-server",
+  "private": true,
+  "description": "Dependencies of the crash report remap server scripts/runner.node.mjs starts in CI. Kept out of the root package.json so that root installs never download from GitHub.",
+  "devDependencies": {
+    "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8"
+  }
+}

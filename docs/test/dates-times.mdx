@@ -98,7 +98,13 @@ Use it to read the mocked time without creating a new `Date` object.
 `jest.useFakeTimers()` also puts `setTimeout`, `setInterval`, and `AbortSignal.timeout()` on a fake clock that only moves when the test moves it. `Date.now()`, `new Date()`, and `performance.now()` follow the same clock. `setImmediate`, `process.nextTick`, `queueMicrotask`, and I/O keep running in real time. The same functions exist on `vi` for tests written against Vitest.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { test, expect, jest } from "bun:test";
+import { afterEach, test, expect, jest } from "bun:test";
+
+// Fake timers stay on until useRealTimers() is called, also when a test fails,
+// so turn them off in afterEach rather than at the end of each test.
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 test("retries after one second", () => {
   jest.useFakeTimers();
@@ -113,8 +119,6 @@ test("retries after one second", () => {
 
   jest.advanceTimersByTime(1);
   expect(retried).toBe(true);
-
-  jest.useRealTimers();
 });
 ```
 

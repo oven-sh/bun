@@ -460,10 +460,13 @@ For browsers that don't support the `:dir()` selector, Bun's CSS bundler convert
 If multiple arguments to `:lang()` aren't supported, Bun generates further fallbacks.
 
 <Warning>
-  The fallback infers direction from the `lang` attribute alone. A `dir` attribute is invisible to `:lang()`, so
-  `<div dir="rtl">` inside a page with `lang="en"` does not match the fallback for `:dir(rtl)`, and an Arabic page that
-  sets `dir="ltr"` on an element still matches it. If your markup sets direction with `dir`, select on the attribute
-  instead (`[dir="rtl"]`) or target browsers that support `:dir()`.
+
+The fallback infers direction from the element's language alone: the value `:lang()` matches, which comes from the
+nearest `lang` attribute on the element or an ancestor (or from the document). A `dir` attribute is invisible to
+`:lang()`, so `<div dir="rtl">` inside a page with `lang="en"` does not match the fallback for `:dir(rtl)`, and an
+Arabic page that sets `dir="ltr"` on an element still matches it. If your markup sets direction with `dir`, select on
+the attribute instead (`[dir="rtl"]`) or target browsers that support `:dir()`.
+
 </Warning>
 
 ### :lang() selector

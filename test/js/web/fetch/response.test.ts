@@ -121,8 +121,9 @@ test("Response.redirect with a ResponseInit checks status the same way as the nu
   for (const status of [0, 101, 200, 204, 304, 399, 404, 600, NaN, "200"]) {
     expect(() => Response.redirect("url", { status })).toThrow(RangeError);
   }
-  // a Response used as the init lends its status, which must still be a redirect status
+  // a Response used as the init lends its status, which goes through the same check
   expect(() => Response.redirect("url", new Response())).toThrow(RangeError);
+  expect(() => Response.redirect("url", Response.error())).toThrow(RangeError);
   expect(Response.redirect("url", Response.redirect("other", 307)).status).toBe(307);
 
   // `status` is read once
@@ -150,6 +151,20 @@ test("Response.json(data, status) checks status the same way as Response.json(da
   // null and undefined still mean "no init"
   expect(Response.json({}, null).status).toBe(200);
   expect(Response.json({}, undefined).status).toBe(200);
+
+  // a Response used as the init lends its status, which goes through the same check
+  expect(Response.json({}, new Response(null, { status: 201 })).status).toBe(201);
+  expect(() => Response.json({}, Response.error())).toThrow(RangeError);
+});
+
+test("new Response(body, response) checks the status it copies from the other Response", () => {
+  const copied = new Response("x", new Response(null, { status: 404, statusText: "Nope" }));
+  expect(copied.status).toBe(404);
+  expect(copied.statusText).toBe("Nope");
+  expect(new Response(null, new Response(null, { status: 101 })).status).toBe(101);
+  // Response.error() carries status 0, which a ResponseInit cannot set either
+  expect(() => new Response("x", Response.error())).toThrow(RangeError);
+  expect(() => new Response("x", { status: 0 })).toThrow(RangeError);
 });
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect

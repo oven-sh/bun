@@ -984,9 +984,6 @@ impl Response {
                 } else if let Some(init) =
                     Init::init_with_rule(global_this, arg_init, StatusRule::Redirect)?
                 {
-                    // `init_with_rule` copies the status of a Response passed as `init`
-                    // without a check, so check the result, not only the `status` member.
-                    StatusRule::Redirect.check(global_this, i64::from(init.status_code))?;
                     response.init.set(init);
                 }
             }
@@ -1211,8 +1208,7 @@ impl Init {
         Self::init_with_rule(global_this, response_init, StatusRule::Response)
     }
 
-    /// `rule` supplies the default status and checks a `status` member when one is
-    /// present. A `Response` passed as `response_init` lends its status without a check.
+    /// `rule` picks the default status and checks any status that `response_init` provides.
     pub(crate) fn init_with_rule(
         global_this: &JSGlobalObject,
         response_init: JSValue,
@@ -1254,7 +1250,9 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                let mut init = resp.init.get().clone(global_this)?;
+                init.status_code = rule.check(global_this, i64::from(init.status_code))?;
+                return Ok(Some(init));
             }
         }
 
@@ -1300,12 +1298,10 @@ impl Init {
     }
 }
 
-/// The statuses one constructor accepts, whether the status arrives as the number
-/// shorthand (`Response.json(data, 404)`) or as `ResponseInit.status`.
+/// The statuses a constructor accepts, from its number shorthand or from a `ResponseInit`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StatusRule {
-    /// https://fetch.spec.whatwg.org/#initialize-a-response step 1, plus 101 so a
-    /// handler can answer an upgrade.
+    /// https://fetch.spec.whatwg.org/#initialize-a-response step 1, plus 101 for upgrades.
     Response,
     /// https://fetch.spec.whatwg.org/#redirect-status
     Redirect,

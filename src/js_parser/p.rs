@@ -7229,8 +7229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// Returns true if `expr` is an identifier named `name` that resolves to the
-    /// global of that name: not shadowed by a binding, and not inside a `with`.
+    /// `expr` is the identifier `name`, unshadowed and not inside a `with`.
     fn is_unbound_identifier_named(&mut self, expr: Expr, name: &[u8]) -> bool {
         let js_ast::ExprData::EIdentifier(ex) = expr.data else {
             return false;

@@ -111,11 +111,9 @@ pub mod options {
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
     /// higher tier we cannot depend on here); the parser only consumes the
-    /// nested option fields below (see `Parser._parse`),
+    /// fields below (see `Parser._parse`),
     /// so `file_system_router_types`/`built_in_modules`
-    /// are intentionally elided. `react_fast_refresh.import_source` arrives
-    /// as `ParserOptions::react_fast_refresh_import_source` instead, since a
-    /// build without a framework can set it too.
+    /// are intentionally elided.
     ///
     /// String fields are `Cow<'static, [u8]>` to match `bake/mod.rs`
     /// (they are user-configured via `fromJS`, rewritten by

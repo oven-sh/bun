@@ -1599,8 +1599,7 @@ impl<'a> Transpiler<'a> {
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
-                    // `features.react_fast_refresh` stays off on this single-file
-                    // path; `ParseTask` forwards the import source for bundles.
+                    // Unread: `features.react_fast_refresh` is off on this path.
                     react_fast_refresh_import_source: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,

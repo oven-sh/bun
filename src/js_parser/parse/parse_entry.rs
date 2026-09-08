@@ -96,15 +96,11 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// When using server components, the framework is able to customize what
-    /// import sources are used.
+    /// Lets a framework customize the server-components import sources.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
 
-    /// With `features.react_fast_refresh`: the module that `$RefreshReg$` and
-    /// `$RefreshSig$` are imported from (its `register` and
-    /// `createSignatureFunctionForTransform` exports). `None` leaves both as
-    /// free identifiers for the host to define, the `react-refresh/babel`
-    /// contract.
+    /// With `features.react_fast_refresh`: the module to import `$RefreshReg$` /
+    /// `$RefreshSig$` from. `None` leaves them as globals for the host to define.
     pub react_fast_refresh_import_source: Option<&'a [u8]>,
 
     /// REPL mode: transforms code for interactive evaluation

@@ -3459,8 +3459,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.react_refresh.register_ref =
                     self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$");
             } else {
-                // Nothing to import them from: the host defines both before the
-                // module runs. By-name ambient, like `require`.
+                // Host-defined globals: by-name ambient, like `require`.
                 self.react_refresh.create_signature_ref =
                     self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"$RefreshSig$")?;
                 self.react_refresh.register_ref =
@@ -8554,13 +8553,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(ref_, loc)
     }
 
-    /// A name that `generate_react_refresh_import` binds, referenced from a call
-    /// that is synthesized after the visit pass went by. Does what visiting a
-    /// written identifier does: counts the use (an import item with no uses is
-    /// trimmed, always so in TypeScript files) and, unless hot module reloading
-    /// binds it with `const { .. } = require(..)`, makes it an
-    /// `EImportIdentifier` so the linker can rewrite it to a property access
-    /// when the imported module is bundled as CommonJS.
+    /// A name bound by `generate_react_refresh_import`, used after the visit
+    /// pass: count the use as the visitor would (unused import items get
+    /// trimmed) and, unless HMR binds it through `require()`, emit an
+    /// `EImportIdentifier` so the linker can bind it to a bundled CJS module.
     fn generated_import_ident(&mut self, ref_: Ref, loc: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
         if self.options.features.hot_module_reloading {

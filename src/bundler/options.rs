@@ -1219,9 +1219,7 @@ pub struct BundleOptions<'a> {
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
-    /// `--react-fast-refresh-import-source`. Read only when `react_fast_refresh`
-    /// is on and no `framework` supplies one: the module that `$RefreshReg$` /
-    /// `$RefreshSig$` are imported from. `None` leaves them as free identifiers.
+    /// `--react-fast-refresh-import-source`; `None` leaves `$RefreshReg$` / `$RefreshSig$` as globals.
     pub react_fast_refresh_import_source: Option<Box<[u8]>>,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,

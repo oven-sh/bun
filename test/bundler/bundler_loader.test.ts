@@ -192,6 +192,22 @@ describe("bundler", async () => {
     });
   }
 
+  // An HTML import from a server build turns into a manifest module plus a
+  // browser entry point that the linker finds again by path, so it stays keyed
+  // by path even when `with { type: "html" }` is not the path's default loader.
+  itBundled("bun/loader-html-type-attribute-on-non-html-extension", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+      import page from './page.htm' with { type: 'html' };
+      console.write(JSON.stringify([typeof page.index, page.files.some(f => f.path === page.index)]));
+    `,
+      "/page.htm": `<!DOCTYPE html><html><head></head><body><h1>hi</h1></body></html>`,
+    },
+    run: { stdout: '["string",true]' },
+  });
+
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",

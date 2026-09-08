@@ -152,17 +152,16 @@ pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
 /// A resolved record's module is keyed in `PathToSourceIndexMap` / `ResolveQueue`
 /// by the bare path for the loader the path gets by default, else by path +
 /// loader (one file under two `with { type }` loaders is two modules, as at
-/// runtime). Returns whether `key_buf` now holds such a key; the dev server's
-/// incremental graph is keyed by path, so it always gets bare paths.
+/// runtime). Returns whether `key_buf` now holds such a key.
 fn key_import_record_by_loader(
     key_buf: &mut Vec<u8>,
     import_record: &mut bun_ast::ImportRecord,
     path_text: &[u8],
     path_loader: bun_ast::Loader,
-    for_dev_server: bool,
+    bare_path_only: bool,
 ) -> bool {
     let loader = import_record.loader.unwrap_or(path_loader);
-    if for_dev_server || loader == path_loader {
+    if bare_path_only || loader == path_loader {
         return false;
     }
     import_record
@@ -6318,6 +6317,7 @@ pub mod bv2_impl {
 
             let mut last_error: Option<Error> = None;
             let mut module_key_buf: Vec<u8> = Vec::new();
+            // The dev server's incremental graph is keyed by path alone.
             let for_dev_server = self.dev_server.is_some();
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
@@ -6886,22 +6886,24 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+                let is_html_entrypoint = import_record_loader == Loader::Html
+                    && target.is_server_side()
+                    && self.dev_server.is_none();
+
+                // An HTML import from a server build becomes a manifest module plus
+                // a browser entry point, both found again by bare path at link time.
                 let keyed_by_loader = super::key_import_record_by_loader(
                     &mut module_key_buf,
                     import_record,
                     path.text,
                     path_loader,
-                    for_dev_server,
+                    for_dev_server || is_html_entrypoint,
                 );
                 let key: &[u8] = if keyed_by_loader {
                     &module_key_buf
                 } else {
                     path.text
                 };
-
-                let is_html_entrypoint = import_record_loader == Loader::Html
-                    && target.is_server_side()
-                    && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(key) {
                     if self.dev_server.is_some() && loader != Loader::Html {

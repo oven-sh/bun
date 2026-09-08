@@ -2806,14 +2806,13 @@ impl<'a> EqlSorter<'a> {
 /// the `trustedDependencies` names and `patchedDependencies` entries that apply to a package placed
 /// in the tree. Overrides and catalogs are left to the differ's flags, workspace versions out on
 /// purpose (release tooling bumps them without an install).
-#[derive(PartialEq, Eq)]
 pub(crate) struct ManifestSections {
     /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
     workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
-    /// `None` when the lockfile has no list, which is also what `turbo prune` wrote before
+    /// Sorted. `None` when the lockfile has no list, which is also what `turbo prune` wrote before
     /// vercel/turborepo#13740 while copying the root package.json that declares one.
     trusted_dependencies: Option<Vec<Box<[u8]>>>,
-    /// (`name@version`, patch path)
+    /// Sorted (`name@version`, patch path).
     patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
@@ -2823,10 +2822,18 @@ impl ManifestSections {
         if self.workspaces != loaded.workspaces {
             return Some("dependencies");
         }
-        if loaded.trusted_dependencies.is_some()
-            && self.trusted_dependencies != loaded.trusted_dependencies
-        {
-            return Some("trustedDependencies");
+        if let Some(recorded) = &loaded.trusted_dependencies {
+            let declared = self.trusted_dependencies.as_deref().unwrap_or_default();
+            let added = declared
+                .iter()
+                .any(|name| recorded.binary_search(name).is_err());
+            // The recorded list is the union over every workspace's package.json, so in a
+            // workspace project a name also goes missing when the workspace that declared it is
+            // not on disk (a pruned checkout); like a catalog entry, only an addition counts there.
+            let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
+            if added || removed {
+                return Some("trustedDependencies");
+            }
         }
         if self.patched_dependencies != loaded.patched_dependencies {
             return Some("patchedDependencies");

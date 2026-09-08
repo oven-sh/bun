@@ -4,6 +4,7 @@
 // passing on the edits a plain install does not record.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
@@ -58,13 +59,16 @@ async function bun(cwd: string, ...args: string[]) {
 }
 
 // A project installed once from `rootJson` / `memberJson`, returning its dir and the bun.lock that install wrote.
+// A `rootJson` without "workspaces" gets no workspace folders.
 async function installed(rootJson: PackageJson = root, memberJson: PackageJson = member) {
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "hoisted" },
     files: {
       "package.json": JSON.stringify(rootJson),
-      "packages/member/package.json": JSON.stringify(memberJson),
-      "packages/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+      ...(rootJson.workspaces && {
+        "packages/member/package.json": JSON.stringify(memberJson),
+        "packages/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+      }),
       "patches/a-dep@1.0.1.patch": patch,
       "patches/no-deps@1.1.0.patch": patch,
     },
@@ -85,6 +89,8 @@ const sectionNote = (section: string) => `note: ${section} in package.json chang
 
 type Edit = {
   section: "dependencies" | "trustedDependencies" | "patchedDependencies";
+  /** The root package.json the project is installed from, `root` by default. */
+  from?: PackageJson;
   root?: (json: PackageJson) => PackageJson;
   member?: (json: PackageJson) => PackageJson;
 };
@@ -93,6 +99,8 @@ const without = (json: PackageJson, key: string) => {
   const { [key]: _, ...rest } = json;
   return rest;
 };
+
+const singlePackage = without(root, "workspaces");
 
 // Each edit keeps every package at its locked version; the next plain `bun install` rewrites bun.lock for all of them.
 const rewrittenByInstall: Record<string, Edit> = {
@@ -131,12 +139,15 @@ const rewrittenByInstall: Record<string, Edit> = {
     section: "trustedDependencies",
     root: json => ({ ...json, trustedDependencies: ["a-dep", "no-deps"] }),
   },
+  // Removals only count without workspaces: bun.lock records the union of every workspace's list, see below.
   "trustedDependencies is emptied": {
     section: "trustedDependencies",
+    from: singlePackage,
     root: json => ({ ...json, trustedDependencies: [] }),
   },
   "trustedDependencies is removed": {
     section: "trustedDependencies",
+    from: singlePackage,
     root: json => without(json, "trustedDependencies"),
   },
 };
@@ -144,8 +155,9 @@ const rewrittenByInstall: Record<string, Edit> = {
 describe.concurrent("--frozen-lockfile fails on a package.json edit that bun install writes to bun.lock", () => {
   for (const [name, edit] of Object.entries(rewrittenByInstall)) {
     test(name, async () => {
-      const { packageDir, lock } = await installed();
-      if (edit.root) await writeRoot(packageDir, edit.root(root));
+      const from = edit.from ?? root;
+      const { packageDir, lock } = await installed(from);
+      if (edit.root) await writeRoot(packageDir, edit.root(from));
       if (edit.member) await writeMember(packageDir, edit.member(member));
 
       const frozen = await bun(packageDir, "install", "--frozen-lockfile");
@@ -238,6 +250,37 @@ describe.concurrent("--frozen-lockfile passes on a package.json edit that bun in
     const { packageDir, lock } = await installed();
     await writeMember(packageDir, { ...member, version: "1.0.1" });
     await writeRoot(packageDir, { ...root, trustedDependencies: staleTrustedDependencies });
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  // bun.lock records one trustedDependencies list for all workspaces, so a checkout with a workspace left out (a Docker
+  // context, `turbo prune`) declares fewer names than bun.lock lists. A removal therefore only counts without workspaces.
+  test("a pruned checkout without the workspace that declared a trustedDependencies name", async () => {
+    const { packageDir, lock } = await installed(without(root, "trustedDependencies"), {
+      ...member,
+      dependencies: { ...member.dependencies, "no-deps": "^1.0.0" },
+      trustedDependencies: ["a-dep", "no-deps"],
+    });
+    expect(lock).toContain('"trustedDependencies": [');
+    await rm(join(packageDir, "packages", "member"), { recursive: true, force: true });
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "member"');
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  test("a trustedDependencies name removed in a workspace project", async () => {
+    const { packageDir, lock } = await installed();
+    await writeRoot(packageDir, { ...root, trustedDependencies: [] });
 
     const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 

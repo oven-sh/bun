@@ -2393,7 +2393,7 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
+                    let mut file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // SAFETY: see `transpiler` note above.
                     let path_loader = Fs::Path::init(path_primary.text)
@@ -2437,10 +2437,17 @@ pub mod bv2_impl {
                     };
                     if !found_existing {
                         // For virtual files, use the path text as-is (no relative path computation needed).
-                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
+                        // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
+                        path_primary.pretty = unsafe {
+                            bun_ptr::detach_lifetime(
+                                self.arena().alloc_slice_copy(path_primary.text),
+                            )
+                        };
                         if keyed_by_loader {
                             self.append_loader_to_pretty_path(&mut path_primary, loader);
                         }
+                        // `ParseTask::init` takes its path from the resolve result.
+                        file_map_result.path_pair.primary = path_primary;
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),

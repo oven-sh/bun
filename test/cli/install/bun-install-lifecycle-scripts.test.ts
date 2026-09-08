@@ -817,35 +817,59 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const marker = join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt");
-    const dependencies = { "uses-what-bin": "1.0.0" };
+    const dependencies = { "uses-what-bin": "1.0.0", "all-lifecycle-scripts": "1.0.0" };
+    const lockfileTrusted = async () =>
+      (await file(join(packageDir, "bun.lock")).text()).match(/"trustedDependencies": \[([^\]]*)\]/)?.[1] ?? null;
 
     await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
     let { out, err, exitCode } = await run(ctx, ["install"]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(out).toContain("Blocked 1 postinstall");
+    expect(out).toContain("Blocked 4 postinstalls");
     expect(exitCode).toBe(0);
 
     await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["uses-what-bin"] }));
-    expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"trustedDependencies"');
+    expect(await lockfileTrusted()).toBeNull();
 
     ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));
     expect(err).not.toContain("error:");
     expect(out).toContain("uses-what-bin@1.0.0");
+    expect(out).not.toContain("all-lifecycle-scripts");
     expect(exitCode).toBe(0);
 
     ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
     expect(err).not.toContain("error:");
     expect(out).toContain("uses-what-bin @1.0.0\n");
+    expect(out).toContain("all-lifecycle-scripts @1.0.0\n");
     expect(exitCode).toBe(0);
     expect(await exists(marker)).toBeFalse();
+
+    // Trusting another package records only that package: uses-what-bin is in
+    // package.json but its script still has not run.
+    ({ out, err, exitCode } = await run(ctx, ["pm", "trust", "all-lifecycle-scripts"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("3 scripts ran across 1 package");
+    expect(exitCode).toBe(0);
+    expect(await lockfileTrusted()).toContain('"all-lifecycle-scripts"');
+    expect(await lockfileTrusted()).not.toContain('"uses-what-bin"');
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies,
+      trustedDependencies: ["all-lifecycle-scripts", "uses-what-bin"],
+    });
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("uses-what-bin @1.0.0\n");
+    expect(out).not.toContain("all-lifecycle-scripts @1.0.0\n");
+    expect(exitCode).toBe(0);
 
     ({ out, err, exitCode } = await run(ctx, ["pm", "trust", "uses-what-bin"]));
     expect(err).not.toContain("error:");
     expect(out).toContain("1 script ran across 1 package");
     expect(exitCode).toBe(0);
     expect(await exists(marker)).toBeTrue();
-    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies"');
+    expect(await lockfileTrusted()).toContain('"uses-what-bin"');
 
     ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
     expect(err).not.toContain("error:");

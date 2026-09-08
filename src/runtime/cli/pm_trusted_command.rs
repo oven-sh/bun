@@ -594,12 +594,11 @@ impl TrustCommand {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
 
-        // could be null if these are the first packages to be trusted
+        // Save what bun.lock recorded plus the names whose scripts just ran. A name that
+        // package.json lists but whose scripts never ran stays unrecorded.
         // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
         unsafe {
-            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-            }
+            (*pm_raw).lockfile.trusted_dependencies = Some(recorded.unwrap_or_default());
         }
 
         let mut total_scripts_ran: usize = 0;

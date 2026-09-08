@@ -2768,10 +2768,11 @@ describe("prepared statements refresh cached column names after a schema change"
           `d.close();`,
       ],
       env: bunEnv,
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 
     expect(q.get()).toEqual({ id: 1, greeting2: "Welcome to bun!" });
   });

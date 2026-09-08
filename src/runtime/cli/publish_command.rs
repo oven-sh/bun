@@ -1844,15 +1844,12 @@ impl PublishCommand {
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
-                            let Ok(subdir) = bun_sys::openat(
-                                dir,
-                                name,
-                                bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW,
-                                0,
-                            ) else {
+                            let Ok(subdir) = bun_sys::Dir::borrow(&dir)
+                                .open_dir(name.as_bytes(), pack::WALK_DIR_OPTIONS)
+                            else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir.into_raw(), subpath.as_bytes().into(), true));
                         }
                     }
                 }

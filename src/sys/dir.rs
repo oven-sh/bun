@@ -427,8 +427,8 @@ impl Dir {
     ///
     /// `no_follow` refuses a link as the last component of `sub_path`:
     /// `ENOTDIR` on Linux, `ELOOP` on the other POSIX targets and on Windows,
-    /// where the open itself takes the reparse point and this reports it. On
-    /// POSIX, `iterate` is advisory (the handle is opened with
+    /// where the open itself takes the symlink or junction and this reports it.
+    /// On POSIX, `iterate` is advisory (the handle is opened with
     /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
     /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
     /// handle is opened **without** `read_only` so the caller may
@@ -448,7 +448,7 @@ impl Dir {
                 },
             )
             .map(Dir::from_fd)?;
-            if opts.no_follow && is_reparse_point(dir.fd)? {
+            if opts.no_follow && is_link_reparse_point(dir.fd)? {
                 return Err(Error::from_code(E::ELOOP, Tag::open).with_path(sub_path));
             }
             return Ok(dir);

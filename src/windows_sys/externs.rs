@@ -352,6 +352,15 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
+/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`) — output of
+/// `NtQueryInformationFile(.., FileAttributeTagInformation)`. `ReparseTag` is
+/// 0 when the file is not a reparse point.
+#[repr(C)]
+pub struct FILE_ATTRIBUTE_TAG_INFORMATION {
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+}
+
 /// `FILE_DIRECTORY_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record.
 /// `FileName` is a flexible array; declared `[WCHAR; 1]` to match C layout
 /// (read past it via `FileNameLength`).
@@ -381,6 +390,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FileAttributeTagInformation: Self = Self(35);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 

@@ -793,7 +793,7 @@ fn add_entire_tree(
 /// and not through a symlink. The walk only descends into entries it listed as
 /// directories, so `no_follow` only refuses one that was replaced by a symlink
 /// since (`ENOTDIR` on Linux, `ELOOP` elsewhere).
-const WALK_DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
+pub(crate) const WALK_DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
     iterate: true,
     no_follow: true,
 };
@@ -812,10 +812,18 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     }
 }
 
-/// The components of a relative `/`-separated path, without the empty ones a
-/// doubled or trailing `/` produces, and without `.`.
+/// What separates the components of a path handed to `openat`. Pack joins with
+/// `/`, but a `bin` path from package.json can carry a `\`, which Windows
+/// resolves as a separator too, so it has to be opened one side at a time there.
+#[cfg(windows)]
+const PATH_SEPARATORS: &[u8] = b"/\\";
+#[cfg(not(windows))]
+const PATH_SEPARATORS: &[u8] = b"/";
+
+/// The components of a relative path, without the empty ones a doubled or
+/// trailing separator produces, and without `.`.
 fn path_components<'a>(path: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + 'a {
-    strings::split(path, b"/").filter(|c| !c.is_empty() && !strings::eql(c, b"."))
+    strings::tokenize_any(path, PATH_SEPARATORS).filter(|c| !strings::eql(c, b"."))
 }
 
 /// Refuses `..`, the one component that takes a path opened one component at a
@@ -875,12 +883,13 @@ impl PackFileOpener {
     #[cfg(windows)]
     const FILE_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
 
-    /// Fails when `fd` is a reparse point. `O_NOFOLLOW` refuses the open on
-    /// POSIX, so this only has work to do on Windows, where the same flag opens
-    /// the reparse point itself and a relative open still resolves through it.
+    /// Fails when `fd` is a symlink or a junction. `O_NOFOLLOW` refuses the
+    /// open on POSIX, so this only has work to do on Windows, where the same
+    /// flag opens the reparse point itself and a relative open still resolves
+    /// through it.
     fn check_not_a_link(fd: Fd, path: &[u8]) -> bun_sys::Maybe<()> {
         #[cfg(windows)]
-        if bun_sys::is_reparse_point(fd)? {
+        if bun_sys::is_link_reparse_point(fd)? {
             return Err(
                 bun_sys::Error::from_code(bun_sys::E::ELOOP, bun_sys::Tag::open).with_path(path),
             );
@@ -909,7 +918,7 @@ impl PackFileOpener {
         path: &ZStr,
     ) -> bun_sys::Maybe<(File, bun_sys::Stat)> {
         let bytes = path.as_bytes();
-        let (dirname, basename) = match strings::last_index_of_char(bytes, b'/') {
+        let (dirname, basename) = match strings::last_index_of_any(bytes, PATH_SEPARATORS) {
             Some(slash) => (&bytes[..slash], &bytes[slash + 1..]),
             None => (&b""[..], bytes),
         };

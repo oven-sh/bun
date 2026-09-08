@@ -2186,6 +2186,18 @@ describe.concurrent("symlinks", () => {
     expect(await packed(dir, "pack-link-bin-dir-1.0.0.tgz")).toEqual(["package/package.json"]);
   });
 
+  // Windows resolves `\` in a bin path as a separator too, so the junction is an
+  // intermediate component there even though pack only splits on `/` elsewhere.
+  test.skipIf(!isWindows)("a bin inside a symlinked directory named with a backslash is not packed", async () => {
+    using dir = tempDir("pack-link-bin-backslash", {
+      "pkg/package.json": JSON.stringify({ name: "pack-link-bin-backslash", version: "1.0.0", bin: "sub\\cli.js" }),
+      "outside/sub/cli.js": "outside\n",
+    });
+    linkOutside(dir, "sub", "sub", "junction");
+
+    expect(await packed(dir, "pack-link-bin-backslash-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
   test('a symlinked "directories.bin" is not packed', async () => {
     using dir = tempDir("pack-link-bins-dir", {
       "pkg/package.json": JSON.stringify({

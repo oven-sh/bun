@@ -3703,31 +3703,34 @@ mod windows_impl {
         // the caller's HANDLE, so it leaked a CRT slot per call).
         fstat_handle(fd)
     }
-    /// `true` when `fd`'s attributes carry `FILE_ATTRIBUTE_REPARSE_POINT`
-    /// (a symlink, a junction or another reparse point).
+    /// `true` when `fd` is a reparse point that names another path: a symlink,
+    /// a junction, or any other tag with the name-surrogate bit. Reparse points
+    /// that only decorate the file in place (dedup, cloud placeholders,
+    /// AppExecLink, WOF compression) are not links and report `false`.
     ///
     /// `O::NOFOLLOW` maps to `FILE_OPEN_REPARSE_POINT`, which opens the reparse
     /// point itself instead of failing the open, and `NtCreateFile` still
     /// resolves a relative path through such a handle. So a caller that must
     /// not follow a link asks the handle it got. `fstat` cannot answer: libuv's
     /// `uv_stat_t` reports a reparse point as the kind it points at.
-    pub fn is_reparse_point(fd: Fd) -> Maybe<bool> {
+    pub fn is_link_reparse_point(fd: Fd) -> Maybe<bool> {
         let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-        let mut info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+        let mut info: w::FILE_ATTRIBUTE_TAG_INFORMATION = bun_core::ffi::zeroed();
         // SAFETY: FFI; `fd` is a live HANDLE and `info` is valid for write.
         let rc = unsafe {
             w::ntdll::NtQueryInformationFile(
                 fd.native(),
                 &mut io,
                 core::ptr::from_mut(&mut info).cast(),
-                core::mem::size_of::<w::FILE_BASIC_INFORMATION>() as u32,
-                w::FILE_INFORMATION_CLASS::FileBasicInformation,
+                core::mem::size_of::<w::FILE_ATTRIBUTE_TAG_INFORMATION>() as u32,
+                w::FILE_INFORMATION_CLASS::FileAttributeTagInformation,
             )
         };
         if w::NT_ERROR(rc) {
             return Err(Error::new(rc, Tag::fstat).with_fd(fd));
         }
-        Ok((info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        Ok((info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0
+            && bun_windows_sys::is_reparse_tag_name_surrogate(info.ReparseTag))
     }
     /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
     /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a

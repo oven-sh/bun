@@ -1200,6 +1200,35 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       }
     });
 
+    it("waits for an async hook, before and after the first read", async () => {
+      for (const readFirst of [false, true]) {
+        const events = [];
+        const rs = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("x");
+          },
+          async cancel(reason) {
+            await Promise.resolve();
+            await Promise.resolve();
+            events.push(["cancel", reason]);
+          },
+        });
+        if (readFirst) {
+          const reader = rs.getReader();
+          await reader.read();
+          expect(await reader.cancel("bye")).toBeUndefined();
+        } else {
+          expect(await rs.cancel("bye")).toBeUndefined();
+        }
+        events.push(["settled", readFirst]);
+        expect(events).toEqual([
+          ["cancel", "bye"],
+          ["settled", readFirst],
+        ]);
+      }
+    });
+
     it("not after end(): the source already saw close()", async () => {
       const events = [];
       let ctrl;

@@ -549,6 +549,145 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+// `delete process.env.TZ` must revert to the host zone even when TZ came from
+// the launch environment (ICU re-reads $TZ from the C environ on POSIX), and an
+// empty / unresolvable TZ selects UTC instead of leaving the previous zone.
+it("process.env.TZ from the launch environment reverts on delete, and empty / invalid select UTC", async () => {
+  const probe = `({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: new Date("2018-07-14T12:34:56Z").getTimezoneOffset() })`;
+  const { TZ: _, ...envWithoutTZ } = bunEnv;
+  await using hostProc = Bun.spawn({
+    cmd: [bunExe(), "-p", `JSON.stringify(${probe})`],
+    env: envWithoutTZ,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const host = JSON.parse(await hostProc.stdout.text());
+  const launch =
+    host.zone === "Asia/Tokyo" ? { zone: "Australia/Brisbane", offset: -600 } : { zone: "Asia/Tokyo", offset: -540 };
+
+  const fixture = `
+    const snap = () => ${probe};
+    const out = { launch: snap() };
+    delete process.env.TZ;
+    out.afterDelete = { ...snap(), has: "TZ" in process.env };
+    process.env.TZ = ${JSON.stringify(launch.zone)};
+    out.afterReSet = { ...snap(), spread: { ...process.env }.TZ };
+    process.env.TZ = "Not/A_Zone";
+    out.afterInvalid = snap();
+    process.env.TZ = ${JSON.stringify(launch.zone)};
+    process.env.TZ = "";
+    out.afterEmpty = snap();
+    delete process.env.TZ;
+    out.afterSecondDelete = snap();
+    process.stdout.write(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...envWithoutTZ, TZ: launch.zone },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+    launch,
+    afterDelete: { ...host, has: false },
+    afterReSet: { ...launch, spread: launch.zone },
+    afterInvalid: { zone: "UTC", offset: 0 },
+    afterEmpty: { zone: "UTC", offset: 0 },
+    afterSecondDelete: host,
+    exitCode: 0,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/735
+// `delete` on a proxy var removed its CustomAccessor with no write-back: fetch()
+// kept proxying through the stale native env map entry and later writes were dead.
+for (const mode of ["main thread", "SHARE_ENV worker"]) {
+  it(`delete process.env.HTTP_PROXY / NO_PROXY reaches fetch() and keeps later writes live (${mode})`, async () => {
+    const steps = `
+      async function run() {
+        await using target = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+        await using proxy = Bun.serve({ port: 0, fetch: () => new Response("via-proxy") });
+        await using proxy2 = Bun.serve({ port: 0, fetch: () => new Response("via-proxy2") });
+        const go = async () => (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
+        const out = { baseline: await go() };
+        process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy.port;
+        out.set = await go();
+        delete process.env.HTTP_PROXY;
+        out.afterDelete = await go();
+        out.hasAfterDelete = "HTTP_PROXY" in process.env;
+        process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy2.port;
+        out.reSet = await go();
+        out.spread = { ...process.env }.HTTP_PROXY === "http://127.0.0.1:" + proxy2.port;
+        process.env.NO_PROXY = "127.0.0.1";
+        out.noProxySet = await go();
+        delete process.env.NO_PROXY;
+        out.noProxyDeleted = await go();
+        return out;
+      }
+    `;
+    const script =
+      mode === "SHARE_ENV worker"
+        ? `
+      const { Worker, SHARE_ENV } = require("worker_threads");
+      const worker = new Worker(
+        ${JSON.stringify(steps + `run().then(out => require("worker_threads").parentPort.postMessage(out));`)},
+        { eval: true, env: SHARE_ENV },
+      );
+      worker.on("message", out => console.log(JSON.stringify(out)));
+      worker.on("error", e => { console.error(e); process.exit(1); });
+      worker.on("exit", code => { if (code !== 0) process.exit(code); });
+    `
+        : steps + `console.log(JSON.stringify(await run()));`;
+    // Scrub every proxy var casing so the child starts in the not-in-OS-env path.
+    const env = { ...bunEnv };
+    for (const k of Object.keys(env)) {
+      if (/^(https?_proxy|no_proxy)$/i.test(k)) delete env[k];
+    }
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+      baseline: "direct",
+      set: "via-proxy",
+      afterDelete: "direct",
+      hasAfterDelete: false,
+      reSet: "via-proxy2",
+      spread: true,
+      noProxySet: "direct",
+      noProxyDeleted: "via-proxy2",
+      exitCode: 0,
+    });
+  });
+}
+
+it("delete process.env.BUN_CONFIG_VERBOSE_FETCH stops verbose logging and keeps later writes live", async () => {
+  const fixture = `
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const go = async tag => (await fetch("http://127.0.0.1:" + server.port + "/" + tag, { headers: { connection: "close" } })).text();
+    await go("baseline");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "1";
+    await go("set1");
+    delete process.env.BUN_CONFIG_VERBOSE_FETCH;
+    await go("afterDelete");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "1";
+    await go("reSet1");
+    process.env.BUN_CONFIG_VERBOSE_FETCH = "0";
+    await go("set0");
+  `;
+  const { BUN_CONFIG_VERBOSE_FETCH: _, ...env } = bunEnv;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const logged = tag => new RegExp(String.raw`HTTP/1\.1 GET http://127\.0\.0\.1:\d+/${tag}\b`).test(stderr);
+  expect({
+    baseline: logged("baseline"),
+    set1: logged("set1"),
+    afterDelete: logged("afterDelete"),
+    reSet1: logged("reSet1"),
+    set0: logged("set0"),
+    exitCode,
+  }).toEqual({ baseline: false, set1: true, afterDelete: false, reSet1: true, set0: false, exitCode: 0 });
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

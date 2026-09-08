@@ -5254,7 +5254,7 @@ impl VirtualMachine {
         }
     }
 
-    /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`
+    /// The `process.env` keys with a custom setter (`applyEnvWriteSideEffects`
     /// in JSEnvironmentVariableMap.cpp) write past the env object: TZ into the
     /// WTF time zone override, NODE_TLS_REJECT_UNAUTHORIZED and
     /// BUN_CONFIG_VERBOSE_FETCH into per-VM caches, and the proxy keys into the

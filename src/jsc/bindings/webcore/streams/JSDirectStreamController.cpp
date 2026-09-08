@@ -1045,9 +1045,11 @@ static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDir
             RETURN_IF_EXCEPTION(scope, );
         } else {
             // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
-            // and picks up m_pullAgain.
+            // and picks up m_pullAgain. What its synchronous part already wrote goes to the
+            // waiting reader now, as in onPull: no end-of-tick job was queued for it, and the
+            // pull may be parked on that very write.
             if (controller->m_pullInFlight) {
-                if (deferredFlush == 1)
+                if (deferredFlush == 1 || !controller->m_buffer.isEmpty())
                     controller->onFlush(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
                 break;

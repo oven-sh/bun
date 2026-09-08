@@ -958,6 +958,42 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect(results).toEqual([64 * 1024, false, 0]);
     });
 
+    // Reads queued before the first pull settles are served by re-pulls from the pull
+    // promise's reaction. A re-pulled pull() that parks on its first write (>= highWaterMark,
+    // written synchronously, so no end-of-tick job) must still reach the queued reader.
+    for (const [label, chunk, strategy] of [
+      ["default highWaterMark", 64 * 1024, undefined],
+      ["explicit highWaterMark", 4096, { highWaterMark: 1024 }],
+    ]) {
+      it(`a re-pulled pull() parked on its first write still feeds queued reads: ${label}`, async () => {
+        let pulls = 0;
+        const rs = new ReadableStream(
+          {
+            type: "direct",
+            async pull(c) {
+              pulls++;
+              await c.write(new Uint8Array(chunk).fill(pulls));
+            },
+          },
+          strategy,
+        );
+        const reader = rs.getReader();
+        const reads = [reader.read(), reader.read(), reader.read()];
+        const got = [];
+        for (const read of reads) {
+          const { value } = await read;
+          got.push([value.byteLength, value[0]]);
+        }
+        expect(got).toEqual([
+          [chunk, 1],
+          [chunk, 2],
+          [chunk, 3],
+        ]);
+        expect(pulls).toBe(3);
+        await reader.cancel();
+      });
+    }
+
     it("a producer writing outside pull() and parking is drained by the next read", async () => {
       let ctrl;
       const rs = new ReadableStream({

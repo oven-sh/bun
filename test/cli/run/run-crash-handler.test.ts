@@ -191,9 +191,12 @@ describe.if(isPosix)("cwd deleted before startup", () => {
   });
 
   // The executable's directory stands in for the missing cwd only inside the
-  // runtime. A relative entry path or a package.json script must not resolve
-  // against it: with bun placed at <planted>/bin/{bun,node}, next to x.cjs and
-  // below a package.json with a "canary" script, nothing planted may run.
+  // runtime. A relative entry path, preload or config, or a package.json
+  // script, must not resolve against it: with bun placed at
+  // <planted>/bin/{bun,node} next to x.cjs, a bunfig.toml that preloads
+  // preload.cjs, and below a package.json with a "canary" script, nothing
+  // planted may run unless named by absolute path (the exact-stdout
+  // expectations below would show a stray "preloaded" line).
   describe("user paths do not resolve against the executable's directory", () => {
     let planted: ReturnType<typeof tempDir>;
     let bin: string;
@@ -212,6 +215,8 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     beforeAll(() => {
       planted = tempDir("cwd-unlinked-planted", {
         "bin/x.cjs": `console.log("ran " + __filename);`,
+        "bin/preload.cjs": `console.log("preloaded " + __filename);`,
+        "bin/bunfig.toml": `preload = ["./preload.cjs"]\n`,
         "bin/tsconfig.json": `{}`,
         "package.json": JSON.stringify({ name: "above-the-executable", scripts: { canary: "echo canary script ran" } }),
       });
@@ -256,7 +261,9 @@ describe.if(isPosix)("cwd deleted before startup", () => {
       "bun run canary",
       "bun canary",
       "bun run",
+      "bun -r ./x.cjs -e 0",
       "node x.cjs",
+      "node -r ./x.cjs -e 0",
     ])("%s refuses with the cwd-deleted hint", async cmd => {
       expect(await runFromDeletedCwd(cmd)).toEqual({
         stdout: "",
@@ -270,6 +277,15 @@ describe.if(isPosix)("cwd deleted before startup", () => {
       const abs = path.join(bin, "x.cjs");
       expect(await runFromDeletedCwd(`${cmd} ${abs}`)).toEqual({
         stdout: `ran ${abs}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an absolute preload still runs", async () => {
+      const abs = path.join(bin, "x.cjs");
+      expect(await runFromDeletedCwd(`bun -r ${abs} -p 6*7`)).toEqual({
+        stdout: `ran ${abs}\n42\n`,
         stderr: "",
         exitCode: 0,
       });

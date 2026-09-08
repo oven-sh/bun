@@ -925,7 +925,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn cwd_or_exe_dir(ctx: &mut ContextData) -> crate::Result<&[u8]> {
         let cwd: &[u8] = match ctx.args.absolute_working_dir {
             Some(ref cwd) => cwd,
-            // Not recorded: `Arguments::parse` saw a deleted cwd, or did not run (Windows `.bunx` fast path).
+            // Not recorded: `Arguments::parse` saw a deleted cwd, or did not run (compiled executable, `.bunx` fast path).
             None => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let dir: Box<[u8]> = match bun_core::getcwd(&mut buf) {
@@ -972,7 +972,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        // `entry_path` is absolute or synthetic here, so a deleted cwd may fall back to the exe dir.
+        // `entry_path` is absolute or synthetic and `Arguments::parse` refused relative preloads: safe to stand in.
         Self::cwd_or_exe_dir(ctx)?;
 
         // `bun_jsc::initialize`
@@ -1165,6 +1165,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+
+        // The entry point is embedded, so a compiled executable starts without a cwd like any program.
+        Self::cwd_or_exe_dir(ctx)?;
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete

@@ -747,6 +747,14 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
+/// `load_preloads` resolves anything but an absolute path or a builtin against the working directory.
+fn preload_needs_cwd(specifier: &[u8]) -> bool {
+    let path = specifier
+        .strip_prefix(b"file://".as_slice())
+        .unwrap_or(specifier);
+    !(bun_paths::is_absolute(path) || path.starts_with(b"node:") || path.starts_with(b"bun:"))
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum BunCAStore {
@@ -1042,6 +1050,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     all.push(Box::<[u8]>::from(p));
                 }
                 ctx.preloads = all;
+            }
+            // Without a cwd (deleted), only an absolute or builtin preload can be resolved (Node refuses too).
+            if ctx.args.absolute_working_dir.is_none()
+                && ctx.preloads.iter().any(|p| preload_needs_cwd(p))
+            {
+                return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
             }
         }
 

@@ -1520,19 +1520,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> = ListManaged::new_in(p.arena);
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
-                    if matches!(stmt.data, StmtData::SEnum(_)) {
-                        // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
-                        // plain save/restore.
-                        let old_scopes_in_order = p.scope_order_to_visit;
+                    match stmt.data {
+                        StmtData::SEnum(_) => {
+                            // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
+                            // plain save/restore.
+                            let old_scopes_in_order = p.scope_order_to_visit;
 
-                        p.scope_order_to_visit =
-                            scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
+                            p.scope_order_to_visit =
+                                scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
-                        let mut temp = ListManaged::new_in(p.arena);
-                        let res = p.visit_and_append_stmt(&mut temp, stmt);
-                        p.scope_order_to_visit = old_scopes_in_order;
-                        res?;
-                        preprocessed_enums.push(temp.into_bump_slice());
+                            let mut temp = ListManaged::new_in(p.arena);
+                            let res = p.visit_and_append_stmt(&mut temp, stmt);
+                            p.scope_order_to_visit = old_scopes_in_order;
+                            res?;
+                            preprocessed_enums.push(temp.into_bump_slice());
+                        }
+                        // An enum above can only see the constants declared before it.
+                        StmtData::SLocal(local) => p.record_ts_enum_constants(&local),
+                        _ => {}
                     }
                 }
             }

@@ -213,6 +213,13 @@ pub struct RecentlyVisitedTSNamespace {
     pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
+/// The value of a TypeScript constant expression. The string is never a rope.
+#[derive(Clone, Copy)]
+pub(crate) enum TSConstantValue {
+    Number(f64),
+    String(js_ast::StoreRef<E::EString>),
+}
+
 #[derive(Clone, Copy)]
 pub struct ReactRefreshImportClause<'a> {
     pub(crate) name: &'a [u8],
@@ -693,6 +700,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// node has metadata) and "tsNamespaceMemberData" will be set to the metadata.
     pub(crate) ts_namespace: RecentlyVisitedTSNamespace,
     pub(crate) top_level_enums: List<'a, Ref>,
+
+    /// Since TypeScript 5.0 an enum member initializer may reference a `const`
+    /// variable whose own initializer is a constant expression. Enums are
+    /// visited before the other statements of their list, so these values are
+    /// computed from the unvisited declarations (`record_ts_enum_constants`)
+    /// and substituted only while an enum member initializer is visited.
+    pub(crate) ts_enum_constants: HashMap<Ref, TSConstantValue>,
+    pub(crate) is_visiting_ts_enum_initializer: bool,
 
     // Value is a shared `&'a [ScopeOrder<'a>]`. The visit pass never writes
     // through these slices — it only reads
@@ -2270,6 +2285,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if TYPESCRIPT {
+            if self.is_visiting_ts_enum_initializer
+                && let Some(&value) = self.ts_enum_constants.get(&ref_)
+            {
+                self.ignore_usage(ref_);
+                let name = self.symbols[ref_.inner_index() as usize]
+                    .original_name
+                    .slice();
+                let value = match value {
+                    TSConstantValue::Number(num) => Expr {
+                        loc,
+                        data: js_ast::ExprData::ENumber(E::Number::new(num)),
+                    },
+                    TSConstantValue::String(str_) => self.new_expr(&*str_, loc),
+                };
+                return self.wrap_inlined_enum(value, name);
+            }
+
             if let Some(member_data) = self.ref_to_ts_namespace_member.get(&ref_) {
                 match member_data {
                     js_ast::ts::Data::EnumNumber(num) => {
@@ -9827,6 +9859,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 map: None,
             },
             top_level_enums: BumpVec::new_in(arena),
+            ts_enum_constants: Default::default(),
+            is_visiting_ts_enum_initializer: false,
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,

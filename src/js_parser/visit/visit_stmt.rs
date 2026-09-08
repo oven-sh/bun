@@ -1,10 +1,10 @@
 #![warn(unused_must_use)]
 use crate::Error;
 use crate::lexer as js_lexer;
-use crate::p::{P, ReactRefreshExportKind};
+use crate::p::{P, ReactRefreshExportKind, TSConstantValue};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    float_to_int32, fold_numeric_binary_operator, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
@@ -33,6 +33,27 @@ fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
+}
+
+/// Appends `value` the way JavaScript string concatenation would. Only 8-bit
+/// (ASCII) strings are folded, like the other string folding in the parser.
+fn append_ts_constant_value(
+    bytes: &mut BumpVec<'_, u8>,
+    value: TSConstantValue,
+    arena: &bun_alloc::Arena,
+) -> Option<()> {
+    match value {
+        TSConstantValue::String(str_) => {
+            if !str_.is_utf8() {
+                return None;
+            }
+            bytes.extend_from_slice(str_.slice8());
+        }
+        TSConstantValue::Number(num) => {
+            bytes.extend_from_slice(E::Number::to_string_from_f64(num, arena)?.slice());
+        }
+    }
+    Some(())
 }
 
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
@@ -2181,6 +2202,217 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// Records the value of each `const` in `local` whose initializer is a
+    /// constant expression, so that enum member initializers can reference it
+    /// (see `P::ts_enum_constants`). `local` has not been visited yet.
+    pub(crate) fn record_ts_enum_constants(&mut self, local: &S::Local) {
+        if local.kind != S::Kind::KConst {
+            return;
+        }
+        for decl in local.decls.slice() {
+            let (js_ast::binding::Data::BIdentifier(id), Some(value)) =
+                (decl.binding.data, decl.value)
+            else {
+                continue;
+            };
+            // With tree shaking, a top-level declaration comes through here once
+            // for the module and again as its own part.
+            if self.ts_enum_constants.contains_key(&id.r#ref) {
+                continue;
+            }
+            if let Some(value) = self.eval_ts_constant_expression(&value) {
+                self.ts_enum_constants.insert(id.r#ref, value);
+            }
+        }
+    }
+
+    /// Evaluates an unvisited expression by the rules the TypeScript compiler
+    /// uses for enum member initializers (`evaluate` in its checker):
+    /// https://github.com/microsoft/TypeScript/pull/50528
+    fn eval_ts_constant_expression(&mut self, expr: &Expr) -> Option<TSConstantValue> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return None;
+        }
+        match expr.data {
+            js_ast::ExprData::ENumber(num) => Some(TSConstantValue::Number(num.value())),
+            js_ast::ExprData::EString(str_) => self.ts_constant_string(str_),
+            js_ast::ExprData::EUnary(unary) => {
+                let TSConstantValue::Number(value) =
+                    self.eval_ts_constant_expression(&unary.value)?
+                else {
+                    return None;
+                };
+                match unary.op {
+                    js_ast::OpCode::UnPos => Some(TSConstantValue::Number(value)),
+                    js_ast::OpCode::UnNeg => Some(TSConstantValue::Number(-value)),
+                    js_ast::OpCode::UnCpl => {
+                        Some(TSConstantValue::Number(f64::from(!float_to_int32(value))))
+                    }
+                    _ => None,
+                }
+            }
+            js_ast::ExprData::EBinary(binary) => {
+                let left = self.eval_ts_constant_expression(&binary.left)?;
+                let right = self.eval_ts_constant_expression(&binary.right)?;
+                match (left, right) {
+                    (TSConstantValue::Number(left), TSConstantValue::Number(right)) => {
+                        fold_numeric_binary_operator(binary.op, left, right)
+                            .map(TSConstantValue::Number)
+                    }
+                    _ if binary.op == js_ast::OpCode::BinAdd => {
+                        let mut bytes: BumpVec<'a, u8> = BumpVec::new_in(self.arena);
+                        append_ts_constant_value(&mut bytes, left, self.arena)?;
+                        append_ts_constant_value(&mut bytes, right, self.arena)?;
+                        Some(self.new_ts_constant_string(E::EString::init(bytes.into_bump_slice())))
+                    }
+                    _ => None,
+                }
+            }
+            js_ast::ExprData::ETemplate(template) => {
+                if template.tag.is_some() {
+                    return None;
+                }
+                let E::TemplateContents::Cooked(head) = &template.head else {
+                    return None;
+                };
+                if !head.is_utf8() {
+                    return None;
+                }
+                let mut bytes: BumpVec<'a, u8> = BumpVec::new_in(self.arena);
+                bytes.extend_from_slice(head.slice8());
+                for part in template.parts() {
+                    let value = self.eval_ts_constant_expression(&part.value)?;
+                    append_ts_constant_value(&mut bytes, value, self.arena)?;
+                    let E::TemplateContents::Cooked(tail) = &part.tail else {
+                        return None;
+                    };
+                    if !tail.is_utf8() {
+                        return None;
+                    }
+                    bytes.extend_from_slice(tail.slice8());
+                }
+                Some(self.new_ts_constant_string(E::EString::init(bytes.into_bump_slice())))
+            }
+            js_ast::ExprData::EIdentifier(ident) => {
+                let name = self.load_name_from_ref(ident.ref_);
+                // Looking up "arguments" where it is forbidden logs an error,
+                // which the visit of this expression will do on its own.
+                if name == b"arguments" {
+                    return None;
+                }
+                let result = self
+                    .find_symbol_with_record_usage::<false>(expr.loc, name)
+                    .ok()?;
+                if result.is_inside_with_scope {
+                    return None;
+                }
+                if result.r#ref.is_empty()
+                    || self.symbols[result.r#ref.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Unbound
+                {
+                    return match name {
+                        b"Infinity" => Some(TSConstantValue::Number(f64::INFINITY)),
+                        b"NaN" => Some(TSConstantValue::Number(f64::NAN)),
+                        _ => None,
+                    };
+                }
+                if let Some(&value) = self.ts_enum_constants.get(&result.r#ref) {
+                    return Some(value);
+                }
+                let data = *self.ref_to_ts_namespace_member.get(&result.r#ref)?;
+                self.ts_namespace_member_value(data)
+            }
+            js_ast::ExprData::EDot(dot) => {
+                if dot.optional_chain.is_some() {
+                    return None;
+                }
+                let map = self.eval_ts_namespace_chain(&dot.target)?;
+                let data = (*map).get(dot.name.slice())?.data;
+                self.ts_namespace_member_value(data)
+            }
+            js_ast::ExprData::EIndex(index) => {
+                if index.optional_chain.is_some() {
+                    return None;
+                }
+                let js_ast::ExprData::EString(name) = index.index.data else {
+                    return None;
+                };
+                if !name.is_utf8() || name.next.is_some() {
+                    return None;
+                }
+                let map = self.eval_ts_namespace_chain(&index.target)?;
+                let data = (*map).get(name.slice8())?.data;
+                self.ts_namespace_member_value(data)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolves an unvisited `a.b.c` to the member map of the enum or namespace
+    /// it names.
+    fn eval_ts_namespace_chain(
+        &mut self,
+        expr: &Expr,
+    ) -> Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>> {
+        let data = match expr.data {
+            js_ast::ExprData::EIdentifier(ident) => {
+                let name = self.load_name_from_ref(ident.ref_);
+                if name == b"arguments" {
+                    return None;
+                }
+                let result = self
+                    .find_symbol_with_record_usage::<false>(expr.loc, name)
+                    .ok()?;
+                if result.is_inside_with_scope || result.r#ref.is_empty() {
+                    return None;
+                }
+                *self.ref_to_ts_namespace_member.get(&result.r#ref)?
+            }
+            js_ast::ExprData::EDot(dot) => {
+                if dot.optional_chain.is_some() {
+                    return None;
+                }
+                let map = self.eval_ts_namespace_chain(&dot.target)?;
+                (*map).get(dot.name.slice())?.data
+            }
+            _ => return None,
+        };
+        match data {
+            js_ast::ts::Data::Namespace(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    fn ts_namespace_member_value(&mut self, data: js_ast::ts::Data) -> Option<TSConstantValue> {
+        match data {
+            js_ast::ts::Data::EnumNumber(num) => Some(TSConstantValue::Number(num)),
+            js_ast::ts::Data::EnumString(str_) => self.ts_constant_string(str_),
+            _ => None,
+        }
+    }
+
+    /// `TSConstantValue::String` is never a rope: each substitution copies the
+    /// node it points at, and copies of a rope would share its tail.
+    fn ts_constant_string(
+        &mut self,
+        str_: js_ast::StoreRef<E::EString>,
+    ) -> Option<TSConstantValue> {
+        if str_.next.is_none() {
+            return Some(TSConstantValue::String(str_));
+        }
+        if !str_.is_utf8() {
+            return None;
+        }
+        let flat = str_.flattened(self.arena).shallow_clone();
+        Some(self.new_ts_constant_string(flat))
+    }
+
+    fn new_ts_constant_string(&mut self, string: E::EString) -> TSConstantValue {
+        debug_assert!(string.next.is_none());
+        let expr = self.new_expr(string, bun_ast::Loc::EMPTY);
+        TSConstantValue::String(expr.data.e_string().expect("infallible: just created"))
+    }
+
     fn s_enum(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -2238,6 +2470,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_should_fold_typescript_constant_expressions =
             p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
+        let old_is_visiting_ts_enum_initializer = p.is_visiting_ts_enum_initializer;
+        p.is_visiting_ts_enum_initializer = true;
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
@@ -2366,6 +2600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
+        p.is_visiting_ts_enum_initializer = old_is_visiting_ts_enum_initializer;
 
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions

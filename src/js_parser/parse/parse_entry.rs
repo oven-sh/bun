@@ -991,24 +991,29 @@ impl<'a> Parser<'a> {
             let mut preprocessed_enum_i: usize = 0;
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
-                    if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
-                        let old_scopes_in_order = p.scope_order_to_visit;
-                        let idx = p
-                            .scopes_in_order_for_enum
-                            .keys()
-                            .iter()
-                            .position(|k| *k == stmt.loc)
-                            .expect("enum scope-order entry recorded during parse");
-                        // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
-                        // re-lookup performed by `append_part → visit_stmts`.
-                        p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
+                    match stmt.data {
+                        js_ast::StmtData::SEnum(_) => {
+                            let old_scopes_in_order = p.scope_order_to_visit;
+                            let idx = p
+                                .scopes_in_order_for_enum
+                                .keys()
+                                .iter()
+                                .position(|k| *k == stmt.loc)
+                                .expect("enum scope-order entry recorded during parse");
+                            // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
+                            // re-lookup performed by `append_part → visit_stmts`.
+                            p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
 
-                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut enum_parts, sliced)?;
-                        preprocessed_enums.push(enum_parts);
+                            let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
+                            p.append_part(&mut enum_parts, sliced)?;
+                            preprocessed_enums.push(enum_parts);
 
-                        p.scope_order_to_visit = old_scopes_in_order;
+                            p.scope_order_to_visit = old_scopes_in_order;
+                        }
+                        // An enum above can only see the constants declared before it.
+                        js_ast::StmtData::SLocal(local) => p.record_ts_enum_constants(&local),
+                        _ => {}
                     }
                 }
             }

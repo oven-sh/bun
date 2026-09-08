@@ -1175,6 +1175,65 @@ function foo() {}
       `);
     });
 
+    // Since TypeScript 5.0, an enum member initializer may reference a `const`
+    // variable whose own initializer is a constant expression.
+    describe("enum initializers that reference const variables", () => {
+      const exp = ts.expectPrinted_;
+
+      it("numeric const continues auto-increment", () => {
+        exp(
+          "const base = 100;\nenum Status { Ok = base, Created, Accepted }",
+          'const base = 100;\nvar Status;\n((Status) => {\n  Status[Status["Ok"] = 100] = "Ok";\n  Status[Status["Created"] = 101] = "Created";\n  Status[Status["Accepted"] = 102] = "Accepted";\n})(Status ||= {})',
+        );
+      });
+
+      it("string const gets no reverse mapping", () => {
+        exp(
+          'const prefix = "app";\nenum Tag { Home = prefix, About = `${prefix}/about`, Upper = prefix + "!" }',
+          'const prefix = "app";\nvar Tag;\n((Tag) => {\n  Tag["Home"] = "app";\n  Tag["About"] = "app/about";\n  Tag["Upper"] = "app!";\n})(Tag ||= {})',
+        );
+      });
+
+      it("const initializers are evaluated as constant expressions", () => {
+        exp(
+          'enum Base { One = 1 }\nconst a = Base.One + 1, b = -a, c = ~a, d = `${a}${b}`, e = a + "x", f = Base["One"] << 3, inf = -Infinity;\nenum V { A = a, B, C = b, D = c, E = d, F = e, G = f, H = inf }',
+          'var Base;\n((Base) => {\n  Base[Base["One"] = 1] = "One";\n})(Base ||= {});\nconst a = 1 /* One */ + 1, b = -a, c = ~a, d = `${a}${b}`, e = a + "x", f = 1 /* One */ << 3, inf = -1 / 0;\nvar V;\n((V) => {\n  V[V["A"] = 2] = "A";\n  V[V["B"] = 3] = "B";\n  V[V["C"] = -2] = "C";\n  V[V["D"] = -3] = "D";\n  V["E"] = "2-2";\n  V["F"] = "2x";\n  V[V["G"] = 8] = "G";\n  V[V["H"] = -1 / 0] = "H";\n})(V ||= {})',
+        );
+      });
+
+      it("leaves alone what TypeScript does not fold", () => {
+        // declared after the enum, not const, or not a constant expression
+        exp(
+          "let x = 1;\nconst y = Math.PI;\nenum E { A = later, B = x, C = y }\nconst later = 5;",
+          'let x = 1;\nconst y = Math.PI;\nvar E;\n((E) => {\n  E[E["A"] = later] = "A";\n  E[E["B"] = x] = "B";\n  E[E["C"] = y] = "C";\n})(E ||= {});\nconst later = 5',
+        );
+        // shadowed by a hoisted variable in the enum's scope
+        exp(
+          "const v = 1;\nfunction g() {\n  enum E { A = v }\n  var v = 2;\n  return E;\n}",
+          'const v = 1;\nfunction g() {\n  let E;\n  ((E) => {\n    E[E["A"] = v] = "A";\n  })(E ||= {});\n  var v = 2;\n  return E;\n}',
+        );
+        // the const is only substituted inside enum initializers
+        exp(
+          "const n = 5;\nenum E { A = n }\nconsole.log(n, E.A);",
+          'const n = 5;\nvar E;\n((E) => {\n  E[E["A"] = 5] = "A";\n})(E ||= {});\nconsole.log(n, 5 /* A */)',
+        );
+      });
+
+      it("a function body sees an outer const declared after it", () => {
+        exp(
+          "export function f() {\n  enum E { A = outer, B }\n  return E;\n}\nconst outer = 7;",
+          'export function f() {\n  let E;\n  ((E) => {\n    E[E["A"] = 7] = "A";\n    E[E["B"] = 8] = "B";\n  })(E ||= {});\n  return E;\n}\nconst outer = 7',
+        );
+      });
+
+      it("exported const inside a namespace", () => {
+        exp(
+          "namespace N {\n  export const a = 1;\n  export enum E { X = a, Y }\n}",
+          'var N;\n((N) => {\n  N.a = 1;\n  let E;\n  ((E) => {\n    E[E["X"] = 1] = "X";\n    E[E["Y"] = 2] = "Y";\n  })(E = N.E ||= {});\n})(N ||= {})',
+        );
+      });
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;

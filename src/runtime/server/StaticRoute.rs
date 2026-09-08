@@ -221,16 +221,9 @@ impl StaticRoute {
                 )?;
             }
 
-            // See `Response::headers_own_content_type`: a Content-Type missing
-            // from such a header list was deleted by the user.
-            let body_content_type = if response.headers_own_content_type() {
-                None
-            } else {
-                any_blob_content_type(&blob)
-            };
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                 response.get_init_headers(),
-                body_content_type,
+                response.body_content_type(any_blob_content_type(&blob)),
             );
 
             // Generate ETag if not already present

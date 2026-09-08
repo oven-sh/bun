@@ -872,6 +872,41 @@ describe("Content-Type header propagation", () => {
       expect(res.status).toBe(200);
     });
   });
+
+  // The Response constructor / `headers` getter copy the body's Content-Type into
+  // the header list; from then on the header list is the only source (Fetch spec),
+  // so deleting it there also hides it from formData(), not only from the wire.
+  test("Response.formData() does not fall back to a Content-Type deleted from the headers", async () => {
+    const bodies = {
+      FormData: () => {
+        const fd = new FormData();
+        fd.append("a", "1");
+        return fd;
+      },
+      URLSearchParams: () => new URLSearchParams("a=1"),
+    };
+    for (const [name, make] of Object.entries(bodies)) {
+      const intact = new Response(make());
+      expect([...(await intact.formData()).keys()], name).toEqual(["a"]);
+
+      const deleted = new Response(make());
+      deleted.headers.delete("content-type");
+      expect(deleted.headers.get("content-type"), name).toBeNull();
+      expect(async () => await deleted.formData(), name).toThrow(TypeError);
+
+      // clone() carries the deletion.
+      const cloned = deleted.clone();
+      expect(cloned.headers.get("content-type"), name).toBeNull();
+      expect(async () => await cloned.formData(), name).toThrow(TypeError);
+
+      // Putting the Content-Type back makes it parse again.
+      const restored = new Response(make());
+      const contentType = restored.headers.get("content-type")!;
+      restored.headers.delete("content-type");
+      restored.headers.set("content-type", contentType);
+      expect([...(await restored.formData()).keys()], name).toEqual(["a"]);
+    }
+  });
 });
 
 it("drops multipart part Content-Type values containing control characters", async () => {

@@ -629,17 +629,33 @@ impl Response {
         Ok(())
     }
 
-    /// Whether a server must take this response's Content-Type from the header
-    /// list alone. `true` once the list has held one: supplied in the init,
-    /// copied from a typed body (`Blob` with a `type`, `FormData`,
-    /// `URLSearchParams`, `Bun.file()`), or set by `Response.json()`. If the
-    /// list then has no Content-Type the user deleted it, so deriving one from
-    /// the body again would undo that. While `false` (a string or untyped body,
-    /// or headers never materialized) the server may still default one from
-    /// the body.
+    /// Whether this response's Content-Type comes from the header list alone.
+    /// `true` once the list has held one: supplied in the init, copied from a
+    /// typed body (`Blob` with a `type`, `FormData`, `URLSearchParams`,
+    /// `Bun.file()`), or set by `Response.json()`. If the list then has no
+    /// Content-Type the user deleted it, and deriving one from the body again
+    /// would undo that. While `false` (a string or untyped body, or headers
+    /// never materialized) the body may still supply one. Every reader of the
+    /// Content-Type (the `Bun.serve` send paths, `formData()`,
+    /// `WebAssembly.compileStreaming`) goes through [`body_content_type`] or
+    /// [`get_content_type`] so they agree.
     #[inline]
     pub(crate) fn headers_own_content_type(&self) -> bool {
         self.init.get().headers_own_content_type
+    }
+
+    /// The Content-Type that `body` (this response's body, which a server may
+    /// already have moved out) still contributes: `None` once the header list
+    /// owns the Content-Type, else `body_content_type` unless it is empty.
+    #[inline]
+    pub(crate) fn body_content_type<'b>(
+        &self,
+        body_content_type: Option<&'b [u8]>,
+    ) -> Option<&'b [u8]> {
+        if self.headers_own_content_type() {
+            return None;
+        }
+        body_content_type.filter(|content_type| !content_type.is_empty())
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -655,14 +671,11 @@ impl Response {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        let from_body = match self.body.get().value.get() {
+            BodyValue::Blob(blob) => Some(blob.content_type_slice()),
+            _ => None,
+        };
+        Ok(self.body_content_type(from_body).map(Utf8Bytes::Borrowed))
     }
 }
 

@@ -3799,12 +3799,8 @@ where
             blob.size()
         };
 
-        let headers_own_content_type = response.headers_own_content_type();
-        let (content_type, needs_content_type, content_type_needs_free) = get_content_type(
-            response.get_init_headers_mut(),
-            headers_own_content_type,
-            blob,
-        );
+        let (content_type, needs_content_type, content_type_needs_free) =
+            get_content_type(response, blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -4792,20 +4788,18 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-/// `headers_own_content_type` is [`Response::headers_own_content_type`]: the
-/// header list is the only source of the Content-Type, so when it has none the
-/// handler removed it and none is sent. The returned `MimeType` still describes
-/// the body (for `autoset_filename`).
-fn get_content_type(
-    headers: Option<&mut FetchHeaders>,
-    headers_own_content_type: bool,
-    blob: &AnyBlob,
-) -> (MimeType, bool, bool) {
+/// `(content_type, needs_content_type, content_type_needs_free)` for framing
+/// `blob`, the body already moved out of `response`. `needs_content_type` is
+/// `false` when `do_write_headers` sends the handler's own Content-Type, and
+/// when the handler deleted it ([`Response::headers_own_content_type`]): then
+/// none is sent, but `content_type` still describes the body for
+/// `autoset_filename`.
+fn get_content_type(response: &Response, blob: &AnyBlob) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
     let content_type: MimeType = 'brk: {
-        if let Some(headers_) = headers {
+        if let Some(headers_) = response.get_init_headers_mut() {
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
@@ -4820,7 +4814,7 @@ fn get_content_type(
                 drop(content_slice);
                 break 'brk mt;
             }
-            if headers_own_content_type {
+            if response.headers_own_content_type() {
                 needs_content_type = false;
             }
         }

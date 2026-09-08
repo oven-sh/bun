@@ -320,6 +320,16 @@ describe("Bun.serve does not re-derive a Content-Type the handler deleted", () =
       inProcess: null,
       static: true,
     };
+    cases[`${name}: content-type set then deleted`] = {
+      make: () => {
+        const r = new Response(body.make(), { headers: { "x-a": "b" } });
+        r.headers.set("content-type", "text/x-set");
+        return del(r);
+      },
+      wire: [],
+      inProcess: null,
+      static: true,
+    };
     // Controls that keep sending a Content-Type.
     cases[`${name}: headers never touched`] = {
       make: () => new Response(body.make()),

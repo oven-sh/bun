@@ -27,20 +27,26 @@ static long offset_seconds;
 static const char *marker;
 static int armed;
 
+/* Runs when the loader maps the shim, before main() and before the process has a second thread. */
+__attribute__((constructor)) static void init(void) {
+    if (real_clock_gettime)
+        return;
+    const char *value = getenv("FAKE_REALTIME_OFFSET");
+    offset_seconds = value ? atol(value) : 0;
+    marker = getenv("FAKE_REALTIME_AFTER");
+    armed = marker == NULL;
+    real_clock_gettime = (int (*)(clockid_t, struct timespec *)) dlsym(RTLD_NEXT, "clock_gettime");
+}
+
 int clock_gettime(clockid_t id, struct timespec *ts) {
-    if (!real_clock_gettime) {
-        real_clock_gettime = (int (*)(clockid_t, struct timespec *)) dlsym(RTLD_NEXT, "clock_gettime");
-        const char *value = getenv("FAKE_REALTIME_OFFSET");
-        offset_seconds = value ? atol(value) : 0;
-        marker = getenv("FAKE_REALTIME_AFTER");
-        armed = marker == NULL;
-    }
+    if (!real_clock_gettime)
+        init(); /* called from an earlier constructor: still single-threaded */
     int result = real_clock_gettime(id, ts);
     if (result || !offset_seconds || (id != CLOCK_REALTIME && id != CLOCK_REALTIME_COARSE))
         return result;
-    if (!armed && access(marker, F_OK) == 0)
-        armed = 1;
-    if (armed)
+    if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) && access(marker, F_OK) == 0)
+        __atomic_store_n(&armed, 1, __ATOMIC_RELEASE);
+    if (__atomic_load_n(&armed, __ATOMIC_ACQUIRE))
         ts->tv_sec += offset_seconds;
     return result;
 }

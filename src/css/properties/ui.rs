@@ -101,10 +101,6 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
     }
 }
 
-/// A value for the [resize](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#resize) property.
-// Intentionally unimplemented upstream, so this stays a unit placeholder.
-pub struct Resize;
-
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 

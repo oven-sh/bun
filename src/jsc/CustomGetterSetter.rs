@@ -4,11 +4,11 @@ bun_opaque::opaque_ffi! {
 }
 
 impl CustomGetterSetter {
-    pub fn is_getter_null(&self) -> bool {
+    pub(crate) fn is_getter_null(&self) -> bool {
         JSC__CustomGetterSetter__isGetterNull(self)
     }
 
-    pub fn is_setter_null(&self) -> bool {
+    pub(crate) fn is_setter_null(&self) -> bool {
         JSC__CustomGetterSetter__isSetterNull(self)
     }
 }

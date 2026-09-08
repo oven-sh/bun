@@ -12,12 +12,15 @@
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSReadRequest.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -35,7 +38,6 @@
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
@@ -43,6 +45,8 @@
 namespace WebCore {
 
 using namespace JSC;
+using Bun::WebStreams::analyzeBarrierEdge;
+using Bun::WebStreams::visitInternalFieldsHidden;
 
 // JSBunStandaloneTextSink — the GENERIC toText accumulator cell (BunStandaloneTextSink.h).
 
@@ -75,17 +79,12 @@ void JSBunStandaloneTextSink::destroy(JSCell* cell)
 
 Structure* JSBunStandaloneTextSink::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSBunStandaloneTextSink::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBunStandaloneTextSink, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunStandaloneTextSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunStandaloneTextSink = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBunStandaloneTextSink, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunStandaloneTextSink, m_subspaceForBunStandaloneTextSink));
 }
 
 DEFINE_VISIT_CHILDREN(JSBunStandaloneTextSink);
@@ -98,6 +97,14 @@ void JSBunStandaloneTextSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     WTF::Locker locker { thisObject->cellLock() };
     thisObject->m_accumulator.visit(locker, visitor);
+}
+
+void JSBunStandaloneTextSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSBunStandaloneTextSink>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    WTF::Locker locker { thisObject->cellLock() };
+    thisObject->m_accumulator.analyzeHeap(locker, cell, analyzer);
 }
 
 // JSOneShotDirectSink — consumeDirectStreamToArrayBuffer's throwaway controller cell.
@@ -124,17 +131,12 @@ JSOneShotDirectSink* JSOneShotDirectSink::create(VM& vm, Structure* structure)
 
 Structure* JSOneShotDirectSink::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSOneShotDirectSink::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSOneShotDirectSink, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForOneShotDirectSink = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForOneShotDirectSink.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForOneShotDirectSink = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSOneShotDirectSink, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForOneShotDirectSink, m_subspaceForOneShotDirectSink));
 }
 
 DEFINE_VISIT_CHILDREN(JSOneShotDirectSink);
@@ -144,11 +146,18 @@ void JSOneShotDirectSink::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_stream);
-    visitor.append(thisObject->m_arrayBufferSink);
-    visitor.append(thisObject->m_capabilityPromise);
-    visitor.append(thisObject->m_closeFunction);
+    visitInternalFieldsHidden(thisObject, visitor);
+}
+
+void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSOneShotDirectSink>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Stream), "stream"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ArrayBufferSink), "arrayBufferSink"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CapabilityPromise), "capabilityPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Source), "source"_s);
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -164,9 +173,9 @@ void JSReadableStreamIntoArrayOperation::finishCreation(VM& vm, JSReadableStream
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_reader.set(vm, this, reader);
-    m_chunks.set(vm, this, chunks);
-    m_result.set(vm, this, result);
+    internalField(Field::Reader).set(vm, this, reader);
+    internalField(Field::Chunks).set(vm, this, chunks);
+    internalField(Field::Result).set(vm, this, result);
 }
 
 JSReadableStreamIntoArrayOperation* JSReadableStreamIntoArrayOperation::create(VM& vm, Structure* structure, JSReadableStreamDefaultReader* reader, JSArray* chunks, JSPromise* result)
@@ -178,17 +187,12 @@ JSReadableStreamIntoArrayOperation* JSReadableStreamIntoArrayOperation::create(V
 
 Structure* JSReadableStreamIntoArrayOperation::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSReadableStreamIntoArrayOperation::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamIntoArrayOperation, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamIntoArrayOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamIntoArrayOperation = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamIntoArrayOperation, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamIntoArrayOperation, m_subspaceForReadableStreamIntoArrayOperation));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamIntoArrayOperation);
@@ -198,10 +202,17 @@ void JSReadableStreamIntoArrayOperation::visitChildrenImpl(JSCell* cell, Visitor
 {
     auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_chunks);
-    visitor.append(thisObject->m_result);
+    visitInternalFieldsHidden(thisObject, visitor);
+}
+
+void JSReadableStreamIntoArrayOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Reader), "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Chunks), "chunks"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Result), "result"_s);
 }
 
 } // namespace WebCore
@@ -231,9 +242,7 @@ static WTF::String stripTextResultBOM(const WTF::String& string)
     return withoutUTF8BOM(withoutUTF8BOM(string));
 }
 
-// UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and
-// write) as U+FFFD, so the pair always agrees; BunString::utf8ByteLength does not.
-static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
+size_t utf8ByteLengthWithReplacement(StringView string)
 {
     if (string.isEmpty())
         return 0;
@@ -242,7 +251,7 @@ static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
     return Bun__encoding__byteLengthUTF16AsUTF8(string.span16().data(), string.span16().size());
 }
 
-static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destination)
+size_t writeUTF8WithReplacement(StringView string, std::span<uint8_t> destination)
 {
     if (string.isEmpty())
         return 0;
@@ -250,6 +259,23 @@ static size_t writeUTF8(const WTF::String& string, std::span<uint8_t> destinatio
     if (string.is8Bit())
         return Bun__encoding__writeLatin1(string.span8().data(), string.span8().size(), destination.data(), destination.size(), utf8);
     return Bun__encoding__writeUTF16(string.span16().data(), string.span16().size(), destination.data(), destination.size(), utf8);
+}
+
+bool appendUTF8WithinStringLimit(const WTF::String& string, WTF::Vector<uint8_t>& bytes)
+{
+    size_t byteLength = utf8ByteLengthWithReplacement(string);
+    if (!byteLength)
+        return true;
+    size_t oldSize = bytes.size();
+    // UTF-8 expansion can exceed any reserve taken from the code-unit estimate.
+    if (exceedsStringLimit(oldSize + byteLength) || !bytes.tryGrow(oldSize + byteLength)) [[unlikely]]
+        return false;
+    size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
+    // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
+    ASSERT(written == byteLength);
+    if (written < byteLength) [[unlikely]]
+        bytes.shrink(oldSize + written);
+    return true;
 }
 
 // `obj[name](...args)` with `this` = obj.
@@ -281,7 +307,7 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
         return nullptr;
     }
     if (byteLength) {
-        size_t written = writeUTF8(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
+        size_t written = writeUTF8WithReplacement(string, { static_cast<uint8_t*>(resultBuffer->data()), byteLength });
         ASSERT_UNUSED(written, written == byteLength);
     }
     auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
@@ -294,25 +320,26 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
     if (chunk.isString()) {
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        if (size_t byteLength = utf8ByteLengthWithReplacement(string)) {
-            size_t oldSize = bytes.size();
-            bytes.grow(oldSize + byteLength);
-            size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
-            // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
-            ASSERT(written == byteLength);
-            if (written < byteLength) [[unlikely]]
-                bytes.shrink(oldSize + written);
+        if (!appendUTF8WithinStringLimit(string, bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
         }
         return true;
     }
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
-            bytes.append(view->span());
+        if (!view->isDetached() && !bytes.tryAppend(view->span())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
     }
     if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-            bytes.append(impl->span());
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached()) {
+            if (!bytes.tryAppend(impl->span())) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return false;
+            }
+        }
         return true;
     }
     throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
@@ -350,9 +377,10 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         stringChunks.append({ WTF::String(), 0 });
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
             total += view->isDetached() ? 0 : view->byteLength();
-        else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-            total += (jsBuffer->impl() && !jsBuffer->impl()->isDetached()) ? jsBuffer->impl()->byteLength() : 0;
-        else {
+        else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+            auto* impl = jsBuffer->impl();
+            total += (impl && !impl->isDetached()) ? impl->byteLength() : 0;
+        } else {
             throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
             return {};
         }
@@ -378,7 +406,7 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             if (stringByteLength) {
                 size_t oldSize = bytes.size();
                 bytes.grow(oldSize + stringByteLength);
-                size_t written = writeUTF8(string, bytes.mutableSpan().subspan(oldSize));
+                size_t written = writeUTF8WithReplacement(string, bytes.mutableSpan().subspan(oldSize));
                 // The sizer and writer must agree; never expose ungrown (uninitialized) bytes.
                 ASSERT(written == stringByteLength);
                 if (written < stringByteLength) [[unlikely]]
@@ -413,6 +441,21 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
+static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)
+{
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
+        if (!view->isDetached())
+            out = view->span();
+        return true;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+            out = impl->span();
+        return true;
+    }
+    return false;
+}
+
 // The toArrayBuffer chunk-array converter (RS:157-206).
 static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue chunksValue)
 {
@@ -435,16 +478,9 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-            return jsBuffer;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            if (impl && !view->byteOffset() && view->byteLength() == impl->byteLength()) {
-                auto* jsBuffer = view->possiblySharedJSBuffer(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return jsBuffer;
-            }
-            auto copied = JSC::ArrayBuffer::tryCreate(view->span());
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
             if (!copied) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -474,18 +510,14 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* uint8 = dynamicDowncast<JSC::JSUint8Array>(chunk))
-            return uint8;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            size_t byteOffset = view->byteOffset();
-            size_t byteLength = view->byteLength();
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), byteOffset, byteLength));
-        }
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = jsBuffer->impl();
-            size_t byteLength = impl ? impl->byteLength() : 0;
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+        std::span<const uint8_t> span;
+        if (binaryChunkSpan(chunk, span)) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
+            if (!copied) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(copied), 0, span.size()));
         }
         if (chunk.isString())
             RELEASE_AND_RETURN(scope, encodeStringToUint8Array(vm, globalObject, chunk));
@@ -522,22 +554,17 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
                 return chunk;
             RELEASE_AND_RETURN(scope, jsString(vm, stripped));
         }
-        bool isBinary = false;
         std::span<const uint8_t> span;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            isBinary = true;
-            span = view->isDetached() ? std::span<const uint8_t> {} : view->span();
-        } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            isBinary = true;
-            if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
-                span = impl->span();
-        }
-        if (isBinary) {
+        if (binaryChunkSpan(chunk, span)) {
             if (exceedsStringLimit(span.size())) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            WTF::String text = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+            WTF::String text = Zig::convertUTF8ToString(span);
+            if (text.isNull() && !span.empty()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
             RELEASE_AND_RETURN(scope, jsString(vm, withoutUTF8BOM(text)));
         }
     }
@@ -627,9 +654,10 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
     size_t byteLength = 0;
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
         byteLength = view->isDetached() ? 0 : view->byteLength();
-    else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-        byteLength = jsBuffer->impl() ? jsBuffer->impl()->byteLength() : 0;
-    else {
+    else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+        auto* impl = jsBuffer->impl();
+        byteLength = impl ? impl->byteLength() : 0;
+    } else {
         throwTypeError(globalObject, scope, "Expected text, ArrayBuffer or ArrayBufferView"_s);
         return {};
     }
@@ -661,9 +689,11 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         WTF::Locker locker { owner->cellLock() };
         accumulator.reset(locker);
     };
-    if (!accumulator.hasString && !accumulator.hasBuffer)
+    const bool hasString = accumulator.hasString;
+    const bool hasBuffer = accumulator.hasBuffer;
+    if (!hasString && !hasBuffer)
         return WTF::emptyString();
-    if (accumulator.hasString && !accumulator.hasBuffer) {
+    if (hasString && !hasBuffer) {
         if (exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);
@@ -675,31 +705,51 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return rope.substring(1);
         return rope;
     }
+    // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
+    const double estimatedLength = accumulator.estimatedLength;
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
     WTF::Vector<uint8_t> bytes;
-    if (accumulator.estimatedLength > 0 && accumulator.estimatedLength < static_cast<double>(std::numeric_limits<uint32_t>::max()))
-        bytes.reserveInitialCapacity(static_cast<size_t>(accumulator.estimatedLength));
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        releaseAccumulated();
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
         if (!value)
             continue;
         bool appended = appendChunkBytes(vm, globalObject, value, bytes);
-        RETURN_IF_EXCEPTION(scope, WTF::String());
-        if (!appended)
+        if (scope.exception() || !appended) [[unlikely]] {
+            releaseAccumulated();
             return WTF::String();
+        }
     }
     if (accumulator.rope.length()) {
         WTF::String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        WTF::CString utf8 = rope.utf8();
-        bytes.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
+            releaseAccumulated();
+            throwOutOfMemoryError(globalObject, scope);
+            return WTF::String();
+        }
     }
     releaseAccumulated();
     if (exceedsStringLimit(bytes.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return WTF::String();
     }
-    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes.span());
+    WTF::String text = Zig::convertUTF8ToString(bytes.span());
+    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
+    return text;
 }
 
 // reader.read() as a Promise-kind read request.
@@ -717,14 +767,14 @@ static JSPromise* readerReadAsPromise(JSC::VM& vm, JSGlobalObject* globalObject,
 
 // The readableStreamIntoArray readMany continuation. Runs synchronously until readMany
 // returns a promise, then chains the next hop onto a fresh derived promise it returns.
-static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSArray* chunks, JSValue manyResult)
+static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSArray* __restrict chunks, JSValue manyResult)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto* runtime = JSStreamsRuntime::from(globalObject);
     JSValue many = manyResult;
     while (true) {
         if (auto* manyPromise = dynamicDowncast<JSPromise>(many)) {
-            auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), reader, chunks);
             auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
             manyPromise->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadManyFulfilled(), runtime->onIntoArrayReadManyRejected(), derived, context);
@@ -735,9 +785,7 @@ static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore:
             throwTypeError(globalObject, scope, "readMany() did not return an object"_s);
             return {};
         }
-        JSValue doneValue = result->get(globalObject, vm.propertyNames->done);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue value = result->get(globalObject, vm.propertyNames->value);
+        auto [doneValue, value] = runtime->readManyResult(globalObject, result);
         RETURN_IF_EXCEPTION(scope, {});
         if (auto* valueArray = dynamicDowncast<JSArray>(value)) {
             unsigned valueLength = valueArray->length();
@@ -768,56 +816,40 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     RETURN_IF_EXCEPTION(scope, {});
     auto* chunks = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    bool isQueueBacked = stream->m_controllerKind == ControllerKind::Default || stream->m_controllerKind == ControllerKind::Byte;
-    if (!isQueueBacked) {
-        // Direct (and controller-less) streams keep the generic readMany loop.
-        JSValue result;
-        {
-            // readMany() throws synchronously on an already-errored stream; convert every
-            // synchronous abrupt completion to a rejection.
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    const ControllerKind controllerKind = stream->m_controllerKind;
+    bool isQueueBacked = controllerKind == ControllerKind::Default || controllerKind == ControllerKind::Byte;
+    // From here on this returns a promise (promiseFromSteps): readMany() throwing synchronously on an
+    // already-errored stream, a getter throwing while draining, are its rejection.
+    RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!isQueueBacked) {
+            // Direct (and controller-less) streams keep the generic readMany loop.
             JSValue many = readableStreamDefaultReaderReadMany(globalObject, reader);
-            if (!catchScope.exception())
-                result = intoArrayLoop(vm, globalObject, reader, chunks, many);
-            if (catchScope.exception()) {
-                JSValue error = takeAbruptCompletion(globalObject, catchScope);
-                if (error.isEmpty())
-                    return {};
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-            }
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            JSValue result = intoArrayLoop(vm, globalObject, reader, chunks, many);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (auto* promise = dynamicDowncast<JSPromise>(result))
+                return promise;
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
         }
-        if (auto* promise = dynamicDowncast<JSPromise>(result))
-            return promise;
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
-    }
-    // Queue-backed streams: one persistent op {reader, chunks, result promise} carries the
-    // pump across every read, so a pending hop costs one reaction registration and nothing else.
-    JSPromise* pendingRead = nullptr;
-    JSValue thrown;
-    ConsumerFillStep step = ConsumerFillStep::Done;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        step = readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
+        // Queue-backed streams: one persistent op {reader, chunks, result promise} carries the
+        // pump across every read, so a pending hop costs one reaction registration and nothing else.
+        JSPromise* pendingRead = nullptr;
+        ConsumerFillStep step = readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (step == ConsumerFillStep::Done) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, chunks));
         }
-    }
-    if (!thrown.isEmpty()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (step == ConsumerFillStep::Done) {
-        readableStreamDefaultReaderRelease(globalObject, reader);
-        RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, chunks));
-    }
-    auto* domGlobalObject = defaultGlobalObject(globalObject);
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
-    auto* op = JSReadableStreamIntoArrayOperation::create(vm, runtime->intoArrayOperationStructure(domGlobalObject), reader, chunks, resultPromise);
-    pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op);
-    RETURN_IF_EXCEPTION(scope, {});
-    return resultPromise;
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        auto* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+        auto* op = JSReadableStreamIntoArrayOperation::create(vm, runtime->intoArrayOperationStructure(domGlobalObject), reader, chunks, resultPromise);
+        pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return resultPromise;
+    }));
 }
 
 enum class ChunkArrayConversion : uint8_t { ArrayBuffer,
@@ -886,8 +918,8 @@ static JSValue finishDirectConsumeLoop(JSC::VM& vm, JSGlobalObject* globalObject
     }
     if (stream->m_controllerKind == ControllerKind::Direct) {
         auto* controller = uncheckedDowncast<JSDirectStreamController>(stream->m_controller.get());
-        if (controller->m_closingPromise)
-            return controller->m_closingPromise.get();
+        if (auto* closingPromise = controller->closingPromise().get())
+            return closingPromise;
     }
     return jsUndefined();
 }
@@ -910,7 +942,7 @@ static JSValue directConsumeLoopStep(JSC::VM& vm, JSGlobalObject* globalObject, 
 static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    setUpDirectStreamController(globalObject, stream, kind, stream->m_bunHighWaterMark);
+    setUpDirectStreamController(globalObject, stream, kind);
     RETURN_IF_EXCEPTION(scope, {});
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -920,25 +952,18 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
     RELEASE_AND_RETURN(scope, directConsumeLoopStep(vm, globalObject, context));
 }
 
+// This returns a promise (promiseFromSteps): every synchronous abrupt completion is its rejection.
 static JSValue consumeDirectStream(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, DirectSinkKind kind)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    {
-        // Today's function is async: every synchronous abrupt completion becomes a rejection.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        result = consumeDirectStreamBody(vm, globalObject, stream, kind);
-        if (catchScope.exception()) {
-            JSValue error = takeAbruptCompletion(globalObject, catchScope);
-            if (error.isEmpty())
-                return {};
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-        }
-    }
-    if (auto* promise = dynamicDowncast<JSPromise>(result))
-        return promise;
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue result = consumeDirectStreamBody(vm, globalObject, stream, kind);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (auto* promise = dynamicDowncast<JSPromise>(result))
+            return promise;
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, result));
+    });
 }
 
 JSValue readableStreamToTextDirect(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
@@ -986,17 +1011,17 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
 
 // Calls the user's pull(oneShotController) exactly once (its own scope so the caller may
 // catch the abrupt completion).
-static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSValue pullFunction, JSOneShotDirectSink* sink)
+static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto callData = JSC::getCallData(pullFunction);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
+    JSObject* pullFunction = source->pullFunction();
+    if (!pullFunction) [[unlikely]] {
         throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
         return {};
     }
     MarkedArgumentBuffer arguments;
     arguments.append(sink);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, callData, jsUndefined(), arguments));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, JSC::getCallData(pullFunction), source->thisValue(), arguments));
 }
 
 JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, bool asUint8Array)
@@ -1006,56 +1031,52 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
-    if (!underlyingSource) [[unlikely]]
+    auto* source = stream->m_directSource.get();
+    if (!source) [[unlikely]]
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
 
     MarkedArgumentBuffer noArguments;
     JSObject* arrayBufferSink = JSC::construct(globalObject, domGlobalObject->ArrayBufferSink(), noArguments, "ArrayBufferSink is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
     stream->m_bunMode = BunStreamMode::Default;
     stream->m_lockedWithoutReader = true;
     stream->m_disturbed = true;
 
     JSObject* startOptions = constructEmptyObject(globalObject);
-    bool hasNumericHighWaterMark = stream->m_bunHighWaterMarkIsNumber || !std::isnan(stream->m_bunHighWaterMark);
-    startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), hasNumericHighWaterMark ? jsNumber(stream->m_bunHighWaterMark) : jsUndefined());
+    const double bunHighWaterMark = stream->m_bunHighWaterMark;
+    bool hasNumericHighWaterMark = stream->m_bunHighWaterMarkIsNumber || !std::isnan(bunHighWaterMark);
+    startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), hasNumericHighWaterMark ? jsNumber(bunHighWaterMark) : jsUndefined());
     startOptions->putDirect(vm, builtinNames(vm).asUint8ArrayPublicName(), jsBoolean(asUint8Array));
     MarkedArgumentBuffer startArguments;
     startArguments.append(startOptions);
     invokeMethod(vm, globalObject, arrayBufferSink, builtinNames(vm).startPublicName(), startArguments);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue pullFunction = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue closeFunction = underlyingSource->get(globalObject, builtinNames(vm).closePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* capability = JSPromise::create(vm, globalObject->promiseStructure());
     auto* sink = JSOneShotDirectSink::create(vm, runtime->oneShotDirectSinkStructure(domGlobalObject));
-    sink->m_stream.set(vm, sink, stream);
-    sink->m_arrayBufferSink.set(vm, sink, arrayBufferSink);
-    sink->m_capabilityPromise.set(vm, sink, capability);
+    sink->setStream(vm, stream);
+    sink->setArrayBufferSink(vm, arrayBufferSink);
+    sink->setCapabilityPromise(vm, capability);
     sink->m_asUint8Array = asUint8Array;
-    sink->m_closeFunction.set(vm, sink, closeFunction);
+    sink->setSource(vm, source);
     installOneShotMethods(vm, globalObject, sink);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue firstPull;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        firstPull = oneShotCallPull(vm, globalObject, pullFunction, sink);
-        if (catchScope.exception()) {
-            JSValue error = takeAbruptCompletion(globalObject, catchScope);
-            if (error.isEmpty())
-                return {};
-            stream->m_lockedWithoutReader = false;
-            readableStreamError(globalObject, stream, error);
+    // The boundary into the direct source's pull(): its completion is converted here — a synchronous
+    // throw errors the stream and rejects the returned promise; a returned promise's rejection is
+    // handled by its reaction.
+    JSValue firstPull = oneShotCallPull(vm, globalObject, source, sink);
+    if (JSC::Exception* exception = scope.exception()) {
+        TRY_CLEAR_EXCEPTION(scope, {});
+        stream->m_lockedWithoutReader = false;
+        // pull() may already have errored the stream through the sink before throwing.
+        if (stream->m_state == ReadableStreamState::Readable) {
+            readableStreamError(globalObject, stream, exception->value());
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
         }
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
         auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1132,29 +1153,21 @@ static JSValue convertChunkArrayPromise(JSC::VM& vm, JSGlobalObject* globalObjec
         return arrayResult;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (arrayPromise->status() == JSPromise::Status::Fulfilled) {
-        JSValue converted;
-        JSValue thrown;
-        {
-            // Text consumers are promise-returning: a synchronous conversion failure rejects.
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            converted = convertChunks(globalObject, arrayPromise->result(), kind);
-            if (catchScope.exception()) [[unlikely]] {
-                thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty()) [[unlikely]]
-                    return {};
-            }
-        }
-        if (!thrown.isEmpty()) [[unlikely]] {
-            if (kind == ChunkArrayConversion::Text)
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-            throwException(globalObject, scope, thrown);
-            return {};
-        }
-        releaseInternalChunkArray(globalObject, arrayPromise->result());
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
-        fulfilled->fulfill(vm, converted);
-        return fulfilled;
+        auto convertNow = [&] -> JSPromise* {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSValue converted = convertChunks(globalObject, arrayPromise->result(), kind);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            releaseInternalChunkArray(globalObject, arrayPromise->result());
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            auto* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
+            fulfilled->fulfill(vm, converted);
+            return fulfilled;
+        };
+        // Text consumers are promise-returning: a synchronous conversion failure rejects. The buffer
+        // consumers have always thrown it synchronously.
+        if (kind == ChunkArrayConversion::Text)
+            RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, convertNow));
+        RELEASE_AND_RETURN(scope, convertNow());
     }
     JSFunction* onFulfilled = nullptr;
     switch (kind) {
@@ -1230,22 +1243,17 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
         return textResult;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (textPromise->status() == JSPromise::Status::Fulfilled) {
-        JSValue parsed;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // .json() returns a promise (promiseFromSteps): a parse failure is its rejection.
+        RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
+            auto scope = DECLARE_THROW_SCOPE(vm);
             WTF::String text = textPromise->result().toWTFString(globalObject);
-            if (!catchScope.exception())
-                parsed = JSONParseWithException(globalObject, text);
-            if (catchScope.exception()) {
-                JSValue error = takeAbruptCompletion(globalObject, catchScope);
-                if (error.isEmpty())
-                    return {};
-                RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
-            }
-        }
-        auto* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
-        fulfilled->fulfill(vm, parsed);
-        return fulfilled;
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            JSValue parsed = JSONParseWithException(globalObject, text);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            auto* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
+            fulfilled->fulfill(vm, parsed);
+            return fulfilled;
+        }));
     }
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
     textPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToJSONFulfilled(), jsUndefined(), derived, jsUndefined());
@@ -1403,8 +1411,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlob
     auto* stream = uncheckedDowncast<JSReadableStream>(callFrame->uncheckedArgument(1));
     JSValue error = callFrame->argument(0);
     stream->m_lockedWithoutReader = false;
-    Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
+    auto* cancelPromise = Bun::WebStreams::readableStreamCancel(globalObject, stream, error);
     RETURN_IF_EXCEPTION(scope, {});
+    if (cancelPromise)
+        Bun::WebStreams::markPromiseAsHandled(vm, cancelPromise);
     Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     throwException(globalObject, scope, error);
@@ -1510,100 +1520,69 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyFulfilled, (JSGl
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::intoArrayLoop(vm, globalObject, reader, chunks, callFrame->argument(0))));
 }
 
-// The persistent-op pump: settle the op's result promise with an error, releasing the reader.
-static void intoArrayFinishWithError(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSPromise* resultPromise, JSValue error)
+// The persistent-op pump: settle, then release the reader (the original
+// `finally { reader.releaseLock() }`). If that release throws after a successful settle, the
+// boundary delivers the error here again with the result already fulfilled; only the first
+// settle counts.
+static void intoArraySettle(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSPromise* resultPromise, JSValue chunks, JSValue error)
 {
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        if (reader->m_stream)
-            Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue releaseError = takeAbruptCompletion(globalObject, catchScope);
-            if (releaseError.isEmpty())
-                return;
-        }
+    if (resultPromise->status() == JSPromise::Status::Pending) {
+        if (error)
+            resultPromise->reject(vm, error);
+        else
+            resultPromise->fulfill(vm, chunks);
     }
-    resultPromise->reject(vm, error);
+    if (reader->m_stream)
+        Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
 }
 
+// One step of the queue-backed pump: consume the read result, refill from the queue; true = done.
+static bool intoArrayStep(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStreamIntoArrayOperation* op, JSValue readResult, JSPromise*& pendingRead)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!readResult.isObject()) [[unlikely]]
+        return true;
+    auto [done, value] = Bun::getIteratorResult(globalObject, asObject(readResult));
+    RETURN_IF_EXCEPTION(scope, true);
+    if (done.toBoolean(globalObject))
+        return true;
+    auto* chunks = op->chunks();
+    chunks->push(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, true);
+    auto step = Bun::WebStreams::readableStreamDefaultReaderFillFromQueue(globalObject, op->reader(), chunks, &pendingRead);
+    RETURN_IF_EXCEPTION(scope, true);
+    return step == Bun::WebStreams::ConsumerFillStep::Done;
+}
+
+// The read's fulfilment reaction (enterStreams): a throw while consuming the result (a `done`/
+// `value` getter, the refill) is the operation's rejection.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(callFrame->uncheckedArgument(1));
-    auto* reader = op->m_reader.get();
-    auto* chunks = op->m_chunks.get();
-    auto* resultPromise = op->m_result.get();
+    auto* reader = op->reader();
+    auto* resultPromise = op->result();
 
-    JSValue thrown;
-    bool finished = false;
-    JSPromise* pendingRead = nullptr;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        do {
-            JSValue readResult = callFrame->argument(0);
-            if (!readResult.isObject()) [[unlikely]] {
-                finished = true;
-                break;
-            }
-            JSValue done = asObject(readResult)->get(globalObject, vm.propertyNames->done);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            JSValue value = asObject(readResult)->get(globalObject, vm.propertyNames->value);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            if (done.toBoolean(globalObject)) {
-                finished = true;
-                break;
-            }
-            chunks->push(globalObject, value);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            auto step = Bun::WebStreams::readableStreamDefaultReaderFillFromQueue(globalObject, reader, chunks, &pendingRead);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            if (step == Bun::WebStreams::ConsumerFillStep::Done)
-                finished = true;
-        } while (false);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return JSValue::encode(jsUndefined());
-        }
-    }
-    if (!thrown.isEmpty()) [[unlikely]] {
-        intoArrayFinishWithError(vm, globalObject, reader, resultPromise, thrown);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    }
-    if (finished) {
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            if (reader->m_stream)
-                Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue releaseError = takeAbruptCompletion(globalObject, catchScope);
-                if (releaseError.isEmpty())
-                    return JSValue::encode(jsUndefined());
-                resultPromise->reject(vm, releaseError);
-                RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-            }
-        }
-        resultPromise->fulfill(vm, chunks);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    }
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    JSValue readResult = callFrame->argument(0);
+    return enterStreams(globalObject, [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSPromise* pendingRead = nullptr;
+        bool finished = intoArrayStep(vm, globalObject, op, readResult, pendingRead);
+        RETURN_IF_EXCEPTION(scope, );
+        if (finished)
+            RELEASE_AND_RETURN(scope, intoArraySettle(vm, globalObject, reader, resultPromise, op->chunks(), {}));
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        pendingRead->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadFulfilled(), runtime->onIntoArrayReadRejected(), jsUndefined(), op); }, [&](JSValue error) { intoArraySettle(vm, globalObject, reader, resultPromise, {}, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* op = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(callFrame->uncheckedArgument(1));
-    intoArrayFinishWithError(vm, globalObject, op->m_reader.get(), op->m_result.get(), callFrame->argument(0));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    const auto* op = uncheckedDowncast<JSReadableStreamIntoArrayOperation>(callFrame->uncheckedArgument(1));
+    intoArraySettle(vm, globalObject, op->reader(), op->result(), {}, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1628,7 +1607,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadFulfilled, (
     auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
     bool done = false;
     if (JSObject* result = callFrame->argument(0).getObject()) {
-        JSValue doneValue = result->get(globalObject, vm.propertyNames->done);
+        JSValue doneValue = Bun::getIteratorResult(globalObject, result).first;
         RETURN_IF_EXCEPTION(scope, {});
         done = doneValue.toBoolean(globalObject);
     }
@@ -1651,23 +1630,23 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFul
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
-    auto* stream = sink->m_stream.get();
+    const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
+    auto* stream = sink->stream();
     if (stream) {
         stream->m_lockedWithoutReader = false;
         Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    return JSValue::encode(sink->m_capabilityPromise.get());
+    return JSValue::encode(sink->capabilityPromise());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
+    const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
     JSValue error = callFrame->argument(0);
-    auto* stream = sink->m_stream.get();
+    auto* stream = sink->stream();
     if (stream) {
         stream->m_lockedWithoutReader = false;
         if (stream->m_state == ReadableStreamState::Readable) {
@@ -1690,12 +1669,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectWrite, (JSGlobalO
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
+    const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
     MarkedArgumentBuffer arguments;
     arguments.append(callFrame->argument(1));
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::invokeMethod(vm, globalObject, sink->m_arrayBufferSink.get(), builtinNames(vm).writePublicName(), arguments)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).writePublicName(), arguments)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1706,28 +1685,22 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalO
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
     sink->m_closed = true;
-    JSValue closeFunction = sink->m_closeFunction.get();
-    if (closeFunction.toBoolean(globalObject)) {
-        auto callData = JSC::getCallData(closeFunction);
-        if (callData.type == CallData::Type::None) [[unlikely]] {
-            throwTypeError(globalObject, scope, "The 'close' member of a direct ReadableStream's underlying source is not a function"_s);
-            return {};
-        }
-        MarkedArgumentBuffer noArguments;
-        JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+    if (auto* source = sink->source()) {
+        sink->clearSource();
+        source->close(globalObject, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
     MarkedArgumentBuffer noArguments;
-    JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->m_arrayBufferSink.get(), builtinNames(vm).endPublicName(), noArguments);
+    JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, {});
-    if (auto* capability = sink->m_capabilityPromise.get(); capability && capability->status() == JSPromise::Status::Pending)
+    if (auto* capability = sink->capabilityPromise(); capability && capability->status() == JSPromise::Status::Pending)
         capability->fulfill(vm, endResult);
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectFlush, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
+    const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsNumber(0));

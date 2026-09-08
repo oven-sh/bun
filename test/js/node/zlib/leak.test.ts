@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { isASAN, rss } from "harness";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 
@@ -7,6 +7,10 @@ const input = Buffer.alloc(50000);
 for (let i = 0; i < input.length; i++) input[i] = Math.random();
 
 const upper = 1024 * 1024 * (isASAN ? 20 : 10);
+
+// The leak assertion (RSS stable across iterations) is quality-agnostic; the
+// default quality (11) makes each brotli test take multiple seconds in CI.
+const brotliOpts = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2 } };
 
 describe("zlib compression does not leak memory", () => {
   beforeAll(() => {
@@ -24,13 +28,13 @@ describe("zlib compression does not leak memory", () => {
         for (let index = 0; index < 10_000; index++) {
           await promisify(zlib[compress])(input);
         }
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
         console.log(baseline);
         for (let index = 0; index < 10_000; index++) {
           await promisify(zlib[compress])(input);
         }
         Bun.gc(true);
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(after);
         console.log("-", after - baseline);
         console.log("-", upper);
@@ -47,13 +51,13 @@ describe("zlib compression does not leak memory", () => {
         for (let index = 0; index < 10_000; index++) {
           zlib[compress](input);
         }
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
         console.log(baseline);
         for (let index = 0; index < 10_000; index++) {
           zlib[compress](input);
         }
         Bun.gc(true);
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(after);
         console.log("-", after - baseline);
         console.log("-", upper);
@@ -65,15 +69,15 @@ describe("zlib compression does not leak memory", () => {
 
   test("brotliCompress", async () => {
     for (let index = 0; index < 1_000; index++) {
-      await promisify(zlib.brotliCompress)(input);
+      await promisify(zlib.brotliCompress)(input, brotliOpts);
     }
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
-      await promisify(zlib.brotliCompress)(input);
+      await promisify(zlib.brotliCompress)(input, brotliOpts);
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log(after);
     console.log("-", after - baseline);
     console.log("-", upper);
@@ -82,15 +86,15 @@ describe("zlib compression does not leak memory", () => {
 
   test("brotliCompressSync", async () => {
     for (let index = 0; index < 1_000; index++) {
-      zlib.brotliCompressSync(input);
+      zlib.brotliCompressSync(input, brotliOpts);
     }
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
-      zlib.brotliCompressSync(input);
+      zlib.brotliCompressSync(input, brotliOpts);
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log(after);
     console.log("-", after - baseline);
     console.log("-", upper);
@@ -101,13 +105,13 @@ describe("zlib compression does not leak memory", () => {
     for (let index = 0; index < 1_000; index++) {
       await promisify(zlib.zstdCompress)(input);
     }
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
       await promisify(zlib.zstdCompress)(input);
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log(after);
     console.log("-", after - baseline);
     console.log("-", upper);
@@ -118,13 +122,13 @@ describe("zlib compression does not leak memory", () => {
     for (let index = 0; index < 1_000; index++) {
       zlib.zstdCompressSync(input);
     }
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
       zlib.zstdCompressSync(input);
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log(after);
     console.log("-", after - baseline);
     console.log("-", upper);

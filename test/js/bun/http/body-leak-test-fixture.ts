@@ -1,12 +1,25 @@
+// RSS on darwin keeps freed-but-mapped (MADV_FREE_REUSABLE) pages, so it only reports
+// the high-water mark; memoryFootprint() is what the process actually retains.
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
+async function memoryUsage() {
+  Bun.gc(true);
+  await Bun.sleep(50);
+  return rss();
+}
+
+const http2 = process.argv.includes("--http2");
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
+  ...(http2 ? { tls: require("harness").tls, http2: true } : {}),
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {
-      Bun.gc(true);
-      await Bun.sleep(10);
-      return new Response(JSON.stringify(process.memoryUsage.rss()), {
+      return new Response(JSON.stringify(await memoryUsage()), {
         headers: {
           "Content-Type": "application/json",
         },
@@ -16,7 +29,7 @@ const server = Bun.serve({
       await Bun.sleep(10);
       require("v8").writeHeapSnapshot("/tmp/heap.heapsnapshot");
       console.log("Wrote heap snapshot to /tmp/heap.heapsnapshot");
-      return new Response(JSON.stringify(process.memoryUsage.rss()), {
+      return new Response(JSON.stringify(await memoryUsage()), {
         headers: {
           "Content-Type": "application/json",
         },
@@ -56,11 +69,11 @@ process?.send?.(server.url.href);
 if (!process.send) {
   setInterval(() => {
     Bun.gc(true);
-    const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-    console.log("RSS", rss, "MB");
+    const rssMB = (rss() / 1024 / 1024) | 0;
+    console.log("RSS", rssMB, "MB");
     console.log("Active requests", server.pendingRequests);
 
-    if (rss > 1024) {
+    if (rssMB > 1024) {
       require("v8").writeHeapSnapshot("/tmp/heap.heapsnapshot");
     }
   }, 5000);

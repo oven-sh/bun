@@ -47,7 +47,7 @@ public:
         JSC::VM& vm,
         JSC::Structure* structure,
         std::span<EncodedJSValue> callbacks,
-        std::span<ZigString> paths)
+        std::span<EncodedSlice> paths)
     {
         auto* routeList = new (NotNull, JSC::allocateCell<ServerRouteList>(vm)) ServerRouteList(vm, structure, callbacks, paths);
         routeList->finishCreation(vm, callbacks, paths);
@@ -77,12 +77,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<ServerRouteList, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerRouteList = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForServerRouteList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerRouteList = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<ServerRouteList, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForServerRouteList, m_subspaceForServerRouteList));
     }
 
     DECLARE_INFO;
@@ -96,7 +91,7 @@ private:
     template<typename Req>
     JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req);
 
-    ServerRouteList(JSC::VM& vm, JSC::Structure* structure, std::span<EncodedJSValue> callbacks, std::span<ZigString> paths)
+    ServerRouteList(JSC::VM& vm, JSC::Structure* structure, std::span<EncodedJSValue> callbacks, std::span<EncodedSlice> paths)
         : Base(vm, structure)
         , m_routes(callbacks.size())
         , m_paramsObjectStructures(paths.size())
@@ -110,7 +105,7 @@ private:
     WTF::FixedVector<IdentifierRange> m_pathIdentifierRanges;
     WTF::Vector<Identifier> m_pathIdentifiers;
 
-    void finishCreation(JSC::VM& vm, std::span<EncodedJSValue> callbacks, std::span<ZigString> paths)
+    void finishCreation(JSC::VM& vm, std::span<EncodedJSValue> callbacks, std::span<EncodedSlice> paths)
     {
         Base::finishCreation(vm);
         ASSERT(callbacks.size() == paths.size());
@@ -123,7 +118,7 @@ private:
         std::span<IdentifierRange> pathIdentifierRanges = m_pathIdentifierRanges.mutableSpan();
 
         for (size_t i = 0; i < paths.size(); i++) {
-            ZigString rawPath = paths[i];
+            EncodedSlice rawPath = paths[i];
             WTF::String path = Zig::toString(rawPath);
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
@@ -186,7 +181,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         auto* prototype = zigGlobalObject->m_JSBunRequestParamsPrototype.get(zigGlobalObject);
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 
         if (identifiers.size() < JSC::JSFinalObject::maxInlineCapacity) {
             PropertyOffset offset;
@@ -250,7 +245,7 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
     JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     *requestObject = JSValue::encode(request);
 
     JSValue callback = m_routes.at(index).get();
@@ -293,10 +288,10 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
 
-extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, ZigString* paths, size_t pathsLength)
+extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, EncodedSlice* paths, size_t pathsLength)
 {
     auto* structure = globalObject->m_ServerRouteListStructure.get(globalObject);
-    auto* routeList = ServerRouteList::create(globalObject->vm(), structure, std::span<EncodedJSValue>(callbacks, pathsLength), std::span<ZigString>(paths, pathsLength));
+    auto* routeList = ServerRouteList::create(globalObject->vm(), structure, std::span<EncodedJSValue>(callbacks, pathsLength), std::span<EncodedSlice>(paths, pathsLength));
     return JSValue::encode(routeList);
 }
 
@@ -309,7 +304,7 @@ JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* glob
 {
     auto* prototype = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("RequestParams"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
+    auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
     structure->setMayBePrototype(true);
     return JSC::constructEmptyObject(vm, structure);
 }

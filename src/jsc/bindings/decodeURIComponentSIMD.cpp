@@ -2,6 +2,7 @@
 #include "root.h"
 
 #include "BunString.h"
+#include "helpers.h"
 #include <wtf/text/WTFString.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/SIMDUTF.h>
@@ -28,7 +29,7 @@ ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<cons
         result.append(chars);
         return;
     }
-    result.append(WTF::String::fromUTF8ReplacingInvalidSequences(chars));
+    result.append(Zig::convertUTF8ToString(chars));
 }
 
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
@@ -63,7 +64,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 
     if (inputIsASCII)
         return String(lchar);
-    return String::fromUTF8ReplacingInvalidSequences(lchar);
+    return Zig::convertUTF8ToString(lchar);
 
 slow_path:
     while (cursor < end && *cursor != '%') {

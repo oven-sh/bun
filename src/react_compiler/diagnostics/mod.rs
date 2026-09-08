@@ -13,7 +13,6 @@
     reason = "ported verbatim from facebook/react upstream; not maintained for Rust idioms"
 )]
 
-pub mod code_frame;
 pub mod js_string;
 
 pub use js_string::JsString;
@@ -289,6 +288,13 @@ impl CompilerErrorOrDiagnostic {
             Self::ErrorDetail(d) => d.logged_severity(),
         }
     }
+
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            Self::Diagnostic(d) => d.category,
+            Self::ErrorDetail(d) => d.category,
+        }
+    }
 }
 
 impl CompilerError {
@@ -325,62 +331,13 @@ impl CompilerError {
 
     /// Check if any error detail has Invariant category.
     pub fn has_invariant_errors(&self) -> bool {
-        self.details.iter().any(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            cat == ErrorCategory::Invariant
-        })
+        self.details
+            .iter()
+            .any(|d| d.category() == ErrorCategory::Invariant)
     }
 
     pub fn merge(&mut self, other: CompilerError) {
         self.details.extend(other.details);
-    }
-
-    /// Check if all error details are non-invariant.
-    /// In TS, this is used to determine if an error thrown during compilation
-    /// should be logged as CompileUnexpectedThrow.
-    pub fn is_all_non_invariant(&self) -> bool {
-        self.details.iter().all(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            cat != ErrorCategory::Invariant
-        })
-    }
-
-    /// Format as a string matching the TS `CompilerError.toString()` output.
-    /// Used for the `data` field of `CompileUnexpectedThrow` events.
-    ///
-    /// Format per detail: `"Category: reason. Description. (line:column)"`
-    /// Multiple details are joined with `"\n\n"`.
-    pub fn to_string_for_event(&self) -> String {
-        use core::fmt::Write as _;
-        let mut buf = String::new();
-        for (i, d) in self.details.iter().enumerate() {
-            if i > 0 {
-                buf.push_str("\n\n");
-            }
-            let (category, reason, description, loc) = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                    let loc = d.primary_location().cloned();
-                    (d.category, &d.reason, &d.description, loc)
-                }
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                    (d.category, &d.reason, &d.description, d.loc)
-                }
-            };
-            let _ = write!(buf, "{}: {}", format_category_heading(category), reason);
-            if let Some(desc) = description {
-                let _ = write!(buf, ". {}.", desc);
-            }
-            if let Some(loc) = loc {
-                let _ = write!(buf, " ({}:{})", loc.start.line, loc.start.column);
-            }
-        }
-        buf
     }
 }
 

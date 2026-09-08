@@ -16,7 +16,7 @@ arr.buffer; // => ArrayBuffer(64)
 The `Uint8Array` may be a view over a _subset_ of the data in the underlying `ArrayBuffer`. In this case, the `buffer` property returns the entire buffer, and the `byteOffset` and `byteLength` properties indicate the subset.
 
 ```ts
-const arr = new Uint8Array(64, 16, 32);
+const arr = new Uint8Array(new ArrayBuffer(64), 16, 32);
 arr.buffer; // => ArrayBuffer(64)
 arr.byteOffset; // => 16
 arr.byteLength; // => 32

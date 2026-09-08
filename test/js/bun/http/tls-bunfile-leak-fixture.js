@@ -11,6 +11,10 @@
 //
 // Env: TLS_CERT_PATH, TLS_KEY_PATH - paths to (large) PEM files
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const certPath = process.env.TLS_CERT_PATH;
 const keyPath = process.env.TLS_KEY_PATH;
 const iterations = parseInt(process.env.ITERATIONS || "100", 10);
@@ -35,11 +39,11 @@ function iterate() {
 
 for (let i = 0; i < warmup; i++) iterate();
 Bun.gc(true);
-const baselineRss = process.memoryUsage.rss();
+const baselineRss = rss();
 
 for (let i = 0; i < iterations; i++) iterate();
 Bun.gc(true);
-const finalRss = process.memoryUsage.rss();
+const finalRss = rss();
 
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);
 

@@ -67,6 +67,73 @@ fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
     bun_core::hash::xxhash64(seed, bytes)
 }
 
+/// Split an `If-None-Match` list into entity-tag fragments, honoring RFC 9110
+/// DQUOTE boundaries: a comma inside an opaque-tag (e.g. `"ab,cd"`) is part of
+/// the tag, not a list separator.
+struct EntityTagSplit<'a> {
+    rest: &'a [u8],
+    done: bool,
+}
+
+impl<'a> Iterator for EntityTagSplit<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        if self.done {
+            return None;
+        }
+        let bytes = self.rest;
+        let mut in_quotes = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'"' => in_quotes = !in_quotes,
+                b',' if !in_quotes => {
+                    let (head, tail) = bytes.split_at(i);
+                    self.rest = &tail[1..];
+                    return Some(head);
+                }
+                _ => {}
+            }
+        }
+        self.done = true;
+        Some(bytes)
+    }
+}
+
+fn split_entity_tags(list: &[u8]) -> EntityTagSplit<'_> {
+    EntityTagSplit {
+        rest: list,
+        done: false,
+    }
+}
+
+/// RFC 9110 §13.1.1: evaluate `If-Match` using the strong comparison
+/// (§8.8.3.2: both not weak and opaque-tags byte-equal). `*` is true for any
+/// current representation. Returns `true` when the condition holds (continue);
+/// `false` means respond 412.
+pub fn if_match(
+    // Stored `ETag` header, `None` when the representation has none.
+    etag: Option<&[u8]>,
+    // `If-Match` header
+    if_match: &[u8],
+) -> bool {
+    if strings::trim(if_match, b" \t") == b"*" {
+        return true;
+    }
+    let Some(etag) = etag else { return false };
+    let ours = parse(etag);
+    if ours.is_weak {
+        return false;
+    }
+    for tag_str in split_entity_tags(if_match) {
+        let parsed = parse(tag_str);
+        if !parsed.is_weak && parsed.tag == ours.tag {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn if_none_match(
     // "ETag" header
     etag: &[u8],
@@ -81,7 +148,7 @@ pub fn if_none_match(
     }
 
     // Parse comma-separated list of entity tags
-    for tag_str in if_none_match.split(|&b| b == b',') {
+    for tag_str in split_entity_tags(if_none_match) {
         let parsed = parse(tag_str);
         if weak_match(
             our_parsed.tag,

@@ -38,7 +38,7 @@
 // of referencing symbols that only exist on this branch's MessagePort.
 #define BUN_MESSAGEPORT_USES_PIPE 1
 
-#include "ContextDestructionObserver.h"
+#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include "MessagePortPipe.h"
@@ -59,7 +59,7 @@ struct StructuredSerializeOptions;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
 
-class MessagePort final : public ContextDestructionObserver, public EventTarget, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePort> {
+class MessagePort final : public ActiveDOMObject, public EventTarget, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePort> {
     WTF_MAKE_NONCOPYABLE(MessagePort);
     WTF_MAKE_TZONE_ALLOCATED(MessagePort);
 
@@ -67,10 +67,22 @@ public:
     static Ref<MessagePort> create(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
     virtual ~MessagePort();
 
+    // ActiveDOMObject.
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
+
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
     void start();
+    bool hasMessageEventListener() const { return m_hasMessageEventListener; }
+    // The worker's entry module finished evaluating: a start() requested before that takes effect now.
+    void entrySettled();
     void close();
+    // Called on the entangled peer when this side closes: dispatches a
+    // 'close' event and releases the event-loop ref so the loop can idle.
+    void peerClosed();
+    void dispatchCloseEvent();
 
     // Transfer machinery.
     static ExceptionOr<Vector<TransferredMessagePort>> disentanglePorts(Vector<RefPtr<MessagePort>>&&);
@@ -90,24 +102,21 @@ public:
     MessagePortPipe* pipe() const { return m_pipe.ptr(); }
     uint8_t side() const { return m_side; }
 
-    void ref() const { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
-    void deref() const { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
-
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return this->ContextDestructionObserver::scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void dispatchEvent(Event&) final;
 
     // node:worker_threads receiveMessageOnPort — synchronous single pop.
-    JSValue tryTakeMessage(JSGlobalObject*);
-
-    bool hasPendingActivity() const;
+    // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
+    JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
-    bool jsHasRef() { return m_hasRef; }
+    // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
+    bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
@@ -115,10 +124,22 @@ private:
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
+    // ActiveDOMObject.
     void contextDestroyed() final;
+    void stop() final { close(); }
+    bool virtualHasPendingActivity() const final;
+
+    // Deliver messages already queued when close() is called, before teardown.
+    void flushQueuedMessagesBeforeClose();
 
     bool isEntangled() const { return !m_isDetached; }
 
+public:
+    // Checked by the transfer path so a closing-but-not-yet-detached port
+    // (inside close()'s flush window) is rejected the same as a detached one.
+    bool isClosing() const { return m_isClosing; }
+
+private:
     // Held for the port's entire lifetime — never nulled — so that the GC
     // thread's hasPendingActivity() can dereference it without racing the
     // mutator. close()/disentangle() flip pipe-side state bits instead.
@@ -127,11 +148,30 @@ private:
 
     bool m_started { false };
     bool m_isDetached { false };
+    bool m_isClosing { false };
+    // True while a 'message' handler is on the stack. close() called from inside one
+    // must finish delivering the in-flight drain (node does); a close from anywhere
+    // else drops whatever is still queued.
+    bool m_isDispatching { false };
+    bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
+    bool m_startDeferredUntilEntrySettled { false };
+    // Read from the GC thread: a port whose only listener is 'close' must survive
+    // until that event is delivered, or the peer's close is lost to a collection.
+    std::atomic<bool> m_hasCloseEventListener { false };
     bool m_hasRef { false };
+
+    // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
+    // independent of m_hasRef (the .onmessage=/.ref() keepalive).
+    bool m_isRefd { true };
+    // Whether the message-listener mechanism currently holds an event-loop ref
+    // (held iff m_isRefd && m_messageEventCount > 0).
+    bool m_listenerLoopRefActive { false };
 
     uint32_t m_messageEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
+    // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
+    void updateListenerEventLoopRef();
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

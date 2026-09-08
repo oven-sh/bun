@@ -23,7 +23,15 @@ leak:start_wqthread
 leak:CRYPTO_set_thread_local
 leak:BIO_new
 leak:_tlv_get_addr
-leak:Bun::generateModule
+# Bun::generateInternalModule (InternalModuleRegistry.cpp) runs a builtin JS
+# module's top level. Covers the node:fs Binding box that $lazy("fs") hands to
+# the NodeJSFS cell: JSC cells live in libpas memory, which LSAN does not scan,
+# so the box reads as a direct leak in a VM that is never torn down (the macro
+# VM inside `bun build`). Anchored so the lambda inside
+# Bun::generateInternalModuleSourceCode does not match too. Delete once
+# `bun build` tears down its macro VM on exit or the box is LSAN-ignored where
+# it is allocated.
+leak:^Bun::generateInternalModule(
 leak:Zig::ImportMetaObject::createFromSpecifier
 leak:Zig::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
@@ -108,8 +116,6 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/node/tls/node-tls-cert.test.ts
-leak:create_ssl_context_from_bun_options
 # test/js/node/test/parallel/test-inspector-enabled.js
 leak:jsc.Debugger.startJSDebuggerThread
 # test/js/sql/sqlite-sql.test.ts
@@ -126,3 +132,27 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/regression/issue/30205.test.ts — global_exit's final GC sweep fires
+# NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
+# loop; the loop is already exiting so they never drain.
+leak:napi_internal_enqueue_finalizer
+# test/js/web/temporal/temporal.test.ts
+# TemporalCore::withTimeZone keeps up to 8 open UCalendars in a process-
+# lifetime LazyNeverDestroyed TinyLRUCache, one per time zone ID; LRU
+# eviction ucal_closes them. The TimeZoneCacheEntry that owns each UCalendar
+# is WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar it holds is reported as a direct
+# leak even though it is reachable and bounded.
+leak:TemporalCore::withTimeZone
+# test/js/bun/bun-object/deep-equals-temporal.test.ts
+# The calendar twin of withTimeZone above: up to 8 open UCalendars in a
+# process-lifetime LazyNeverDestroyed TinyLRUCache, one per calendar ID
+# (non-ISO arithmetic, plus pure-ISO PlainDateTime.prototype.with); LRU
+# eviction ucal_closes them. The CalendarCacheEntry that owns each UCalendar
+# is WTF_MAKE_TZONE_ALLOCATED (bmalloc), which LSAN does not scan as a root
+# region, so the libc-allocated UCalendar (and the ICU TimeZone inside it)
+# is reported as a direct leak even though it is reachable and bounded.
+# Anchored on the builder frame, not withCalendar itself, so a real leak in
+# one of the op lambdas withCalendar runs would still be reported
+# (withTimeZone has no builder frame; its ucal_open is inline).
+leak:TemporalCore::buildCalendarTemplate

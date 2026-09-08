@@ -31,6 +31,7 @@ public:
     // visitChildrenImpl MUST visit: m_stream + m_closedPromise (from the base),
     // m_pipeOperation, and m_readRequests (a barrier container: UNDER cellLock()).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -45,9 +46,8 @@ public:
     WTF::Deque<JSC::WriteBarrier<JSReadRequest>, 4> m_readRequests;
 
     // The reader→operation liveness back-edge, set when a pipe (JSStreamPipeToOperation) or
-    // a Bun pump (JSReadStreamIntoSinkOperation / JSResumableSinkPumpOperation) acquires
-    // this reader, cleared on release/finalize. ERASED on purpose: one operation per reader
-    // by construction. Visited.
+    // a Bun pump (JSReadStreamIntoSinkOperation) acquires this reader, cleared on
+    // release/finalize. ERASED on purpose: one operation per reader by construction. Visited.
     JSC::WriteBarrier<JSC::JSCell> m_pipeOperation;
 
 private:

@@ -32,7 +32,7 @@ use crate::ssa::enter_ssa::placeholder_function;
 // Public API
 // =============================================================================
 
-pub fn infer_types(
+pub(crate) fn infer_types(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {

@@ -18,7 +18,7 @@ pub struct PosixStat {
     pub blocks: u64,
 
     /// Access time
-    pub atim: Timespec,
+    pub(crate) atim: Timespec,
     /// Modification time
     pub mtim: Timespec,
     /// Change time (metadata)
@@ -225,9 +225,5 @@ impl PosixStat {
 
     pub fn ctime(&self) -> Timespec {
         self.ctim
-    }
-
-    pub fn birthtime(&self) -> Timespec {
-        self.birthtim
     }
 }

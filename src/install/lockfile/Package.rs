@@ -126,8 +126,7 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
-/// Adds the names from a package.json `"trustedDependencies"` array to `set`.
-/// `set` stays `None` when the key is absent, so the default list still applies.
+/// Appends a package.json `"trustedDependencies"` array to `set` (left `None` if the key is absent).
 pub(crate) fn append_trusted_dependencies(
     set: &mut Option<TrustedDependenciesSet>,
     bump: &bun_alloc::Arena,

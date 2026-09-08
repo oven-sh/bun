@@ -844,10 +844,7 @@ impl PackageManager {
         }
     }
 
-    /// `bun install` decides trust from the `trustedDependencies` in package.json
-    /// (the root and every workspace). `bun.lock` only records the set from its
-    /// last save, and `--frozen-lockfile` never rewrites it. Call this after
-    /// `load_lockfile_from_cwd` so `bun pm` sees the set the installer used.
+    /// Trust comes from package.json (root and workspaces), not from what `bun.lock` last saved.
     pub fn load_trusted_dependencies_from_package_json(&mut self) -> Result<(), Error> {
         use self::workspace_package_json_cache::{GetJSONOptions, GetResult};
 
@@ -886,8 +883,7 @@ impl PackageManager {
                     // `log` carries the message.
                     Err(_) => None,
                 },
-                // A workspace that bun.lock lists can be gone from disk. The
-                // installer skips those too.
+                // The installer also skips a lockfile workspace that is missing on disk.
                 GetResult::ReadErr(Error::Sys(
                     bun_errno::SystemErrno::ENOENT | bun_errno::SystemErrno::ENOTDIR,
                 )) if i > 0 => continue,

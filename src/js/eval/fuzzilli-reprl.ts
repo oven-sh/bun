@@ -17,19 +17,61 @@ globalThis.__filename = "/fuzzilli.js";
 // child, so fuzzed scripts must not be able to reach the real implementation.
 process.execve = () => {};
 
-// The loop below yields to the event loop after every script, so promise
+// Everything the loop calls between scripts is captured here, because fuzzed
+// scripts overwrite globals and prototype methods.
+const { String, setTimeout, setInterval, setImmediate, clearTimeout, clearInterval, clearImmediate } = globalThis;
+const { apply } = Reflect;
+const { forEach: mapForEach, set: mapSet, clear: mapClear } = Map.prototype;
+const print = console.log.bind(console);
+const addListener = process.on.bind(process);
+const removeListener = process.off.bind(process);
+const exit = process.exit.bind(process);
+
+// Print uncaught exception like workerd does. The thrown value comes from
+// fuzzed code, so converting it to a string can itself throw.
+function reportUncaught(err) {
+  try {
+    print(`uncaught:${String(err)}`);
+  } catch {
+    print("uncaught:<unprintable>");
+  }
+}
+
+// The loop gives the event loop a turn after every script, so promise
 // reactions and timer callbacks from fuzzed code do run. Without these
 // handlers the first unhandled rejection or async throw would exit the REPRL
-// child. Record it as a failed execution instead.
+// child. Record it as a failed execution instead. A script can remove the
+// handlers, so they are installed again before every script.
 let asyncFailure = false;
 const onAsyncFailure = err => {
-  console.log(`uncaught:${err}`);
   asyncFailure = true;
+  reportUncaught(err);
 };
-process.on("uncaughtException", onAsyncFailure);
-process.on("unhandledRejection", onAsyncFailure);
+function installAsyncFailureHandlers() {
+  removeListener("uncaughtException", onAsyncFailure);
+  removeListener("unhandledRejection", onAsyncFailure);
+  addListener("uncaughtException", onAsyncFailure);
+  addListener("unhandledRejection", onAsyncFailure);
+}
 
-const { setImmediate } = globalThis;
+// Timers that a script leaves behind would fire during later scripts. Track
+// the ones created through the globals and clear them once the script's
+// status is known.
+const pendingTimers = new Map();
+function tracked(set, clear) {
+  return function () {
+    const timer = apply(set, this, arguments);
+    apply(mapSet, pendingTimers, [timer, clear]);
+    return timer;
+  };
+}
+globalThis.setTimeout = tracked(setTimeout, clearTimeout);
+globalThis.setInterval = tracked(setInterval, clearInterval);
+globalThis.setImmediate = tracked(setImmediate, clearImmediate);
+function clearPendingTimers() {
+  apply(mapForEach, pendingTimers, [(clear, timer) => clear(timer)]);
+  apply(mapClear, pendingTimers, []);
+}
 
 // ============================================================================
 // REPRL Protocol Loop
@@ -56,19 +98,24 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// Main REPRL loop
-while (true) {
+// Main REPRL loop. Each iteration ends by scheduling the next one with
+// setImmediate, which gives the event loop one non-blocking turn per script:
+// it drains the microtasks the script queued (otherwise they, and everything
+// they capture, stay in the queue for the lifetime of this process), fires due
+// timers, and reaps subprocesses that have exited.
+function runNextScript() {
   // Read command
   const cmd = Buffer.alloc(4);
   const cmd_n = fs.readSync(REPRL_CRFD, cmd, 0, 4, null);
 
   if (cmd_n === 0) {
     // EOF
-    break;
+    return exit(0);
   }
 
   if (cmd_n !== 4 || cmd.toString() !== "exec") {
-    throw new Error(`Invalid REPRL command: expected 'exec', got ${cmd.toString()}`);
+    console.error(`Invalid REPRL command: expected 'exec', got ${cmd.toString()}`);
+    return exit(1);
   }
 
   // Read script size (8 bytes, little-endian)
@@ -89,20 +136,20 @@ while (true) {
 
   // Execute script
   let exit_code = 0;
+  installAsyncFailureHandlers();
   try {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
-    // Print uncaught exception like workerd does
-    console.log(`uncaught:${_e}`);
+    reportUncaught(_e);
     exit_code = 1;
   }
 
-  // One non-blocking turn of the event loop before reporting: drains the
-  // microtasks the script queued (otherwise they, and everything they
-  // capture, stay in the queue for the lifetime of this process) and reaps
-  // subprocesses that have exited.
-  await new Promise(resolve => setImmediate(resolve));
+  setImmediate(finishScript, exit_code);
+}
+
+function finishScript(exit_code) {
+  clearPendingTimers();
   if (asyncFailure) {
     asyncFailure = false;
     exit_code = 1;
@@ -116,4 +163,7 @@ while (true) {
   fs.writeSync(REPRL_CWFD, status_bytes);
 
   resetCoverage();
+  runNextScript();
 }
+
+setImmediate(runNextScript);

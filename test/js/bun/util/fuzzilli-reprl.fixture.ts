@@ -3,10 +3,10 @@
 // normal (non-fuzzilli) build.
 //
 // argv[2] is a JSON array of payload scripts. Each one is fed to the loop as
-// one exec cycle, then the control pipe reports EOF. When the loop finishes,
-// the fixture prints one `REPRL_FIXTURE_RESULT=` line with the status the
-// loop wrote for each payload and the value of `globalThis.probe` at the time
-// of each status write.
+// one exec cycle, then the control pipe reports EOF, on which the loop exits
+// the process. On exit the fixture prints one `REPRL_FIXTURE_RESULT=` line
+// with the status the loop wrote for each payload and the value of
+// `globalThis.probe` at the time of each status write.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -63,7 +63,7 @@ const realWriteSync = fs.writeSync;
   if (fd === REPRL_CWFD) {
     if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
       statuses.push(buffer.readUInt32LE(0));
-      probes.push((globalThis as any).probe ?? null);
+      probes.push(structuredClone((globalThis as any).probe ?? null));
     }
     return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
   }
@@ -73,9 +73,8 @@ const realWriteSync = fs.writeSync;
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
 
-// The loop runs until the control pipe reports EOF. The source uses top-level
-// await, so importing it waits for the loop to finish.
-await import(path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"));
+process.on("exit", () => {
+  realWriteSync.call(fs, 1, `REPRL_FIXTURE_RESULT=${JSON.stringify({ statuses, probes })}\n`);
+});
 
-realWriteSync.call(fs, 1, `REPRL_FIXTURE_RESULT=${JSON.stringify({ statuses, probes })}\n`);
-process.exit(0);
+await import(path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"));

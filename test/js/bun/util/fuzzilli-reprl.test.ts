@@ -13,10 +13,13 @@ async function runReprl(payloads: string[]) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const resultLine = stdout.split("\n").find(line => line.startsWith("REPRL_FIXTURE_RESULT="));
+  const lines = stdout.trim().split("\n");
+  const resultLine = lines.find(line => line.startsWith("REPRL_FIXTURE_RESULT="));
   const result = resultLine ? JSON.parse(resultLine.slice("REPRL_FIXTURE_RESULT=".length)) : undefined;
-  return { stdout, stderr, exitCode, result };
+  return { stdout, lines, stderr, exitCode, result };
 }
+
+const FAILED = 1 << 8;
 
 // APIs that intentionally kill the process outside of normal exception
 // handling must be stubbed out before the loop starts, otherwise every fuzz
@@ -51,21 +54,61 @@ test.concurrent("REPRL loop drains microtasks queued by a payload before reporti
 });
 
 // Now that async code runs, an unhandled rejection or a throw from a microtask
-// must not take down the REPRL child. It is reported as a failed execution
-// (exit code 1 in the upper status byte) for the payload that caused it, and
-// the loop keeps going.
+// must not take down the REPRL child, whatever the thrown value is. It is
+// reported as a failed execution (exit code 1 in the upper status byte) for
+// the payload that caused it, and the loop keeps going. That includes the
+// case where an earlier payload removed the loop's process listeners.
 test.concurrent("REPRL loop reports async failures as a failed execution and keeps running", async () => {
-  const { stdout, stderr, exitCode, result } = await runReprl([
+  const { lines, stderr, exitCode, result } = await runReprl([
     `Promise.reject(new Error("unhandled"));`,
     `queueMicrotask(() => { throw new Error("thrown"); });`,
+    `queueMicrotask(() => { throw Symbol("not implicitly convertible"); });`,
+    `Promise.reject({ toString() { throw new Error("toString throws"); } });`,
+    `throw Symbol("sync");`,
+    `process.removeAllListeners("uncaughtException"); process.removeAllListeners("unhandledRejection");`,
+    `Promise.reject(new Error("still handled"));`,
     `globalThis.probe = "alive";`,
   ]);
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual([
+  const expected = {
+    statuses: [FAILED, FAILED, FAILED, FAILED, FAILED, 0, FAILED, 0],
+    probes: [null, null, null, null, null, null, null, "alive"],
+  };
+  expect(lines).toEqual([
     "uncaught:Error: unhandled",
     "uncaught:Error: thrown",
-    `REPRL_FIXTURE_RESULT=${JSON.stringify({ statuses: [256, 256, 0], probes: [null, null, "alive"] })}`,
+    "uncaught:Symbol(not implicitly convertible)",
+    "uncaught:<unprintable>",
+    "uncaught:Symbol(sync)",
+    "uncaught:Error: still handled",
+    `REPRL_FIXTURE_RESULT=${JSON.stringify(expected)}`,
   ]);
-  expect(result).toEqual({ statuses: [256, 256, 0], probes: [null, null, "alive"] });
+  expect(result).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
+// Timers, intervals and immediates that a payload leaves behind must not fire
+// while later payloads run. A timer that is already due fires within its own
+// payload's turn; everything still pending when the status is written is
+// cleared.
+test.concurrent("REPRL loop clears timers a payload leaves behind", async () => {
+  const { lines, stderr, exitCode, result } = await runReprl([
+    `globalThis.probe = { interval: 0, immediates: 0, late: false };
+     setInterval(() => { globalThis.probe.interval++; throw new Error("interval"); }, 0);
+     setTimeout(() => { globalThis.probe.late = true; }, 20);
+     setImmediate(function again() { globalThis.probe.immediates++; setImmediate(again); });
+     const start = performance.now();
+     while (performance.now() - start < 5) {}`,
+    `const start = performance.now();
+     while (performance.now() - start < 40) {}`,
+    `globalThis.probe = "done";`,
+  ]);
+  expect(stderr).toBe("");
+  const expected = {
+    statuses: [FAILED, 0, 0],
+    probes: [{ interval: 1, immediates: 1, late: false }, { interval: 1, immediates: 1, late: false }, "done"],
+  };
+  expect(lines).toEqual(["uncaught:Error: interval", `REPRL_FIXTURE_RESULT=${JSON.stringify(expected)}`]);
+  expect(result).toEqual(expected);
   expect(exitCode).toBe(0);
 });

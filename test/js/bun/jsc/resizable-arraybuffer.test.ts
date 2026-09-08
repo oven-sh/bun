@@ -9,7 +9,11 @@ describe("%TypedArray%.prototype.filter on a BigInt array whose callback takes t
   // into the new array with TypedArraySetElement, which is ToBigInt(value) for a BigInt array,
   // and ToBigInt(undefined) throws a TypeError. JSC used to store 0n instead.
 
-  for (const TA of [BigInt64Array, BigUint64Array]) {
+  // Typed as one constructor so that `class Derived extends TA` below type-checks. The tests only use
+  // what the two BigInt array types share.
+  const bigIntArrayConstructors = [BigInt64Array, BigUint64Array] as unknown as BigInt64ArrayConstructor[];
+
+  for (const TA of bigIntArrayConstructors) {
     describe(TA.name, () => {
       test("shrink to zero mid-iteration", () => {
         const buffer = new ArrayBuffer(40, { maxByteLength: 40 });
@@ -53,7 +57,7 @@ describe("%TypedArray%.prototype.filter on a BigInt array whose callback takes t
       test.each([
         ["resizable", { maxByteLength: 40 }],
         ["fixed-length", undefined],
-      ])("detach a %s buffer mid-iteration", (_, options) => {
+      ] as const)("detach a %s buffer mid-iteration", (_, options) => {
         const buffer = new ArrayBuffer(40, options);
         const array = new TA(buffer).fill(7n);
         expect(() =>
@@ -102,10 +106,9 @@ describe("%TypedArray%.prototype.filter on a BigInt array whose callback takes t
 
       test("every callback runs, then the species constructor, then the stores up to the first undefined", () => {
         const log: string[] = [];
-        let created: InstanceType<typeof TA> | undefined;
+        let created: BigInt64Array | undefined;
         class Derived extends TA {
-          constructor(...args: any[]) {
-            // @ts-ignore
+          constructor(...args: [any, ...any[]]) {
             super(...args);
             log.push(`construct ${args[0]}`);
             created = this;

@@ -282,6 +282,13 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    // The frame a dynamic import() request pushed onto vm.m_synchronousModuleQueue
+    // because require(esm) was loading a graph when the import() was called
+    // (Zig::DynamicImportQueueScope in ZigGlobalObject.cpp). While it is the
+    // head of that chain the loader is serving the import(), not the require(),
+    // so moduleLoaderFetch must not switch to its synchronous path.
+    JSC::VM::SynchronousModuleQueue* dynamicImportModuleQueue { nullptr };
+
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 

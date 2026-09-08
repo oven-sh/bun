@@ -37,6 +37,7 @@
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
+#include "JavaScriptCore/MicrotaskQueueInlines.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/CyclicModuleRecord.h"
 #include "JavaScriptCore/ModuleRegistryEntry.h"
@@ -3528,6 +3529,62 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), b);
 }
 
+namespace {
+
+// require(esm) loads a module graph without yielding: it points
+// vm.m_synchronousModuleQueue at a stack frame, the loader's internal promise
+// reactions are appended to that frame instead of the microtask queue, and the
+// frame is drained in a loop (JSModuleLoader::loadModuleSync,
+// Bun::fetchCommonJSModule). A dynamic import() that a module in that graph
+// calls while it evaluates is a new asynchronous load, not part of the graph.
+// For the duration of the import() request this scope pushes a frame of its
+// own, so nothing the request queues reaches the frame require() is draining,
+// and publishes it as JSVMClientData::dynamicImportModuleQueue so
+// moduleLoaderFetch keeps fetching asynchronously. On exit it hands every
+// reaction the request queued to the microtask queue, which is where they go
+// when no require() is on the stack. The frame stays linked through `prev`
+// while it is installed, so VM::visitAggregate keeps marking the tasks of the
+// frames under it.
+class DynamicImportQueueScope {
+    WTF_MAKE_NONCOPYABLE(DynamicImportQueueScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    DynamicImportQueueScope(JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+        : m_globalObject(globalObject)
+        , m_vm(vm)
+    {
+        if (!vm.m_synchronousModuleQueue)
+            return;
+        m_clientData = WebCore::clientData(vm);
+        m_queue.prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &m_queue;
+        m_outerDynamicImportQueue = std::exchange(m_clientData->dynamicImportModuleQueue, &m_queue);
+    }
+
+    ~DynamicImportQueueScope()
+    {
+        if (!m_clientData)
+            return;
+        ASSERT(m_vm.m_synchronousModuleQueue == &m_queue);
+        // Queue before unlinking: queueMicrotask can allocate, and the tasks not
+        // yet moved are only reachable through the frame chain.
+        for (auto& task : m_queue.tasks)
+            m_globalObject->queueMicrotask(m_vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
+        m_clientData->dynamicImportModuleQueue = m_outerDynamicImportQueue;
+        m_vm.m_synchronousModuleQueue = m_queue.prev;
+    }
+
+private:
+    JSC::JSGlobalObject* m_globalObject;
+    JSC::VM& m_vm;
+    WebCore::JSVMClientData* m_clientData { nullptr };
+    JSC::VM::SynchronousModuleQueue* m_outerDynamicImportQueue { nullptr };
+    JSC::VM::SynchronousModuleQueue m_queue;
+};
+
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
@@ -3539,6 +3596,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     VM& vm = JSC::getVM(globalObject);
+    DynamicImportQueueScope dynamicImportQueueScope(globalObject, vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     {
@@ -3684,8 +3742,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // to microtasks. The async fetch path goes through the transpiler thread
     // pool; route to the synchronous fetch instead so the returned promise is
     // already fulfilled and the loader keeps draining its private queue (see
-    // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
-    if (vm.m_synchronousModuleQueue) {
+    // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue). A frame
+    // pushed by DynamicImportQueueScope is the exception: that fetch is for an
+    // import() call, which loads asynchronously like any other.
+    if (vm.m_synchronousModuleQueue && vm.m_synchronousModuleQueue != WebCore::clientData(vm)->dynamicImportModuleQueue) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
             moduleKeyJS,

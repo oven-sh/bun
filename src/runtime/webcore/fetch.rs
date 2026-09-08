@@ -147,17 +147,14 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-/// https://fetch.spec.whatwg.org/#data-urls runs on the URL serialized with
-/// exclude-fragment set, so normalize through the WHATWG URL parser and strip
-/// the fragment before processing.
+/// https://fetch.spec.whatwg.org/#data-urls: process the WHATWG-serialized URL without its fragment.
 fn process_data_url(url: &BunString) -> Option<FetchDataURL> {
     let url_utf8 = url.to_utf8();
     let raw = url_utf8.slice();
 
     let href;
     let href_utf8;
-    // Fast path: for an opaque-path data URL with no `?` and every byte in
-    // [0x21, 0x7E] the URL parser is a no-op, so large base64 payloads skip it.
+    // The URL parser is a no-op for an opaque path of bytes in [0x21, 0x7E] with no `?`; skip it.
     let input = if raw.get(b"data:".len()) != Some(&b'/')
         && raw.iter().all(|&b| (0x21..=0x7E).contains(&b) && b != b'?')
     {
@@ -192,8 +189,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<J
     blob.content_type
         .set(BlobContentType::Owned(std::sync::Arc::clone(&content_type)));
 
-    // Set `Content-Type` now: the lazy path in `get_or_create_headers` reads it
-    // off the body's Blob, which is gone once the body is consumed.
+    // Set `Content-Type` now; the lazy copy from the body Blob is lost once the body is consumed.
     let mut headers = HeadersRef::create_empty();
     headers.put(
         HTTPHeaderName::ContentType,

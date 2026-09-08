@@ -142,8 +142,7 @@ fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
     strings::trim_right(rest, b" ").strip_suffix(b";")
 }
 
-/// Result of [`DataURL::process_for_fetch`]: the serialized MIME type to expose
-/// as `Content-Type`, and the decoded body bytes.
+/// The `Content-Type` to expose and the decoded body, from [`DataURL::process_for_fetch`].
 pub struct FetchDataURL {
     pub mime_type: Vec<u8>,
     pub body: Vec<u8>,
@@ -205,9 +204,7 @@ fn solely_http_tokens(s: &[u8]) -> bool {
     !s.is_empty() && s.iter().all(|&c| is_http_token(c))
 }
 
-/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string (extract-value)
-/// Caller has consumed the opening `"`. Advances `*pos` past the closing `"`
-/// (or to end of input) and returns the unescaped value.
+/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string with extract-value, after the opening `"`.
 fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
     let mut value = Vec::new();
     while *pos < input.len() {
@@ -229,9 +226,7 @@ fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
     value
 }
 
-/// Parse and re-serialize a MIME type per mimesniff, returning `None` when the
-/// essence (`type/subtype`) is invalid.
-/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type
+/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type then serialize; `None` for an invalid `type/subtype`.
 fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
     let input = trim_http_whitespace(input);
     let slash = strings::index_of_char_usize(input, b'/')?;
@@ -382,11 +377,7 @@ impl<'a> DataURL<'a> {
         Ok(percent_decoded.to_vec())
     }
 
-    /// https://fetch.spec.whatwg.org/#data-url-processor, steps 12 to 14 on top
-    /// of [`DataURL::parse`] and [`DataURL::decode_data`].
-    ///
-    /// `input` is the URL serialized with exclude-fragment set (the caller ran
-    /// it through the WHATWG URL parser and stripped `#fragment`).
+    /// https://fetch.spec.whatwg.org/#data-url-processor; `input` is the serialized URL without its fragment.
     pub fn process_for_fetch(input: &[u8]) -> Option<FetchDataURL> {
         let parsed = DataURL::parse(input).ok()??;
         let body = parsed.decode_data().ok()?;

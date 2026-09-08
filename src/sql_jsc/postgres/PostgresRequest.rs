@@ -212,7 +212,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                     return Err(js_error_to_postgres(global.throw_value(
                         global.ERR_INVALID_ARG_TYPE(format_args!(
                             "Query parameter ${} of type bytea must be a Buffer, TypedArray, ArrayBuffer or string. Received {}",
-                            i + 1,
+                            index + 1,
                             received,
                         )),
                     )));

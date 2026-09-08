@@ -1855,6 +1855,40 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
+            // Check for external packages first, before the browser polyfills below
+            if !kind.is_entry_point()
+                && self.opts.external.node_modules.count() > 0
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                && !import_path.ends_with(b"/")
+            {
+                let mut query = import_path;
+                loop {
+                    if self.opts.external.node_modules.contains(query) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "The path \"{}\" was marked as external by the user",
+                                bstr::BStr::new(query)
+                            ));
+                        }
+                        return ResultUnion::Success(Result {
+                            path_pair: PathPair {
+                                primary: Path::init(query),
+                                secondary: None,
+                            },
+                            flags: ResultFlags::IS_EXTERNAL,
+                            ..Default::default()
+                        });
+                    }
+
+                    // If the module "foo" has been marked as external, we also want to treat
+                    // paths into that module such as "foo/bar" as external too.
+                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
+                        break;
+                    };
+                    query = &query[0..slash];
+                }
+            }
+
             if self.opts.polyfill_node_globals {
                 let had_node_prefix = import_path.starts_with(b"node:");
                 let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
@@ -1862,58 +1896,6 @@ impl<'a> Resolver<'a> {
                 } else {
                     import_path
                 };
-                // "fs" or "fs/...": stubbed below to match Webpack v4.
-                let is_bare_fs_stub = import_path_without_node_prefix.starts_with(b"fs")
-                    && (import_path_without_node_prefix.len() == 2
-                        || import_path_without_node_prefix[2] == b'/');
-
-                // `--external` (either spelling, or a parent path) wins over the
-                // polyfill/stub. Only imports this block would swallow are checked,
-                // so `--external node:foo` can't capture an npm package `foo` (#13941).
-                if !kind.is_entry_point()
-                    && self.opts.external.node_modules.count() > 0
-                    && (had_node_prefix
-                        || NodeFallbackModules::map().contains_key(import_path_without_node_prefix)
-                        || is_bare_fs_stub)
-                {
-                    const PREFIX: &[u8] = b"node:";
-                    let ext = &self.opts.external.node_modules;
-                    let mut query = import_path_without_node_prefix;
-                    let matched = loop {
-                        if ext.contains(query) {
-                            break true;
-                        }
-                        let mut buf = [0u8; 64];
-                        if PREFIX.len() + query.len() <= buf.len() {
-                            buf[..PREFIX.len()].copy_from_slice(PREFIX);
-                            buf[PREFIX.len()..PREFIX.len() + query.len()].copy_from_slice(query);
-                            if ext.contains(&buf[..PREFIX.len() + query.len()]) {
-                                break true;
-                            }
-                        }
-                        let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                            break false;
-                        };
-                        query = &query[..slash];
-                    };
-                    if matched {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(import_path)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(import_path),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
-                    }
-                }
 
                 // The importer's package.json "browser" map wins over the builtin
                 // polyfill. The lookup uses the bare name so it matches the same
@@ -1970,7 +1952,10 @@ impl<'a> Resolver<'a> {
                     }
 
                     // Always mark "fs" as disabled, matching Webpack v4 behavior
-                    if is_bare_fs_stub {
+                    if import_path_without_node_prefix.starts_with(b"fs")
+                        && (import_path_without_node_prefix.len() == 2
+                            || import_path_without_node_prefix[2] == b'/')
+                    {
                         result.path_pair.primary.namespace = b"node";
                         result.path_pair.primary.text = import_path_without_node_prefix;
                         result.module_type = options::ModuleType::Cjs;
@@ -1979,40 +1964,6 @@ impl<'a> Resolver<'a> {
                         result.primary_side_effects_data = SideEffects::NoSideEffectsPureData;
                         return ResultUnion::Success(result);
                     }
-                }
-            }
-
-            // Check for external packages first
-            if !kind.is_entry_point()
-                && self.opts.external.node_modules.count() > 0
-                // Imports like "process/" need to resolve to the filesystem, not a builtin
-                && !import_path.ends_with(b"/")
-            {
-                let mut query = import_path;
-                loop {
-                    if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(query)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            path_pair: PathPair {
-                                primary: Path::init(query),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
-                    }
-
-                    // If the module "foo" has been marked as external, we also want to treat
-                    // paths into that module such as "foo/bar" as external too.
-                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
-                    };
-                    query = &query[0..slash];
                 }
             }
 

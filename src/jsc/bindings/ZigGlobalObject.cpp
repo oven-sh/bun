@@ -4377,8 +4377,7 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
-    // Through the emitter, so onDidChangeListeners restores SIG_DFL for process.on(<signal>)
-    // listeners and drops the memoryPressure/IPC hooks, as the last process.off() would.
+    // onDidChangeListeners restores SIG_DFL for the file's process.on(<signal>) listeners.
     if (globalObject->hasProcessObject())
         globalObject->processObject()->wrapped().removeAllListeners();
     globalObject->scriptExecutionContext()->prepareForDestruction();

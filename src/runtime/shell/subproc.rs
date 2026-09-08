@@ -902,11 +902,9 @@ impl ShellSubprocess {
             return Err(ShellErr::Sys(sys_err));
         }
 
-        // After the last fallible start, so `abort_after_failed_start` (which
-        // drops the exit handler) never leaves a registered entry behind.
+        // Last, so a failed start (which drops the exit handler) never leaves an entry behind.
         if !*notify_caller_process_already_exited {
-            // SAFETY: `subprocess` is live; the exit handler only runs from the
-            // event loop, after this returns.
+            // SAFETY: `subprocess` is live; its exit handler only runs from the event loop.
             unsafe { (*subprocess).register_with_auto_killer() };
         }
 
@@ -920,8 +918,7 @@ impl ShellSubprocess {
         NonNull::new(self.event_loop.bun_vm().cast())
     }
 
-    /// Lets `bun test` kill this child on a test timeout or `--isolate` swap,
-    /// like a `Bun.spawn` child. `on_process_exit` unregisters it.
+    /// Lets `bun test` kill this child on a timeout or `--isolate` swap, like a `Bun.spawn` child.
     fn register_with_auto_killer(&self) {
         let Some(vm) = self.js_vm() else { return };
         let Some(handle) = self.process.as_ref() else {

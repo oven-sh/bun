@@ -113,14 +113,15 @@ describe.each([
   ["BigInt64Array", BigInt64Array, int64Cases],
   ["BigUint64Array", BigUint64Array, uint64Cases],
 ] as const)("%s indexOf / lastIndexOf / includes", (_name, constructor, cases) => {
-  test.each(cases.map(([elements, needle, index]) => [`${needle}n`, `[${elements.join("n, ")}n]`, elements, needle, index] as const))(
-    "needle %s in %s",
-    (_needle, _elements, elements, needle, index) => {
-      for (const [kind, view] of Object.entries(makeViews(constructor, elements))) {
-        expect({ kind, ...search(view, needle) }).toEqual({ kind, ...expected(elements.length, index) });
-      }
-    },
-  );
+  test.each(
+    cases.map(
+      ([elements, needle, index]) => [`${needle}n`, `[${elements.join("n, ")}n]`, elements, needle, index] as const,
+    ),
+  )("needle %s in %s", (_needle, _elements, elements, needle, index) => {
+    for (const [kind, view] of Object.entries(makeViews(constructor, elements))) {
+      expect({ kind, ...search(view, needle) }).toEqual({ kind, ...expected(elements.length, index) });
+    }
+  });
 });
 
 test("a Number needle never matches a BigInt element and a BigInt needle never matches a Number element", () => {

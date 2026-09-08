@@ -1210,20 +1210,19 @@ class Http2ServerResponse extends Stream {
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {
-        headers[key] = hints[key];
+        const name = key.trim().toLowerCase();
+        assertValidHeader(name, hints[key]);
+        if (!checkIsHttpToken(name)) {
+          throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
+        }
+        headers[name] = hints[key];
       }
     }
     if (linkHeaderValue.length === 0) {
       return false;
     }
-    const stream = this[kStream];
-    if (stream.headersSent || this[kState].closed) return false;
-    stream.additionalHeaders({
-      ...headers,
-      [HTTP2_HEADER_STATUS]: HTTP_STATUS_EARLY_HINTS,
-      "Link": linkHeaderValue,
-    });
-    return true;
+    headers.Link = linkHeaderValue;
+    return this.writeInformation(HTTP_STATUS_EARLY_HINTS, headers);
   }
 }
 
@@ -2398,6 +2397,7 @@ class Http2Stream extends Duplex {
     // symbol keys, and deleting it here would flip the object into dictionary mode,
     // pessimizing every later property access on it.
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3466,6 +3466,7 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    assertNoConnectionHeaders(headers);
     let hasStatus = true;
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
@@ -3577,6 +3578,7 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
     if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3758,13 +3760,21 @@ const kForbiddenConnectionHeaders = new SafeSet([
   "proxy-connection",
   "transfer-encoding",
 ]);
+// RFC 9113 §8.2.2 with node's mapToHeaders field rules. Only a `te` value is read, so a user
+// toString() runs once, in the native walk.
 function assertNoConnectionHeaders(headers): void {
-  for (const name in headers) {
-    const lower = name.toLowerCase();
-    if (kForbiddenConnectionHeaders.has(lower) || (lower === "te" && headers[name] !== "trailers")) {
-      const err = new TypeError(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
-      err.code = "ERR_HTTP2_INVALID_CONNECTION_HEADERS";
-      throw err;
+  const keys = ObjectKeys(headers);
+  for (let i = 0; i < keys.length; i++) {
+    let value = headers[keys[i]];
+    if (value === undefined || ($isArray(value) && value.length === 0)) continue;
+    const lower = keys[i].toLowerCase();
+    let forbidden = kForbiddenConnectionHeaders.has(lower);
+    if (!forbidden && lower === "te") {
+      if ($isArray(value) && value.length === 1) value = value[0];
+      forbidden = `${value}` !== "trailers";
+    }
+    if (forbidden) {
+      throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
     }
   }
 }
@@ -6031,7 +6041,8 @@ class ClientHttp2Session extends Http2Session {
         const headerNames = ObjectKeys(headers);
         for (let i = 0; i < headerNames.length; i++) {
           const name = headerNames[i];
-          if (name === "") continue;
+          // node's mapToHeaders skips an undefined value before it looks at the name.
+          if (name === "" || headers[name] === undefined) continue;
           if (name.charCodeAt(0) === 0x3a /* ':' */) {
             // Unknown pseudo-header names throw synchronously (node's mapToHeaders); known ones
             // are still re-checked by the native encoder at submission time.
@@ -6046,6 +6057,7 @@ class ClientHttp2Session extends Http2Session {
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
       if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+      assertNoConnectionHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -6113,14 +6125,18 @@ class ClientHttp2Session extends Http2Session {
         } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
         }
-        // nghttp2 refuses content-length on a request whose HEADERS carry END_STREAM (no payload
-        // can follow): reset with PROTOCOL_ERROR after creation (an async stream error, not a
-        // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
+        // nghttp2 refuses a nonzero content-length on a request whose HEADERS carry END_STREAM
+        // (no payload can follow): reset with PROTOCOL_ERROR after creation (an async stream
+        // error, not a throw). `content-length: 0` matches the empty payload and goes through.
+        // An explicit endStream:false keeps the body legal, so only the ended case rejects.
         if (options.endStream) {
           for (const key of Object.keys(headers)) {
             if (key.toLowerCase() === "content-length") {
-              rejectContentLengthOnNoPayload = true;
-              break;
+              const value = headers[key];
+              if (value !== undefined && String(value) !== "0") {
+                rejectContentLengthOnNoPayload = true;
+                break;
+              }
             }
           }
         }

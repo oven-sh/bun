@@ -226,12 +226,9 @@ pub(crate) fn scan_imports_and_exports(
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
 
-                // `import sheet from "./x.css" with { type: "css" }` from browser
-                // code is a CSS module script: `x.css` becomes a constructed
-                // `CSSStyleSheet` (see `LinkerContext::css_module_scripts`).
-                // Other targets have no `CSSStyleSheet` (and `bun run` evaluates
-                // this import to `{}`), so they keep the plain CSS import. The
-                // dev server rejects these imports while resolving them.
+                // Register CSS module scripts (`LinkerContext::css_module_scripts`).
+                // Only browser targets have `CSSStyleSheet`; elsewhere, and under
+                // `bun run`, the import stays a plain CSS import (`{}`).
                 if record.flags.contains(ImportRecordFlags::CSS_MODULE_SCRIPT)
                     && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
                     && output_format != Format::InternalBakeDev

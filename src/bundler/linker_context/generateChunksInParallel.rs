@@ -52,8 +52,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
     c.mangle_local_css();
-    // Must run before any JS is printed: it fills in the string literals that
-    // the CSS module script stubs print.
+    // Fills in AST that the JS printer reads below.
     generate_css_module_script_texts(c)?;
 
     let mut has_js_chunk = false;

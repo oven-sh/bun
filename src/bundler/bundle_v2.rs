@@ -6689,10 +6689,8 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
-                        // A production build turns this into a constructed
-                        // `CSSStyleSheet`. The dev server serves CSS as hot-reloaded
-                        // `<link>` tags outside of the module graph, which cannot
-                        // represent that yet.
+                        // The dev server serves CSS outside of the module graph,
+                        // so it cannot produce the `CSSStyleSheet` a build does.
                         if import_record
                             .flags
                             .contains(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT)

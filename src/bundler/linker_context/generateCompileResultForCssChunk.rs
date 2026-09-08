@@ -53,11 +53,9 @@ pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPool
     unsafe { Chunk::write_compile_result_slot(chunk_ptr, part_range.i as usize, result) };
 }
 
-/// Prints the CSS of every CSS module script (see
-/// [`LinkerContext::css_module_scripts`]) into the argument of its JS stub's
-/// `__cssModule()` call. Each file is rendered as a CSS chunk of its own would
-/// be: `@import`ed files are inlined in order and `url()` assets print as
-/// unique-key placeholders, which the JS chunk later replaces with output paths.
+/// Prints each CSS module script (see [`LinkerContext::css_module_scripts`])
+/// the way a CSS chunk rooted at it would print, into the argument of its
+/// stub's `__cssModule()` call.
 pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<(), crate::Error> {
     let entries: Vec<(u32, crate::linker_context_mod::CssModuleScript)> = c
         .css_module_scripts
@@ -75,9 +73,8 @@ pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<
         b"\n"
     };
 
-    // SAFETY: `c` is the `linker` field of the live `BundleV2` that drives this
-    // link step; `Worker::get` only needs `&BundleV2`. Holding the worker also
-    // makes its AST store the one `Expr::init` allocates from below.
+    // SAFETY: `c` is the `linker` field of the live `BundleV2`. Holding the
+    // worker also gives `Expr::init` below an AST store to allocate from.
     let bundle = unsafe { &*LinkerContext::bundle_v2_ptr(std::ptr::from_mut(c)) };
     let mut worker = scopeguard::guard(Worker::get(bundle), |w| w.unget());
     let mut texts: Vec<&[u8]> = Vec::with_capacity(entries.len());
@@ -178,8 +175,7 @@ fn asset_placeholders(css: &[u8], prefix: &[u8]) -> Vec<(usize, usize)> {
     found
 }
 
-/// The CSS text of one CSS module script, allocated in the linker arena so it
-/// outlives the JS printer.
+/// The CSS text of one CSS module script, in the linker arena.
 fn render_css_module_script(
     c: &mut LinkerContext,
     worker: &mut Worker,

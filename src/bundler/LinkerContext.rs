@@ -139,24 +139,20 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
-    /// CSS files that browser code imports with `with { type: "css" }` (CSS
-    /// module scripts), by source index. Their JS stub exports a constructed
-    /// `CSSStyleSheet` instead of `{}`, the importing chunk's CSS leaves them
-    /// out, and chunk assignment treats them as JS files.
+    /// CSS files imported from browser code with `with { type: "css" }`, by
+    /// source index. Their JS stub exports a `CSSStyleSheet`, page CSS skips
+    /// them, and chunking treats them as JS files.
     pub(crate) css_module_scripts: ArrayHashMap<u32, CssModuleScript>,
 }
 
 /// See [`LinkerContext::css_module_scripts`].
 #[derive(Clone, Copy, Default)]
 pub(crate) struct CssModuleScript {
-    /// The stub's `__cssModule("")` call. `generate_code_for_lazy_export`
-    /// creates it and `generate_chunks_in_parallel` replaces the argument with
-    /// the printed CSS.
+    /// The stub's `__cssModule("")` call; `generate_css_module_script_texts`
+    /// replaces the argument with the printed CSS.
     pub(crate) call: Option<bun_ast::StoreRef<E::Call>>,
-    /// The CSS references copied assets and the output is ESM: each such
-    /// `url()` prints as `${__cssUrl(path, import.meta.url)}`, so it resolves
-    /// against the chunk like it would in a `.css` file next to it, not
-    /// against the page.
+    /// ESM output with copied assets: `url()`s print as
+    /// `${__cssUrl(path, import.meta.url)}` so they resolve against the chunk.
     pub(crate) resolve_asset_urls: bool,
 }
 
@@ -2898,8 +2894,7 @@ impl<'a> LinkerContext<'a> {
                         ctx.queue.push_back((record.source_index.get(), out_dist));
                     }
                 }
-                // Except the JS stub of a CSS module script, whose export part
-                // depends on the runtime's `__cssModule`.
+                // A CSS module script also has live JS parts (the stub).
                 if !self.is_css_module_script(source_index) {
                     continue;
                 }
@@ -3114,9 +3109,7 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            // The JS stub of a CSS module script is a module of its own: as an
-            // `import()` target or inside a CommonJS wrapper its parts are live
-            // like those of any other lazy-export file.
+            // A CSS module script also has live JS parts (the stub).
             if !self.is_css_module_script(source_index) {
                 return;
             }

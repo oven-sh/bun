@@ -342,18 +342,15 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
-// `import sheet from "./x.css" with { type: "css" }` (a CSS module script):
-// the default export is a constructed stylesheet with the bundled CSS text.
-// Globals go through `globalThis` so bundling does not reserve their names
-// (DOM implementations such as happy-dom declare their own `CSSStyleSheet`).
+// `import sheet from "./x.css" with { type: "css" }` in browser builds. Globals
+// go through `globalThis` so bundling does not reserve their names.
 export var __cssModule = css => {
   var sheet = new globalThis.CSSStyleSheet();
   sheet.replaceSync(css);
   return sheet;
 };
 
-// A `url()` in that CSS points at an asset relative to the JS chunk, so ESM
-// output resolves it against `import.meta.url` instead of the page.
+// Resolves a chunk-relative asset `url()` in that CSS against the chunk.
 export var __cssUrl = (url, base) => new globalThis.URL(url, base).href;
 
 export var __promiseAll = args => Promise.all(args);

@@ -364,10 +364,8 @@ pub(crate) fn generate_code_for_lazy_export(
         }
     }
 
-    // A CSS module script exports `__cssModule("<css>")`, a constructed
-    // `CSSStyleSheet`. The CSS text is only known once chunks are generated, so
-    // the argument starts empty and `LinkerContext::css_module_scripts`
-    // remembers the call.
+    // A CSS module script exports `__cssModule("<css>")`. The CSS is printed
+    // later (`generate_css_module_script_texts`), so the argument starts empty.
     let mut css_module_script: Option<crate::linker_context_mod::CssModuleScript> = None;
     if maybe_css_ast.is_some() && this.is_css_module_script(source_index) {
         let stmt: Stmt = part.stmts[0];
@@ -580,9 +578,8 @@ pub(crate) fn generate_code_for_lazy_export(
     Ok(())
 }
 
-/// Whether printing the CSS file `source_index`, with the CSS files it
-/// `@import`s inlined, emits a `url()` that points at a copied asset rather
-/// than a `data:` URL or an external URL.
+/// Whether `source_index` or a CSS file it `@import`s has a `url()` to a
+/// copied asset (not a `data:` URL or an external URL).
 fn css_references_copied_assets(this: &LinkerContext, source_index: IndexInt) -> bool {
     let import_records = this.graph.ast.items_import_records();
     let css_asts = this.graph.ast.items_css();

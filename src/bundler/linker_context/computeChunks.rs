@@ -138,8 +138,7 @@ pub(crate) fn compute_chunks(
             }
         }
 
-        // `import("./x.css", { with: { type: "css" } })` loads the JS stub of a
-        // CSS module script, so that entry point gets a JS chunk below.
+        // `import()` of a CSS module script loads its JS stub: a JS chunk.
         let is_dynamic_css_module_script = this.css_module_scripts.contains(&source_index)
             && this.graph.files.items_entry_point_kind()[source_index as usize]
                 == crate::EntryPoint::Kind::DynamicImport;
@@ -322,8 +321,7 @@ pub(crate) fn compute_chunks(
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                // The JS stub of a CSS module script is a regular module (its
-                // `CSSStyleSheet` has an identity), so it is placed like JS.
+                // A CSS module script's stub is placed like a JS file.
                 if css_reprs[source_index.get() as usize].is_none()
                     || this.css_module_scripts.contains(&source_index.get())
                 {

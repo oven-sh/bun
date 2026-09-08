@@ -4,7 +4,7 @@ use bun_core::fmt as bun_fmt;
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
-use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
+use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4};
 use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
@@ -88,8 +88,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
         let tag = match parameter_fields.get(i) {
             // An extra value goes as text; the server reports the count mismatch (08P01).
             None => types::Tag::text,
-            // OIDs above `Short::MAX` are user-defined types and are bound as text.
-            Some(&oid) => Short::try_from(oid).map_or(types::Tag::text, types::Tag),
+            Some(&oid) => types::Tag::from_oid(oid),
         };
         if value.is_empty_or_undefined_or_null() {
             bun_core::scoped_log!(Postgres, "  -> NULL");

@@ -56,7 +56,7 @@
 //  varbit                                |  1562 |     1563
 //  numeric                               |  1700 |     1231
 
-use super::int_types::short as Short;
+use super::int_types::{Int4, short as Short};
 
 // Non-exhaustive: any `short` value is a valid `Tag`. A `#[repr(i16)] enum`
 // cannot hold arbitrary values, so model as a transparent newtype with
@@ -179,6 +179,12 @@ pg_tags! {
 }
 
 impl Tag {
+    /// The one OID-to-`Tag` mapping. An OID above `Short::MAX` is a user-defined type: text.
+    pub fn from_oid(oid: Int4) -> Tag {
+        Short::try_from(oid).map_or(Tag::text, Tag)
+    }
+
+    /// Types `DataCell` decodes from binary, for result columns. Bind parameters have a shorter encoder list.
     pub fn is_binary_format_supported(self) -> bool {
         match self {
             // TODO: .int2_array, .float8_array,

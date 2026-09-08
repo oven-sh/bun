@@ -540,14 +540,14 @@ impl ExtractTarball {
             // install reads from it. Delete it so the fresh copy below replaces
             // it instead of being kept as an equivalent existing destination.
             if self.resolution.tag == ResolutionTag::Npm {
-                let mut folder_name_z_buf = PathBuffer::uninit();
+                let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
                 folder_name_z_buf[..folder_name.len()].copy_from_slice(folder_name);
                 folder_name_z_buf[folder_name.len()] = 0;
                 let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
                 if sys::directory_exists_at(cache_dir.fd(), folder_name_z).unwrap_or(false) {
-                    let mut json_buf = PathBuffer::uninit();
+                    let mut json_buf = bun_paths::path_buffer_pool::get();
                     let json_z = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut json_buf.0,
+                        &mut json_buf,
                         &[folder_name, b"package.json"],
                     );
                     if !sys::exists_at(cache_dir.fd(), json_z) {

@@ -311,9 +311,10 @@ impl CacheStaging {
             folder_name,
             bun_sys::RenameatConcurrentlyOptions {
                 move_fallback: false,
+                keep_existing_destination: true,
             },
         );
-        // After an exchange the temporary name holds the folder that was replaced.
+        // On failure the temporary name may still hold our copy.
         self.discard();
         if let Err(err) = renamed {
             log.add_error_fmt(

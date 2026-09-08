@@ -288,7 +288,7 @@ fn glob_match_impl(
                                 let mut is_match = false;
 
                                 // source unicode char to match against the target + its byte length in `path`
-                                let (c, len) = decode_wtf8_rune_at(path, state.path_index as usize);
+                                let (c, len) = decode_rune_at(path, state.path_index as usize);
 
                                 while (state.glob_index as usize) < glob.len()
                                     && (first || glob[state.glob_index as usize] != b']')
@@ -615,48 +615,20 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     true
 }
 
-const REPLACEMENT_CHAR: u32 = 0xFFFD;
-
-/// Byte length of the codepoint at `bytes[idx]`; see [`decode_wtf8_rune_at`].
+/// Byte length of the codepoint at `bytes[idx]`; see [`decode_rune_at`].
 #[inline(always)]
 fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
-    decode_wtf8_rune_at(bytes, idx).1
+    decode_rune_at(bytes, idx).1
 }
 
-/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
-/// `bytes` can be a directory entry that is not valid UTF-8: an ill-formed
-/// sequence is U+FFFD over its maximal subpart, as `readdir` decodes it, so
-/// `byte_len` never reaches into the next character or past the end.
-#[inline]
-fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
-    let lead = bytes[idx];
-    if lead < 0x80 {
-        return (u32::from(lead), 1);
-    }
-    // (length, second-byte range): the ranges exclude overlong forms and
-    // codepoints above U+10FFFF, but keep surrogates (ED A0..BF) for WTF-8.
-    let (len, lo, hi): (u8, u8, u8) = match lead {
-        0xC2..=0xDF => (2, 0x80, 0xBF),
-        0xE0 => (3, 0xA0, 0xBF),
-        0xE1..=0xEF => (3, 0x80, 0xBF),
-        0xF0 => (4, 0x90, 0xBF),
-        0xF1..=0xF3 => (4, 0x80, 0xBF),
-        0xF4 => (4, 0x80, 0x8F),
-        _ => return (REPLACEMENT_CHAR, 1),
-    };
-    let tail = &bytes[idx + 1..];
-    match tail.first() {
-        Some(&b) if lo <= b && b <= hi => {}
-        _ => return (REPLACEMENT_CHAR, 1),
-    }
-    let mut cp = ((u32::from(lead) & (0x7F >> len)) << 6) | u32::from(tail[0] & 0x3F);
-    for i in 1..usize::from(len) - 1 {
-        match tail.get(i) {
-            Some(&b) if b & 0xC0 == 0x80 => cp = (cp << 6) | u32::from(b & 0x3F),
-            _ => return (REPLACEMENT_CHAR, (i + 1) as u8),
-        }
-    }
-    (cp, len)
+/// Decodes the codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+/// A directory entry need not be valid UTF-8, so this decodes the way the
+/// entry's name is decoded for JS: an ill-formed sequence is one U+FFFD over
+/// its maximal subpart, and `byte_len` never passes the end of `bytes`.
+#[inline(always)]
+fn decode_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
+    let r = strings::utf8_codepoint_with_fffd(&bytes[idx..]);
+    (r.code_point, r.len)
 }
 
 /// Unescapes the character if needed
@@ -687,7 +659,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                 b'r' => b'\r' as u32,
                 b't' => b'\t' as u32,
                 _ => 'brk: {
-                    let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+                    let (cp, len) = decode_rune_at(glob, *glob_index as usize);
                     *clen = len;
                     break 'brk cp;
                 }
@@ -695,7 +667,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
         }
         // multi-byte sequences
         _ => {
-            let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+            let (cp, len) = decode_rune_at(glob, *glob_index as usize);
             *clen = len;
             *c = cp;
         }

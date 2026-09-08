@@ -40,8 +40,8 @@ pub use unicode_draft::{
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
     element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
-    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf16_codepoint,
-    utf16_codepoint_with_fffd, wtf8_sequence,
+    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf8_codepoint_with_fffd,
+    utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -2773,5 +2773,43 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    #[test]
+    fn utf8_codepoint_with_fffd_steps_by_maximal_subpart() {
+        // (input, code_point, len, fail)
+        let cases: &[(&[u8], u32, u8, bool)] = &[
+            (b"a\x80", 0x61, 1, false),
+            (b"\xC3\xA9x", 0xE9, 2, false),
+            (b"\xE4\xB8\xAD", 0x4E2D, 3, false),
+            (b"\xF0\x9F\x98\x80js", 0x1F600, 4, false),
+            (b"\xEF\xBF\xBD", 0xFFFD, 3, false),
+            // stray continuation byte, invalid leads
+            (b"\x80x", 0xFFFD, 1, true),
+            (b"\xC0\xB8", 0xFFFD, 1, true),
+            (b"\xF5\x80\x80\x80", 0xFFFD, 1, true),
+            // lead followed by a non-continuation byte: the lead alone
+            (b"\xC3x", 0xFFFD, 1, true),
+            // second byte outside the narrowed range for E0 / ED / F0 / F4
+            (b"\xE0\x80\x80", 0xFFFD, 1, true),
+            (b"\xED\xA0\x80", 0xFFFD, 1, true),
+            (b"\xF0\x80\x80\x80", 0xFFFD, 1, true),
+            (b"\xF4\x90\x80\x80", 0xFFFD, 1, true),
+            // truncated sequences: the whole valid prefix is one replacement
+            (b"\xE4\xB8.js", 0xFFFD, 2, true),
+            (b"\xE4\xB8", 0xFFFD, 2, true),
+            (b"\xF0\x9F\x98js", 0xFFFD, 3, true),
+            (b"\xF0\x9F", 0xFFFD, 2, true),
+            (b"\xC3", 0xFFFD, 1, true),
+        ];
+        for &(input, code_point, len, fail) in cases {
+            let r = super::utf8_codepoint_with_fffd(input);
+            assert_eq!(
+                (r.code_point, r.len, r.fail),
+                (code_point, len, fail),
+                "input {:x?}",
+                input
+            );
+        }
     }
 }

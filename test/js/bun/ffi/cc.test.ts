@@ -75,10 +75,13 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
       expect(() => res.symbols.add("1", "2")).toThrow();
     });
 
-    // looks like `b` defaults to `0`, is this U.B. or expected?
-    it.skip("when passed too few arguments, throws an error", () => {
+    // A missing argument is undefined, which converts to 0, exactly as it does
+    // for a dlopen() symbol.
+    it("when passed too few arguments, the missing ones are 0", () => {
       // @ts-expect-error
-      expect(() => res.symbols.add(1)).toThrow();
+      expect(res.symbols.add(1)).toBe(1);
+      // @ts-expect-error
+      expect(res.symbols.add()).toBe(0);
     });
 
     it("when passed too many arguments, still works", () => {
@@ -100,6 +103,134 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// The wrapper cc() compiles for a symbol used to load one call-frame slot per
+// declared parameter without looking at how many arguments were passed, so a
+// call with fewer arguments handed C whatever the caller's frame held past the
+// last one: garbage integers, and for pointer parameters a segfault while the
+// stale slot was being inspected as a JSValue. A missing argument is undefined,
+// which converts the way it does for dlopen() symbols: 0 for integers and
+// pointers, NaN for floating point, false for bool, undefined for napi_value.
+// Runs in a subprocess because the unfixed wrapper crashes.
+describe("calling a symbol with fewer arguments than it declares", () => {
+  it("converts the missing arguments as undefined instead of reading past the call frame", async () => {
+    using dir = tempDir("bun-ffi-cc-missing-args", {
+      // Every function reports what C received as an int, so a bad argument
+      // decode cannot be masked by the matching return conversion.
+      "arity.c": /* c */ `
+        int digits(int a, int b, int c) { return a * 100 + b * 10 + c; }
+        int u8_value(unsigned char x) { return x; }
+        int bool_value(_Bool x) { return x; }
+        int f64_is_nan(double x) { return x != x; }
+        int f32_is_nan(float x) { return x != x; }
+        int ptr_is_null(void* p) { return p == 0; }
+        int cstring_is_null(const char* s) { return s == 0; }
+        int function_is_null(void (*f)(void)) { return f == 0; }
+        /* bit i is set when parameter i arrived as the value undefined converts to */
+        int missing_mask(int a, double b, void* c, _Bool d) {
+          return (a == 0) | ((b != b) << 1) | ((c == 0) << 2) | ((d == 0) << 3);
+        }
+        typedef struct bun_test_env* env_t;
+        typedef struct bun_test_value* value_t;
+        value_t echo_napi_value(env_t env, value_t value) { return value; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, ptr } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "arity.c"),
+          symbols: {
+            digits: { args: ["i32", "i32", "i32"], returns: "i32" },
+            u8_value: { args: ["u8"], returns: "i32" },
+            bool_value: { args: ["bool"], returns: "i32" },
+            f64_is_nan: { args: ["f64"], returns: "i32" },
+            f32_is_nan: { args: ["f32"], returns: "i32" },
+            ptr_is_null: { args: ["ptr"], returns: "i32" },
+            cstring_is_null: { args: ["cstring"], returns: "i32" },
+            function_is_null: { args: ["function"], returns: "i32" },
+            missing_mask: { args: ["i32", "f64", "ptr", "bool"], returns: "i32" },
+            echo_napi_value: { args: ["napi_env", "napi_value"], returns: "napi_value" },
+          },
+        });
+
+        const bytes = new Uint8Array(8);
+
+        // Repeated calls from one call site walk through the JIT tiers, which
+        // is where the stale slot past the arguments tends to hold a pointer.
+        let nullPointers = 0;
+        for (let i = 0; i < 500; i++) nullPointers += symbols.ptr_is_null();
+
+        const results = {
+          digits: {
+            none: symbols.digits(),
+            one: symbols.digits(1),
+            two: symbols.digits(1, 2),
+            all: symbols.digits(1, 2, 3),
+            extra: symbols.digits(1, 2, 3, 4),
+          },
+          // 200.5 is a double-encoded JSValue; integer parameters used to receive the raw slot bits.
+          u8: { missing: symbols.u8_value(), passed: symbols.u8_value(200), double_encoded: symbols.u8_value(200.5) },
+          bool: { missing: symbols.bool_value(), passed: symbols.bool_value(true) },
+          f64_is_nan: { missing: symbols.f64_is_nan(), passed: symbols.f64_is_nan(1.5) },
+          f32_is_nan: { missing: symbols.f32_is_nan(), passed: symbols.f32_is_nan(1.5) },
+          ptr_is_null: {
+            missing: symbols.ptr_is_null(),
+            missing_500_times: nullPointers,
+            undefined: symbols.ptr_is_null(undefined),
+            null: symbols.ptr_is_null(null),
+            typed_array: symbols.ptr_is_null(bytes),
+            address: symbols.ptr_is_null(ptr(bytes)),
+          },
+          cstring_is_null: { missing: symbols.cstring_is_null(), undefined: symbols.cstring_is_null(undefined) },
+          // The engine's FFI throws a TypeError for an undefined callback; the cc() wrapper
+          // has no throwing conversion yet (#37989 adds it), so C receives NULL until then.
+          function_is_null: { missing: symbols.function_is_null(), undefined: symbols.function_is_null(undefined) },
+          missing_mask: {
+            none: symbols.missing_mask(),
+            first_only: symbols.missing_mask(5),
+            all: symbols.missing_mask(5, 2.5, bytes, true),
+          },
+          // napi_env takes up position 0 of the JS argument list but is filled in by the wrapper.
+          echo_napi_value: {
+            none: typeof symbols.echo_napi_value(),
+            placeholder_only: typeof symbols.echo_napi_value(null),
+            passed: symbols.echo_napi_value(undefined, 42),
+          },
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        digits: { none: 0, one: 100, two: 120, all: 123, extra: 123 },
+        u8: { missing: 0, passed: 200, double_encoded: 200 },
+        bool: { missing: 0, passed: 1 },
+        f64_is_nan: { missing: 1, passed: 0 },
+        f32_is_nan: { missing: 1, passed: 0 },
+        ptr_is_null: { missing: 1, missing_500_times: 500, undefined: 1, null: 1, typed_array: 0, address: 0 },
+        cstring_is_null: { missing: 1, undefined: 1 },
+        function_is_null: { missing: 1, undefined: 1 },
+        missing_mask: { none: 0b1111, first_only: 0b1110, all: 0 },
+        echo_napi_value: { none: "undefined", placeholder_only: "undefined", passed: 42 },
+      },
+      exitCode: 0,
+    });
+  });
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

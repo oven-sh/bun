@@ -254,9 +254,17 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
+
+        let RefDataValue::Collection { .. } = data else {
+            // Not a describe() callback's own throw or rejection: the error comes from
+            // work the collector does not track (a timer an earlier file leaked, a stray
+            // rejected promise) while the file's top level or a describe() callback is
+            // still running. No scope fails and collection continues.
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        };
 
         self.active_scope_mut().failed = true;
 

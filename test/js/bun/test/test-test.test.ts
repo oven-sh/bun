@@ -748,4 +748,137 @@ test("my-test", () => {
       expect(output).toContain("Ran 1 test across 1 file");
     });
   }
+
+  // An error that lands while a file is still collecting (its top level or a
+  // describe() callback is running) must not stop that file's tests from being
+  // collected and run, and must not move them into another file.
+  test.concurrent("from a finished file's timer, while the next file is in a top-level await", async () => {
+    using test_dir = tempDir("unhandled-cross-file-collection", {
+      "a.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("a leaks a throwing timer", () => {
+          setTimeout(() => {
+            globalThis.__aTimerFired = true;
+            throw new Error("## late throw from a ##");
+          }, 10);
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        // stands for a top-level \`await startServer()\` or fixture import
+        do {
+          await Bun.sleep(5);
+        } while (!globalThis.__aTimerFired);
+        test("b1 failing", () => { expect(1).toBe(2); });
+        test("b2", () => { expect(2).toBe(2); });
+      `,
+      "package.json": "{}",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      cwd: String(test_dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
+    expect(output).toContain("Unhandled error between tests");
+    expect(output).not.toContain("Cannot call test()");
+    expect(output).toMatch(/\(fail\) b1 failing/);
+    expect(output).toMatch(/\(pass\) b2/);
+    expect(output).toContain("\n 2 pass\n");
+    expect(output).toContain("\n 1 fail\n");
+    expect(output).toContain("\n 1 error\n");
+    expect(output).toContain("Ran 3 tests across 2 files");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("from a finished file's timer, while the next file awaits in a describe() callback", async () => {
+    using test_dir = tempDir("unhandled-cross-file-describe", {
+      "a.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("a leaks a throwing timer", () => {
+          setTimeout(() => {
+            globalThis.__aTimerFired = true;
+            throw new Error("## late throw from a ##");
+          }, 10);
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.js": /*js*/ `
+        import { test, expect, describe } from "bun:test";
+        describe("waits", async () => {
+          do {
+            await Bun.sleep(5);
+          } while (!globalThis.__aTimerFired);
+          test("b1 failing", () => { expect(1).toBe(2); });
+          test("b2", () => { expect(2).toBe(2); });
+        });
+        test("b3", () => { expect(3).toBe(3); });
+      `,
+      "c.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        await Bun.sleep(20);
+        test("c1", () => { expect(1).toBe(1); });
+      `,
+      "package.json": "{}",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js", "./c.test.js"],
+      cwd: String(test_dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
+    expect(output).not.toContain("Cannot call test()");
+    // b1 and b2 stay in b.test.js, inside their describe, and nothing leaks into c.test.js
+    const perFile = output.split(/\n(?=\S+\.test\.js:\n)/g).map(s => s.trim());
+    expect(perFile.find(s => s.startsWith("b.test.js:"))).toMatch(
+      /Unhandled error between tests[\s\S]+\(fail\) waits > b1 failing[\s\S]+\(pass\) waits > b2[\s\S]+\(pass\) b3/,
+    );
+    expect(perFile.find(s => s.startsWith("c.test.js:"))).toMatch(/^c\.test\.js:\n\(pass\) c1 [^\n]+\n\n 4 pass\n/);
+    expect(output).toContain("\n 1 fail\n");
+    expect(output).toContain("\n 1 error\n");
+    expect(output).toContain("Ran 5 tests across 3 files");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("from the file's own top level, before its tests are scheduled", async () => {
+    using test_dir = tempDir("unhandled-own-top-level", {
+      "my-test.test.js": /*js*/ `
+        import { test, expect } from "bun:test";
+        Promise.reject(new Error("## stray top-level rejection ##"));
+        test("t1 failing", () => { expect(1).toBe(2); });
+        test("t2", () => { expect(2).toBe(2); });
+      `,
+      "package.json": "{}",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "./my-test.test.js"],
+      cwd: String(test_dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(output.match(/^error: ## stray top-level rejection ##$/gm)).toHaveLength(1);
+    expect(output).toContain("Unhandled error between tests");
+    expect(output).toMatch(/\(fail\) t1 failing/);
+    expect(output).toMatch(/\(pass\) t2/);
+    expect(output).toContain("\n 1 pass\n");
+    expect(output).toContain("\n 1 fail\n");
+    expect(output).toContain("\n 1 error\n");
+    expect(output).toContain("Ran 2 tests across 1 file");
+    expect(exitCode).toBe(1);
+  });
 });

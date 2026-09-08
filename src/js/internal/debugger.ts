@@ -246,7 +246,10 @@ export default function (
     }
   }
 
-  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  // BUN_INSPECT_NOTIFY is how the extension that exported BUN_INSPECT learns
+  // that its endpoint is up, so it is only answered for the BUN_INSPECT session,
+  // not for an --inspect flag that replaced it.
+  const notifyUrl = isAutomatic ? process.env["BUN_INSPECT_NOTIFY"] || "" : "";
   if (notifyUrl) {
     // Only send this once.
     process.env["BUN_INSPECT_NOTIFY"] = "";

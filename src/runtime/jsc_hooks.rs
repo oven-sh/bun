@@ -592,9 +592,7 @@ unsafe fn configure_debugger(
     }
 
     let debugger = match cli_flag {
-        // `BUN_INSPECT*` is ambient (an editor's debug terminal exports it to
-        // every child); an explicit `--inspect*` flag replaces it rather than
-        // opening a second, unannounced listener next to the requested one.
+        // An explicit `--inspect*` flag replaces the ambient `BUN_INSPECT*` variables.
         CliDebugger::Unspecified => {
             let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
             let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");

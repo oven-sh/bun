@@ -62,7 +62,8 @@ test("env_loader should not have allocator threading issues with BUN_INSPECT_CON
 // environment as it is: not parse it again (the define setup JSON-parses NODE_ENV and fails on a value
 // that is not valid JSON) and not load .env files of its own into the process.
 //
-// Once that VM is up, the debugger thread connects to BUN_INSPECT_NOTIFY (src/js/internal/debugger.ts)
+// The inspector is started the way the editor extension starts it: BUN_INSPECT names the endpoint and,
+// once that VM is up, the debugger thread connects to BUN_INSPECT_NOTIFY (src/js/internal/debugger.ts)
 // through its own process.env. The fixtures wait for stdin, which is closed after that notification,
 // so what they print was observed after the debugger thread finished its setup. A debugger thread
 // that aborts takes the process down before the notification instead.
@@ -79,7 +80,12 @@ async function runUnderInspector(cmd: string[], cwd: string, env: Record<string,
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
     cwd,
-    env: { ...bunEnv, ...env, BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${listener.port}` },
+    env: {
+      ...bunEnv,
+      ...env,
+      BUN_INSPECT: `ws://127.0.0.1:0/${Math.random().toString(36).slice(2)}`,
+      BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${listener.port}`,
+    },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -111,7 +117,7 @@ const invalidNodeEnvs: [variable: string, value: string][] = [
 ];
 
 test.concurrent.each(invalidNodeEnvs)(
-  "--inspect starts when %s holds a value that is not valid JSON",
+  "the inspector starts when %s holds a value that is not valid JSON",
   async (variable, value) => {
     using dir = tempDir("debugger-thread-invalid-node-env", {
       "fixture.ts": `
@@ -120,7 +126,7 @@ test.concurrent.each(invalidNodeEnvs)(
       `,
     });
 
-    const result = await runUnderInspector(["--inspect=127.0.0.1:0", "fixture.ts"], String(dir), {
+    const result = await runUnderInspector(["fixture.ts"], String(dir), {
       NODE_ENV: undefined,
       BUN_ENV: undefined,
       [variable]: value,
@@ -198,15 +204,11 @@ test.concurrent("the debugger thread does not load .env files into a bun test pr
     `,
   });
 
-  const result = await runUnderInspector(
-    ["test", "--inspect=127.0.0.1:0", "./env.test.ts"],
-    join(String(dir), "project"),
-    {
-      NODE_ENV: "development",
-      BUN_ENV: undefined,
-      ...Object.fromEntries(keys.map(key => [key, undefined])),
-    },
-  );
+  const result = await runUnderInspector(["test", "./env.test.ts"], join(String(dir), "project"), {
+    NODE_ENV: "development",
+    BUN_ENV: undefined,
+    ...Object.fromEntries(keys.map(key => [key, undefined])),
+  });
   const loadedByBunTest = { FROM_ENV: "1", FROM_ENV_LOCAL: null, FROM_ENV_DEVELOPMENT: null };
   expect(result).toEqual({
     notification: "1",

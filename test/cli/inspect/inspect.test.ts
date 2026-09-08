@@ -460,10 +460,25 @@ describe("unix domain socket without websocket", () => {
       // every child. A stale value must not add a second, unannounced listener
       // next to the one the flag asked for, nor make the flag run block.
       const envSocket = randomSocketPath();
+      // The extension pairs BUN_INSPECT with BUN_INSPECT_NOTIFY and attaches to
+      // the BUN_INSPECT endpoint when pinged; a flag run must not ping it.
+      let notified = false;
+      using notifyListener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open: () => void (notified = true),
+          data: () => void (notified = true),
+        },
+      });
       await using inspectee = spawn({
         cwd: import.meta.dir,
         cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/" + Math.random().toString(36).slice(2), "inspectee.js"],
-        env: { ...bunEnv, BUN_INSPECT: "ws+unix://" + join(process.cwd(), envSocket) + "?wait=1" },
+        env: {
+          ...bunEnv,
+          BUN_INSPECT: "ws+unix://" + join(process.cwd(), envSocket) + "?wait=1",
+          BUN_INSPECT_NOTIFY: `tcp://127.0.0.1:${notifyListener.port}`,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -499,6 +514,11 @@ describe("unix domain socket without websocket", () => {
         if (stdout.includes("\n")) break;
       }
       expect(stdout.split("\n")[0]).toBe("Hello");
+
+      // The notify ping is sent right after the banner, before the script runs.
+      inspectee.kill();
+      await inspectee.exited;
+      expect(notified).toBe(false);
     });
   }
 });

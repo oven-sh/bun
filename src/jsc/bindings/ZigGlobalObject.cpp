@@ -4377,11 +4377,8 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
-    // A `process.on(<signal>)` listener installs a process-wide sigaction (a uv_signal_t on
-    // Windows) that is only torn down when the listener count drops to zero. Dropping the
-    // listeners with the global skips that, so the next file inherits a caught signal with no
-    // JS target. Remove them through the emitter so onDidChangeListeners restores SIG_DFL and
-    // releases the memoryPressure and IPC hooks, exactly as process.off() would have.
+    // Through the emitter, so onDidChangeListeners restores SIG_DFL for process.on(<signal>)
+    // listeners and drops the memoryPressure/IPC hooks, as the last process.off() would.
     if (globalObject->hasProcessObject())
         globalObject->processObject()->wrapped().removeAllListeners();
     globalObject->scriptExecutionContext()->prepareForDestruction();

@@ -698,8 +698,8 @@ describe.concurrent("bun test --isolate", () => {
 
   test("with --isolate, a leaked Bun.$ subprocess is killed before the next file", async () => {
     using dir = tempDir("isolate-shell-subprocess", {
-      "sleeper.js": `
-        const fs = require("fs");
+      "sleeper.mjs": `
+        import fs from "node:fs";
         fs.writeFileSync(process.env.PID_FILE + ".tmp", String(process.pid));
         fs.renameSync(process.env.PID_FILE + ".tmp", process.env.PID_FILE);
         setInterval(() => {}, 1e6);
@@ -710,7 +710,7 @@ describe.concurrent("bun test --isolate", () => {
         import fs from "node:fs";
         test("leak a sleeper through Bun.$", async () => {
           // Not awaited: the shell, and the sleeper under it, are still running when this file ends.
-          $\`\${process.execPath} sleeper.js\`.quiet().then(() => {}, () => {});
+          $\`\${process.execPath} sleeper.mjs\`.quiet().then(() => {}, () => {});
           while (!fs.existsSync(process.env.PID_FILE!)) await Bun.sleep(10);
           expect(Number(fs.readFileSync(process.env.PID_FILE!, "utf8"))).toBeGreaterThan(0);
         });

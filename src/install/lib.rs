@@ -888,15 +888,10 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
-/// Open `name` inside `parent` as a directory, without following a symlink at
-/// `name`. Creates the directory when it is missing, and replaces a symlink
-/// with an empty directory.
-///
-/// For the levels of a `node_modules` tree that the install creates (`.bin`,
-/// `@scope`) and that later steps resolve by path again. A symlink at one of
-/// them sends those steps into the symlink's target directory, outside the
-/// tree, where they delete and replace files the user owns. Concurrent
-/// callers for the same `name` all end up with the one real directory.
+/// Open the directory `name` in `parent` with `O_NOFOLLOW`. A missing one is
+/// created, and a symlink planted at `name` is replaced by a real directory, so
+/// the `node_modules` levels the install creates (`.bin`, `@scope`) cannot
+/// redirect later path-based steps outside the tree. Safe for concurrent callers.
 #[cfg(not(windows))]
 pub(crate) fn make_open_real_dir(
     parent: &bun_sys::Dir,
@@ -922,9 +917,8 @@ pub(crate) fn make_open_real_dir(
     };
     match err.get_errno() {
         E::ENOENT => {}
-        // `O_NOFOLLOW` refuses a symlink with `ELOOP`. Together with
-        // `O_DIRECTORY`, Linux reports `ENOTDIR` for it instead, the same as for
-        // a regular file, so `lstat` tells the two apart.
+        // A symlink is `ELOOP`, or `ENOTDIR` on Linux because of `O_DIRECTORY`,
+        // which a regular file also gives: `lstat` tells them apart.
         E::ELOOP | E::ENOTDIR
             if bun_sys::lstatat(parent.fd(), name_z).is_ok_and(|stat| {
                 bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == EntryKind::SymLink

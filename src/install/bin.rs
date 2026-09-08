@@ -827,8 +827,7 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
-    /// `node_modules/.bin` (or the global bin directory), opened by the first
-    /// link this `Linker` writes and reused for the package's other bins.
+    /// The opened `.bin` (or global bin) directory, reused across this package's bins.
     pub bin_dir: Option<sys::Dir>,
 
     pub err: Option<Error>,
@@ -946,10 +945,8 @@ impl<'a> Linker<'a> {
         }
 
         if self.err.is_some() {
-            // A shim is two files, so a failed one can leave the other behind.
-            // A symlink is one `symlinkat`, which leaves nothing when it fails,
-            // and `abs_dest` must not be resolved by path again (see
-            // `open_bin_dir`).
+            // Remove a half-written shim pair. POSIX made one `symlinkat` on the
+            // `.bin` fd and does not touch `abs_dest` by path.
             #[cfg(windows)]
             Self::unlink_bin_or_shim(abs_dest);
             return;
@@ -1260,13 +1257,8 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// Open the directory the bin links are written into.
-    ///
-    /// The install creates `node_modules/.bin`, so it is opened without
-    /// following a symlink at `.bin`, and a symlink there is replaced (see
-    /// `crate::make_open_real_dir`). The global bin directory is the user's
-    /// own (`BUN_INSTALL_BIN`, bunfig `globalBinDir`), so it is opened the way
-    /// the user wrote it.
+    /// `node_modules/.bin` without following a symlink planted at `.bin` (see
+    /// `crate::make_open_real_dir`), or the user's global bin directory as configured.
     #[cfg(not(windows))]
     fn open_bin_dir(
         node_modules_path: &AbsPath,
@@ -1289,8 +1281,7 @@ impl<'a> Linker<'a> {
         crate::make_open_real_dir(&node_modules, b".bin")
     }
 
-    /// `symlinkat`, with the retry `sys::symlink_running_executable` does when
-    /// the name holds the running executable.
+    /// `symlinkat` with the `EBUSY`/`ETXTBSY` retry of `sys::symlink_running_executable`.
     #[cfg(not(windows))]
     fn symlink_bin(bin_dir: &sys::Dir, rel_target: &ZStr, name: &ZStr) -> sys::Maybe<()> {
         match sys::symlinkat(rel_target, bin_dir.fd(), name) {

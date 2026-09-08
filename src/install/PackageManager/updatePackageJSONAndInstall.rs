@@ -724,10 +724,8 @@ pub(super) fn remove_leftover_node_modules(
     updates: &[UpdateRequest],
 ) {
     let cwd = bun_sys::Dir::cwd();
-    // `node_modules` itself can be a symlink the user made. The levels inside
-    // it (`@scope`, `.bin`) are the install's, and a symlink at one of them is
-    // not followed: the package directory and the dangling bin links would be
-    // deleted from the symlink's target directory instead.
+    // `node_modules` may be the user's symlink. `@scope` and `.bin` inside it
+    // are not followed, so nothing is deleted outside the tree.
     let node_modules = cwd.open_at(b"node_modules").ok();
     let name_hashes = manager.lockfile.packages.items_name_hash();
     if let Some(node_modules) = &node_modules {

@@ -2109,8 +2109,7 @@ impl PublishError {
     }
 }
 
-/// `url.href` for an error message: nothing before the last `@` (so no userinfo, whatever the
-/// password holds), no `?query` or `#fragment`, one trailing slash. A clean `scheme://` is kept.
+/// `url.href` with nothing before its last `@`, no `?query` or `#fragment`, and one trailing slash.
 fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     fn after_last_at(s: &[u8]) -> &[u8] {
         strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
@@ -2125,9 +2124,9 @@ fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
         0
     };
     let rest = after_last_at(href);
-    // `URL::parse` does not validate the scheme, so the last `@` can sit inside it;
-    // `rest` then already starts at the real `scheme://`.
-    let scheme = if rest.len() < href.len() - authority_start {
+    // When the last `@` sits inside the unvalidated scheme, `rest` starts at the real `scheme://`.
+    let at_was_in_authority = href.len() - rest.len() > authority_start;
+    let scheme: &[u8] = if at_was_in_authority {
         after_last_at(&href[..authority_start])
     } else {
         b""

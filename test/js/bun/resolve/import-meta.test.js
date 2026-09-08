@@ -6,6 +6,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { SourceTextModule } from "node:vm";
 import sync from "./require-json.json";
 
 const { path, dir, dirname, filename } = import.meta;
@@ -305,6 +306,28 @@ it("import.meta members are own, discoverable properties", () => {
 
   // import.meta keeps a null prototype, matching Node.
   expect(Object.getPrototypeOf(import.meta)).toBe(null);
+});
+
+// A context-less vm.SourceTextModule links through the main global. Like Node, its
+// import.meta starts empty: only initializeImportMeta adds members, and the Bun
+// members (url, dir, ...) must not appear.
+it("vm.SourceTextModule import.meta has no default members", async () => {
+  const m = new SourceTextModule("globalThis.__vmMeta = import.meta;", {
+    initializeImportMeta(meta) {
+      meta.prop = 42;
+    },
+  });
+  await m.link(() => {
+    throw new Error("no imports expected");
+  });
+  await m.evaluate();
+  const meta = globalThis.__vmMeta;
+  delete globalThis.__vmMeta;
+
+  expect(Object.getPrototypeOf(meta)).toBe(null);
+  expect(meta.url).toBeUndefined();
+  expect(Reflect.ownKeys(meta)).toEqual(["prop"]);
+  expect(meta.prop).toBe(42);
 });
 
 // https://github.com/oven-sh/bun/issues/32246

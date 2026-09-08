@@ -1012,6 +1012,27 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       expect((await reader.read()).done).toBe(true);
     });
 
+    it("a read drained inside pull() leaves no end-of-tick job pinning the controller", async () => {
+      // Nothing here yields to a macrotask, so a queued process.nextTick job would still be
+      // holding every controller when the GC runs.
+      const { heapStats } = require("bun:jsc");
+      const live = () => heapStats().objectTypeCounts.DirectStreamController ?? 0;
+      Bun.gc(true);
+      const before = live();
+      for (let i = 0; i < 500; i++) {
+        const reader = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("x");
+          },
+        }).getReader();
+        expect((await reader.read()).value.byteLength).toBe(1);
+        reader.releaseLock();
+      }
+      Bun.gc(true);
+      expect(live() - before).toBeLessThan(50);
+    });
+
     it("write() validates its chunk like a native sink", async () => {
       const errors = [];
       const rs = new ReadableStream({

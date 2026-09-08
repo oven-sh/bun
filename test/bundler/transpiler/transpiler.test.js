@@ -6141,24 +6141,16 @@ describe("json/toml loader with reserved-word top-level keys", () => {
     "await", "arguments", "eval",
   ];
 
-  it("emits valid JS for every reserved-word key (json)", () => {
-    const t = new Bun.Transpiler();
-    const failures = [];
-    for (const k of reserved) {
-      const out = t.transformSync(JSON.stringify({ [k]: 1 }), "json");
-      if (reparses(out) !== "ok") failures.push({ key: k, out });
-    }
-    expect(failures).toEqual([]);
-  });
+  describe.each(reserved)("%s as a top-level key", key => {
+    it("emits valid JS (json)", () => {
+      const out = new Bun.Transpiler().transformSync(JSON.stringify({ [key]: 1 }), "json");
+      expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    });
 
-  it("emits valid JS for every reserved-word key (toml)", () => {
-    const t = new Bun.Transpiler();
-    const failures = [];
-    for (const k of reserved) {
-      const out = t.transformSync(`${k} = 1`, "toml");
-      if (reparses(out) !== "ok") failures.push({ key: k, out });
-    }
-    expect(failures).toEqual([]);
+    it("emits valid JS (toml)", () => {
+      const out = new Bun.Transpiler().transformSync(`${key} = 1`, "toml");
+      expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    });
   });
 
   it("aliases reserved-word keys and preserves the exported name", () => {
@@ -6192,30 +6184,27 @@ describe("json/toml loader with reserved-word top-level keys", () => {
     expect(out).toContain("_if as if");
   });
 
-  it("suffixes when a mangled key collides with a sibling", () => {
-    const t = new Bun.Transpiler();
-    for (const [src, decl, aliases] of [
-      ['{"if":1,"_if":2}', "var _if = 1, _if2 = 2;", ["_if as if", "_if2 as _if"]],
-      ['{"_if":1,"if":2}', "var _if = 1, _if2 = 2;", ["_if", "_if2 as if"]],
-      ['{"let":1,"_let":2}', "var _let = 1, _let2 = 2;", ["_let as let", "_let2 as _let"]],
-      ['{"b c":1,"b_c":2}', "var b_c = 1, b_c2 = 2;", ['b_c as "b c"', "b_c2 as b_c"]],
-      ['{"if":1,"_if":2,"_if2":3}', "var _if = 1, _if2 = 2, _if22 = 3;", ["_if as if", "_if2 as _if", "_if22 as _if2"]],
-    ]) {
-      const out = t.transformSync(src, "json");
-      expect({ src, verdict: reparses(out) }).toEqual({ src, verdict: "ok" });
-      expect(out.split("\n")[0]).toBe(decl);
-      for (const a of aliases) expect(out).toContain(a);
-    }
+  // prettier-ignore
+  it.each([
+    ['{"if":1,"_if":2}', "var _if = 1, _if2 = 2;", ["_if as if", "_if2 as _if"]],
+    ['{"_if":1,"if":2}', "var _if = 1, _if2 = 2;", ["_if", "_if2 as if"]],
+    ['{"let":1,"_let":2}', "var _let = 1, _let2 = 2;", ["_let as let", "_let2 as _let"]],
+    ['{"b c":1,"b_c":2}', "var b_c = 1, b_c2 = 2;", ['b_c as "b c"', "b_c2 as b_c"]],
+    ['{"if":1,"_if":2,"_if2":3}', "var _if = 1, _if2 = 2, _if22 = 3;", ["_if as if", "_if2 as _if", "_if22 as _if2"]],
+  ])("suffixes a mangled key that collides with a sibling: %s", (src, decl, aliases) => {
+    const out = new Bun.Transpiler().transformSync(src, "json");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    expect(out.split("\n")[0]).toBe(decl);
+    for (const alias of aliases) expect(out).toContain(alias);
   });
 
   // `var NaN = NaN;` would shadow the global and export `undefined`.
   it("does not shadow NaN / Infinity / undefined", () => {
-    const t = new Bun.Transpiler();
-    const out = t.transformSync("NaN = nan\nInfinity = inf\nundefined = 1\nx = nan", "toml");
-    expect(reparses(out)).toBe("ok");
+    const out = new Bun.Transpiler().transformSync("NaN = nan\nInfinity = inf\nundefined = 1\nx = nan", "toml");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
     expect(out.split("\n")[0]).toBe("var _NaN = NaN, _Infinity = 1 / 0, _undefined = 1, x = NaN;");
-    for (const a of ["_NaN as NaN", "_Infinity as Infinity", "_undefined as undefined"]) {
-      expect(out).toContain(a);
+    for (const alias of ["_NaN as NaN", "_Infinity as Infinity", "_undefined as undefined"]) {
+      expect(out).toContain(alias);
     }
   });
 });

@@ -4134,9 +4134,8 @@ fn upgrade_reject_policy(
     }
 }
 
-/// A bare server-side `secureContext` carries no parsed config, so read the
-/// policy off the ctx: `FAIL_IF_NO_PEER_CERT` means `requestCert` plus
-/// `rejectUnauthorized`.
+/// A bare server-side `secureContext` has no parsed config, so read
+/// `requestCert` + `rejectUnauthorized` back off the ctx verify mode.
 fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =

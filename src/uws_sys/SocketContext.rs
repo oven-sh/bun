@@ -161,14 +161,8 @@ impl Default for BunSocketContextOptions {
 
 impl BunSocketContextOptions {
     /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
-    /// inside this call once private-key load completes.
-    ///
-    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/
-    /// `reject_unauthorized` here; the per-socket client override (always run
-    /// chain validation, populate verify_error) is applied in
-    /// `us_internal_ssl_client_verify_defaults`, so a server reusing this ctx
-    /// never sends CertificateRequest unless these options asked it to.
+    /// inside this call once private-key load completes. Verify mode follows
+    /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
         // A non-null return carries the +1 from `SSL_CTX_new`.

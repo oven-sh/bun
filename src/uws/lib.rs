@@ -492,10 +492,8 @@ pub mod ssl_wrapper {
             Self::init_with_ctx(ssl_ctx, is_client, handlers)
         }
 
-        /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override:
-        /// the server's own `requestCert` / `rejectUnauthorized` win over the
-        /// mode baked into a shared `SecureContext`. No-op for clients, whose
-        /// mode `init_with_ctx` sets.
+        /// Mirror `us_socket_adopt_tls`: the server's `requestCert` /
+        /// `rejectUnauthorized` override the shared `SecureContext`'s mode. No-op for clients.
         pub fn set_server_verify(&self, request_cert: bool, reject_unauthorized: bool) {
             if self.flags.is_client() {
                 return;
@@ -1231,9 +1229,7 @@ pub mod ssl_wrapper {
     }
 
     unsafe extern "C" {
-        /// The client half of `us_internal_ssl_attach`: on a CTX with verify
-        /// mode NONE, set VERIFY_PEER on this SSL only and install the shared
-        /// default roots unless the CTX holds user CAs.
+        /// The client half of `us_internal_ssl_attach`; see libusockets.h.
         // SAFETY (unsafe fn): `ssl` and `ctx` must be live, and `ssl` created from `ctx`.
         fn us_internal_ssl_client_verify_defaults(
             ssl: *mut boring_sys::SSL,

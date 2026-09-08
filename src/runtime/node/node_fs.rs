@@ -412,9 +412,7 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. `clonefile` refuses an existing
-/// `dest` with `EEXIST`, so without `COPYFILE_EXCL` unlink `dest` and retry.
-/// `EINVAL` when `src` and `dest` are the same inode: the unlink would delete `src`.
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: on `EEXIST` unlink `dest` and retry, unless `src` is `dest`.
 #[cfg(target_os = "macos")]
 fn clonefile_force(
     src: &ZStr,

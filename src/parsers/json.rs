@@ -16,8 +16,7 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
-    /// `JSON.parse` token grammar: no single quotes, JS-only number forms (`0x10`, `010`, `1_000`,
-    /// `.5`, `5.`, `- 5`) or escapes, escaped keywords, or Unicode whitespace. Comments keep their flag.
+    /// `JSON.parse` tokens only: no `'s'`, `0x10`/`010`/`1_000`/`.5`/`5.`/`- 5`, `\xHH`/`\v`, `\u0074rue`, or Unicode whitespace.
     pub strict: bool,
     pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
@@ -334,8 +333,7 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
-/// Exactly what `JSON.parse` accepts ([`JSONOptions::strict`], nothing after the root value, not
-/// empty) into the classic `E::Object` / `E::Array` AST.
+/// Exactly what `JSON.parse` accepts ([`JSONOptions::strict`], one root value, not empty) into the classic AST.
 pub fn parse_strict(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

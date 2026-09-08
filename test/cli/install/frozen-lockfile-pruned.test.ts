@@ -529,29 +529,30 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await lockText(packageDir)).toBe(pruned);
   });
 
-  // Unlike a dropped trustedDependencies section, bun.lock records patchedDependencies and turbo prune keeps them, so a
-  // package.json that disagrees is a stale lockfile in a pruned checkout too.
-  test.concurrent("patchedDependencies added after bun.lock was written fail --frozen-lockfile", async () => {
+  // Like trustedDependencies above, a patchedDependencies list bun.lock never recorded is not compared (turbo prune before
+  // vercel/turborepo#11027 dropped the section).
+  test.concurrent("patchedDependencies added after bun.lock was written still passes --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimScenario(linker, monorepo, survivors);
     expect(full).not.toContain('"patchedDependencies"');
     await writeTree(packageDir, patchedMonorepo, survivors);
 
-    const { stderr } = await frozen(packageDir, linker, 1);
+    const { stderr } = await frozen(packageDir, linker, 0);
 
-    expect(stderr).toContain(changedSectionNote("patchedDependencies"));
+    expect(stderr).not.toContain("patchedDependencies");
     expect(await lockText(packageDir)).toBe(full);
-    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
+    expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
+    expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
 
     const { stderr: plain } = await install(packageDir, linker);
 
     expect(plain).toContain("Saved lockfile");
     expect(await lockText(packageDir)).toContain(patchedLockLine);
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
-    expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
-    await frozen(packageDir, linker, 0);
   });
 
-  test.concurrent("patchedDependencies removed after bun.lock was written fail --frozen-lockfile", async () => {
+  // A recorded list is compared: turbo prune keeps the entries of packages it keeps, so a difference is a package.json edit.
+  test.concurrent("patchedDependencies removed after bun.lock was written fails --frozen-lockfile", async () => {
     const { fullDir, full } = await fullInstall(linker, patchedMonorepo);
     expect(full).toContain(patchedLockLine);
     expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();

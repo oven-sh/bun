@@ -172,6 +172,8 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 bun install --frozen-lockfile
 ```
 
+`package.json` disagrees with `bun.lock` when a dependency would resolve to a different package, and also when every package stays as locked but the next `bun install` would rewrite `bun.lock`: a version range written differently (`^1.0.0` changed to `>=1.0.0`), a dependency moved between `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, or a changed `overrides`, `catalog`, `trustedDependencies` or `patchedDependencies` entry. The error names the section and the `package.json` it is in. Run `bun install` and commit the updated `bun.lock` to fix it. A bumped workspace `version` is accepted, so release tooling does not need to reinstall.
+
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.

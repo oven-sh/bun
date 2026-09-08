@@ -236,10 +236,13 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                // Taken before package.json's sections are copied over the loaded ones below.
+                // Taken before package.json's sections are copied over the loaded ones below. A
+                // lockfile migrated in this run is written even when frozen, so it is not held
+                // against package.json.
                 if had_any_diffs
                     && manager.options.enable.frozen_lockfile()
                     && ok.format == lockfile::Format::Text
+                    && ok.migrated == lockfile::Migrated::None
                 {
                     loaded_manifest_sections = Some(manager.lockfile.manifest_sections());
                 }

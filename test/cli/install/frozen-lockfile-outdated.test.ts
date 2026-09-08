@@ -207,10 +207,11 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
   });
 });
 
-// Edits and repository shapes for which a plain `bun install` leaves bun.lock byte for byte as it is.
-// bun.lock lists only the names that are in the tree, so the differ reports the rest as added on every install.
+// Names bun.lock does not list because they are not in the tree. The differ reports them as added on every install, so
+// adding them to a fixture guarantees the comparison runs even when nothing recorded changed.
 const staleTrustedDependencies = ["a-dep", "not-installed", "esbuild", "sharp", "@prisma/client", "core-js", "bcrypt"];
 
+// Edits for which a plain `bun install` leaves bun.lock byte for byte as it is.
 const notRecorded: Record<string, Pick<Edit, "root" | "member">> = {
   "a trustedDependencies name that is not in the tree": {
     root: json => ({ ...json, trustedDependencies: ["a-dep", "not-installed"] }),
@@ -219,18 +220,26 @@ const notRecorded: Record<string, Pick<Edit, "root" | "member">> = {
     root: json => ({ ...json, trustedDependencies: staleTrustedDependencies }),
   },
   "a workspace's lifecycle script": {
+    root: json => ({ ...json, trustedDependencies: staleTrustedDependencies }),
     member: json => ({ ...json, scripts: { postinstall: "echo changed" } }),
   },
   "package.json key order and formatting": {
     root: json => ({
-      trustedDependencies: json.trustedDependencies,
-      ...json,
+      trustedDependencies: staleTrustedDependencies,
+      ...without(json, "trustedDependencies"),
       dependencies: { "no-deps": "^1.0.0", "a-dep": "1.0.1" },
+    }),
+  },
+  // bun.lock only records the patchedDependencies entries that apply to a package in the tree.
+  "a patchedDependencies entry for a version that is not in the tree": {
+    root: json => ({
+      ...json,
+      patchedDependencies: { ...json.patchedDependencies, "no-deps@2.0.0": "patches/no-deps@1.1.0.patch" },
     }),
   },
 };
 
-describe.concurrent("--frozen-lockfile passes on what bun install does not write to bun.lock", () => {
+describe.concurrent("--frozen-lockfile still passes", () => {
   for (const [name, edit] of Object.entries(notRecorded)) {
     test(name, async () => {
       const { packageDir, lock } = await installed();
@@ -250,6 +259,8 @@ describe.concurrent("--frozen-lockfile passes on what bun install does not write
       expect(plain.exitCode).toBe(0);
     });
   }
+
+  // The next four are edits a plain install does write to bun.lock, accepted on purpose.
 
   // bun.lock records workspace versions, but release tooling bumps them without an install (pnpm and yarn accept this
   // too), also when the differ reports something else on the same run.
@@ -296,43 +307,28 @@ describe.concurrent("--frozen-lockfile passes on what bun install does not write
     expect(frozen.exitCode).toBe(0);
   });
 
-  // `turbo prune` before vercel/turborepo#13740 dropped the list from bun.lock while copying the root package.json.
-  test.each([root, singlePackage])("a trustedDependencies list that bun.lock never recorded (%#)", async base => {
-    const { packageDir, lock } = await installed(without(base, "trustedDependencies"));
-    expect(lock).not.toContain("trustedDependencies");
-    await writeRoot(packageDir, {
-      ...base,
-      patchedDependencies: { ...base.patchedDependencies, "no-deps@2.0.0": "patches/no-deps@1.1.0.patch" },
+  // `turbo prune` releases have dropped either section from bun.lock while copying the root package.json that declares
+  // it (vercel/turborepo#11027, vercel/turborepo#13740), so a list bun.lock never recorded is not compared.
+  describe.each(["trustedDependencies", "patchedDependencies"])("a %s list that bun.lock never recorded", section => {
+    test.each([root, singlePackage])("%#", async base => {
+      const { packageDir, lock } = await installed(without(base, section));
+      expect(lock).not.toContain(section);
+      // The stale names make the differ report a change in the patchedDependencies case too.
+      await writeRoot(packageDir, { ...base, trustedDependencies: staleTrustedDependencies });
+
+      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(await lockText(packageDir)).toBe(lock);
+      expect(frozen.exitCode).toBe(0);
     });
-
-    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
-
-    expect(frozen.stderr).not.toContain("error:");
-    expect(await lockText(packageDir)).toBe(lock);
-    expect(frozen.exitCode).toBe(0);
-  });
-
-  // bun.lock only records the patchedDependencies entries that apply to a package in the tree, so the differ reports
-  // this entry as a change on every install of an untouched checkout.
-  test("a patchedDependencies entry for a version that is not in the tree", async () => {
-    const { packageDir, lock } = await installed({
-      ...root,
-      patchedDependencies: { ...root.patchedDependencies, "no-deps@2.0.0": "patches/no-deps@1.1.0.patch" },
-    });
-    expect(lock).not.toContain("no-deps@2.0.0");
-
-    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
-
-    expect(frozen.stderr).not.toContain("error:");
-    expect(await lockText(packageDir)).toBe(lock);
-    expect(frozen.exitCode).toBe(0);
   });
 
   test("trustedDependencies declared by a workspace", async () => {
-    const { packageDir, lock } = await installed(without(root, "trustedDependencies"), {
-      ...member,
-      trustedDependencies: ["a-dep"],
-    });
+    const { packageDir, lock } = await installed(
+      { ...root, trustedDependencies: staleTrustedDependencies },
+      { ...member, trustedDependencies: ["a-dep"] },
+    );
 
     const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 
@@ -343,11 +339,14 @@ describe.concurrent("--frozen-lockfile passes on what bun install does not write
 
   // --production implies --frozen-lockfile and leaves devDependencies out of node_modules, not out of the comparison.
   test("--production with trusted and patched devDependencies", async () => {
-    const { packageDir, lock } = await installed({
-      ...without(root, "dependencies"),
-      devDependencies: root.dependencies,
-      trustedDependencies: staleTrustedDependencies,
-    });
+    const { packageDir, lock } = await installed(
+      {
+        ...without(root, "dependencies"),
+        devDependencies: root.dependencies,
+        trustedDependencies: staleTrustedDependencies,
+      },
+      { name: "member", version: "1.0.0" },
+    );
     expect(lock).toContain('"trustedDependencies"');
     expect(lock).toContain('"patchedDependencies"');
 

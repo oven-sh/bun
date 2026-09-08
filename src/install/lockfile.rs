@@ -2804,20 +2804,24 @@ impl<'a> EqlSorter<'a> {
 /// The sections of bun.lock that come from the manifests rather than from resolution, as
 /// `bun_lock::Stringifier::save_from_binary` writes them: each workspace's dependency lists, and
 /// the `trustedDependencies` names and `patchedDependencies` entries that apply to a package placed
-/// in the tree. Overrides and catalogs are left to the differ's flags, and workspace versions are
-/// left out on purpose (release tooling bumps them without an install).
+/// in the tree. Not included: overrides and catalogs (the differ flags those), and workspace
+/// names, versions and bins (release tooling bumps versions without an install).
 pub(crate) struct ManifestSections {
     /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
     workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
-    /// Sorted. `None` when the lockfile has no list.
+    /// Sorted names. `None` when the lockfile has no list.
     trusted_dependencies: Option<Vec<Box<[u8]>>>,
-    /// Sorted (`name@version`, patch path).
-    patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
+    /// Sorted (`name@version`, patch path). `None` when the lockfile has no entries.
+    patched_dependencies: Option<Vec<(Box<[u8]>, Box<[u8]>)>>,
 }
 
 impl ManifestSections {
-    /// The section to name, and the directory of the package.json it is in, when `self` (taken
-    /// before installing) no longer matches `loaded`.
+    /// The section to name, and the directory of the package.json it is in, when `self` (the
+    /// lockfile about to be installed) no longer matches `loaded` (the one read from disk).
+    ///
+    /// `trustedDependencies` and `patchedDependencies` are only compared against a list the loaded
+    /// lockfile recorded: `turbo prune` releases have dropped either section while copying the
+    /// root package.json that declares it (vercel/turborepo#11027, vercel/turborepo#13740).
     pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
         if self.workspaces.len() != loaded.workspaces.len() {
             return Some(("workspaces", b""));
@@ -2828,8 +2832,6 @@ impl ManifestSections {
             }
         }
 
-        // A lockfile without the list is not compared: `turbo prune` before vercel/turborepo#13740
-        // dropped it while copying the package.json that declares it.
         if let Some(recorded) = loaded.trusted_dependencies.as_deref() {
             let declared = self.trusted_dependencies.as_deref().unwrap_or_default();
             let added = declared
@@ -2844,8 +2846,10 @@ impl ManifestSections {
             }
         }
 
-        if self.patched_dependencies != loaded.patched_dependencies {
-            return Some(("patchedDependencies", b""));
+        if let Some(recorded) = loaded.patched_dependencies.as_deref() {
+            if self.patched_dependencies.as_deref().unwrap_or_default() != recorded {
+                return Some(("patchedDependencies", b""));
+            }
         }
         None
     }
@@ -2893,7 +2897,8 @@ impl Lockfile {
 
         let mut trusted_dependencies: Option<Vec<Box<[u8]>>> =
             self.trusted_dependencies.as_ref().map(|_| Vec::new());
-        let mut patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+        let mut patched_dependencies: Option<Vec<(Box<[u8]>, Box<[u8]>)>> =
+            (self.patched_dependencies.count() > 0).then(Vec::new);
         let mut name_and_version: Vec<u8> = Vec::new();
         for tree in self.buffers.trees.iter() {
             for &dep_id in tree.dependencies.get(hoisted_deps) {
@@ -2918,7 +2923,7 @@ impl Lockfile {
                     }
                 }
 
-                if self.patched_dependencies.count() > 0 {
+                if let Some(found) = &mut patched_dependencies {
                     let res = &pkg_resolutions[pkg_id as usize];
                     name_and_version.clear();
                     let _ = write!(
@@ -2940,7 +2945,7 @@ impl Lockfile {
                         .patched_dependencies
                         .get(&SemverStringBuilder::string_hash(&name_and_version))
                     {
-                        patched_dependencies.push((
+                        found.push((
                             Box::from(name_and_version.as_slice()),
                             Box::from(patch.path.slice(buf)),
                         ));
@@ -2952,8 +2957,10 @@ impl Lockfile {
             found.sort_unstable();
             found.dedup();
         }
-        patched_dependencies.sort_unstable();
-        patched_dependencies.dedup();
+        if let Some(found) = &mut patched_dependencies {
+            found.sort_unstable();
+            found.dedup();
+        }
 
         ManifestSections {
             workspaces,

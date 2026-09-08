@@ -5087,6 +5087,8 @@ pub mod bv2_impl {
                                 .as_mut_slice()
                                 [resolve.import_record.import_record_index as usize];
                         import_record.path = path_as_static(&path);
+                        // The path map pass may have matched the source specifier to a module.
+                        import_record.source_index = Index::INVALID;
                     }
 
                     if let Some(source_index) = out_source_index {

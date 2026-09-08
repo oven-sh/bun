@@ -175,9 +175,7 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn compute_clear_screen(&self) -> bool {
-        !self
-            .env_loader()
-            .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
+        !self.env_loader().has_set_no_clear_terminal_on_reload()
     }
 }
 
@@ -1375,10 +1373,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn compute_clear_screen(&self) -> bool {
-        !self
-            .transpiler
-            .env()
-            .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
+        !self.transpiler.env().has_set_no_clear_terminal_on_reload()
     }
 }
 

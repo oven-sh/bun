@@ -143,6 +143,21 @@ NamedError: console.error a named error
 `);
 });
 
+// console.clear() clears a terminal. With stdout and stderr piped there is no
+// terminal to clear, and FORCE_COLOR (which forces colors, not a terminal)
+// does not change that.
+it("console.clear() writes nothing when stdio is not a terminal", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.clear(); console.log('after clear');"],
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "after clear\n", stderr: "", exitCode: 0 });
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

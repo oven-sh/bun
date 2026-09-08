@@ -195,6 +195,32 @@ function runInCwdFailure(cwd: string, pkgname: string, scriptname: string, resul
   expect(exitCode).not.toBe(0);
 }
 
+/** Runs `bun <args>` with a pseudo-terminal as stdio and returns everything it
+ *  drew. `text` has the escape sequences stripped and `\r\n` folded to `\n`. */
+async function runInTerminal(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+  const decoder = new TextDecoder();
+  let output = "";
+  const eof = Promise.withResolvers<void>();
+  const proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    // bunEnv sets NO_COLOR=1, which keeps the plain renderer even on a terminal.
+    env: { ...bunEnv, NO_COLOR: undefined, ...env },
+    terminal: {
+      cols: 250,
+      rows: 50,
+      data: (_terminal, chunk) => void (output += decoder.decode(chunk, { stream: true })),
+      exit: () => eof.resolve(),
+    },
+  });
+  const exitCode = await proc.exited;
+  // The PTY reports EOF once everything the child wrote has been delivered.
+  await eof.promise;
+  proc.terminal!.close();
+  output += decoder.decode();
+  return { exitCode, output, text: Bun.stripANSI(output).replaceAll("\r\n", "\n") };
+}
+
 describe("bun", () => {
   const dirs = [cwd_root, cwd_packages, cwd_a, cwd_b, cwd_c, cwd_d];
   const packages = [
@@ -542,105 +568,8 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
-  function runElideLinesTest({
-    elideLines,
-    target_pattern,
-    antipattern,
-  }: {
-    elideLines?: number;
-    target_pattern: RegExp[];
-    antipattern?: RegExp[];
-  }) {
-    const dir = tempDirWithFiles("testworkspace", {
-      packages: {
-        dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              script: `${bunExe()} run index.js`,
-            },
-          }),
-        },
-      },
-      "package.json": JSON.stringify({
-        name: "ws",
-        workspaces: ["packages/*"],
-      }),
-    });
-
-    if (process.platform === "win32") {
-      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [
-          bunExe(),
-          "run",
-          "--filter",
-          "./packages/dep0",
-          ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
-          "script",
-        ],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-      expect(exitCode).toBe(0);
-      return;
-    }
-
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
-    });
-  }
-
-  test("does not elide output by default when using --filter", () => {
-    runElideLinesTest({
-      target_pattern: [/(?:log_line[\s\S]*?){20}/],
-      antipattern: [/lines elided/],
-    });
-  });
-
-  test("respects --elide-lines argument", () => {
-    runElideLinesTest({
-      elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-    });
-  });
-
-  test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
-      elideLines: 0,
-      target_pattern: [/(?:log_line[\s\S]*?){20}/],
-      antipattern: [/lines elided/],
-    });
-  });
-
-  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
-    using dir = tempDir("testworkspace", {
+  function twentyLinesWorkspace() {
+    return tempDir("testworkspace", {
       packages: {
         dep0: {
           "index.js": Array(20).fill("console.log('log_line');").join("\n"),
@@ -649,29 +578,35 @@ describe("bun", () => {
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
+  }
 
-    // Use a non-zero value so the test would fail if elision ever leaked into
-    // the non-TTY code path. With `--elide-lines 5`, a broken implementation
-    // would only surface 5 log_line entries and the 20-match regex would fail.
-    const { exitCode, stderr, stdout } = spawnSync({
-      cwd: dir,
-      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
-      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdoutval = stdout.toString();
-    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-    // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
-    // filter_run.zig's flushDrawBuf; guard the correct stream.
-    expect(stdoutval).not.toMatch(/lines elided/);
-    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-    expect(exitCode).toBe(0);
+  // The live renderer (one redrawn pane per script, elision, "Done in") needs
+  // a terminal on stdout, so these run `bun` under a pseudo-terminal.
+  test.concurrent("does not elide output by default when using --filter", async () => {
+    using dir = twentyLinesWorkspace();
+    const r = await runInTerminal(String(dir), ["run", "--filter", "./packages/dep0", "script"]);
+    expect(r.text).not.toMatch(/lines elided/);
+    expect(r.text).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.exitCode).toBe(0);
   });
 
-  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
-  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+  test.concurrent("respects --elide-lines argument", async () => {
+    using dir = twentyLinesWorkspace();
+    const r = await runInTerminal(String(dir), ["run", "--filter", "./packages/dep0", "--elide-lines", "15", "script"]);
+    expect(r.text).toMatch(/\[5 lines elided\]/);
+    expect(r.text).toMatch(/(?:log_line[\s\S]*?){15}/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("--elide-lines=0 shows all output", async () => {
+    using dir = twentyLinesWorkspace();
+    const r = await runInTerminal(String(dir), ["run", "--filter", "./packages/dep0", "--elide-lines", "0", "script"]);
+    expect(r.text).not.toMatch(/lines elided/);
+    expect(r.text).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.concurrent("terminal output reports how long a successful script took", async () => {
     using dir = tempDir("filter-done-in", {
       packages: {
         dep0: {
@@ -680,16 +615,35 @@ describe("bun", () => {
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
+    const r = await runInTerminal(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(r.text).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(r.exitCode).toBe(0);
+  });
 
-    const { exitCode, stdout } = spawnSync({
+  // When stdout is not a terminal every output line is written once, prefixed
+  // with `pkg script: `, with no cursor movement or erase sequences, and
+  // --elide-lines is a no-op. FORCE_COLOR only forces colors; it must not
+  // switch a pipe (a CI log, `| cat`, a file) over to the redrawing renderer.
+  test.concurrent.each([
+    ["default env", {}],
+    ["FORCE_COLOR=1", { FORCE_COLOR: "1", NO_COLOR: undefined }],
+    ["FORCE_COLOR=1 NO_COLOR=1", { FORCE_COLOR: "1", NO_COLOR: "1" }],
+  ])("piped stdout gets plain prefixed lines (%s)", async (_, env) => {
+    using dir = twentyLinesWorkspace();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
       cwd: String(dir),
-      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
-      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
-
-    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("--elide-lines is only supported in terminal environments");
+    expect(stdout.split("\n")).toEqual([
+      ...Array(20).fill("dep0 script: log_line"),
+      "dep0 script: Exited with code 0",
+      "",
+    ]);
     expect(exitCode).toBe(0);
   });
 
@@ -1283,23 +1237,19 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
-  // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+  // Elision only happens on a terminal.
+  test.concurrent("[run] elide-lines enables elision for --filter", async () => {
     using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
-    const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
-    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    const r = await runInTerminal(String(dir), ["run", "--filter", "dep0", "lines"]);
+    expect(r.text).toMatch(/\[5 lines elided\]/);
     expect(r.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+  test.concurrent("--elide-lines on the CLI wins over [run] elide-lines", async () => {
     using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
-    const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
-      FORCE_COLOR: "1",
-      NO_COLOR: "0",
-    });
-    expect(r.stdout).not.toMatch(/lines elided/);
-    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    const r = await runInTerminal(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"]);
+    expect(r.text).not.toMatch(/lines elided/);
+    expect(r.text).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(r.exitCode).toBe(0);
   });
 

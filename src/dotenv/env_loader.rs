@@ -544,13 +544,15 @@ impl Loader {
         Some(true)
     }
 
-    /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
-    pub fn has_set_no_clear_terminal_on_reload(&self, default_value: bool) -> bool {
+    /// Whether `--no-clear-screen` or a truthy `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
+    /// asks to keep the terminal on reload. Which streams can be cleared at all
+    /// is `Output::reset_terminal_all`'s decision, not this one's.
+    pub fn has_set_no_clear_terminal_on_reload(&self) -> bool {
         HAS_NO_CLEAR_SCREEN_CLI_FLAG
             .get()
             .copied()
             .or_else(|| self.get_as_bool(b"BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD"))
-            .unwrap_or(default_value)
+            .unwrap_or(false)
     }
 
     pub fn get(&self, key: &[u8]) -> Option<&[u8]> {

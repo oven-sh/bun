@@ -859,6 +859,19 @@ pub fn is_stderr_tty() -> bool {
     stdio_tty_flag(2)
 }
 
+/// Whether stdout takes terminal control sequences (cursor movement, line
+/// erase, screen clear). That needs a terminal with ANSI output enabled.
+/// `FORCE_COLOR` enables colors on a pipe; it does not make the pipe a terminal.
+#[inline]
+pub fn is_stdout_ansi_terminal() -> bool {
+    is_stdout_tty() && enable_ansi_colors_stdout()
+}
+/// See [`is_stdout_ansi_terminal`].
+#[inline]
+pub fn is_stderr_ansi_terminal() -> bool {
+    is_stderr_tty() && enable_ansi_colors_stderr()
+}
+
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
         // Do not print github annotations for AI agents because that wastes the context window.
@@ -1021,33 +1034,44 @@ pub fn writer_buffered() -> &'static mut io::Writer {
     source_writer_escape(Source::buffered_stream)
 }
 
+const CLEAR_SCREEN: &[u8] = b"\x1B[2J\x1B[3J\x1B[H";
+
+/// Clears one terminal: stderr if it is one, else stdout. No-op when neither
+/// stream is a terminal (see [`is_stdout_ansi_terminal`]).
 pub fn reset_terminal() {
-    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed);
-    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed);
+    let stderr = is_stderr_ansi_terminal();
+    let stdout = is_stdout_ansi_terminal();
     if !stderr && !stdout {
         return;
     }
     SOURCE.with_borrow_mut(|s| {
         if stderr {
-            let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+            let _ = s.error_stream().write_all(CLEAR_SCREEN);
         } else {
-            let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+            let _ = s.stream().write_all(CLEAR_SCREEN);
         }
     });
 }
 
+/// Clears every stream that is a terminal (see [`is_stdout_ansi_terminal`]).
+/// No-op for a stream that is a pipe or a file, whatever `FORCE_COLOR` says.
 pub fn reset_terminal_all() {
     // Reached from `reload_process`, which any thread may call. A thread that
     // never ran `Source::configure_thread` has zeroed writers, not stdio.
     if !SOURCE_SET.get() {
         return;
     }
+    let stderr = is_stderr_ansi_terminal();
+    let stdout = is_stdout_ansi_terminal();
+    if !stderr && !stdout {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
-        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
-            let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+        if stderr {
+            let _ = s.error_stream().write_all(CLEAR_SCREEN);
         }
-        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
-            let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
+        if stdout {
+            let _ = s.stream().write_all(CLEAR_SCREEN);
         }
     });
 }

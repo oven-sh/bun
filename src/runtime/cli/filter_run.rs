@@ -323,6 +323,8 @@ struct State<'a> {
     // buffer for batched output
     draw_buf: Vec<u8>,
     last_lines_written: usize,
+    /// Live pane-per-script redraw. Only when stdout is a terminal; a pipe or
+    /// file gets one `pkg script: line` record per output line instead.
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
@@ -769,12 +771,6 @@ impl AbortHandler {
     }
 }
 
-#[cfg(windows)]
-fn windows_is_terminal() -> bool {
-    let res = bun_sys::windows::GetFileType(bun_sys::Fd::stdout().native());
-    res == bun_sys::windows::FILE_TYPE_CHAR
-}
-
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> crate::Result<core::convert::Infallible> {
@@ -961,16 +957,7 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
-        pretty_output: {
-            #[cfg(windows)]
-            {
-                windows_is_terminal() && Output::enable_ansi_colors_stdout()
-            }
-            #[cfg(not(windows))]
-            {
-                Output::enable_ansi_colors_stdout()
-            }
-        },
+        pretty_output: Output::is_stdout_ansi_terminal(),
         shell_bin,
         aborted: false,
         env: env_ptr,

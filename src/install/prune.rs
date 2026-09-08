@@ -1713,7 +1713,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
             true,
             &[],
             None,
-            InstallLog::Quiet,
+            InstallLog::of(manager),
         ))
     })
 }

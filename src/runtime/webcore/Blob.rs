@@ -4055,12 +4055,8 @@ impl URLSearchParamsConverter {
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Copies a JS `Blob` into the value of a new FormData entry
-/// (`WebCore::Blob::create(JSValue)`, from `append`/`set`). Per
-/// <https://xhr.spec.whatwg.org/#create-an-entry> a value that is not a
-/// `File` becomes a new `File`, so it gets the `new File()` default
-/// `lastModified` of now; a `File` keeps its own. `Blob__setAsFile` applies
-/// the entry's filename.
+/// The value of a new FormData entry (<https://xhr.spec.whatwg.org/#create-an-entry>):
+/// a source that is not a `File` becomes a new `File`, whose `lastModified` defaults to now.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJSForFormData(value: JSValue) -> Option<NonNull<Blob>> {
     let source = Blob::from_js(value)?;

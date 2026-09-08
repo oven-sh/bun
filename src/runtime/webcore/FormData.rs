@@ -175,9 +175,7 @@ pub(crate) fn to_js_from_multipart_data(
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
-                // > Each part whose `Content-Disposition` header contains a
-                // > `filename` parameter must be parsed into an entry whose
-                // > value is a `File` object
+                // A part with a `filename` is a new `File`.
                 let mut blob = Blob::create(value_str, wrap.global, false);
                 blob.is_jsdom_file.set(true);
                 blob.last_modified.set(wrap.now);

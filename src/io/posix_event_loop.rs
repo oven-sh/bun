@@ -908,8 +908,7 @@ impl FilePoll {
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
             || self.flags.contains(Flags::PollMemoryPressure);
-        // The `needs_rearm` skip below keeps the disarmed registration in the kernel; teardown still has to delete
-        // it (the fd may outlive this poll), by fd on epoll and for both filters on kqueue.
+        // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
         let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
         if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());

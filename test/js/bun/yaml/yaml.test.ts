@@ -4302,8 +4302,8 @@ refs:
           normalKey: "normal value",
           symbolValue: sym,
         };
-        // Symbol keys are not enumerable, symbol values are undefined
-        expect(YAML.stringify(obj, null, 2)).toBe("normalKey: normal value\ntest: symbol key value");
+        // Symbol keys are skipped (like JSON.stringify), symbol values are undefined
+        expect(YAML.stringify(obj, null, 2)).toBe("normalKey: normal value");
       });
 
       test("handles WeakMap and WeakSet", () => {

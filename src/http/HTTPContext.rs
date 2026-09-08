@@ -726,7 +726,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 return Some(pooled);
             };
             bun_core::scoped_log!(HTTPContext, "Keep-Alive pool full, evicting oldest");
-            Self::terminate_socket(pooled_socket_mut(oldest).http_socket);
+            // The evicted connection is healthy: retire it with a FIN
+            // (`close_socket`), not the RST `terminate_socket` sends.
+            Self::close_socket(pooled_socket_mut(oldest).http_socket);
         }
         let Some(slot) = pool.claim() else {
             return Some(pooled);

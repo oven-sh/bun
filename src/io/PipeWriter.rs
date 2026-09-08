@@ -1141,13 +1141,6 @@ pub trait BaseWindowsPipeWriter: Sized {
         }
     }
 
-    fn get_fd(&self) -> Fd {
-        let Some(pipe) = self.source() else {
-            return Fd::INVALID;
-        };
-        pipe.get_fd()
-    }
-
     fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }

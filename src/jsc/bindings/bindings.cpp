@@ -2821,7 +2821,17 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
-        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
+        // bun_sys::Error tags are static literals; "write" and "close" are common strings.
+        JSC::JSValue syscall;
+        auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
+            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            : std::span<const Latin1Character> {};
+        if (equalSpans(staticSyscall, "write"_span8))
+            syscall = Bun::commonStrings(vm).writeString();
+        else if (equalSpans(staticSyscall, "close"_span8))
+            syscall = Bun::commonStrings(vm).closeString();
+        else
+            syscall = Bun::toJS(globalObject, err.syscall);
         if (scope.exception()) {
             scope.clearException();
         } else {

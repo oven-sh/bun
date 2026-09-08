@@ -1640,7 +1640,7 @@ impl BlobExt for Blob {
                         break 'piped Err(err);
                     }
                     break 'piped Ok(
-                        JSPromise::rejected_promise(global_this, assignment_result).to_js(),
+                        JSPromise::rejected_promise(global_this, assignment_result).to_js()
                     );
                 }
             }

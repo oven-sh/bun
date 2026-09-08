@@ -798,12 +798,12 @@ impl<'a> LinkerContext<'a> {
         // split `import()` uses `__chunks` from its entry point part (see
         // `module_preload_registration`).
         if module_preload {
-            let reaches = shake.files_reaching_split_import(&*parts, &*parts_live, import_records)?;
+            let reaches =
+                shake.files_reaching_split_import(&*parts, &*parts_live, import_records)?;
             let mut preload_entries = AutoBitSet::init_empty(parts.len())?;
             for &entry in entry_points {
                 let id = entry as usize;
-                if entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id)
-                {
+                if entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id) {
                     continue;
                 }
                 preload_entries.set(id);
@@ -4013,11 +4013,11 @@ impl<'a> LinkerContext<'a> {
     fn method_call_item_needs_this(
         &self,
         import_ref: Ref,
-        named_import: &NamedImport,
+        namespace_ref: Ref,
         result: &MatchImport,
     ) -> bool {
         self.options.output_format != Format::InternalBakeDev
-            && named_import.namespace_ref.is_valid()
+            && namespace_ref.is_valid()
             && self
                 .graph
                 .symbols
@@ -4077,34 +4077,41 @@ impl<'a> LinkerContext<'a> {
         let imports_to_bind = &mut imports_to_bind_row;
         // `NamedImport` is non-Clone (owns a `Vec`), and `match_import_with_export`
         // re-reads the column through `self`, so iterate a sorted copy of the
-        // keys (ascending `inner_index`) and look entries up again where needed.
-        let mut refs: Vec<Ref> = self.graph.ast.items_named_imports()[source_index as usize]
-            .keys()
-            .to_vec();
-        refs.sort_unstable_by_key(|r| r.inner_index());
+        // keys (ascending `inner_index`) with the `Copy` fields the loop needs.
+        struct Import {
+            import_ref: Ref,
+            import_record_index: u32,
+            namespace_ref: Ref,
+            alias_loc: Loc,
+            alias: Option<bun_ast::StoreStr>,
+        }
+        let mut imports: Vec<Import> = {
+            let named_imports = &self.graph.ast.items_named_imports()[source_index as usize];
+            named_imports
+                .keys()
+                .iter()
+                .zip(named_imports.values())
+                .map(|(&import_ref, ni)| Import {
+                    import_ref,
+                    import_record_index: ni.import_record_index,
+                    namespace_ref: ni.namespace_ref,
+                    alias_loc: ni.alias_loc,
+                    alias: ni.alias,
+                })
+                .collect()
+        };
+        imports.sort_unstable_by_key(|i| i.import_ref.inner_index());
 
         // Items of `ns.name()` left unbound, each with its `ns`.
         let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
-        for import_ref in refs {
-            fn named_import<'s>(
-                this: &'s LinkerContext<'_>,
-                source_index: crate::IndexInt,
-                import_ref: Ref,
-            ) -> &'s NamedImport {
-                this.graph.ast.items_named_imports()[source_index as usize]
-                    .get(&import_ref)
-                    .expect("infallible: key from this map")
-            }
-            let (import_record_index, namespace_ref, alias_loc, alias) = {
-                let ni = named_import(self, source_index, import_ref);
-                (
-                    ni.import_record_index,
-                    ni.namespace_ref,
-                    ni.alias_loc,
-                    ni.alias,
-                )
-            };
-
+        for Import {
+            import_ref,
+            import_record_index,
+            namespace_ref,
+            alias_loc,
+            alias,
+        } in imports
+        {
             // Not matched at all: matching marks a name it can't find `Missing`,
             // which prints `undefined` where the read should stay `ns.a`.
             let is_call_item = self.is_call_record(source_index, import_record_index);
@@ -4132,11 +4139,7 @@ impl<'a> LinkerContext<'a> {
 
             match result.kind {
                 MatchImportKind::Normal
-                    if self.method_call_item_needs_this(
-                        import_ref,
-                        named_import(self, source_index, import_ref),
-                        &result,
-                    ) =>
+                    if self.method_call_item_needs_this(import_ref, namespace_ref, &result) =>
                 {
                     method_call_items.insert(import_ref, namespace_ref);
                 }

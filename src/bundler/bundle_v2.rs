@@ -6661,7 +6661,9 @@ pub mod bv2_impl {
                                     format!(
                                         "{}/{}{}",
                                         bake_types::ASSET_PREFIX,
-                                        bun_core::fmt::bytes_to_hex_lower_string(&hash.to_ne_bytes()),
+                                        bun_core::fmt::bytes_to_hex_lower_string(
+                                            &hash.to_ne_bytes()
+                                        ),
                                         bstr::BStr::new(bun_paths::extension(path.text)),
                                     )
                                     .as_bytes(),

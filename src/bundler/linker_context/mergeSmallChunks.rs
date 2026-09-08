@@ -897,8 +897,7 @@ pub(crate) fn merge_small_chunks<'a>(
         // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         inits.clear();
-        let pure =
-            fold_pure && this.loading_file_side_effects(pg, source_index, Some(&mut inits));
+        let pure = fold_pure && this.loading_file_side_effects(pg, source_index, Some(&mut inits));
         if fold_pure && !pure {
             inits.clear();
             this.top_level_inits(source_index, &mut inits);

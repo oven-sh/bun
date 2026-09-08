@@ -581,8 +581,7 @@ fn create_exports_for_file(
             });
             if lifted_setter_param.is_valid()
                 && exp_data.source_index.get() == id
-                && c
-                    .symbols
+                && c.symbols
                     .get_const(exp_data.import_ref)
                     .is_some_and(|symbol| symbol.kind != bun_ast::symbol::Kind::Import)
             {
@@ -609,11 +608,7 @@ fn create_exports_for_file(
                     ..Default::default()
                 });
                 setter_properties.push(G::Property {
-                    key: Some(Expr::allocate(
-                        arena,
-                        E::String::init(alias),
-                        loc,
-                    )),
+                    key: Some(Expr::allocate(arena, E::String::init(alias), loc)),
                     value: Some(Expr::allocate(
                         arena,
                         E::Arrow {

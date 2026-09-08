@@ -55,18 +55,14 @@ pub(crate) fn scan_imports_and_exports<'a>(
     let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     {
-        // Step 1: Figure out what modules must be CommonJS
+        // Step 1: Figure out what modules must be CommonJS.
+        // CSS files first: they neither read nor write what the JS pass below
+        // computes, and handling them separately lets that pass hold the
+        // columns split-borrowed across files.
         for source_index_ in &reachable {
-            let _trace = perf::trace("Bundler.FigureOutCommonJS");
             let id = source_index_.get() as usize;
-
-            // does it have a JS AST?
-            if !(id < this.graph.ast.items_import_records().len()) {
-                continue;
-            }
-
-            // Is it CSS?
-            if this.graph.ast.items_css()[id].is_some() {
+            if id < this.graph.ast.items_css().len() && this.graph.ast.items_css()[id].is_some() {
+                let _trace = perf::trace("Bundler.FigureOutCommonJS");
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
@@ -80,25 +76,38 @@ pub(crate) fn scan_imports_and_exports<'a>(
                 // Validate cross-file "composes: ... from" named imports and
                 // composes-from property collisions.
                 __css_validation::validate_css_import_composes(this, pg, id);
+            }
+        }
 
+        let code_splitting = this.graph.code_splitting;
+        let ast = this.graph.ast.split_mut();
+        let meta = this.graph.meta.split_mut();
+        let import_records: &[ImportRecordList<'_>] = ast.import_records;
+        let css: &[crate::bundled_ast::CssCol] = ast.css;
+        let ast_flags: &[AstFlags] = ast.flags;
+        let exports_kind: &mut [ExportsKind] = ast.exports_kind;
+        let named_imports: &[NamedImports] = ast.named_imports;
+        let named_exports: &[NamedExports] = ast.named_exports;
+        let module_types: &[crate::options::ModuleType] = ast.module_type;
+        let dynamic_import_aliases: &[bun_ast::ast_result::DynamicImportAliases] =
+            ast.dynamic_import_aliases;
+        let meta_flags: &mut [js_meta::Flags] = meta.flags;
+        let dyn_ref_aliases: &mut [js_meta::DynamicImportReferencedAliases] =
+            meta.dynamic_import_referenced_aliases;
+        let entry_point_kinds = this.graph.files.items_entry_point_kind();
+        for source_index_ in &reachable {
+            let _trace = perf::trace("Bundler.FigureOutCommonJS");
+            let id = source_index_.get() as usize;
+
+            // does it have a JS AST?
+            if !(id < import_records.len()) {
                 continue;
             }
 
-            let code_splitting = this.graph.code_splitting;
-            let ast = this.graph.ast.split_mut();
-            let meta = this.graph.meta.split_mut();
-            let import_records: &[ImportRecordList<'_>] = ast.import_records;
-            let ast_flags: &[AstFlags] = ast.flags;
-            let exports_kind: &mut [ExportsKind] = ast.exports_kind;
-            let named_imports: &[NamedImports] = ast.named_imports;
-            let named_exports: &[NamedExports] = ast.named_exports;
-            let module_types: &[crate::options::ModuleType] = ast.module_type;
-            let dynamic_import_aliases: &[bun_ast::ast_result::DynamicImportAliases] =
-                ast.dynamic_import_aliases;
-            let meta_flags: &mut [js_meta::Flags] = meta.flags;
-            let dyn_ref_aliases: &mut [js_meta::DynamicImportReferencedAliases] =
-                meta.dynamic_import_referenced_aliases;
-            let entry_point_kinds = this.graph.files.items_entry_point_kind();
+            // Is it CSS? (handled above)
+            if css[id].is_some() {
+                continue;
+            }
 
             // Named static imports contribute exactly their aliases to the
             // importee's observable-export set (see below); `* as ns` and
@@ -135,8 +144,7 @@ pub(crate) fn scan_imports_and_exports<'a>(
                 }
             }
 
-            for (import_record_index, record) in import_records[id].as_slice().iter().enumerate()
-            {
+            for (import_record_index, record) in import_records[id].as_slice().iter().enumerate() {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -331,7 +339,7 @@ pub(crate) fn scan_imports_and_exports<'a>(
             // resulting wrapper won't be invoked by other files. An exception is
             // made for entry point files in CommonJS format (or when in pass-through mode).
             if kind == ExportsKind::Cjs
-                && (!this.graph.files.items_entry_point_kind()[id].is_entry_point()
+                && (!entry_point_kinds[id].is_entry_point()
                     || output_format == Format::Iife
                     || output_format == Format::Esm)
             {
@@ -529,7 +537,8 @@ pub(crate) fn scan_imports_and_exports<'a>(
                     .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
                 if is_lifted_commonjs && flag.wrap == WrapKind::Cjs {
                     // The wrapper prints `exports.x = ...` again, so it takes `exports`.
-                    this.graph.ast.items_flags_mut()[source_index].insert(AstFlags::USES_EXPORTS_REF);
+                    this.graph.ast.items_flags_mut()[source_index]
+                        .insert(AstFlags::USES_EXPORTS_REF);
                 } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {
                     // Step 5 runs in parallel, so the export setters' parameter is made here.
                     let param = this.graph.generate_new_symbol(
@@ -570,39 +579,44 @@ pub(crate) fn scan_imports_and_exports<'a>(
     // An `import()` / `require()` of a wrapped ES module whose every read step
     // 4 bound to an export needs no value: nothing depends on the namespace
     // object through it, so tree shaking can drop that object.
-    for source_index_ in &reachable {
-        let id = source_index_.get() as usize;
+    {
         let LinkerGraph {
             ast, meta, symbols, ..
         } = &mut this.graph;
         let ast = ast.split_mut();
         let import_records: &mut [ImportRecordList<'_>] = ast.import_records;
         let exports_kind: &[ExportsKind] = ast.exports_kind;
+        let dynamic_import_aliases: &[bun_ast::ast_result::DynamicImportAliases] =
+            ast.dynamic_import_aliases;
         let meta_flags = meta.items_flags();
-        let uses = &ast.dynamic_import_aliases[id];
-        for (&record_index, dynamic_use) in uses.keys().iter().zip(uses.values()) {
-            let record = &import_records[id].as_slice()[record_index as usize];
-            if dynamic_use.needs_namespace_object
-                || !record.source_index.is_valid()
-                || meta_flags[record.source_index.get() as usize].wrap != WrapKind::Esm
-                || exports_kind[record.source_index.get() as usize] != ExportsKind::Esm
-            {
-                continue;
-            }
-            let bound = &meta.items_imports_to_bind()[id];
-            // `ns.a` of a name the importee does not export prints `undefined`.
-            // A pattern would read it off `{}`, which has a prototype.
-            let satisfied = |item: &bun_ast::ast_result::DynamicImportItem| {
-                bound.contains(&item.local)
-                    || symbols.get_const(item.local).is_some_and(|symbol| {
-                        symbol.import_item_status == bun_ast::ImportItemStatus::Missing
-                            && symbol.namespace_alias.is_some()
-                    })
-            };
-            if dynamic_use.items.slice().iter().all(satisfied) {
-                import_records[id].as_mut_slice()[record_index as usize]
-                    .flags
-                    .insert(ImportRecordFlags::NAMESPACE_UNUSED);
+        let imports_to_bind = meta.items_imports_to_bind();
+        for source_index_ in &reachable {
+            let id = source_index_.get() as usize;
+            let uses = &dynamic_import_aliases[id];
+            for (&record_index, dynamic_use) in uses.keys().iter().zip(uses.values()) {
+                let record = &import_records[id].as_slice()[record_index as usize];
+                if dynamic_use.needs_namespace_object
+                    || !record.source_index.is_valid()
+                    || meta_flags[record.source_index.get() as usize].wrap != WrapKind::Esm
+                    || exports_kind[record.source_index.get() as usize] != ExportsKind::Esm
+                {
+                    continue;
+                }
+                let bound = &imports_to_bind[id];
+                // `ns.a` of a name the importee does not export prints `undefined`.
+                // A pattern would read it off `{}`, which has a prototype.
+                let satisfied = |item: &bun_ast::ast_result::DynamicImportItem| {
+                    bound.contains(&item.local)
+                        || symbols.get_const(item.local).is_some_and(|symbol| {
+                            symbol.import_item_status == bun_ast::ImportItemStatus::Missing
+                                && symbol.namespace_alias.is_some()
+                        })
+                };
+                if dynamic_use.items.slice().iter().all(satisfied) {
+                    import_records[id].as_mut_slice()[record_index as usize]
+                        .flags
+                        .insert(ImportRecordFlags::NAMESPACE_UNUSED);
+                }
             }
         }
     }
@@ -1191,7 +1205,8 @@ pub(crate) fn scan_imports_and_exports<'a>(
                     // `convert_stmts_for_chunk` prints a wrapped lifted file's export star as
                     // `module.exports = <value>`: the part needs `module` and that value.
                     if wrap == WrapKind::Cjs
-                        && this.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && this.graph.ast.items_flags()[id]
+                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)
                     {
                         if rec_source_index.is_valid() {

@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, bun_string_jsc};
 use bun_core::String as BunString;
@@ -10,7 +12,7 @@ use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
 use bun_sql::mysql::protocol::prepared_statement;
 use bun_sql::mysql::query_status::Status;
-use bun_sql::mysql::statement_keyword::keyword_of_statement;
+use bun_sql::mysql::statement_keyword::KeywordCursor;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::jsc::js_error_to_mysql;
@@ -30,10 +32,9 @@ pub struct MySQLQuery {
     /// one ref).
     statement: Option<RefPtr<MySQLStatement>>,
     query: BunString,
-    /// Results delivered so far. A multi-statement query gets one result per
-    /// statement, so this is also the index of the statement that the next
-    /// result belongs to.
-    results_received: u32,
+    /// Position in `query` of the statement whose result arrives next; its
+    /// leading keyword becomes `result.command`.
+    command: KeywordCursor,
 
     status: Status,
     flags: Flags,
@@ -77,7 +78,7 @@ fn keyword_to_js<T: Copy + Into<u32>>(global: &JSGlobalObject, keyword: &[T]) ->
         &mut heap
     };
     for (dst, &c) in upper.iter_mut().zip(keyword) {
-        // `keyword_of_statement` only yields ASCII letters.
+        // `KeywordCursor` only yields ASCII letters.
         *dst = (c.into() as u8).to_ascii_uppercase();
     }
     if let Some(i) = KNOWN_KEYWORDS.iter().position(|k| *k == &*upper) {
@@ -449,20 +450,33 @@ impl MySQLQuery {
         Self {
             statement: None,
             query,
-            results_received: 0,
+            command: KeywordCursor::default(),
             status: Status::Pending,
             flags: Flags::new(bigint, simple),
         }
     }
 
-    /// `result.command` for the result about to be delivered: the leading
-    /// keyword of its statement in the query text (see `keyword_to_js`).
-    pub(crate) fn command(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let index = self.results_received as usize;
+    /// Advances to the statement whose result arrives next and returns the
+    /// range of its leading keyword in the query text.
+    pub(crate) fn advance_command(&mut self) -> Range<usize> {
         if self.query.is_utf16() {
-            keyword_to_js(global, keyword_of_statement(self.query.utf16(), index))
+            self.command.next(self.query.utf16())
         } else {
-            keyword_to_js(global, keyword_of_statement(self.query.latin1(), index))
+            self.command.next(self.query.latin1())
+        }
+    }
+
+    /// `result.command` for a keyword range from `advance_command` (see
+    /// `keyword_to_js`).
+    pub(crate) fn command_to_js(
+        &self,
+        global: &JSGlobalObject,
+        keyword: Range<usize>,
+    ) -> JsResult<JSValue> {
+        if self.query.is_utf16() {
+            keyword_to_js(global, &self.query.utf16()[keyword])
+        } else {
+            keyword_to_js(global, &self.query.latin1()[keyword])
         }
     }
 
@@ -509,8 +523,6 @@ impl MySQLQuery {
         } else {
             Status::PartialResponse
         };
-        self.results_received += 1;
-
         true
     }
 

@@ -3,36 +3,49 @@
 //! the query text: the leading keyword of the statement that produced the
 //! result.
 
-/// Returns the leading keyword of the `index`-th `;`-separated statement in
-/// `sql`. Whitespace, comments and opening parentheses before the keyword are
-/// skipped, and quoted strings, quoted identifiers and comments do not split
-/// statements. When `sql` has fewer statements than `index + 1` (a `CALL`
-/// produces one result per result set plus one), the last keyword found is
-/// returned. The slice is empty when there is no keyword.
-///
-/// Generic over the code unit so it runs on both Latin-1 and UTF-16 strings
-/// without transcoding.
-pub fn keyword_of_statement<T: Copy + Into<u32>>(sql: &[T], index: usize) -> &[T] {
-    let mut keyword: &[T] = &[];
-    let mut pos = 0usize;
-    let mut statement = 0usize;
-    loop {
+use core::ops::Range;
+
+/// Walks the `;`-separated statements of a query, one per result, and yields
+/// the leading keyword of each. Whitespace, comments and opening parentheses
+/// before a keyword are skipped, and quoted strings, quoted identifiers and
+/// comments do not split statements. The text of a statement is only scanned
+/// when the result after it arrives, so a single-statement query costs a look
+/// at its first word.
+#[derive(Clone, Copy, Default)]
+pub struct KeywordCursor {
+    /// Just past the keyword last returned, inside that statement.
+    pos: usize,
+    started: bool,
+    keyword: (usize, usize),
+}
+
+impl KeywordCursor {
+    /// Advances to the next statement and returns the range of its leading
+    /// keyword in `sql` (empty when it has none). When no statement is left (a
+    /// `CALL` produces one result per result set plus one), the previous
+    /// keyword is returned again.
+    ///
+    /// Generic over the code unit so it runs on both Latin-1 and UTF-16
+    /// strings without transcoding.
+    pub fn next<T: Copy + Into<u32>>(&mut self, sql: &[T]) -> Range<usize> {
+        let mut pos = self.pos;
+        if self.started {
+            match statement_end(sql, pos) {
+                Some(end) => pos = end + 1,
+                None => return self.keyword.0..self.keyword.1,
+            }
+        }
+        self.started = true;
         pos = skip_to_keyword(sql, pos);
         let start = pos;
         while pos < sql.len() && is_alpha(sql[pos]) {
             pos += 1;
         }
-        if pos > start {
-            keyword = &sql[start..pos];
+        self.pos = pos;
+        if pos > start || self.keyword.1 == 0 {
+            self.keyword = (start, pos);
         }
-        if statement == index {
-            return keyword;
-        }
-        match statement_end(sql, pos) {
-            Some(end) => pos = end + 1,
-            None => return keyword,
-        }
-        statement += 1;
+        self.keyword.0..self.keyword.1
     }
 }
 

@@ -102,6 +102,8 @@ const without = (json: PackageJson, key: string) => {
 };
 
 const singlePackage = without(root, "workspaces");
+// one-dep@1.0.0 depends on no-deps@1.0.1, so no-deps is in the tree without the root listing it.
+const transitive: PackageJson = { name: "root", version: "1.0.0", dependencies: { "one-dep": "1.0.0" } };
 
 // Each edit keeps every package at its locked version; the next plain `bun install` rewrites bun.lock for all of them.
 const rewrittenByInstall: Record<string, Edit> = {
@@ -109,9 +111,23 @@ const rewrittenByInstall: Record<string, Edit> = {
     section: "dependencies",
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": ">=1.0.0" } }),
   },
+  "a dependency's range is raised to the locked version": {
+    section: "dependencies",
+    root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.1.0" } }),
+  },
   "a dependency's range is pinned to the locked version": {
     section: "dependencies",
     root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.1.0" } }),
+  },
+  "a dependency is added that the lockfile already resolves transitively": {
+    section: "dependencies",
+    from: transitive,
+    root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "1.0.1" } }),
+  },
+  "a dependency that stays in the tree transitively is removed": {
+    section: "dependencies",
+    from: { ...transitive, dependencies: { ...transitive.dependencies, "no-deps": "1.0.1" } },
+    root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
   },
   "a dependency moves from dependencies to devDependencies": {
     section: "dependencies",
@@ -371,4 +387,101 @@ describe.concurrent("--frozen-lockfile still passes", () => {
     expect(await lockText(packageDir)).toBe(reformatted);
     expect(frozen.exitCode).toBe(0);
   });
+});
+
+// Ways workspaces reach each other that bun.lock reloads through its own rules. The comparison sees the reloaded
+// lockfile on one side and the reparsed package.json files on the other, so each has to come out the same. The stale
+// trustedDependencies name makes the comparison run.
+const monorepo = (members: Record<string, PackageJson>, rootJson: PackageJson = {}) => ({
+  "package.json": { name: "root", workspaces: ["packages/*"], trustedDependencies: ["not-installed"], ...rootJson },
+  ...Object.fromEntries(
+    Object.entries(members).map(([name, json]) => [`packages/${name}/package.json`, { name, ...json }]),
+  ),
+});
+const unchangedProjects: Record<string, Record<string, PackageJson>> = {
+  "a workspace: dependency on a sibling": monorepo({
+    app: { version: "1.0.0", dependencies: { lib: "workspace:*", "no-deps": "^1.0.0" } },
+    lib: { version: "1.0.0", dependencies: { "a-dep": "1.0.1" } },
+  }),
+  "root dependencies on its own workspaces": monorepo(
+    { app: { version: "1.0.0" }, lib: { version: "1.0.0" } },
+    { dependencies: { app: "workspace:*", "no-deps": "^1.0.0" }, devDependencies: { lib: "^1.0.0" } },
+  ),
+  "a root range its workspace does not satisfy, sent there by an override": monorepo(
+    { lib: { version: "1.0.0" } },
+    { dependencies: { lib: "^9.0.0", "no-deps": "^1.0.0" }, overrides: { lib: "workspace:*" } },
+  ),
+  "a sibling in devDependencies and peerDependencies": monorepo({
+    app: { version: "1.0.0", devDependencies: { lib: "workspace:*" }, peerDependencies: { lib: "*" } },
+    lib: { version: "1.0.0" },
+  }),
+  "a sibling range in two dependency groups": monorepo({
+    app: { version: "1.0.0", devDependencies: { lib: "^1.0.0" }, peerDependencies: { lib: "^1.0.0" } },
+    lib: { version: "1.0.0" },
+  }),
+  "a star range on a sibling without a version": monorepo({
+    app: { version: "1.0.0", dependencies: { lib: "*" } },
+    lib: {},
+  }),
+  "an npm: alias of a sibling": monorepo({
+    app: { version: "1.0.0", dependencies: { renamed: "npm:lib@*" } },
+    lib: { version: "1.0.0" },
+  }),
+  "a catalog entry that points at a workspace": monorepo(
+    { app: { version: "1.0.0", dependencies: { lib: "catalog:", "no-deps": "catalog:" } }, lib: { version: "1.0.0" } },
+    { workspaces: { packages: ["packages/*"], catalog: { lib: "workspace:*", "no-deps": "^1.0.0" } } },
+  ),
+  "an override that sends an unsatisfied range to a workspace": monorepo(
+    { app: { version: "1.0.0", dependencies: { lib: "^5.0.0" } }, lib: { version: "1.0.0" } },
+    { overrides: { lib: "workspace:*" } },
+  ),
+  "an optional peer and a lifecycle script in a workspace": monorepo({
+    app: {
+      version: "1.0.0",
+      scripts: { postinstall: "echo postinstall" },
+      peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+      peerDependenciesMeta: { "a-dep": { optional: true } },
+    },
+  }),
+  "a $name override": {
+    "package.json": {
+      name: "root",
+      dependencies: { "no-deps": "^1.0.0", "a-dep": "1.0.1" },
+      overrides: { "a-dep": "$no-deps" },
+      trustedDependencies: ["not-installed"],
+    },
+  },
+};
+
+describe.concurrent("--frozen-lockfile still passes on an unchanged project with", () => {
+  for (const [name, files] of Object.entries(unchangedProjects)) {
+    test(name, async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+      });
+      const first = await bun(packageDir, "install");
+      expect(first.stderr).toContain("Saved lockfile");
+      expect(first.exitCode).toBe(0);
+      const lock = await lockText(packageDir);
+
+      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+
+      // And from a clean checkout, as CI runs it.
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const ci = await bun(packageDir, "ci");
+
+      expect(ci.stderr).not.toContain("error:");
+      expect(ci.exitCode).toBe(0);
+
+      const plain = await bun(packageDir, "install");
+
+      expect(plain.stderr).not.toContain("Saved lockfile");
+      expect(await lockText(packageDir)).toBe(lock);
+      expect(plain.exitCode).toBe(0);
+    });
+  }
 });

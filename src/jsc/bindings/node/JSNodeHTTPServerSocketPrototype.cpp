@@ -39,6 +39,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketDrainKeylog);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketGetCipher);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketGetPeerCertificate);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketGetTLSVersion);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -76,6 +79,9 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "drainKeylog"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketDrainKeylog, 0 } },
+    { "getCipher"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketGetCipher, 0 } },
+    { "getPeerCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketGetPeerCertificate, 1 } },
+    { "getTLSVersion"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketGetTLSVersion, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
@@ -91,6 +97,24 @@ void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
 }
 
 extern "C" int us_socket_pop_keylog(us_socket_t* s, unsigned char* out, int out_cap);
+extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getCipher(JSC::JSGlobalObject*, us_socket_t*, bool is_ssl, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getPeerCertificate(JSC::JSGlobalObject*, us_socket_t*, bool is_ssl, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getTLSVersion(JSC::JSGlobalObject*, us_socket_t*, bool is_ssl, JSC::CallFrame*);
+
+#define NODE_HTTP_SERVER_SOCKET_TLS_FN(jsName, rustName)                                                                                  \
+    JSC_DEFINE_HOST_FUNCTION(jsName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))                                    \
+    {                                                                                                                                     \
+        auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());                                               \
+        if (!thisObject || thisObject->isClosed() || !thisObject->socket) [[unlikely]] {                                                  \
+            return JSValue::encode(JSC::jsUndefined());                                                                                    \
+        }                                                                                                                                 \
+        return rustName(globalObject, thisObject->socket, thisObject->is_ssl, callFrame);                                                 \
+    }
+
+NODE_HTTP_SERVER_SOCKET_TLS_FN(jsFunctionNodeHTTPServerSocketGetCipher, Bun__NodeHTTPServerSocket__getCipher)
+NODE_HTTP_SERVER_SOCKET_TLS_FN(jsFunctionNodeHTTPServerSocketGetPeerCertificate, Bun__NodeHTTPServerSocket__getPeerCertificate)
+NODE_HTTP_SERVER_SOCKET_TLS_FN(jsFunctionNodeHTTPServerSocketGetTLSVersion, Bun__NodeHTTPServerSocket__getTLSVersion)
+#undef NODE_HTTP_SERVER_SOCKET_TLS_FN
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketDrainKeylog, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

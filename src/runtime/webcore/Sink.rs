@@ -406,6 +406,9 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn get_fd(&self) -> i32 {
         -1
     }
+    fn get_fd_js(&self) -> crate::webcore::jsc::JSValue {
+        crate::webcore::jsc::JSValue::js_number(self.get_fd() as f64)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -774,7 +777,7 @@ impl<T: JsSinkType> JSSink<T> {
     pub(crate) fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
         if T::HAS_GET_FD {
-            return JSValue::js_number(this.get_fd() as f64);
+            return this.get_fd_js();
         }
         JSValue::NULL
     }

@@ -1446,6 +1446,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn get_fd(&self) -> i32 {
         Self::get_fd(self)
     }
+    fn get_fd_js(&self) -> JSValue {
+        Self::get_fd_js(self)
+    }
 }
 
 impl FileSink {
@@ -1453,7 +1456,7 @@ impl FileSink {
         #[cfg(windows)]
         {
             match self.fd.get().decode_windows() {
-                bun_sys::fd::DecodeWindows::Windows(_) => -1, // TODO:
+                bun_sys::fd::DecodeWindows::Windows(_) => -1,
                 bun_sys::fd::DecodeWindows::Uv(num) => num,
             }
         }
@@ -1461,6 +1464,14 @@ impl FileSink {
         {
             self.fd.get().native()
         }
+    }
+
+    /// `_getFd()`: the descriptor as JS sees it. On Windows a HANDLE-backed
+    /// sink (a subprocess stdin) reports the HANDLE as a number, which
+    /// `Bun.spawn` accepts as stdio.
+    fn get_fd_js(&self) -> JSValue {
+        use bun_sys_jsc::FdJsc as _;
+        self.fd.get().to_js_without_making_lib_uv_owned()
     }
 
     /// Bytes the writer took off our hands in the `write_*` call that produced

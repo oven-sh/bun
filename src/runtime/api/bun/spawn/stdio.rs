@@ -4,6 +4,8 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
+#[cfg(windows)]
+use core::ffi::c_void;
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
@@ -450,6 +452,13 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
+            // A Windows HANDLE (a socket or pipe `fd` getter) is a number past
+            // the CRT fd range; libuv inherits it as UV_INHERIT_STREAM does.
+            #[cfg(windows)]
+            if value.as_number() > i32::MAX as f64 {
+                *out_stdio = Stdio::Fd(Fd::from_system(value.to_int64() as usize as *mut c_void));
+                return Ok(());
+            }
             // `bun.FD.fromUV(this.toInt32())` inlined here since the
             // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
             let fd = Fd::from_uv(value.to_int32());

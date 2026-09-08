@@ -159,6 +159,38 @@ for (const getter of ["headers", "data"] as const) {
   });
 }
 
+test.concurrent("https server socket is a TLSSocket with working native TLS accessors", async () => {
+  const server = https.createServer(options, (req, res) => {
+    const socket = req.socket as tls.TLSSocket;
+    res.end(
+      JSON.stringify({
+        isTLSSocket: socket instanceof tls.TLSSocket,
+        encrypted: socket.encrypted,
+        cipher: socket.getCipher(),
+        protocol: socket.getProtocol(),
+        peerCertificate: socket.getPeerCertificate(),
+      }),
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const req = https.request({ host: "127.0.0.1", port, ca: options.cert, servername: "localhost" });
+  req.end();
+  const [res] = await once(req, "response");
+  let body = "";
+  for await (const chunk of res) body += chunk;
+  server.close();
+  const info = JSON.parse(body);
+  expect(info).toEqual({
+    isTLSSocket: true,
+    encrypted: true,
+    cipher: { name: expect.any(String), standardName: expect.any(String), version: expect.any(String) },
+    protocol: expect.stringMatching(/^TLSv1\.[23]$/),
+    peerCertificate: {},
+  });
+});
+
 test.concurrent("should not crash when closing sockets after upgrade", async () => {
   const { promise, resolve } = Promise.withResolvers();
   let http_sockets: tls.TLSSocket[] = [];

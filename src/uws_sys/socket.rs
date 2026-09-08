@@ -670,6 +670,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn fd(&self) -> Fd {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).get_fd(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).fd(),
             _ => Fd::INVALID,
         }
     }

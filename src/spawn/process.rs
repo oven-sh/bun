@@ -2068,7 +2068,20 @@ mod spawn_process_body {
                     }
                     WindowsStdio::Pipe(fd) => {
                         stdio.flags = uv::UV_INHERIT_FD;
-                        stdio.data.fd = fd.uv();
+                        stdio.data.fd = match fd.make_libuv_owned() {
+                            Ok(crt) if crt != *fd => {
+                                uv_files_to_close.push(crt.uv());
+                                crt.uv()
+                            }
+                            Ok(crt) => crt.uv(),
+                            Err(()) => {
+                                cleanup_uv_files(&uv_files_to_close, loop_);
+                                return Ok(Err(bun_sys::Error::from_code(
+                                    bun_sys::E::EBADF,
+                                    bun_sys::Tag::uv_spawn,
+                                )));
+                            }
+                        };
                     }
                 }
             }
@@ -2163,7 +2176,20 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Pipe(fd) => {
                     stdio.flags = uv::UV_INHERIT_FD;
-                    stdio.data.fd = fd.uv();
+                    stdio.data.fd = match fd.make_libuv_owned() {
+                        Ok(crt) if crt != *fd => {
+                            uv_files_to_close.push(crt.uv());
+                            crt.uv()
+                        }
+                        Ok(crt) => crt.uv(),
+                        Err(()) => {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(bun_sys::Error::from_code(
+                                bun_sys::E::EBADF,
+                                bun_sys::Tag::uv_spawn,
+                            )));
+                        }
+                    };
                 }
             }
         }

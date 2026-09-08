@@ -4000,6 +4000,70 @@ pub type TLSSocket = NewSocket<true>;
 /// `to_js` / `data_{get,set}_cached` above.
 use crate::generated_classes::{js_TCPSocket, js_TLSSocket};
 
+// TLS accessors for a node:http server socket (`JSNodeHTTPServerSocket`), which
+// holds a raw `us_socket_t` rather than a `TLSSocket`; the `https` socket is a
+// `TLSSocket` on the JS side and its `getCipher()` etc. read these.
+fn node_http_server_socket_ssl(
+    socket: *mut uws::us_socket_t,
+    is_ssl: bool,
+) -> Option<*mut boringssl_sys::SSL> {
+    if !is_ssl || socket.is_null() {
+        return None;
+    }
+    uws::NewSocketHandler::<true>::from(socket).ssl()
+}
+
+#[unsafe(export_name = "Bun__NodeHTTPServerSocket__getCipher")]
+extern "C" fn node_http_server_socket_get_cipher(
+    global: &JSGlobalObject,
+    socket: *mut uws::us_socket_t,
+    is_ssl: bool,
+    frame: &CallFrame,
+) -> JSValue {
+    jsc::host_fn::to_js_host_fn_result(
+        global,
+        tls_socket_functions::get_cipher_of(
+            node_http_server_socket_ssl(socket, is_ssl),
+            global,
+            frame,
+        ),
+    )
+}
+
+#[unsafe(export_name = "Bun__NodeHTTPServerSocket__getPeerCertificate")]
+extern "C" fn node_http_server_socket_get_peer_certificate(
+    global: &JSGlobalObject,
+    socket: *mut uws::us_socket_t,
+    is_ssl: bool,
+    frame: &CallFrame,
+) -> JSValue {
+    jsc::host_fn::to_js_host_fn_result(
+        global,
+        tls_socket_functions::get_peer_certificate_of(
+            node_http_server_socket_ssl(socket, is_ssl),
+            global,
+            frame,
+        ),
+    )
+}
+
+#[unsafe(export_name = "Bun__NodeHTTPServerSocket__getTLSVersion")]
+extern "C" fn node_http_server_socket_get_tls_version(
+    global: &JSGlobalObject,
+    socket: *mut uws::us_socket_t,
+    is_ssl: bool,
+    frame: &CallFrame,
+) -> JSValue {
+    jsc::host_fn::to_js_host_fn_result(
+        global,
+        tls_socket_functions::get_tls_version_of(
+            node_http_server_socket_ssl(socket, is_ssl),
+            global,
+            frame,
+        ),
+    )
+}
+
 // ── JsClass impls (manual — `#[bun_jsc::JsClass]` derive can't handle the
 // const-generic split into two codegen classes `JSTCPSocket` / `JSTLSSocket`).
 // Routes through the codegen'd `js_$name` safe wrappers so the

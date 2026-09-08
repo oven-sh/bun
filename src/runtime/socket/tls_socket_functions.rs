@@ -388,11 +388,19 @@ pub(super) fn get_x509_certificate(
 pub(super) fn get_tls_version(
     this: &This,
     global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    get_tls_version_of(this.socket.get().ssl(), global, frame)
+}
+
+pub(crate) fn get_tls_version_of(
+    ssl: Option<*mut boringssl::SSL>,
+    global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::NULL);
     };
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -444,6 +452,14 @@ pub(super) fn get_peer_certificate(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
+    get_peer_certificate_of(this.socket.get().ssl(), global, frame)
+}
+
+pub(crate) fn get_peer_certificate_of(
+    ssl: Option<*mut boringssl::SSL>,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     jsc::mark_binding();
 
     let [arg] = frame.arguments_as_array::<1>();
@@ -455,7 +471,7 @@ pub(super) fn get_peer_certificate(
         abbreviated = arg.to_boolean();
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::UNDEFINED);
     };
     let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
@@ -780,9 +796,17 @@ pub(super) fn get_shared_sigalgs(
 pub(super) fn get_cipher(
     this: &This,
     global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    get_cipher_of(this.socket.get().ssl(), global, frame)
+}
+
+pub(crate) fn get_cipher_of(
+    ssl: Option<*mut boringssl::SSL>,
+    global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::UNDEFINED);
     };
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));

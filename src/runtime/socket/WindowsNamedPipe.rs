@@ -1015,6 +1015,17 @@ impl WindowsNamedPipe {
             .map(|p| p.as_ptr())
     }
 
+    /// The pipe's HANDLE, for sharing with a child as stdio (libuv's
+    /// UV_INHERIT_STREAM leeches the same handle); INVALID when not open.
+    pub(crate) fn fd(&self) -> Fd {
+        use bun_sys::windows::libuv::UvHandle as _;
+        match self.uv_pipe() {
+            // SAFETY: `uv_pipe()` is the live `uv_pipe_t` this socket drives.
+            Some(pipe) => Fd::from_system(unsafe { &*pipe }.fd()),
+            None => Fd::INVALID,
+        }
+    }
+
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         let err = self.ssl_error.get();

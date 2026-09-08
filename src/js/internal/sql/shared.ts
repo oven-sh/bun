@@ -157,18 +157,18 @@ function normalizeSSLMode(value: string): SSLMode {
   );
 }
 
-// close({ timeout }) takes seconds but arms its deadline timer in
-// milliseconds, and setTimeout clamps delays above 2 ** 31 - 1 ms to 1 ms, so
-// the upper bound must hold for the millisecond product.
-const MAX_CLOSE_TIMEOUT = (2 ** 31 - 1) / 1000;
+// setTimeout clamps a delay above this to 1 ms, and the native timers saturate at it.
+const MAX_TIMER_MS = 2 ** 31 - 1;
+const MAX_TIMEOUT_SECONDS = MAX_TIMER_MS / 1000;
 
-function validateCloseTimeout(timeout: number): number {
+// For options given in seconds that arm a millisecond timer.
+function validateTimeoutSeconds(name: string, timeout: number): number {
   timeout = Number(timeout);
-  if (timeout > MAX_CLOSE_TIMEOUT || timeout < 0 || timeout !== timeout) {
+  if (timeout > MAX_TIMEOUT_SECONDS || timeout < 0 || timeout !== timeout) {
     throw $ERR_INVALID_ARG_VALUE(
-      "options.timeout",
+      name,
       timeout,
-      `must be a non-negative number no greater than ${MAX_CLOSE_TIMEOUT} seconds`,
+      `must be a non-negative number no greater than ${MAX_TIMEOUT_SECONDS} seconds`,
     );
   }
   return timeout;
@@ -1323,7 +1323,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     let timeout = options?.timeout;
     const hasTimeout = !!timeout;
     if (hasTimeout) {
-      timeout = validateCloseTimeout(timeout);
+      timeout = validateTimeoutSeconds("options.timeout", timeout);
     }
 
     this.closed = true;
@@ -2085,39 +2085,15 @@ function parseOptions(
   }
 
   if (idleTimeout != null) {
-    idleTimeout = Number(idleTimeout);
-    if (idleTimeout > 2 ** 31 || idleTimeout < 0 || idleTimeout !== idleTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.idle_timeout",
-        idleTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    idleTimeout *= 1000;
+    idleTimeout = validateTimeoutSeconds("options.idle_timeout", idleTimeout) * 1000;
   }
 
   if (connectionTimeout != null) {
-    connectionTimeout = Number(connectionTimeout);
-    if (connectionTimeout > 2 ** 31 || connectionTimeout < 0 || connectionTimeout !== connectionTimeout) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.connection_timeout",
-        connectionTimeout,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    connectionTimeout *= 1000;
+    connectionTimeout = validateTimeoutSeconds("options.connection_timeout", connectionTimeout) * 1000;
   }
 
   if (maxLifetime != null) {
-    maxLifetime = Number(maxLifetime);
-    if (maxLifetime > 2 ** 31 || maxLifetime < 0 || maxLifetime !== maxLifetime) {
-      throw $ERR_INVALID_ARG_VALUE(
-        "options.max_lifetime",
-        maxLifetime,
-        "must be a non-negative integer less than 2^31",
-      );
-    }
-    maxLifetime *= 1000;
+    maxLifetime = validateTimeoutSeconds("options.max_lifetime", maxLifetime) * 1000;
   }
 
   if (max != null) {
@@ -2250,7 +2226,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 export default {
   parseOptions,
   SQLHelper,
-  validateCloseTimeout,
+  validateTimeoutSeconds,
   SQLResultArray,
   SQLArrayParameter,
   getHelperCommandFromDetect,

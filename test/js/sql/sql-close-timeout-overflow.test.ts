@@ -5,7 +5,8 @@
 // force-closed after ~1 ms, cancelling in-flight queries. On reserved
 // connections and transactions, validation also ran after acceptQueries was
 // already cleared, so a rejected close left the handle refusing all further
-// queries.
+// queries. The idle_timeout, connection_timeout and max_lifetime options had
+// the same seconds-bounded check before their own * 1000.
 // https://github.com/oven-sh/bun/issues/32096
 
 import { SQL } from "bun";
@@ -48,6 +49,24 @@ for (const [adapter, url] of adapters) {
       e => e,
     );
     expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+  });
+}
+
+// The constructor options are validated synchronously in parseOptions, before
+// any connection exists.
+for (const option of ["idle_timeout", "connection_timeout", "max_lifetime"] as const) {
+  test.each([2 ** 31, 2147483.648, Infinity])(
+    `${option}: constructor rejects %p, whose millisecond value overflows`,
+    timeout => {
+      expect(() => new SQL("postgres://bun_sql_test@localhost:5432/bun_sql_test", { [option]: timeout })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    },
+  );
+
+  test.each([MAX_TIMEOUT_SECONDS, 60, 0])(`${option}: constructor accepts %p`, async timeout => {
+    await using sql = new SQL("postgres://bun_sql_test@localhost:5432/bun_sql_test", { [option]: timeout });
+    expect(sql).toBeDefined();
   });
 }
 

@@ -7,7 +7,7 @@ const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, parseOptions, validateCloseTimeout } = require("internal/sql/shared");
+const { SQLHelper, parseOptions, validateTimeoutSeconds } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
@@ -472,7 +472,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       let timeout = options?.timeout;
       if (timeout) {
-        timeout = validateCloseTimeout(timeout);
+        timeout = validateTimeoutSeconds("options.timeout", timeout);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (timeout) {
@@ -754,7 +754,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       let timeout = options?.timeout;
       if (timeout) {
-        timeout = validateCloseTimeout(timeout);
+        timeout = validateTimeoutSeconds("options.timeout", timeout);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;

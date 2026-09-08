@@ -1297,6 +1297,272 @@ impl Pipe {
     }
 }
 
+/// `uv_pipe()`: a connected pair of pipe ends, `[read, write]`.
+pub fn pipe_pair(read_flags: c_int, write_flags: c_int) -> Result<[uv_file; 2], ReturnCode> {
+    let mut fds: [uv_file; 2] = [0; 2];
+    // SAFETY: `fds` is the out-array `uv_pipe` fills.
+    let rc = unsafe { uv_pipe(&raw mut fds, read_flags, write_flags) };
+    if rc.is_err() { Err(rc) } else { Ok(fds) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// OwnedPipe — a heap `uv_pipe_t` with its read state, owned from Rust.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// What [`OwnedPipe::read_start`] delivers, on the loop thread.
+pub enum PipeRead<'a> {
+    /// Bytes read into the pipe's buffer; borrowed for the call.
+    Data(&'a [u8]),
+    /// The raw negative libuv errno (e.g. `UV_EOF`); reading has been stopped.
+    Error(c_int),
+}
+
+struct PipeReadState {
+    buf: Box<[u8]>,
+    on_read: Box<dyn FnMut(PipeRead<'_>)>,
+}
+
+/// The allocation behind an [`OwnedPipe`]: the handle (first, so the pointer
+/// libuv holds is the allocation's) and the read state its callbacks use.
+/// Freed once both the [`OwnedPipe`] is gone and the close callback has run,
+/// whichever is later, so it outlives every libuv callback and the owner.
+#[repr(C)]
+struct PipeBox {
+    pipe: Pipe,
+    read: Option<PipeReadState>,
+    /// The [`OwnedPipe`] still exists.
+    owned: bool,
+    /// The close callback has run: libuv is done with the handle.
+    closed: bool,
+}
+
+impl PipeBox {
+    unsafe extern "C" fn on_close(handle: *mut Pipe) {
+        // SAFETY: `handle` is the `PipeBox` allocation (pipe first); the close
+        // callback runs once, after libuv's last use of the handle.
+        unsafe {
+            let this = handle.cast::<PipeBox>();
+            (*this).closed = true;
+            if !(*this).owned {
+                drop(Box::from_raw(this));
+            }
+        }
+    }
+
+    /// `uv_close` the handle unless that already started. Loop thread.
+    ///
+    /// # Safety
+    /// `this` is a live `PipeBox` whose handle was initialised.
+    unsafe fn close(this: *mut PipeBox) {
+        // SAFETY: fn contract.
+        unsafe {
+            if !(*this).closed && !(*this).pipe.is_closing() {
+                (*this).pipe.close(Self::on_close);
+            }
+        }
+    }
+
+    /// [`open_handles::CloseViaOwner`] for VM teardown: close, but leave the
+    /// allocation to the [`OwnedPipe`].
+    unsafe fn close_for_teardown(owner: *mut c_void) {
+        // SAFETY: registered with this `PipeBox` as owner while it is live
+        // (cleared by `uv_close` → `open_handles::remove`).
+        unsafe { Self::close(owner.cast::<PipeBox>()) }
+    }
+}
+
+/// One in-flight [`OwnedPipe::write`]: the request, the bytes it points into,
+/// and the completion. libuv owns the box until the write callback.
+#[repr(C)]
+struct PipeWrite {
+    req: uv_write_t,
+    buf: uv_buf_t,
+    _bytes: Box<[u8]>,
+    on_done: Option<Box<dyn FnOnce(ReturnCode)>>,
+}
+
+/// An initialised `uv_pipe_t` on this thread's loop that Rust owns: dropping
+/// it `uv_close`s the handle (cancelling in-flight writes, whose completions
+/// still run) and frees it from the close callback.
+pub struct OwnedPipe(core::ptr::NonNull<PipeBox>);
+
+impl OwnedPipe {
+    /// `uv_pipe_init` on this thread's loop.
+    pub fn init(ipc: bool) -> Result<OwnedPipe, ReturnCode> {
+        // SAFETY: all-zero is a valid (uninitialised) `uv_pipe_t`.
+        let pipe: Pipe = unsafe { core::mem::zeroed() };
+        let raw = Box::into_raw(Box::new(PipeBox {
+            pipe,
+            read: None,
+            owned: true,
+            closed: false,
+        }));
+        // SAFETY: `raw` is the live box just leaked; on failure the handle was
+        // never registered with the loop, so it is freed directly.
+        unsafe {
+            let rc = (*raw).pipe.init(Loop::get(), ipc);
+            if rc.is_err() {
+                drop(Box::from_raw(raw));
+                return Err(rc);
+            }
+            open_handles::set_owner(raw.cast(), raw.cast(), Some(PipeBox::close_for_teardown));
+            Ok(OwnedPipe(core::ptr::NonNull::new_unchecked(raw)))
+        }
+    }
+
+    #[inline]
+    fn pipe(&self) -> *mut Pipe {
+        // SAFETY: `PipeBox` is `repr(C)` with `pipe` first.
+        unsafe { &raw mut (*self.0.as_ptr()).pipe }
+    }
+
+    /// `uv_pipe_open`: adopt `file` as this pipe's handle.
+    pub fn open(&self, file: uv_file) -> Result<(), ReturnCode> {
+        // SAFETY: live, initialised handle (type invariant).
+        let rc = unsafe { (*self.pipe()).open(file) };
+        if rc.is_err() { Err(rc) } else { Ok(()) }
+    }
+
+    pub fn unref(&self) {
+        // SAFETY: live, initialised handle (type invariant).
+        unsafe { (*self.pipe()).unref() }
+    }
+
+    /// `uv_read_start` into a `buf_size` buffer; `on_read` gets each result
+    /// on the loop thread until [`read_stop`](Self::read_stop) or drop.
+    pub fn read_start(
+        &self,
+        buf_size: usize,
+        on_read: Box<dyn FnMut(PipeRead<'_>)>,
+    ) -> Result<(), ReturnCode> {
+        unsafe extern "C" fn alloc_cb(
+            handle: *mut uv_handle_t,
+            _suggested_size: usize,
+            buf: *mut uv_buf_t,
+        ) {
+            // SAFETY: `handle` is the `PipeBox` this was registered on, whose
+            // `read` was set before `uv_read_start`; `buf` is libuv's out-param.
+            unsafe {
+                let this = handle.cast::<PipeBox>();
+                *buf = match (*this).read.as_mut() {
+                    Some(state) => uv_buf_t {
+                        len: state.buf.len() as ULONG,
+                        base: state.buf.as_mut_ptr(),
+                    },
+                    None => uv_buf_t::init(b""), // libuv reports UV_ENOBUFS
+                };
+            }
+        }
+        unsafe extern "C" fn read_cb(
+            stream: *mut uv_stream_t,
+            nread: ReturnCodeI64,
+            buf: *const uv_buf_t,
+        ) {
+            let n = nread.int();
+            if n == 0 {
+                return; // EAGAIN / EWOULDBLOCK
+            }
+            // SAFETY: as `alloc_cb`; `buf` is the buffer `alloc_cb` handed out,
+            // filled with `n` bytes when `n > 0`. The state is moved out for the
+            // call so a re-entrant `read_start` cannot free the running closure.
+            unsafe {
+                let this = stream.cast::<PipeBox>();
+                let Some(mut state) = (*this).read.take() else {
+                    return;
+                };
+                if n < 0 {
+                    let _ = uv_read_stop(stream);
+                    (state.on_read)(PipeRead::Error(n as c_int));
+                } else {
+                    debug_assert!(core::ptr::eq((*buf).base, state.buf.as_ptr()));
+                    (state.on_read)(PipeRead::Data(&state.buf[..n as usize]));
+                }
+                if (*this).read.is_none() {
+                    (*this).read = Some(state);
+                }
+            }
+        }
+        // SAFETY: live, initialised handle (type invariant); the read state is
+        // installed before libuv can call back and lives until the close callback.
+        unsafe {
+            (*self.0.as_ptr()).read = Some(PipeReadState {
+                buf: vec![0u8; buf_size].into_boxed_slice(),
+                on_read,
+            });
+            let rc = uv_read_start(self.pipe().cast(), Some(alloc_cb), Some(read_cb));
+            if rc.is_err() { Err(rc) } else { Ok(()) }
+        }
+    }
+
+    pub fn read_stop(&self) {
+        // SAFETY: live, initialised handle (type invariant); always succeeds.
+        let _ = unsafe { uv_read_stop(self.pipe().cast()) };
+    }
+
+    /// `uv_write` a copy of `bytes`; `on_done` gets the status on the loop
+    /// thread (`UV_ECANCELED` if the pipe is closed first). On `Err` nothing
+    /// was queued and `on_done` never runs.
+    pub fn write(
+        &self,
+        bytes: Box<[u8]>,
+        on_done: Box<dyn FnOnce(ReturnCode)>,
+    ) -> Result<(), ReturnCode> {
+        unsafe extern "C" fn write_cb(req: *mut uv_write_t, status: ReturnCode) {
+            // SAFETY: `req` is the first field of the `PipeWrite` leaked in
+            // `write`; libuv calls this exactly once.
+            let mut write = unsafe { Box::from_raw(req.cast::<PipeWrite>()) };
+            if let Some(on_done) = write.on_done.take() {
+                on_done(status);
+            }
+        }
+        // SAFETY: all-zero is a valid `uv_write_t` for `uv_write` to fill.
+        let req: uv_write_t = unsafe { core::mem::zeroed() };
+        let mut write = Box::new(PipeWrite {
+            req,
+            buf: uv_buf_t::init(b""),
+            _bytes: bytes,
+            on_done: Some(on_done),
+        });
+        write.buf = uv_buf_t::init(&write._bytes);
+        let raw = Box::into_raw(write);
+        // SAFETY: live, initialised handle (type invariant); `raw` stays
+        // allocated and unmoved until `write_cb` reclaims it.
+        unsafe {
+            let rc = uv_write(
+                &raw mut (*raw).req,
+                self.pipe().cast(),
+                &raw const (*raw).buf,
+                1,
+                Some(write_cb),
+            );
+            if rc.is_err() {
+                drop(Box::from_raw(raw));
+                return Err(rc);
+            }
+        }
+        Ok(())
+    }
+}
+
+const _: () = assert!(core::mem::offset_of!(PipeBox, pipe) == 0);
+const _: () = assert!(core::mem::offset_of!(PipeWrite, req) == 0);
+
+impl Drop for OwnedPipe {
+    fn drop(&mut self) {
+        // SAFETY: live `PipeBox` (type invariant); freed here only if libuv is
+        // already done with it, else by the close callback.
+        unsafe {
+            let this = self.0.as_ptr();
+            (*this).owned = false;
+            if (*this).closed {
+                drop(Box::from_raw(this));
+            } else {
+                PipeBox::close(this);
+            }
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_tty_t`.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1152,7 +1152,6 @@ impl BlobExt for Blob {
                 proxy_url,
                 aws_options.request_payer,
                 None,
-                core::ptr::null_mut(),
             );
         }
 
@@ -3968,7 +3967,6 @@ pub(crate) fn write_file_with_source_destination(
                             proxy_url,
                             aws_options.request_payer,
                             None,
-                            core::ptr::null_mut(),
                         );
                     } else {
                         return Ok(JSPromise::rejected_promise(
@@ -4049,7 +4047,6 @@ pub(crate) fn write_file_with_source_destination(
                         proxy_url,
                         aws_options.request_payer,
                         None,
-                        core::ptr::null_mut(),
                     );
                 } else {
                     return Ok(JSPromise::rejected_promise(
@@ -4326,7 +4323,6 @@ pub(crate) fn write_file_internal(
                                 proxy_url,
                                 aws_options.request_payer,
                                 None,
-                                core::ptr::null_mut(),
                             )?));
                         }
                         destination_blob.detach();

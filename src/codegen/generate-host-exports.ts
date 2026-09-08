@@ -144,9 +144,21 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
         `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
     };
   }
-  // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
+  // `&mut [T]` — C passes `(T* name, size_t name_len)`; the caller owns the
+  // buffer exclusively for the call.
+  const sliceMut = /^&\s*mut\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
+  if (sliceMut) {
+    const elem = sliceMut[1].trim();
+    return {
+      cTy: `*mut ${elem}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live, exclusively borrowed elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice_mut(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // Other slice shapes (`&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\`, \`&mut [T]\`, or (ptr, len)`);
   }
   // `Option<&CStr>` — C passes a (possibly null) NUL-terminated `const char*`.
   if (/^Option\s*<\s*&\s*(?:(?:::)?(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {

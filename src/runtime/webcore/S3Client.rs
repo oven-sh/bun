@@ -422,13 +422,13 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut blob, options) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "presign",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::get_presign_url_from(&mut blob, global, options)
+        S3File::get_presign_url_from(&blob, global, options)
     }
 
     #[bun_jsc::host_fn(method)]

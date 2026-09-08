@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
@@ -51,6 +51,12 @@ pub struct AsyncHTTP<'a> {
     pub elapsed: u64,
 
     pub(crate) signals: Signals,
+
+    /// Set (release) by the HTTP thread on the caller's original right before
+    /// the terminal result callback / shutdown release
+    /// ([`HTTPClientResultCallback::hand_back`]): from then on the HTTP thread
+    /// never touches the original again ([`crate::InFlight::reclaim`]).
+    pub(crate) handed_back: AtomicBool,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -454,6 +460,7 @@ impl<'a> AsyncHTTP<'a> {
             async_http_id,
             elapsed: 0,
             signals,
+            handed_back: AtomicBool::new(false),
         };
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -597,7 +604,7 @@ fn send_sync_callback(
     // `read_item`.
     unsafe {
         result.body_into(&mut (*(*this).response_buffer).list);
-        (*this).write_item(result.detach_lifetime());
+        (*this).write_item(result.into_owned());
     }
 }
 
@@ -750,7 +757,7 @@ impl<'a> AsyncHTTP<'a> {
                 }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);
-                callback.run(async_http, result);
+                callback.hand_back(async_http, result);
 
                 // SAFETY: `async_http` is the `async_http` field of a
                 // `ThreadlocalAsyncHTTP` heap-allocated by HTTPThread via

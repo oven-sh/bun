@@ -1239,7 +1239,6 @@ describe("close() under transport backpressure sends the buffered tail", () => {
   // write, and sent a 1-byte tail.
   test.each(modes)("over h2, close() %s", async (_mode, later) => {
     const state = newState();
-    // @ts-expect-error http2 is not in the public types yet
     using server = Bun.serve({ port: 0, idleTimeout: 0, http2: true, fetch: () => new Response(body(state, later)) });
 
     const client = await RawH2.connect(server.port, false);

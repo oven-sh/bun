@@ -326,13 +326,13 @@ describe("websocket", () => {
 
     for (const url of urls) {
       const webSocket = new WebSocket(url);
-      const { promise: opened, resolve, reject } = Promise.withResolvers<void>();
-      webSocket.addEventListener("open", () => resolve());
-      webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-      await opened;
-      const { promise: reply, resolve: onMessage } = Promise.withResolvers<unknown>();
-      webSocket.addEventListener("message", ({ data }) => onMessage(JSON.parse(data.toString())));
-      webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+      const { promise: reply, resolve, reject } = Promise.withResolvers<unknown>();
+      webSocket.addEventListener("error", cause => reject(new Error(`WebSocket error on ${url}`, { cause })));
+      webSocket.addEventListener("close", () => reject(new Error(`WebSocket to ${url} closed before a reply`)));
+      webSocket.addEventListener("message", ({ data }) => resolve(JSON.parse(data.toString())));
+      webSocket.addEventListener("open", () =>
+        webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } })),
+      );
       expect(await reply).toMatchObject({ id: 1, result: { result: { type: "number", value: 2 } } });
       webSocket.close();
     }

@@ -64,7 +64,7 @@ The command attaches the capability to the `bun` binary itself. Replacing the bi
 systemd's resource-control and sandboxing options work with Bun. Two of them need care:
 
 - To cap memory, use `MemoryMax=`. `LimitAS=` (the same limit as `ulimit -v`) caps address space instead, and Bun reserves far more address space than the memory it uses. Bun sizes its startup reservations to fit the limit, but a value below a few hundred megabytes can still stop it from starting.
-- `MemoryDenyWriteExecute=yes` forbids executable memory, so JavaScriptCore's JIT is unavailable. JavaScript and WebAssembly still run, in the interpreter, which is several times slower for compute-heavy code.
+- `MemoryDenyWriteExecute=yes` forbids memory mappings that are writable and executable at the same time, and forbids making a mapping executable later. A JIT needs one or the other, so JavaScriptCore's JIT is unavailable. JavaScript and WebAssembly still run, in the interpreter, which is several times slower for compute-heavy code.
 
 ---
 

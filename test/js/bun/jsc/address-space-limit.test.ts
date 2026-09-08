@@ -34,12 +34,13 @@ describe.skipIf(!isLinux || isASAN || isDebug)("RLIMIT_AS", () => {
     expect({ stdout, exitCode, signalCode }).toEqual({ stdout: `{"jit":true}`, exitCode: 0, signalCode: null });
   });
 
-  for (const limitMB of [768, 1024, 1200, 1536, 2048, 2250]) {
-    test.concurrent(`ulimit -v ${limitMB}M: bun starts and keeps the JIT`, async () => {
+  test.concurrent.each([768, 1024, 1200, 1536, 2048, 2250])(
+    "ulimit -v %dM: bun starts and keeps the JIT",
+    async limitMB => {
       const { stdout, stderr, exitCode, signalCode } = await run(limitMB);
       // stderr first: on failure it carries the crash banner or the allocation error.
       expect({ stderr, stdout }).toEqual({ stderr: expect.any(String), stdout: `{"jit":true}` });
       expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
-    });
-  }
+    },
+  );
 });

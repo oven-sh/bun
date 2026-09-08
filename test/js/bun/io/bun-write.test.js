@@ -292,6 +292,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
     expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(src))).toBe(1000);
     expect(fs.statSync(existing).size).toBe(1000);
+
+    const small = join(String(dir), "small.bin");
+    await Bun.write(small, new Uint8Array(100).fill(9));
+    expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(small))).toBe(100);
+    expect(fs.statSync(existing).size).toBe(100);
   });
 
   it("Bun.file", async () => {

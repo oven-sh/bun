@@ -550,8 +550,25 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
 
-  // npm (nopt Boolean): a bare key or an empty value is true, `false`, `null`
-  // and a numeric zero are false, and every other string is true
+  test("an inline comment is not part of the registry url or the auth token", () => {
+    // ini cuts an unquoted value at the first unescaped `;` or `#`. With the
+    // comment left in, the registry URL no longer matched its `//host/` credential.
+    expect(
+      loadNpmrc(`
+registry=http://127.0.0.1:4873/ ; default registry
+//127.0.0.1:4873/:_authToken=SECRET # token
+`),
+    ).toEqual({
+      default_registry_url: "http://127.0.0.1:4873/",
+      default_registry_token: "SECRET",
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    });
+  });
+
+  // npm (nopt Boolean): a bare key or an empty value is true, `false`, `null`,
+  // `undefined` and a numeric zero are false, and every other string is true
   test.each([
     ["ignore-scripts", true],
     ["ignore-scripts=", true],
@@ -573,7 +590,7 @@ registry=https://somehost.com/org1/npm/registry/
     ["ignore-scripts=00", false],
     ["ignore-scripts=0.0", false],
     ["ignore-scripts=-0", false],
-    ["ignore-scripts=undefined", undefined],
+    ["ignore-scripts=undefined", false],
     ["ignore-scripts= 0 ", false],
     ["ignore-scripts= 1 ", true],
     // ini JSON-parses a single-quoted value, so these reach the loader as numbers
@@ -582,6 +599,11 @@ registry=https://somehost.com/org1/npm/registry/
     ['ignore-scripts="1"', true],
     ['ignore-scripts="0"', false],
     ["ignore-scripts='null'", false],
+    // the inline comment is cut before the value is coerced
+    ["ignore-scripts=false ; allow scripts", false],
+    ["ignore-scripts=0 # allow scripts", false],
+    ["ignore-scripts=true ; no scripts", true],
+    ["ignore-scripts = ; bare", true],
   ])("boolean option: %s", (line, expected) => {
     expect(loadNpmrc(line + "\n").ignore_scripts).toBe(expected);
   });

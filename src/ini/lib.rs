@@ -120,7 +120,9 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
+pub use draft::{
+    Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config, npm_config_bool,
+};
 
 mod draft {
 
@@ -628,7 +630,14 @@ mod draft {
                                 }
                                 unesc.push(b'$');
                             }
-                            b';' | b'#' => break,
+                            b';' | b'#' => {
+                                // ini cuts an unquoted string at the first unescaped
+                                // comment char and trims what is left
+                                let kept = bun_core::trim_right(&unesc, b" \n\r\t").len();
+                                unesc.truncate(kept);
+                                did_any_escape = true;
+                                break;
+                            }
                             b'\\' => {
                                 esc = true;
                                 did_any_escape = true;
@@ -1233,26 +1242,25 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// npm's Boolean coercion: `@npmcli/config` parse-field, then nopt `validateBoolean`.
+    pub fn npm_config_bool(value: &[u8]) -> bool {
+        let value = bun_core::trim(value, b" \n\r\t");
+        if value == b"false" || value == b"null" || value == b"undefined" {
+            return false;
+        }
+        let numeric_zero = core::str::from_utf8(value)
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .is_some_and(|n| n == 0.0);
+        !numeric_zero
+    }
+
     fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
-            ExprData::ENull(_) => Some(false),
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(false),
             // a single-quoted `'1'` is JSON-parsed to a number, as in ini
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
-            ExprData::EString(_) => {
-                let str_ = bun_core::trim(expr.as_utf8_string_literal()?, b" \n\r\t");
-                if str_ == b"undefined" {
-                    return None;
-                }
-                if str_ == b"false" || str_ == b"null" {
-                    return Some(false);
-                }
-                let numeric_zero = core::str::from_utf8(str_)
-                    .ok()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .is_some_and(|n| n == 0.0);
-                Some(!numeric_zero)
-            }
+            ExprData::EString(_) => expr.as_utf8_string_literal().map(npm_config_bool),
             _ => None,
         }
     }

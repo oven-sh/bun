@@ -12,7 +12,7 @@
 // Postgres server and asserts binary and text decode to the same instant.
 //
 // It also checks in-band that the "binary" query really received binary
-// results (the `0.1::real` sentinel), and sweeps sub-millisecond instants from
+// results (the `array[1]::int4[]` sentinel), and sweeps sub-millisecond instants from
 // 4714 BC to the JS Date limit against the server's own
 // floor(extract(epoch) * 1000), which covers the ranges where the text path
 // cannot serve as the oracle.

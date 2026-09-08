@@ -238,24 +238,11 @@ pub trait HotReloaderCtx {
 
 /// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
 /// `HotReloaderCtx::reload` doesn't need to name the const generics.
-pub trait HotReloadTaskView {
-    fn count(&self) -> u8;
-    fn hashes(&self) -> &[u32];
-    fn paths(&self) -> &[&'static [u8]];
-}
+pub trait HotReloadTaskView {}
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
     for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 {
-    fn count(&self) -> u8 {
-        self.count
-    }
-    fn hashes(&self) -> &[u32] {
-        &self.hashes[..self.count as usize]
-    }
-    fn paths(&self) -> &[&'static [u8]] {
-        &self.paths[..self.count as usize]
-    }
 }
 
 /// When non-null, `on_file_update` records the absolute path of every file

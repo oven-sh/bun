@@ -603,6 +603,16 @@ pub(crate) mod on_unhandled_rejection {
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+            if buntest.phase == bun_test::Phase::Collection && !buntest.collection.describe_callback_pending {
+                // No describe() callback is waiting on a promise: the error came from
+                // module or preload top level, a `.each` table, or synchronously from a
+                // describe() body. There is no callback to complete, so report it and
+                // keep collecting. Stepping the collection here would run the queued
+                // describe() callbacks early and finish the run before the file has
+                // registered its tests.
+                buntest.on_uncaught_exception(global_object, Some(rejection), true, &RefDataValue::Start);
+                return;
+            }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).

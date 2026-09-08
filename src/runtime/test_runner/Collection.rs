@@ -16,6 +16,10 @@ use crate::test_runner::jest::Jest;
 pub struct Collection {
     /// set to true after collection phase ends
     pub(crate) locked: bool,
+    /// Set while an async describe() callback's promise is outstanding. Only then can
+    /// an uncaught error be that callback's failure. At module or preload top level,
+    /// and while a describe() body runs synchronously, no callback is waiting.
+    pub(crate) describe_callback_pending: bool,
     pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
     pub(crate) current_scope_callback_queue: Vec<QueuedDescribe>,
     // The two queues above are self-referential — their `NonNull<DescribeScope>` fields point
@@ -79,6 +83,7 @@ impl Collection {
 
         Collection {
             locked: false,
+            describe_callback_pending: false,
             describe_callback_queue: Vec::new(),
             current_scope_callback_queue: Vec::new(),
             root_scope,
@@ -170,6 +175,7 @@ impl Collection {
             "collection:runOneCompleted reset scope back from {}",
             bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
+        self.describe_callback_pending = false;
         self.active_scope = prev_scope;
         group::log(format_args!(
             "collection:runOneCompleted reset scope back to {}",
@@ -234,17 +240,20 @@ impl Collection {
                 bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
             ));
 
-            if let Some(cfg_data) = BunTest::run_test_callback(
+            let sync_result = BunTest::run_test_callback(
                 buntest_strong,
                 global_this,
                 callback.get(),
                 false,
                 RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,
-            ) {
+            );
+            // Re-derive after re-entrant call per BunTestCell::get aliasing contract.
+            let buntest = buntest_strong.get();
+            match sync_result {
                 // the result is available immediately; queue
-                // Re-derive after re-entrant call per BunTestCell::get aliasing contract.
-                buntest_strong.get().add_result(cfg_data);
+                Some(cfg_data) => buntest.add_result(cfg_data),
+                None => buntest.collection.describe_callback_pending = true,
             }
 
             return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
@@ -254,9 +263,17 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
+
+        // Only a describe() callback's own throw or rejection fails its scope. Any other
+        // error seen during collection (module or preload top level, a `.each` table, a
+        // timer) has no scope to fail, and failing the active scope for it would drop
+        // tests that registered fine.
+        let RefDataValue::Collection { .. } = data else {
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        };
 
         self.active_scope_mut().failed = true;
 

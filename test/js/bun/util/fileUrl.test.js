@@ -42,6 +42,12 @@ describe("fileURLToPath", () => {
     expect(() => fileURLToPath(new URL("http:///path/to/file.js"))).toThrow();
   });
 
+  it("should fail on strings that do not parse as a URL with ERR_INVALID_URL", () => {
+    for (const input of ["file://[", "not a url", ""]) {
+      expect(() => fileURLToPath(input)).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL", input }));
+    }
+  });
+
   describe("should fail on non URLs", () => {
     const fuzz = [1, true, Symbol("foo"), {}, [], () => {}, null, undefined, NaN, Infinity, -Infinity, new Boolean()];
     fuzz.forEach(value => {

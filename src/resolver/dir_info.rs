@@ -201,6 +201,12 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
+    /// Is there a "package.json" file, parseable or not?
+    #[inline]
+    pub(crate) fn has_package_json_file(&self) -> bool {
+        self.flags.contains(Flags::HasPackageJsonFile)
+    }
+
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
     /// mut-provenance; callers that only read go through here.
     #[inline]
@@ -386,6 +392,9 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// This directory has a package.json file. Unlike `package_json`, this
+        /// is also set when the file could not be parsed.
+        const HasPackageJsonFile = 1 << 3;
     }
 }
 impl Flags {

@@ -1,12 +1,16 @@
+use crate::resolve_message::esm_package_name;
 use crate::{
-    self as jsc, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
-    VirtualMachineRef as VirtualMachine,
+    self as jsc, CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    URLJsc as _, VirtualMachineRef as VirtualMachine,
 };
+use bstr::BStr;
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
 use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
+use bun_paths::resolve_path;
+use core::ptr::NonNull;
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -98,6 +102,194 @@ fn find_path_inner(
         crate::virtual_machine::ResolveMode::RequireResolve,
     )?
     .ok())
+}
+
+// https://nodejs.org/api/module.html#modulefindpackagejsonspecifier-base
+#[crate::host_fn(export = "NodeModuleModule__findPackageJSON")]
+fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::mark_binding!();
+    if frame.arguments_count() == 0 {
+        return Err(global.throw_missing_arguments_value(&["specifier"]));
+    }
+    let specifier_value = frame.argument(0);
+    if specifier_value.is_symbol() {
+        return Err(global.throw_invalid_argument_type_value(
+            "specifier",
+            "string",
+            specifier_value,
+        ));
+    }
+    let specifier = match Location::from_js(global, specifier_value) {
+        Ok(specifier) => specifier,
+        // Like Node, a value whose `toString()` throws is reported as the wrong type.
+        Err(jsc::JsError::Thrown) if global.clear_exception_except_termination() => {
+            return Err(global.throw_invalid_argument_type_value(
+                "specifier",
+                "string",
+                specifier_value,
+            ));
+        }
+        Err(err) => return Err(err),
+    };
+    let base_value = frame.argument(1);
+    let base = if base_value.is_undefined() {
+        None
+    } else if base_value.is_string() || jsc::DOMURL::cast_(base_value, global.vm()).is_some() {
+        Some(Location::from_js(global, base_value)?)
+    } else {
+        return Err(global.throw_invalid_argument_type_value("base", "string", base_value));
+    };
+
+    let is_url = matches!(specifier, Location::Url(_));
+    let specifier = specifier.into_path(global)?;
+    let specifier_utf8 = specifier.to_utf8();
+    let mut specifier = specifier_utf8.slice();
+    // `import()` ignores a query string (`./a.js?v=1`); a file URL already lost its own.
+    if !is_url {
+        if let Some(query) = strings::index_of_char_usize(specifier, b'?') {
+            specifier = &specifier[..query];
+        }
+    }
+    let base = base.map(|base| base.into_path(global)).transpose()?;
+    let base_utf8 = base.as_ref().map(BunString::to_utf8);
+
+    let top_level_dir = global.bun_vm().top_level_dir();
+    let mut base_buf = bun_paths::path_buffer_pool::get();
+    // `base` is the calling module (`__filename` / `import.meta.url`), so
+    // resolution starts in its directory; without one it starts in the cwd.
+    let (source_dir, referrer): (&[u8], &[u8]) = match &base_utf8 {
+        Some(base) => {
+            // Like Node's `new URL(base)`: a path must be absolute.
+            if !bun_paths::is_absolute(base.slice()) {
+                let error = global
+                    .err(jsc::ErrorCode::ERR_INVALID_URL, format_args!("Invalid URL"))
+                    .to_js();
+                error.put(global, "input", base_value);
+                return Err(global.throw_value(error));
+            }
+            // A trailing separator (`dir/`, `file:///dir/`) names the directory itself.
+            // Checked before the join, which keeps only the platform's own separator.
+            let is_directory = base
+                .slice()
+                .last()
+                .is_some_and(|&last| bun_paths::Platform::AUTO.is_separator(last));
+            let joined = resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                top_level_dir,
+                &mut base_buf,
+                &[base.slice()],
+            );
+            // `None`: longer than any path the OS accepts.
+            let Some(base) = joined else {
+                return Err(global.throw_invalid_argument_value(b"base", base_value));
+            };
+            let source_dir = if is_directory {
+                base
+            } else {
+                bun_paths::dirname(base).unwrap_or(base)
+            };
+            (source_dir, base)
+        }
+        None => (top_level_dir, top_level_dir),
+    };
+
+    let mut log = bun_ast::Log::default();
+    // SAFETY: the per-thread VM outlives this synchronous call, and `log` is
+    // declared before the guard so it is still alive when the guard restores
+    // the resolver's previous log on drop.
+    let _restore_log = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            core::ptr::addr_of_mut!((*global.bun_vm_ptr()).transpiler.resolver),
+            NonNull::from(&mut log),
+        )
+    };
+
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    match resolver.find_package_json(source_dir, specifier) {
+        Ok(Some(package_dir)) => {
+            let dir = package_dir.abs_path;
+            let separator = match dir.last() {
+                Some(&last) if bun_paths::Platform::AUTO.is_separator(last) => "",
+                _ => bun_paths::SEP_STR,
+            };
+            BunString::create_format(format_args!("{}{}package.json", BStr::new(dir), separator))
+                .into_js(global)
+        }
+        Ok(None) => Ok(JSValue::UNDEFINED),
+        Err(bun_resolver::Error::ModuleNotFound) => {
+            // Node names the package, or the path it looked for.
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let (kind, name) =
+                if bun_paths::is_package_path(specifier) {
+                    ("package", esm_package_name(specifier))
+                } else {
+                    let joined = resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(source_dir, &mut path_buf, &[specifier]);
+                    ("module", joined.unwrap_or(specifier))
+                };
+            Err(global
+                .err(
+                    jsc::ErrorCode::ERR_MODULE_NOT_FOUND,
+                    format_args!(
+                        "Cannot find {} '{}' imported from {}",
+                        kind,
+                        BStr::new(name),
+                        BStr::new(referrer)
+                    ),
+                )
+                .throw())
+        }
+        Err(err) => Err(global.throw(format_args!(
+            "{} while resolving '{}' from '{}'",
+            err.name(),
+            BStr::new(specifier),
+            BStr::new(referrer)
+        ))),
+    }
+}
+
+/// A `specifier` or `base` argument: a path, or a `file:` URL to convert.
+enum Location {
+    Url(JSValue),
+    /// Like Node, any value that is not a `URL` is used as `${value}`.
+    Text(BunString),
+}
+
+impl Location {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        if jsc::DOMURL::cast_(value, global.vm()).is_some() {
+            return Ok(Self::Url(value));
+        }
+        Ok(Self::Text(value.to_bun_string(global)?))
+    }
+
+    /// A URL is converted, and rejected, exactly as `Bun.fileURLToPath()` would.
+    fn into_path(self, global: &JSGlobalObject) -> JsResult<BunString> {
+        let url = match self {
+            Self::Url(url) => url,
+            Self::Text(text) => {
+                if !has_url_scheme(text.to_utf8().slice()) {
+                    return Ok(text);
+                }
+                text.to_js(global)?
+            }
+        };
+        jsc::URL::file_url_to_path_from_js(url, global)
+    }
+}
+
+/// `file:`, `https://`, `node:` and the like. A scheme must be at least two
+/// characters so that a Windows drive letter (`C:\`) is still a path.
+fn has_url_scheme(location: &[u8]) -> bool {
+    let Some(colon) = strings::index_of_char_usize(location, b':') else {
+        return false;
+    };
+    let scheme = &location[..colon];
+    scheme.len() >= 2
+        && scheme[0].is_ascii_alphabetic()
+        && scheme[1..]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
 }
 
 pub fn stat(path: &[u8]) -> i32 {

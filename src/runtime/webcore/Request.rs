@@ -1079,8 +1079,7 @@ impl Request {
 
         for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
-            // `input` is always last; everything before it is the `RequestInit`
-            // dictionary, which has no `url` member.
+            // The last candidate is `input`; the rest is the `RequestInit` dictionary (no `url` member).
             let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject

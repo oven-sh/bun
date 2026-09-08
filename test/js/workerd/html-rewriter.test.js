@@ -2876,6 +2876,76 @@ describe("tagName, endTag.name, and comment.text setters", () => {
   });
 });
 
+// The documented contract (packages/bun-types/html-rewriter.d.ts,
+// docs/runtime/html-rewriter.mdx): unwrapping or renaming rewrites the
+// element's own tags only. The contents of a raw-text element are not
+// re-parsed or escaped, and the documented text-handler recipe is what
+// escapes them.
+describe("raw-text element contents pass through removeAndKeepContent and tagName unchanged", () => {
+  const unwrap = selector =>
+    new HTMLRewriter().on(selector, {
+      element(el) {
+        el.removeAndKeepContent();
+      },
+    });
+
+  it("removeAndKeepContent emits RCDATA, RAWTEXT and script contents verbatim", () => {
+    expect({
+      textarea: unwrap("textarea").transform("<textarea><script>alert(1)</script></textarea><p>n</p>"),
+      style: unwrap("style").transform(`<div><style>a{content:'</sty'}</style><i>x</i></div>`),
+      noscript: unwrap("noscript").transform('<noscript><img src="a.png"></noscript>'),
+      script: unwrap("script").transform('<script>if(a<b)document.write("<p id=9>")</script>'),
+    }).toEqual({
+      textarea: "<script>alert(1)</script><p>n</p>",
+      style: `<div>a{content:'</sty'}<i>x</i></div>`,
+      noscript: '<img src="a.png">',
+      script: 'if(a<b)document.write("<p id=9>")',
+    });
+  });
+
+  it("tagName assignment does not re-parse or escape the contents", () => {
+    const out = new HTMLRewriter()
+      .on("script", {
+        element(el) {
+          el.tagName = "div";
+        },
+      })
+      .transform('<script>if(a<b)document.write("<p id=9>")</script>');
+    expect(out).toBe('<div>if(a<b)document.write("<p id=9>")</div>');
+  });
+
+  it("a text handler on the same selector escapes the kept contents", () => {
+    // text.replace(text.text) re-emits each chunk as text, which escapes <, > and &.
+    const escaped = new HTMLRewriter()
+      .on("style, textarea", {
+        element(el) {
+          el.removeAndKeepContent();
+        },
+        text(t) {
+          if (!t.removed && t.text) t.replace(t.text);
+        },
+      })
+      .transform(
+        `<style>p{content:"</sty"} b &amp; c</style><textarea><img src=x onerror="alert(1)"></textarea><p>n</p>`,
+      );
+    expect(escaped).toBe(`p{content:"&lt;/sty"} b &amp;amp; c&lt;img src=x onerror="alert(1)"&gt;<p>n</p>`);
+
+    // For RCDATA (textarea, title) entities are already live, so escaping "<" alone
+    // with { html: true } matches what the DOM would serialize.
+    const rcdata = new HTMLRewriter()
+      .on("textarea, title", {
+        element(el) {
+          el.removeAndKeepContent();
+        },
+        text(t) {
+          if (!t.removed) t.replace(t.text.replaceAll("<", "&lt;"), { html: true });
+        },
+      })
+      .transform('<title>a &amp; b <i>x</i></title><textarea><img src=x onerror="alert(1)"></textarea>');
+    expect(rcdata).toBe('a &amp; b &lt;i>x&lt;/i>&lt;img src=x onerror="alert(1)">');
+  });
+});
+
 // `transform(await fetch(url)).text()` never stores the output Response, and
 // the upstream ByteStream dispatches in via a SinkHandle raw pointer between
 // event-loop turns, so the input source's `sinkOwner` slot is what keeps the

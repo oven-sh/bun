@@ -376,7 +376,9 @@ describe.concurrent("bun info", () => {
 describe.concurrent("bun pm view (local registry)", () => {
   const tgz = (name: string, v: string) => `http://127.0.0.1/${name}/-/${name}-${v}.tgz`;
   const byPublishOrder = (name: string, order: string[]) =>
-    Object.fromEntries(order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum: "4".repeat(40) } }]));
+    Object.fromEntries(
+      order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum: "4".repeat(40) } }]),
+    );
   const packuments: Record<string, unknown> = {
     "zz-basic": {
       name: "zz-basic",
@@ -557,7 +559,11 @@ describe.concurrent("bun pm view (local registry)", () => {
       code: 0,
     });
     // One element: printed bare.
-    expect(await view(["zz-conflict", "maintainers.name", "keywords"])).toEqual({ out: `["verkw"]\n`, err: "", code: 0 });
+    expect(await view(["zz-conflict", "maintainers.name", "keywords"])).toEqual({
+      out: `["verkw"]\n`,
+      err: "",
+      code: 0,
+    });
   });
 
   test("bracket keys are literal and may contain dots", async () => {
@@ -629,10 +635,7 @@ latest: 1.0.0
       code: 0,
     });
     const v1 = await view(["zz-basic@1.0.0"]);
-    expect(v1.out.split("\n").slice(0, 2)).toEqual([
-      "zz-basic@1.0.0 | MIT | deps: 0 | versions: 2",
-      "basic v1",
-    ]);
+    expect(v1.out.split("\n").slice(0, 2)).toEqual(["zz-basic@1.0.0 | MIT | deps: 0 | versions: 2", "basic v1"]);
     const nolicense = await view(["zz-nolicense"]);
     expect(nolicense.out.split("\n")[0]).toBe("zz-nolicense@1.0.0 | Proprietary | deps: 0 | versions: 1");
   });

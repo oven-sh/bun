@@ -1208,13 +1208,15 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.has_backpressure && self.end_len > 0
     }
 
-    /// `res.end()` or a completed `res.try_end()` just wrote the last chunk
-    /// (or the whole Content-Length body) and `markDone()`d the response. The
-    /// one place `ended_response` is set, so every path that reaches uWS's end
-    /// through `send`/`send_readable` (endFromJS, auto-flush, on_writable,
-    /// `finalize()`'s flush) agrees the response is over and nothing ends it a
-    /// second time. Also the last point `res` is known live on HTTP/1 (see
-    /// `ended_response`), so release any request-body pause here.
+    /// `res.end()` or a completed `res.try_end()` just handed uWS the end of
+    /// the response: on HTTP/1 the last chunk (or the whole Content-Length
+    /// body) is written and the response `markDone()`d; H2/H3 may still be
+    /// draining but own the END from here. The one place `ended_response` is
+    /// set, so every path that reaches uWS's end through `send`/`send_readable`
+    /// (endFromJS, auto-flush, on_writable, `finalize()`'s flush) agrees the
+    /// response is over and nothing ends it a second time. Also the last point
+    /// `res` is known live on HTTP/1 (see `ended_response`), so release any
+    /// request-body pause here.
     fn mark_response_ended(&mut self, res: uws::AnyResponse) {
         self.has_backpressure = false;
         self.ended_response = true;
@@ -1970,7 +1972,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 res.clear_on_writable();
             }
             // After `end()` parked buffered bytes (`requested_end`), this flush
-            // is itself the `res.end()` that writes them plus the last chunk.
+            // is normally the `res.end()` that writes them plus the last chunk
+            // (and sets `ended_response`).
             let _ = self.flush_no_wait();
             self.set_done();
 

@@ -1486,9 +1486,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // TypeScript instantiates a namespace whose body has any non-type
-            // statement, even `;` or "use strict", so a namespace body keeps
-            // them for the emptiness check in parse_type_script_namespace_stmt.
+            // tsc instantiates `namespace N { ; }`, so the body must not look empty.
             let keep_trivia = opts.scope.is_namespace();
             let mut skip = !keep_trivia && matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
             // Parse one or more directives at the beginning

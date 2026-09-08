@@ -737,9 +737,7 @@ fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
     // when the input is already a valid ASCII identifier; the binding
     // reserved-word remap is the only transform that fires for an
     // otherwise-valid ASCII name.
-    if is_simple_ascii_identifier(name)
-        && !bun_ast::lexer_tables::is_binding_reserved_word(name)
-    {
+    if is_simple_ascii_identifier(name) && !bun_ast::lexer_tables::is_binding_reserved_word(name) {
         debug_assert!(js_lexer::is_identifier(name));
         return None;
     }

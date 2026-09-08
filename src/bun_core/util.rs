@@ -3562,7 +3562,6 @@ pub mod base64 {
         let n = encode(dest, source);
         &dest[..n]
     }
-
 }
 
 // ── dupe_z / free_sensitive ───────────────────────────────────────────────

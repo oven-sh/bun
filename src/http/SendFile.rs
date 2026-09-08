@@ -5,14 +5,7 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
-/// Streams a file request body from the HTTP thread. Linux and FreeBSD hand
-/// the copy to `sendfile(2)`. macOS copies through a userspace buffer instead:
-/// XNU's `sendfile` allocates its mbuf chain with an uninterruptible wait
-/// before it checks for socket space, so under mbuf pressure the HTTP thread
-/// sleeps in the kernel and the process cannot be killed (the server side
-/// avoids it for the same reason, see `can_sendfile` in FileResponseStream.rs).
-/// `BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE=1` selects the userspace copy on
-/// the other platforms too.
+/// A file request body streamed from the HTTP thread. Never `sendfile(2)` on macOS: XNU's sleeps uninterruptibly under mbuf pressure (see `can_sendfile` in FileResponseStream.rs).
 #[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
@@ -121,9 +114,7 @@ impl SendFile {
         Status::Again
     }
 
-    /// `pread` into the HTTP thread's scratch buffer, non-blocking `send`, and
-    /// leave `offset`/`remain` at the first byte the socket did not take so the
-    /// next writable event resumes there.
+    /// `pread` + non-blocking `send`, leaving `offset`/`remain` at the first byte the socket did not take.
     #[cfg(unix)]
     fn write_copy(&mut self, socket_fd: Fd) -> Status {
         bun_core::scoped_log!(
@@ -133,9 +124,7 @@ impl SendFile {
             self.remain
         );
         let buf = crate::scratch::file_body_copy_buffer();
-        // A writable event can mean as little as the low-water mark of socket
-        // space. Start small and double while the socket keeps taking whole
-        // chunks, so a slow link does not pread 256 KiB to send 2 KiB per wake.
+        // Start small and double: a writable wake can mean as little as the low-water mark of space.
         let mut chunk: usize = 16 * 1024;
         loop {
             let want = chunk.min(buf.len()).min(self.remain);
@@ -150,8 +139,7 @@ impl SendFile {
             };
             let wrote = match bun_sys::send_non_block(socket_fd, &buf[..read]) {
                 Ok(n) => n,
-                // ENOBUFS is the kernel's network buffer pool running dry:
-                // transient, like the other usockets write paths treat it.
+                // ENOBUFS (kernel buffer pool empty) is transient, as in us_socket_write.
                 Err(err) if matches!(err.get_errno(), bun_sys::E::EAGAIN | bun_sys::E::ENOBUFS) => {
                     break;
                 }

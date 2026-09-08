@@ -1098,9 +1098,7 @@ mod scratch {
     }
     #[cfg(unix)]
     pub(crate) const FILE_BODY_COPY_BUFFER_SIZE: usize = 256 * 1024;
-    /// `SendFile::write_copy` preads each chunk of a file request body into
-    /// this and writes it out before the next pread, so one buffer serves every
-    /// in-flight upload. Zero-initialised so it lands in .bss, not in the binary.
+    /// Scratch for `SendFile::write_copy`, drained before the next `pread`. Zero-initialised so it stays in .bss.
     #[cfg(unix)]
     pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; FILE_BODY_COPY_BUFFER_SIZE] {
         static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; FILE_BODY_COPY_BUFFER_SIZE]> =

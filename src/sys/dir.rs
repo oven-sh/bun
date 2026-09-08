@@ -112,6 +112,138 @@ impl Dir {
             Err(e) => Err(e),
         }
     }
+    /// Open `name`, a single path component, relative to this dir. Fails
+    /// instead of following when `name` is a symlink (`ENOTDIR` on Linux,
+    /// `ELOOP` elsewhere).
+    pub fn open_real_dir(&self, name: &[u8]) -> Maybe<Dir> {
+        #[cfg(not(windows))]
+        {
+            openat_a(
+                self.fd,
+                name,
+                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                0,
+            )
+            .map(Dir::from_fd)
+        }
+        #[cfg(windows)]
+        {
+            // `O_NOFOLLOW` maps to `FILE_OPEN_REPARSE_POINT`, which opens the
+            // reparse point itself and reports a junction as a directory. So
+            // test the entry by path first, then open it normally.
+            if self.entry_is_symlink(name) {
+                return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
+            }
+            self.open_dir(
+                name,
+                OpenDirOptions {
+                    iterate: true,
+                    ..Default::default()
+                },
+            )
+        }
+    }
+
+    /// Open `name`, a single path component, relative to this dir, and create
+    /// it when nothing is there. Never follows a symlink: a symlink at `name`
+    /// is unlinked and replaced with a real directory. The link target is not
+    /// touched.
+    ///
+    /// Use this for a directory the caller owns, where an entry that another
+    /// writer left behind must not redirect the writes that follow out of the
+    /// tree.
+    pub fn make_open_real_dir(&self, name: &[u8]) -> Maybe<Dir> {
+        let err = match self.open_real_dir(name) {
+            Ok(dir) => return Ok(dir),
+            Err(err) => err,
+        };
+        match err.get_errno() {
+            E::ENOENT => {}
+            // `O_NOFOLLOW | O_DIRECTORY` on a symlink is `ENOTDIR` on Linux and
+            // `ELOOP` elsewhere, and `ENOTDIR` is also what a plain file gives.
+            // Only a symlink is the caller's to replace, so check the entry
+            // before removing anything.
+            E::ELOOP | E::EMLINK | E::ENOTDIR => {
+                // No syscall swaps a symlink for a directory in one step.
+                if !self.remove_symlink(name) {
+                    return Err(err);
+                }
+            }
+            _ => return Err(err),
+        }
+        if let Err(e) = self.make_dir(name) {
+            if e != bun_errno::SystemErrno::EEXIST {
+                return Err(Error::from_code(e.into(), Tag::mkdir).with_path(name));
+            }
+        }
+        self.open_real_dir(name)
+    }
+
+    /// `mkdir -p`-and-open `sub_path`, one component at a time, with
+    /// [`Dir::make_open_real_dir`]. No component of `sub_path` can be a
+    /// symlink once this returns.
+    pub fn make_open_real_path(&self, sub_path: &[u8]) -> Maybe<Dir> {
+        let mut dir: Option<Dir> = None;
+        for component in bun_core::strings::split_any(sub_path, b"/\\") {
+            if component.is_empty() || component == b"." {
+                continue;
+            }
+            let next = dir.as_ref().unwrap_or(self).make_open_real_dir(component)?;
+            dir = Some(next);
+        }
+        match dir {
+            Some(dir) => Ok(dir),
+            None => self.open_real_dir(b"."),
+        }
+    }
+
+    /// Unlink `name` when it is a symlink. `true` when it is gone.
+    fn remove_symlink(&self, name: &[u8]) -> bool {
+        if !self.entry_is_symlink(name) {
+            return false;
+        }
+        if unlinkat_a(self.fd, name, 0).is_ok() {
+            return true;
+        }
+        // A directory symlink and a junction need `rmdir` on Windows.
+        unlinkat_a(self.fd, name, AT_REMOVEDIR).is_ok()
+    }
+
+    /// `true` when `name` is a symlink, a junction, or any other reparse point.
+    fn entry_is_symlink(&self, name: &[u8]) -> bool {
+        #[cfg(not(windows))]
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let len = name.len().min(buf.0.len() - 1);
+            buf.0[..len].copy_from_slice(&name[..len]);
+            buf.0[len] = 0;
+            // SAFETY: NUL-terminated above.
+            let name_z = ZStr::from_buf(&buf.0[..], len);
+            match lstatat(self.fd, name_z) {
+                Ok(st) => kind_from_mode(st.st_mode as Mode) == EntryKind::SymLink,
+                Err(_) => false,
+            }
+        }
+        #[cfg(windows)]
+        {
+            // `lstatat` fstats the opened reparse point, which reports a
+            // junction as a directory, so stat by path instead.
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            let Ok(dir_path) = self.get_fd_path(&mut dir_buf) else {
+                return false;
+            };
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
+                &mut path_buf[..],
+                &[&*dir_path, name],
+            );
+            match lstat(path) {
+                Ok(st) => kind_from_mode(st.st_mode as Mode) == EntryKind::SymLink,
+                Err(_) => false,
+            }
+        }
+    }
+
     /// Recursive `rm -rf`
     /// (stack-based depth-first walk).
     pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {

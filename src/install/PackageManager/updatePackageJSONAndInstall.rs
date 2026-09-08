@@ -725,17 +725,27 @@ pub(super) fn remove_leftover_node_modules(
 ) {
     let cwd = bun_sys::Dir::cwd();
     let mut node_modules_buf = PathBuffer::uninit();
-    node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-    node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
     let name_hashes = manager.lockfile.packages.items_name_hash();
-    for request in updates.iter() {
-        // Only top-level folders are removed; nested copies are left alone.
-        let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
-        if !name_hashes.contains(&name_hash) {
-            let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
-            offset_buf[..request.name.len()].copy_from_slice(request.name);
-            let _ =
-                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+    // `node_modules` and a scoped package's `@scope` are directories the
+    // installer creates. Open each one without following a symlink, so the
+    // recursive delete below cannot reach outside the project.
+    if let Ok(node_modules) = cwd.open_real_dir(b"node_modules") {
+        for request in updates.iter() {
+            // Only top-level folders are removed; nested copies are left alone.
+            let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
+            if name_hashes.contains(&name_hash) {
+                continue;
+            }
+            let (scope_dir, name) = match strings::split_once_char(request.name, b'/') {
+                Some((scope, name)) if request.name.first() == Some(&b'@') => {
+                    match node_modules.open_real_dir(scope) {
+                        Ok(dir) => (Some(dir), name),
+                        Err(_) => continue,
+                    }
+                }
+                _ => (None, request.name),
+            };
+            let _ = scope_dir.as_ref().unwrap_or(&node_modules).delete_tree(name);
         }
     }
 

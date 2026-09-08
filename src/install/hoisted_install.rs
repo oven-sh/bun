@@ -6,7 +6,7 @@ use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap}
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
-use bun_sys::{self as sys, Dir, Fd};
+use bun_sys::{Dir, Fd};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
@@ -170,36 +170,23 @@ pub(crate) fn install_hoisted_packages(
     let mut new_node_modules = false;
     let cwd = Fd::cwd();
     let node_modules_folder: Dir = 'brk: {
-        // Attempt to open the existing node_modules folder
-        match sys::openat_os_path(
-            cwd,
-            bun_paths::os_path_literal!("node_modules"),
-            sys::O::DIRECTORY | sys::O::RDONLY,
-            0o755,
-        ) {
-            Ok(fd) => break 'brk Dir::from_fd(fd),
+        // Attempt to open the existing node_modules folder. A symlink here is
+        // not the install tree: `make_open_real_dir` replaces it below, so the
+        // tree starts out empty either way.
+        match Dir::borrow(&cwd).open_real_dir(b"node_modules") {
+            Ok(dir) => break 'brk dir,
             Err(_) => {}
         }
 
         new_node_modules = true;
 
         // Attempt to create a new node_modules folder
-        if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), 0o755) {
-            if err.errno != sys::E::EEXIST as _ {
-                Output::err(
-                    err,
-                    "could not create the <b>\"node_modules\"<r> directory",
-                    (),
-                );
-                Global::crash();
-            }
-        }
-        match Dir::borrow(&cwd).open_at(b"node_modules") {
+        match Dir::borrow(&cwd).make_open_real_dir(b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(err) => {
                 Output::err(
                     err,
-                    "could not open the <b>\"node_modules\"<r> directory",
+                    "could not create the <b>\"node_modules\"<r> directory",
                     (),
                 );
                 Global::crash();

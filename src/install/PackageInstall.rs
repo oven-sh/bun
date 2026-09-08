@@ -7,8 +7,6 @@ use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
 use bun_semver::String as SemverString;
-#[cfg(not(windows))]
-use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
@@ -1072,13 +1070,11 @@ impl<'a> PackageInstall<'a> {
             Ok(())
         }
 
-        let subdir = match destination_dir.make_open_path(
-            self.destination_dir_subpath.as_bytes(),
-            OpenDirOptions::default(),
-        ) {
-            Ok(d) => d,
-            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
-        };
+        let subdir =
+            match destination_dir.make_open_real_path(self.destination_dir_subpath.as_bytes()) {
+                Ok(d) => d,
+                Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
+            };
         if let Err(err) = copy(&subdir, &mut walker_) {
             return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
         }
@@ -1095,7 +1091,7 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir, subdir, 0o755);
+                let _ = destination_dir.make_open_real_dir(subdir.as_bytes());
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
         }
@@ -1189,13 +1185,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(not(windows))]
         {
-            let subdir = match destbase.make_open_path(
-                destpath.as_bytes(),
-                OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            ) {
+            let subdir = match destbase.make_open_real_path(destpath.as_bytes()) {
                 Ok(d) => d,
                 Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
@@ -1240,6 +1230,10 @@ impl<'a> PackageInstall<'a> {
             buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
+            // Replace a symlink at any of `destpath`'s components with a real
+            // directory, so the absolute path above cannot resolve out of the
+            // tree.
+            let _ = destbase.make_open_real_path(destpath.as_bytes());
             let _ = mkdir_recursive_os_path(fullpath);
             let to_copy_buf_off = fullpath.len();
 
@@ -1938,12 +1932,34 @@ impl<'a> PackageInstall<'a> {
             ZStr::from_buf(&rand_path_buf, written)
         };
 
-        match sys::renameat(
-            destination_dir.fd(),
-            self.destination_dir_subpath,
-            destination_dir.fd(),
-            temp_path,
-        ) {
+        // `destination_dir_subpath` is `<pkg>` or `@scope/<pkg>`. The installer
+        // creates the `@scope` directory, so open it as a real directory first.
+        // Otherwise a symlink there makes this rename pull a directory out of
+        // the link target, and the task below deletes it.
+        let subpath = self.destination_dir_subpath.as_bytes();
+        let slash = strings::index_of_char_usize(subpath, SEP);
+        let scope_dir = match slash {
+            Some(slash) => match destination_dir.make_open_real_dir(&subpath[..slash]) {
+                Ok(dir) => Some(dir),
+                // Nothing to rename aside when the scope directory is unusable.
+                Err(_) => return,
+            },
+            None => None,
+        };
+        let (from_dir, from_path) = match (&scope_dir, slash) {
+            (Some(dir), Some(slash)) => (
+                dir.fd(),
+                // SAFETY: `destination_dir_subpath` is NUL-terminated inside
+                // `destination_dir_subpath_buf`, so this suffix of it is too.
+                ZStr::from_buf(
+                    &self.destination_dir_subpath_buf[slash + 1..],
+                    subpath.len() - slash - 1,
+                ),
+            ),
+            _ => (destination_dir.fd(), self.destination_dir_subpath),
+        };
+
+        match sys::renameat(from_dir, from_path, destination_dir.fd(), temp_path) {
             Err(_) => {
                 // if it fails, that means the directory doesn't exist or was inaccessible
             }
@@ -2139,6 +2155,9 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written at [i].
                 let fullpath = bun_core::WStr::from_buf(&wbuf[..], i);
 
+                // Replace a symlink at the `@scope` directory with a real one,
+                // so the absolute path above cannot resolve out of the tree.
+                let _ = destination_dir.make_open_real_path(dir);
                 let _ = mkdir_recursive_os_path(fullpath);
             }
 
@@ -2185,18 +2204,12 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         {
             let owned_dest_dir: Option<Dir> = if let Some(dir) = subdir {
-                Some(
-                    match bun_sys::MakePath::make_open_path(
-                        destination_dir,
-                        dir,
-                        OpenDirOptions::default(),
-                    ) {
-                        Ok(d) => d,
-                        Err(err) => {
-                            return InstallResult::fail(err.into(), Step::LinkingDependency, None);
-                        }
-                    },
-                )
+                Some(match destination_dir.make_open_real_path(dir) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                    }
+                })
             } else {
                 None
             };

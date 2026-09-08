@@ -76,6 +76,75 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+// WHATWG `RequestInit` has no `url` member. The URL comes from `input` only.
+describe("RequestInit has no url member", () => {
+  test("new Request(request, { url }) keeps the input Request's url", () => {
+    const base = new Request("http://a.example/x", { method: "DELETE" });
+    const r = new Request(base, { url: "http://b.example/y" } as RequestInit);
+    expect(r.url).toBe("http://a.example/x");
+    expect(r.method).toBe("DELETE");
+  });
+
+  test("new Request(request, { url: <invalid> }) does not throw", () => {
+    const base = new Request("http://a.example/x");
+    expect(new Request(base, { url: "/relative" } as RequestInit).url).toBe("http://a.example/x");
+    expect(new Request(base, { url: 123 } as RequestInit).url).toBe("http://a.example/x");
+  });
+
+  test("init.url getter is never read", () => {
+    const base = new Request("http://a.example/x");
+    let called = false;
+    const init = {
+      method: "POST",
+      get url() {
+        called = true;
+        return "http://b.example/y";
+      },
+    };
+    const r = new Request(base, init);
+    expect(r.url).toBe("http://a.example/x");
+    expect(r.method).toBe("POST");
+    expect(called).toBe(false);
+  });
+
+  test("new Request(string, { url }) keeps the string url", () => {
+    expect(new Request("http://a.example/x", { url: "http://b.example/y" } as RequestInit).url).toBe(
+      "http://a.example/x",
+    );
+    // An empty-string input does not fall back to init.url.
+    expect(() => new Request("", { url: "http://b.example/y" } as RequestInit)).toThrow();
+  });
+
+  test("new Request({ url }, { url }) takes the url from input only", () => {
+    // A plain object with a `url` as *input* is a Bun extension and keeps working.
+    // @ts-expect-error
+    const r = new Request({ url: "http://a.example/x" }, { url: "http://b.example/y", method: "PATCH" });
+    expect(r.url).toBe("http://a.example/x");
+    expect(r.method).toBe("PATCH");
+  });
+
+  test("a Response passed as init does not contribute its url", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("hi"),
+    });
+    const res = await fetch(server.url);
+    expect(res.url).toBe(server.url.href);
+    const base = new Request("http://a.example/x");
+    // @ts-expect-error
+    expect(new Request(base, res).url).toBe("http://a.example/x");
+  });
+
+  test("fetch(new Request(request, { url })) goes to the input Request's url", async () => {
+    await using a = Bun.serve({ port: 0, fetch: () => new Response("a") });
+    await using b = Bun.serve({ port: 0, fetch: () => new Response("b") });
+    const req = new Request(new Request(a.url), { url: b.url.href } as RequestInit);
+    expect(req.url).toBe(a.url.href);
+    const res = await fetch(req);
+    expect(await res.text()).toBe("a");
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

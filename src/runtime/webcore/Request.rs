@@ -1077,8 +1077,11 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
+            // `input` is always last; everything before it is the `RequestInit`
+            // dictionary, which has no `url` member.
+            let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
@@ -1172,7 +1175,7 @@ impl Request {
                         }
                     }
 
-                    if !fields.contains(Fields::Url) {
+                    if is_input && !fields.contains(Fields::Url) {
                         let url = response.url();
                         if !url.is_empty() {
                             req.url.set(url.clone());
@@ -1231,7 +1234,7 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Url) {
+            if is_input && !fields.contains(Fields::Url) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Url) {
                     Ok(Some(url)) => {
                         match BunString::from_js(url, global_this) {
@@ -1241,30 +1244,20 @@ impl Request {
                         if !req.url.get().is_empty() {
                             fields.insert(Fields::Url);
                         }
-
-                        // first value
                     }
                     Ok(None) => {
-                        // Short-circuit ordering: only probe
-                        // `implementsToString` (which performs JS property
-                        // lookup with observable side effects) when the first
-                        // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
-                            let implements = match value.implements_to_string(global_this) {
-                                Ok(b) => b,
+                        let implements = match value.implements_to_string(global_this) {
+                            Ok(b) => b,
+                            Err(e) => bail!(Err(e)),
+                        };
+                        if implements {
+                            let str = match BunString::from_js(value, global_this) {
+                                Ok(s) => s,
                                 Err(e) => bail!(Err(e)),
                             };
-                            if implements {
-                                let str = match BunString::from_js(value, global_this) {
-                                    Ok(s) => s,
-                                    Err(e) => bail!(Err(e)),
-                                };
-                                req.url.set(str);
-                                if !req.url.get().is_empty() {
-                                    fields.insert(Fields::Url);
-                                }
+                            req.url.set(str);
+                            if !req.url.get().is_empty() {
+                                fields.insert(Fields::Url);
                             }
                         }
                     }

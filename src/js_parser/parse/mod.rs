@@ -1486,7 +1486,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            let mut skip = matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
+            // tsc instantiates `namespace N { ; }`, so the body must not look empty.
+            let keep_trivia = opts.scope.is_namespace();
+            let mut skip = !keep_trivia && matches!(stmt.data, js_ast::stmt::Data::SEmpty(_));
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
@@ -1496,7 +1498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
+                                skip = !keep_trivia;
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
@@ -1507,7 +1509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').
-                                skip = true;
+                                skip = !keep_trivia;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");

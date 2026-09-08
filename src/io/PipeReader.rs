@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -239,6 +239,12 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
+        // A ref'd reader holds the loop only while its poll is armed: an
+        // unarmed poll delivers nothing, and `try_register_poll` re-applies
+        // KEEP_ALIVE when it arms again.
+        if value && !poll.is_watching() {
+            return;
+        }
         poll.set_keeping_process_alive(self.vtable.event_loop(), value);
     }
 
@@ -529,9 +535,8 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        // Re-applied on every arm: `pause()` unregisters, which drops it.
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 

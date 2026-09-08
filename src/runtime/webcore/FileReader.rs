@@ -655,8 +655,9 @@ impl FileReader {
             // No JS read is waiting; stop at the highwater mark and let onPull restart. `started` gates it: a non-lazy `Bun.spawn` pipe is already reading before any consumer attaches, and throttling then deadlocks a child alternating stdout/stderr writes.
             let keep_going = !self.started.get()
                 || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
-            // A completion-driven reader keeps issuing reads unless stopped; `on_pull` restarts it.
-            #[cfg(windows)]
+            // Returning `false` only ends this read loop. `pause()` is what stops the reader: it cancels the next
+            // completion read (Windows) or unregisters the poll, which also releases its hold on the event loop
+            // (POSIX; an unarmed poll could not even observe the peer closing). `on_pull` unpauses.
             if !keep_going {
                 self.reader().pause();
             }
@@ -809,6 +810,8 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
+            // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
+            self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);

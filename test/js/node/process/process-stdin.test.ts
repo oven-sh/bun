@@ -305,6 +305,58 @@ test.concurrent("stdin should not allow process to exit when not paused", async 
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
 
+// unref() drops stdin's hold on the event loop and ref() takes it back: after
+// the pair the child has nothing else pending and must still receive every
+// later byte up to EOF.
+test.concurrent("stdin.ref() after unref() keeps the process alive until EOF", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let total = 0;
+      process.stdin.on("data", chunk => {
+        if (total === 0) {
+          process.stdin.unref();
+          process.stdin.ref();
+          process.stdout.write("ready\\n");
+        }
+        total += chunk.length;
+      });
+      process.stdin.on("end", () => {
+        process.stdout.write("TOTAL " + total + "\\n");
+      });
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  proc.stdin.write("x");
+  while (!stdout.includes("ready\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value);
+  }
+  // The child is idle again with only stdin to wait for; these bytes must still reach it.
+  const rest = Buffer.alloc(64 * 1024, "y");
+  proc.stdin.write(rest);
+  await proc.stdin.end();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value);
+  }
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`ready\nTOTAL ${1 + rest.length}\n`);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("a throw from a 'data' listener is an uncaughtException, and stdin keeps reading", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -496,6 +548,20 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
     `);
     expect(bytesAfter).toBeLessThan(feedMB * 1024 * 1024);
     expect(deltaMB).toBeLessThan(maxDeltaMB);
+  });
+
+  // Stopped at the backstop, the reader's one-shot poll is left unarmed until
+  // the next read, so it can observe nothing (not even the writer going away)
+  // and must not keep the event loop alive on its own. Node behaves the same:
+  // readStop() at the highWaterMark leaves the handle inactive.
+  test.concurrent("a reader stopped at the highwater backstop does not keep the process alive", async () => {
+    const { first } = await run(`
+      const rd = Bun.stdin.stream().getReader();
+      const c = await rd.read();
+      process.stdout.write(JSON.stringify({ first: (c.value?.length ?? 0) > 0 }));
+      // No further read and no exit(): once the backstop engages nothing is pending.
+    `);
+    expect(first).toBe(true);
   });
 
   test.concurrent("reading resumes after the highwater backstop", async () => {

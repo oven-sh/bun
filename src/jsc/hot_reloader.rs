@@ -565,7 +565,10 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            unsafe {
+                (*ctx).bun_watcher_mut().clear_unresolved_imports();
+                (*ctx).reload(self);
+            }
         }
     }
 
@@ -743,6 +746,8 @@ where
 
         // SAFETY: see above.
         let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
+        // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
+        unsafe { (*watcher_ptr).enable_unresolved_import_tracking() };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(
@@ -936,6 +941,13 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+                        if event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
+                            // SAFETY: the Watcher outlives this call (it owns the
+                            // Reloader that calls us); the borrow is scoped to this call.
+                            && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                        {
+                            current_task.append(current_hash);
+                        }
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1056,6 +1068,29 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+
+                        // A missing import is only visible as an event on its directory.
+                        let satisfies_unresolved_import = if IS_KQUEUE {
+                            event.op.contains(WatchOp::WRITE)
+                                // SAFETY: the Watcher outlives this call (it owns the
+                                // Reloader that calls us); the borrow is scoped to this call.
+                                && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                        } else {
+                            event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
+                                && affected_inotify.iter().any(|name| match name {
+                                    // SAFETY: see the kqueue arm above.
+                                    Some(z) => unsafe {
+                                        (*ctx).unresolved_import_matches(
+                                            file_path,
+                                            Some(z.as_bytes()),
+                                        )
+                                    },
+                                    None => false,
+                                })
+                        };
+                        if satisfies_unresolved_import {
+                            current_task.append(current_hash);
+                        }
 
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over

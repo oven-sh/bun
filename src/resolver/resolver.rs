@@ -2156,6 +2156,12 @@ impl<'a> Resolver<'a> {
                 ..Default::default()
             })
         } else {
+            if FeatureFlags::WATCH_DIRECTORIES
+                && let Some(watcher) = self.watcher.as_ref()
+                && let Some(dir) = bun_paths::dirname(abs_path)
+            {
+                watcher.unresolved(dir, bun_paths::basename(abs_path));
+            }
             ResultUnion::NotFound
         };
         self.extension_order = prev_extension_order;

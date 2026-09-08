@@ -71,6 +71,7 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+    pub(crate) on_unresolved: fn(*mut (), dir_path: &[u8], base: &[u8]),
 }
 
 impl AnyResolveWatcher {
@@ -78,6 +79,54 @@ impl AnyResolveWatcher {
     pub fn watch(self, dir_path: &[u8], dir_fd: Fd) {
         (self.callback)(self.context, dir_path, dir_fd)
     }
+
+    /// A relative or absolute import of `base` in `dir_path` resolved to nothing.
+    #[inline]
+    pub fn unresolved(self, dir_path: &[u8], base: &[u8]) {
+        (self.on_unresolved)(self.context, dir_path, base)
+    }
+}
+
+/// An import the resolver could not find: the directory and the name stem (`a` for `a.js`).
+struct UnresolvedImport {
+    dir_hash: HashType,
+    stem: Box<[u8]>,
+    /// Entries that matched the stem when the import failed. They cannot satisfy it.
+    present: Vec<Box<[u8]>>,
+}
+
+impl UnresolvedImport {
+    fn stem_of(base: &[u8]) -> &[u8] {
+        if base.len() < 2 {
+            return base;
+        }
+        match strings::index_of_char_usize(&base[1..], b'.') {
+            Some(i) => &base[..i + 1],
+            None => base,
+        }
+    }
+
+    fn stem_matches(stem: &[u8], name: &[u8]) -> bool {
+        name == stem
+            || (name.len() > stem.len() && name.starts_with(stem) && name[stem.len()] == b'.')
+    }
+
+    fn matches(&self, name: &[u8]) -> bool {
+        Self::stem_matches(&self.stem, name) && !self.present.iter().any(|p| &**p == name)
+    }
+}
+
+fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&[u8]) -> bool) -> bool {
+    let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(dir.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        if f(entry.name.slice_u8()) {
+            return true;
+        }
+    }
+    false
 }
 
 // TODO: some platform-specific behavior is implemented in
@@ -123,6 +172,11 @@ pub struct Watcher {
 
     pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub(crate) evict_list_i: WatchItemIndex,
+
+    /// Imports the resolver could not find. Guarded by `mutex`.
+    unresolved_imports: Vec<UnresolvedImport>,
+    /// Set by the hot reloader, the only consumer of `unresolved_imports`.
+    track_unresolved_imports: bool,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
@@ -203,6 +257,8 @@ impl Watcher {
             close_descriptors: bun_core::AtomicCell::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
+            unresolved_imports: Vec::new(),
+            track_unresolved_imports: false,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -946,21 +1002,102 @@ impl Watcher {
             // `&mut Watcher` is scoped to this call.
             unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
+        fn wrap_unresolved(ctx: *mut (), dir_path: &[u8], base: &[u8]) {
+            // SAFETY: see `wrap`.
+            unsafe { (*ctx.cast::<Watcher>()).on_unresolved_import(dir_path, base) }
+        }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
             callback: wrap,
+            on_unresolved: wrap_unresolved,
         }
     }
 
-    pub(crate) fn on_maybe_watch_directory(&mut self, file_path: &[u8], dir_fd: Fd) {
+    #[inline]
+    fn is_watchable_directory(&self, dir_path: &[u8]) -> bool {
         // We don't want to watch:
         // - Directories outside the root directory
         // - Directories inside node_modules
-        if !strings::contains(file_path, b"node_modules")
-            && strings::contains(file_path, self.top_level_dir())
-        {
+        !strings::contains(dir_path, b"node_modules")
+            && strings::contains(dir_path, self.top_level_dir())
+    }
+
+    pub(crate) fn on_maybe_watch_directory(&mut self, file_path: &[u8], dir_fd: Fd) {
+        if self.is_watchable_directory(file_path) {
             let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
+    }
+
+    /// Called once the whole resolution missed, not on every `load_as_file` miss.
+    pub fn enable_unresolved_import_tracking(&mut self) {
+        self.track_unresolved_imports = true;
+    }
+
+    pub(crate) fn on_unresolved_import(&mut self, dir_path: &[u8], base: &[u8]) {
+        if !self.track_unresolved_imports || !self.is_watchable_directory(dir_path) {
+            return;
+        }
+        let stem = UnresolvedImport::stem_of(base);
+        if stem.is_empty() {
+            return;
+        }
+        let dir_hash = Self::unresolved_dir_hash(dir_path);
+        {
+            let _guard = self.mutex.lock_guard();
+            if self
+                .unresolved_imports
+                .iter()
+                .any(|u| u.dir_hash == dir_hash && &*u.stem == stem)
+            {
+                return;
+            }
+        }
+        let mut present: Vec<Box<[u8]>> = Vec::new();
+        for_each_dir_entry(dir_path, |name| {
+            if UnresolvedImport::stem_matches(stem, name) {
+                present.push(name.into());
+            }
+            false
+        });
+        let _guard = self.mutex.lock_guard();
+        self.unresolved_imports.push(UnresolvedImport {
+            dir_hash,
+            stem: stem.into(),
+            present,
+        });
+    }
+
+    /// Callers spell the same directory with and without a trailing slash.
+    #[inline]
+    fn unresolved_dir_hash(dir_path: &[u8]) -> HashType {
+        Self::get_hash(strings::without_trailing_slash(dir_path))
+    }
+
+    /// `name: None` lists the directory (kqueue and Windows report no entry name). Caller holds `mutex`.
+    pub fn unresolved_import_matches(&self, dir_path: &[u8], name: Option<&[u8]>) -> bool {
+        debug_assert!(self.mutex.is_held_by_current_thread());
+        let dir_hash = Self::unresolved_dir_hash(dir_path);
+        let mut candidates = self
+            .unresolved_imports
+            .iter()
+            .filter(|u| u.dir_hash == dir_hash)
+            .peekable();
+        if candidates.peek().is_none() {
+            return false;
+        }
+        if let Some(name) = name {
+            return candidates.any(|u| u.matches(name));
+        }
+        let candidates: Vec<&UnresolvedImport> = candidates.collect();
+        for_each_dir_entry(dir_path, |entry_name| {
+            candidates.iter().any(|u| u.matches(entry_name))
+        })
+    }
+
+    /// A reload re-runs every resolution, so the record of failed ones starts over.
+    pub fn clear_unresolved_imports(&mut self) {
+        let _guard = self.mutex.lock_guard();
+        self.unresolved_imports.clear();
     }
 }
 

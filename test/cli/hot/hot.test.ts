@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, forEachLine, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,40 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+it(
+  "--hot reloads when a missing import is created",
+  async () => {
+    writeFileSync(join(cwd, "missing-entry.js"), `import { a } from "./missing-dep.js"; console.log("RUN", a);`);
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "missing-entry.js"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = forEachLine(runner.stdout);
+    const stderr = forEachLine(runner.stderr);
+    const until = async (lines: AsyncIterator<string>, predicate: (line: string) => boolean) => {
+      while (true) {
+        const { value, done } = await lines.next();
+        if (done) throw new Error("stream ended before the expected line");
+        if (predicate(value)) return value;
+      }
+    };
+
+    await until(stderr, line => line.includes("Cannot find module"));
+
+    writeFileSync(join(cwd, "missing-dep.js"), "export const a = 10;");
+    expect(await until(stdout, line => line.startsWith("RUN"))).toBe("RUN 10");
+
+    writeFileSync(join(cwd, "missing-dep.js"), "export const a = 20;");
+    expect(await until(stdout, line => line.startsWith("RUN"))).toBe("RUN 20");
+
+    runner.kill();
+    await runner.exited;
+  },
+  timeout,
 );

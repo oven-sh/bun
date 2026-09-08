@@ -145,14 +145,13 @@ JSDirectStreamController* JSDirectStreamController::create(VM& vm, Structure* st
     return cell;
 }
 
-// Deliver buffered data to a waiting reader at the end of this tick. Scheduling goes
-// through process.nextTick so the job (and its rooted controller) runs as part of the
-// regular microtask/nextTick drain; a no-op in the handler if the data was already taken.
-// A write made inside pull() runs before the read that triggered it is recorded, so arming
-// does not require a waiting consumer.
+// Deliver data written outside pull() to a waiting reader at the end of this tick: a
+// process.nextTick job (rooting the controller until it runs; a no-op if the data was already
+// taken). A write during the synchronous part of pull() needs no job: onPull drains it as soon
+// as pull() returns.
 void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 {
-    if (m_endOfTickFlushArmed || m_closed || !m_stream)
+    if (m_endOfTickFlushArmed || m_closed || !m_stream || m_deferFlush == -1)
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

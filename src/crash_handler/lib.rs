@@ -2389,18 +2389,12 @@ mod draft {
     // The v1/v2 trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
     // shift every following VLQ byte, making bun.report unable to decode the URL.
-    const GIT_SHA: &str = {
-        const fn sha7(s: &'static str) -> &'static str {
-            // GIT_SHA is ASCII hex; `split_at` const-panics if the input is
-            // shorter than 7 bytes or byte 7 is not a char boundary.
-            s.split_at(7).0
-        }
-        if !Environment::GIT_SHA.is_empty() {
-            sha7(Environment::GIT_SHA)
-        } else {
-            "unknown"
-        }
+    const GIT_SHA: &str = if !Environment::GIT_SHA.is_empty() {
+        Environment::GIT_SHA.split_at(7).0
+    } else {
+        "unknown"
     };
+    const _: () = assert!(GIT_SHA.len() == 7);
 
     struct StackLine {
         address: i32,

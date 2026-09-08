@@ -151,11 +151,10 @@ test("the crash report lists the CPU features", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-// The v1/v2 trace string is decoded positionally by bun.report:
+// bun.report decodes the v1/v2 trace string positionally:
 // <platform char><command char><format version char><7-char commit sha><vlq...>.
-// The sha segment must be exactly the first 7 characters of the full revision;
-// a longer or shorter prefix shifts every following byte and the URL becomes
-// undecodable.
+// This pins the offset and content of the version and sha segments. The sha
+// length itself is a compile-time assert next to GIT_SHA in the crash handler.
 test("crash report trace string embeds the 7-char commit sha", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],

@@ -1343,6 +1343,9 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
+            http::Error::MultipleLocationHeaders => BunString::static_(
+                "The redirect response has more than one Location header with different values, so there is no single URL to follow.",
+            ),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

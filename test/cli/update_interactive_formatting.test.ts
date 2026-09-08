@@ -119,6 +119,39 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("should offer what package.json declares now, not what bun.lock recorded", async () => {
+    await using dir = tempDir("update-interactive-edited-package-json", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.1", "dep-with-tags": "1.0.0", "no-deps": "1.0.0" },
+      }),
+    });
+    await install(dir);
+    const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+
+    // Edited after the install, no reinstall: ranges widened, `a-dep` moved to
+    // devDependencies, `dep-with-tags` removed. bun.lock still has the old list.
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "no-deps": "^1.0.0" },
+        devDependencies: { "a-dep": "^1.0.1" },
+      }),
+    );
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--dry-run"], input: "\n" });
+
+    // Name, Current, Target, Latest: Target follows the new ranges, not the exact pins bun.lock still has.
+    expect(stdout).toMatch(/no-deps\s+1\.0\.0\s+1\.1\.0\s+2\.0\.0/);
+    expect(stdout).toMatch(/a-dep dev\s+1\.0\.1\s+1\.0\.10\s/);
+    expect(stdout).not.toContain("dep-with-tags");
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(0);
+  });
+
   it("should render mixed dependency types under separate section headers", async () => {
     await using dir = tempDir("update-interactive-mixed-sections", {
       "bunfig.toml": bunfig(),

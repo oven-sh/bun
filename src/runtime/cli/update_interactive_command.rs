@@ -12,6 +12,7 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
+use bun_install::package_manager::workspace_manifests::DeclaredDependencies;
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
@@ -840,171 +841,139 @@ impl UpdateInteractiveCommand {
         let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
-        let mut checked: usize = 0;
 
         let mut version_buf: String = String::new();
 
-        for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == INVALID_PACKAGE_ID {
-                    continue;
-                }
-                checked += 1;
-                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                if !selects(groups, dep.behavior) {
-                    continue;
-                }
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                if resolved_version.tag != dependency::Tag::Npm
-                    && resolved_version.tag != dependency::Tag::DistTag
-                {
-                    continue;
-                }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
-                if resolution.tag != resolution::Tag::Npm {
-                    continue;
-                }
+        // Names, groups and ranges come from each package.json as it is now; bun.lock keeps the ones of the
+        // last install and only says which version that installed.
+        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
+        let checked = declared.rows().len();
 
-                let name_slice = dep.name.slice(string_buf);
-                let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-
-                let scope = manager.options.scope_for_package_name(package_name).clone();
-                // Snapshot for `OutdatedPackage.uses_default_registry` (see
-                // field comment) — cannot be deferred to render time, since a
-                // stored manager back-pointer cannot be soundly aliased.
-                let uses_default_registry = global_uses_default_registry
-                    && manager.options.scope_for_package_name(name_slice).url_hash
-                        == default_url_hash;
-                let mut expired = false;
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    cache_ctx,
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    needs_extended,
-                ) else {
-                    continue;
-                };
-
-                let Some(latest) = manifest
-                    .find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes)
-                    .unwrap()
-                else {
-                    continue;
-                };
-
-                // In interactive mode, show the constrained update version as "Target"
-                // but always include packages (don't filter out breaking changes)
-                let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest
-                        .find_best_version_with_filter(
-                            &resolved_version.npm().version,
-                            string_buf,
-                            min_age_ms,
-                            excludes,
-                        )
-                        .unwrap()
-                        .unwrap_or(latest)
-                } else {
-                    manifest
-                        .find_by_dist_tag_with_filter(
-                            resolved_version.dist_tag().tag.slice(string_buf),
-                            min_age_ms,
-                            excludes,
-                        )
-                        .unwrap()
-                        .unwrap_or(latest)
-                };
-
-                // Skip only if both the constrained update AND the latest version are the same as current
-                // This ensures we show packages where latest is newer even if constrained update isn't
-                let current_ver = resolution.npm().version;
-                let update_ver = update_version.version;
-                let latest_ver = latest.version;
-
-                let update_is_same = current_ver.major == update_ver.major
-                    && current_ver.minor == update_ver.minor
-                    && current_ver.patch == update_ver.patch
-                    && current_ver.tag.eql(update_ver.tag);
-
-                let latest_is_same = current_ver.major == latest_ver.major
-                    && current_ver.minor == latest_ver.minor
-                    && current_ver.patch == latest_ver.patch
-                    && current_ver.tag.eql(latest_ver.tag);
-
-                if update_is_same && latest_is_same {
-                    continue;
-                }
-
-                version_buf.clear();
-                write!(version_buf, "{}", current_ver.fmt(string_buf)).expect("OOM");
-                let current_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                version_buf.clear();
-                write!(
-                    version_buf,
-                    "{}",
-                    update_version.version.fmt(&manifest.string_buf)
-                )
-                .expect("OOM");
-                let update_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                version_buf.clear();
-                write!(version_buf, "{}", latest.version.fmt(&manifest.string_buf)).expect("OOM");
-                let latest_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
-
-                // Already filtered by version.order check above
-
-                version_buf.clear();
-                let dep_type: &'static [u8] = DependencyGroup::prop_for_behavior(dep.behavior);
-
-                // Get workspace name but only show if it's actually a workspace
-                let workspace_resolution =
-                    manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-                let workspace_name: &[u8] =
-                    if workspace_resolution.tag == resolution::Tag::Workspace {
-                        manager.lockfile.packages.items_name()[workspace_pkg_id as usize]
-                            .slice(string_buf)
-                    } else {
-                        b""
-                    };
-
-                let is_catalog = dep.version.tag == dependency::Tag::Catalog;
-                let catalog_name_str: &[u8] = if is_catalog {
-                    dep.version.catalog().slice(string_buf)
-                } else {
-                    b""
-                };
-
-                let catalog_name: Option<Box<[u8]>> = if !catalog_name_str.is_empty() {
-                    Some(Box::from(catalog_name_str))
-                } else {
-                    None
-                };
-
-                outdated_packages.push(OutdatedPackage {
-                    name: Box::from(name_slice),
-                    current_version: current_version_buf,
-                    latest_version: latest_version_buf,
-                    update_version: update_version_buf,
-                    workspace_pkg_id,
-                    dependency_type: dep_type,
-                    workspace_name: Box::from(workspace_name),
-                    behavior: dep.behavior,
-                    uses_default_registry,
-                    is_catalog,
-                    catalog_name,
-                    use_latest: update_to_latest, // default to --latest flag value
-                });
+        for row in declared.rows() {
+            let workspace_pkg_id = row.workspace_pkg_id;
+            let package_id = row.package_id;
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let json_buf = declared.string_bytes();
+            let dep = declared.dependency(row);
+            if !selects(groups, dep.behavior) {
+                continue;
             }
+            let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
+
+            let name_slice = dep.name.slice(json_buf);
+            let package_name =
+                manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+
+            let scope = manager.options.scope_for_package_name(package_name).clone();
+            // Snapshot for `OutdatedPackage.uses_default_registry` (see
+            // field comment) — cannot be deferred to render time, since a
+            // stored manager back-pointer cannot be soundly aliased.
+            let uses_default_registry = global_uses_default_registry
+                && manager.options.scope_for_package_name(name_slice).url_hash == default_url_hash;
+            let mut expired = false;
+            let Some(manifest) = manager.manifests.by_name_allow_expired(
+                cache_ctx,
+                &scope,
+                package_name,
+                Some(&mut expired),
+                needs_extended,
+            ) else {
+                continue;
+            };
+
+            let Some(latest) = manifest
+                .find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes)
+                .unwrap()
+            else {
+                continue;
+            };
+
+            // In interactive mode, show the constrained update version as "Target"
+            // but always include packages (don't filter out breaking changes)
+            let update_version = declared
+                .find_update(row, manifest, min_age_ms, excludes)
+                .unwrap()
+                .unwrap_or(latest);
+
+            // Skip only if both the constrained update AND the latest version are the same as current
+            // This ensures we show packages where latest is newer even if constrained update isn't
+            // `DeclaredDependencies` only has rows installed from npm.
+            let current_ver = resolution.npm().version;
+            let update_ver = update_version.version;
+            let latest_ver = latest.version;
+
+            let update_is_same = current_ver.major == update_ver.major
+                && current_ver.minor == update_ver.minor
+                && current_ver.patch == update_ver.patch
+                && current_ver.tag.eql(update_ver.tag);
+
+            let latest_is_same = current_ver.major == latest_ver.major
+                && current_ver.minor == latest_ver.minor
+                && current_ver.patch == latest_ver.patch
+                && current_ver.tag.eql(latest_ver.tag);
+
+            if update_is_same && latest_is_same {
+                continue;
+            }
+
+            version_buf.clear();
+            write!(version_buf, "{}", current_ver.fmt(string_buf)).expect("OOM");
+            let current_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+            version_buf.clear();
+            write!(
+                version_buf,
+                "{}",
+                update_version.version.fmt(&manifest.string_buf)
+            )
+            .expect("OOM");
+            let update_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+            version_buf.clear();
+            write!(version_buf, "{}", latest.version.fmt(&manifest.string_buf)).expect("OOM");
+            let latest_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+            // Already filtered by version.order check above
+
+            version_buf.clear();
+            let dep_type: &'static [u8] = DependencyGroup::prop_for_behavior(dep.behavior);
+
+            // Get workspace name but only show if it's actually a workspace
+            let workspace_resolution =
+                manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
+            let workspace_name: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
+                manager.lockfile.packages.items_name()[workspace_pkg_id as usize].slice(string_buf)
+            } else {
+                b""
+            };
+
+            let is_catalog = dep.version.tag == dependency::Tag::Catalog;
+            let catalog_name_str: &[u8] = if is_catalog {
+                dep.version.catalog().slice(json_buf)
+            } else {
+                b""
+            };
+
+            let catalog_name: Option<Box<[u8]>> = if !catalog_name_str.is_empty() {
+                Some(Box::from(catalog_name_str))
+            } else {
+                None
+            };
+
+            outdated_packages.push(OutdatedPackage {
+                name: Box::from(name_slice),
+                current_version: current_version_buf,
+                latest_version: latest_version_buf,
+                update_version: update_version_buf,
+                workspace_pkg_id,
+                dependency_type: dep_type,
+                workspace_name: Box::from(workspace_name),
+                behavior: dep.behavior,
+                uses_default_registry,
+                is_catalog,
+                catalog_name,
+                use_latest: update_to_latest, // default to --latest flag value
+            });
         }
 
         // Group catalog dependencies

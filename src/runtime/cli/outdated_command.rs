@@ -9,28 +9,19 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::package_manager::workspace_manifests::{DeclaredDependencies, DeclaredDependency};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
-use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
+use bun_install::{CommandLineArguments, PackageID, PackageManager};
 use bun_wyhash::hash;
 
 use crate::Command;
 
 pub(crate) struct OutdatedCommand;
 
-#[derive(Clone, Copy)]
-struct OutdatedInfo {
-    package_id: PackageID,
-    dep_id: DependencyID,
-    workspace_pkg_id: PackageID,
-    is_catalog: bool,
-}
-
 struct GroupedOutdatedInfo {
-    package_id: PackageID,
-    dep_id: DependencyID,
-    workspace_pkg_id: PackageID,
+    dep: DeclaredDependency,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
@@ -199,14 +190,15 @@ impl OutdatedCommand {
 
     fn group_catalog_dependencies(
         manager: &PackageManager,
-        outdated_items: &[OutdatedInfo],
-        _: &[PackageID],
+        declared: &DeclaredDependencies,
+        outdated_items: &[DeclaredDependency],
     ) -> Vec<GroupedOutdatedInfo> {
-        let lockfile = &manager.lockfile;
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = manager.lockfile.packages.items_name();
+        let pkg_names_buf = manager.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = declared.string_bytes();
+        let is_catalog = |item: &DeclaredDependency| {
+            declared.dependency(item).version.tag == dependency::Tag::Catalog
+        };
 
         let mut result: Vec<GroupedOutdatedInfo> = Vec::new();
 
@@ -220,8 +212,8 @@ impl OutdatedCommand {
             bun_collections::HashMap::new();
 
         for item in outdated_items {
-            if item.is_catalog {
-                let dep = &dependencies[item.dep_id as usize];
+            if is_catalog(item) {
+                let dep = declared.dependency(item);
                 let name_hash = hash(dep.name.slice(string_buf));
                 let catalog = *dep.version.catalog();
                 let catalog_name = catalog.slice(string_buf);
@@ -237,9 +229,7 @@ impl OutdatedCommand {
                     .push(item.workspace_pkg_id);
             } else {
                 result.push(GroupedOutdatedInfo {
-                    package_id: item.package_id,
-                    dep_id: item.dep_id,
-                    workspace_pkg_id: item.workspace_pkg_id,
+                    dep: *item,
                     grouped_workspace_names: None,
                 });
             }
@@ -247,11 +237,11 @@ impl OutdatedCommand {
 
         // Second pass: add grouped catalog dependencies
         for item in outdated_items {
-            if !item.is_catalog {
+            if !is_catalog(item) {
                 continue;
             }
 
-            let dep = &dependencies[item.dep_id as usize];
+            let dep = declared.dependency(item);
             let name_hash = hash(dep.name.slice(string_buf));
             let catalog = *dep.version.catalog();
             let catalog_name = catalog.slice(string_buf);
@@ -283,15 +273,13 @@ impl OutdatedCommand {
                 if i > 0 {
                     workspace_names.extend_from_slice(b", ");
                 }
-                let workspace_name = pkg_names[workspace_id as usize].slice(string_buf);
+                let workspace_name = pkg_names[workspace_id as usize].slice(pkg_names_buf);
                 workspace_names.extend_from_slice(workspace_name);
             }
             workspace_names.push(b')');
 
             result.push(GroupedOutdatedInfo {
-                package_id: item.package_id,
-                dep_id: item.dep_id,
-                workspace_pkg_id: item.workspace_pkg_id,
+                dep: *item,
                 grouped_workspace_names: Some(workspace_names.into_boxed_slice()),
             });
         }
@@ -355,170 +343,138 @@ impl OutdatedCommand {
 
         let mut version_buf: String = String::new();
 
-        let mut outdated_ids: Vec<OutdatedInfo> = Vec::new();
+        // Names, groups and ranges come from each package.json as it is now; bun.lock keeps the ones of the
+        // last install and only says which version that installed.
+        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
+        let mut outdated_ids: Vec<DeclaredDependency> = Vec::new();
 
-        for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == bun_install::INVALID_PACKAGE_ID {
-                    continue;
-                }
-                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                if resolved_version.tag != dependency::Tag::Npm
-                    && resolved_version.tag != dependency::Tag::DistTag
-                {
-                    continue;
-                }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
-                if resolution.tag != resolution::Tag::Npm {
-                    continue;
-                }
+        for row in declared.rows() {
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let dep = declared.dependency(row);
+            let resolution = manager.lockfile.packages.items_resolution()[row.package_id as usize];
 
-                // package patterns match against dependency name (name in package.json)
-                if let Some(patterns) = &package_patterns {
-                    let matched = 'match_: {
-                        for pattern in patterns {
-                            match pattern {
-                                FilterType::Path => unreachable!(),
-                                FilterType::Name(name_pattern) => {
-                                    if name_pattern.is_empty() {
-                                        continue;
-                                    }
-                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
-                                        .matches()
-                                    {
-                                        break 'match_ false;
-                                    }
+            // package patterns match against dependency name (name in package.json)
+            if let Some(patterns) = &package_patterns {
+                let matched = 'match_: {
+                    for pattern in patterns {
+                        match pattern {
+                            FilterType::Path => unreachable!(),
+                            FilterType::Name(name_pattern) => {
+                                if name_pattern.is_empty() {
+                                    continue;
                                 }
-                                FilterType::All => {}
+                                if !glob::r#match(
+                                    name_pattern,
+                                    dep.name.slice(declared.string_bytes()),
+                                )
+                                .matches()
+                                {
+                                    break 'match_ false;
+                                }
                             }
+                            FilterType::All => {}
                         }
-                        true
-                    };
-                    if !matched {
-                        continue;
                     }
-                }
-
-                let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-                let scope = manager.options.scope_for_package_name(package_name).clone();
-                let mut expired = false;
-                let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    cache_ctx,
-                    &scope,
-                    package_name,
-                    Some(&mut expired),
-                    needs_extended,
-                ) else {
-                    continue;
+                    true
                 };
-
-                let Some(actual_latest) = manifest.find_by_dist_tag(b"latest") else {
-                    continue;
-                };
-
-                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
-
-                let update_version = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest.find_best_version_with_filter(
-                        &resolved_version.npm().version,
-                        string_buf,
-                        min_age_ms,
-                        excludes,
-                    )
-                } else {
-                    manifest.find_by_dist_tag_with_filter(
-                        resolved_version.dist_tag().tag.slice(string_buf),
-                        min_age_ms,
-                        excludes,
-                    )
-                };
-
-                let current_version = resolution.npm().version;
-                if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
-                    != core::cmp::Ordering::Less
-                {
+                if !matched {
                     continue;
                 }
-
-                let has_filtered_update = update_version.latest_is_filtered();
-                let has_filtered_latest = latest.latest_is_filtered();
-                if has_filtered_update || has_filtered_latest {
-                    has_filtered_versions = true;
-                }
-
-                let package_name_len = package_name.len()
-                    + if dep.behavior.is_dev() {
-                        " (dev)".len()
-                    } else if dep.behavior.is_peer() {
-                        " (peer)".len()
-                    } else if dep.behavior.is_optional() {
-                        " (optional)".len()
-                    } else {
-                        0
-                    };
-                if package_name_len > max_name {
-                    max_name = package_name_len;
-                }
-
-                version_buf.clear();
-                write!(version_buf, "{}", current_version.fmt(string_buf))
-                    .expect("OOM writing version");
-                if version_buf.len() > max_current {
-                    max_current = version_buf.len();
-                }
-
-                version_buf.clear();
-                if let Some(uv) = update_version.unwrap() {
-                    write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                }
-                let update_version_len =
-                    version_buf.len() + if has_filtered_update { " *".len() } else { 0 };
-                if update_version_len > max_update {
-                    max_update = update_version_len;
-                }
-
-                version_buf.clear();
-                if let Some(lv) = latest.unwrap() {
-                    write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
-                        .expect("OOM writing version");
-                }
-                let latest_version_len =
-                    version_buf.len() + if has_filtered_latest { " *".len() } else { 0 };
-                if latest_version_len > max_latest {
-                    max_latest = latest_version_len;
-                }
-                version_buf.clear();
-
-                let workspace_name = manager.lockfile.packages.items_name()
-                    [workspace_pkg_id as usize]
-                    .slice(string_buf);
-                if workspace_name.len() > max_workspace {
-                    max_workspace = workspace_name.len();
-                }
-
-                outdated_ids.push(OutdatedInfo {
-                    package_id,
-                    dep_id,
-                    workspace_pkg_id,
-                    is_catalog: dep.version.tag == dependency::Tag::Catalog,
-                });
             }
+
+            let package_name =
+                manager.lockfile.packages.items_name()[row.package_id as usize].slice(string_buf);
+            let scope = manager.options.scope_for_package_name(package_name).clone();
+            let mut expired = false;
+            let Some(manifest) = manager.manifests.by_name_allow_expired(
+                cache_ctx,
+                &scope,
+                package_name,
+                Some(&mut expired),
+                needs_extended,
+            ) else {
+                continue;
+            };
+
+            let Some(actual_latest) = manifest.find_by_dist_tag(b"latest") else {
+                continue;
+            };
+
+            let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
+            let update_version = declared.find_update(row, manifest, min_age_ms, excludes);
+
+            // `DeclaredDependencies` only has rows installed from npm.
+            let current_version = resolution.npm().version;
+            if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
+                != core::cmp::Ordering::Less
+            {
+                continue;
+            }
+
+            let has_filtered_update = update_version.latest_is_filtered();
+            let has_filtered_latest = latest.latest_is_filtered();
+            if has_filtered_update || has_filtered_latest {
+                has_filtered_versions = true;
+            }
+
+            let package_name_len = package_name.len()
+                + if dep.behavior.is_dev() {
+                    " (dev)".len()
+                } else if dep.behavior.is_peer() {
+                    " (peer)".len()
+                } else if dep.behavior.is_optional() {
+                    " (optional)".len()
+                } else {
+                    0
+                };
+            if package_name_len > max_name {
+                max_name = package_name_len;
+            }
+
+            version_buf.clear();
+            write!(version_buf, "{}", current_version.fmt(string_buf))
+                .expect("OOM writing version");
+            if version_buf.len() > max_current {
+                max_current = version_buf.len();
+            }
+
+            version_buf.clear();
+            if let Some(uv) = update_version.unwrap() {
+                write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
+                    .expect("OOM writing version");
+            } else {
+                write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    .expect("OOM writing version");
+            }
+            let update_version_len =
+                version_buf.len() + if has_filtered_update { " *".len() } else { 0 };
+            if update_version_len > max_update {
+                max_update = update_version_len;
+            }
+
+            version_buf.clear();
+            if let Some(lv) = latest.unwrap() {
+                write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
+                    .expect("OOM writing version");
+            } else {
+                write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    .expect("OOM writing version");
+            }
+            let latest_version_len =
+                version_buf.len() + if has_filtered_latest { " *".len() } else { 0 };
+            if latest_version_len > max_latest {
+                max_latest = latest_version_len;
+            }
+            version_buf.clear();
+
+            let workspace_name = manager.lockfile.packages.items_name()
+                [row.workspace_pkg_id as usize]
+                .slice(string_buf);
+            if workspace_name.len() > max_workspace {
+                max_workspace = workspace_name.len();
+            }
+
+            outdated_ids.push(*row);
         }
 
         if outdated_ids.is_empty() {
@@ -526,8 +482,7 @@ impl OutdatedCommand {
         }
 
         // Group catalog dependencies
-        let grouped_ids =
-            Self::group_catalog_dependencies(manager, &outdated_ids, workspace_pkg_ids);
+        let grouped_ids = Self::group_catalog_dependencies(manager, &declared, &outdated_ids);
 
         // Recalculate max workspace length after grouping
         let mut new_max_workspace: usize = max_workspace;
@@ -594,11 +549,10 @@ impl OutdatedCommand {
             Behavior::OPTIONAL,
         ] {
             for item in &grouped_ids {
-                let package_id = item.package_id;
-                let dep_id = item.dep_id;
+                let package_id = item.dep.package_id;
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                let dep = declared.dependency(&item.dep);
                 if !dep.behavior.includes(group_behavior) {
                     continue;
                 }
@@ -620,26 +574,9 @@ impl OutdatedCommand {
                 };
 
                 let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
-                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
-                else {
-                    continue;
-                };
-                let update = if resolved_version.tag == dependency::Tag::Npm {
-                    manifest.find_best_version_with_filter(
-                        &resolved_version.npm().version,
-                        string_buf,
-                        min_age_ms,
-                        excludes,
-                    )
-                } else {
-                    manifest.find_by_dist_tag_with_filter(
-                        resolved_version.dist_tag().tag.slice(string_buf),
-                        min_age_ms,
-                        excludes,
-                    )
-                };
+                let update = declared.find_update(&item.dep, manifest, min_age_ms, excludes);
 
-                // resolution.tag == Npm (verified in first pass).
+                // `DeclaredDependencies` only has rows installed from npm.
                 let current_version = resolution.npm().version;
 
                 table.print_line_separator();
@@ -755,7 +692,7 @@ impl OutdatedCommand {
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
                     } else {
-                        manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
+                        manager.lockfile.packages.items_name()[item.dep.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
                     bun_core::pretty!("{}", BStr::new(workspace_name));

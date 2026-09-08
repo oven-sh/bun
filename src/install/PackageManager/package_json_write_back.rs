@@ -10,7 +10,7 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
+use crate::{PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -20,6 +20,7 @@ use super::add_remove_with_filter::{
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
+use super::workspace_manifests::{ScratchManifests, same_row};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 /// A package.json whose cache entry was re-printed; `target.name_hash == None` is the root.
@@ -266,7 +267,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
 
 /// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
 fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
-    let mut scratch = super::workspace_manifests::ScratchManifests::new();
+    let mut scratch = ScratchManifests::new();
     scratch.parse_root(manager)?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
@@ -277,7 +278,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
         parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
-    let super::workspace_manifests::ScratchManifests {
+    let ScratchManifests {
         lockfile: scratch, ..
     } = scratch;
 
@@ -365,10 +366,6 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         builder.clamp();
     }
     Ok(())
-}
-
-fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
-    row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
 }
 
 /// Compared against the file, not `stale_contents`: the before-install print in `update_package_json_and_install` replaces the cwd entry's contents without recording them.

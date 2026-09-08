@@ -208,6 +208,7 @@ enum class CommonStringsForRust : uint8_t {
     quicDatagramAcknowledged = 21,
     quicDatagramLost = 22,
     base64 = 23,
+    write = 24,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
@@ -262,6 +263,8 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.quicDatagramLostString();
     case CommonStringsForRust::base64:
         return commonStrings.base64String();
+    case CommonStringsForRust::write:
+        return commonStrings.writeString();
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();

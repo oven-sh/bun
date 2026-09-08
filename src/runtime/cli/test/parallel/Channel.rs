@@ -36,7 +36,7 @@ use bun_sys::FdExt as _;
 use bun_uws as uws;
 
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_libuv_sys::UvStream as _;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -489,33 +489,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 }
             }
         }
-    }
-
-    pub fn close(&self) {
-        if self.done.get() {
-            return;
-        }
-        self.flush();
-        #[cfg(windows)]
-        {
-            let p = self.backend.pipe.replace(core::ptr::null_mut());
-            if !p.is_null() {
-                // SAFETY: `p` is the live Box-allocated uv_pipe_t owned by this channel.
-                if unsafe { !(*p).is_closing() } {
-                    // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                    unsafe { uv::Pipe::close_and_destroy(p) };
-                } else {
-                    // Already closing: keep ownership; the uv close callback
-                    // finishes the teardown.
-                    self.backend.pipe.set(p);
-                }
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            self.backend.socket.get().close(uws::CloseCode::Normal);
-        }
-        self.mark_done();
     }
 
     // -- frame decode (shared) -----------------------------------------------

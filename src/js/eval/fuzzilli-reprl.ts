@@ -35,8 +35,7 @@ function reportUncaught(err) {
   }
 }
 
-// An async throw or unhandled rejection fails the execution instead of
-// exiting the child. Installed before every script: scripts can remove them.
+// Async failures fail the execution instead of exiting the child.
 let asyncFailure = false;
 const onAsyncFailure = err => {
   asyncFailure = true;
@@ -49,8 +48,7 @@ function installAsyncFailureHandlers() {
   addListener("unhandledRejection", onAsyncFailure);
 }
 
-// Timers a script leaves behind are cleared so they do not fire during later
-// scripts.
+// Timers a script leaves behind must not fire during later scripts.
 const pendingTimers = new Map();
 function tracked(set, clear) {
   return function () {
@@ -92,8 +90,7 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// Main REPRL loop. setImmediate between scripts gives the event loop one
-// non-blocking turn: microtasks drain, due timers fire, exited children reap.
+// Main REPRL loop. setImmediate gives the event loop one turn per script.
 function runNextScript() {
   // Read command
   const cmd = Buffer.alloc(4);

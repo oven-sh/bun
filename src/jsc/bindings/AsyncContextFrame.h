@@ -22,9 +22,7 @@ public:
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
-    // Snapshots the active async context (what AsyncLocalStorage.getStore() reads)
-    // into `slot` for AsyncContextFrameScope to restore later. No-op when there is
-    // none. `slot` must be GC-visited by the owning object's JS wrapper.
+    // Snapshots the active async context into `slot`, which the owner's JS wrapper must GC-visit.
     static void captureCurrentContext(JSC::JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot);
 
     // The following is JSC::call but
@@ -57,9 +55,7 @@ public:
     }
 };
 
-// RAII: installs `context` as the active async context and restores the previous
-// one on exit. Use it around an event dispatch that runs asynchronously on behalf
-// of a resource created earlier. A no-op when `context` is empty or undefined.
+// Makes `context` the active async context for its lifetime. No-op if `context` is empty.
 class AsyncContextFrameScope {
     WTF_MAKE_NONCOPYABLE(AsyncContextFrameScope);
 

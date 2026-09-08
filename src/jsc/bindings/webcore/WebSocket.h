@@ -316,8 +316,7 @@ private:
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void failConnectingWebSocket();
 
-    // All open/message/error/close events originate from the network, not from a
-    // JS caller: dispatch them in the async context captured at construction.
+    // Every network-originated event goes through here, never plain dispatchEvent().
     void dispatchEventInCreationContext(Event&);
 
     void sendWebSocketString(const String& message, const Opcode opcode);
@@ -359,9 +358,7 @@ private:
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
 
-    // The async context active when the WebSocket was constructed, restored
-    // around event dispatch. Visited by JSWebSocket::visitChildrenImpl and
-    // released once the close event (the last one possible) has fired.
+    // Cleared after the close event. Visited by JSWebSocket::visitChildrenImpl.
     JSValueInWrappedObject m_creationAsyncContext;
 
     NativeCallbacks m_native;

@@ -180,14 +180,11 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     , m_extensions(emptyString())
 {
     m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
-    // Events are dispatched from the network, not from a JS caller, so snapshot
-    // the creator's async context now (Node's AsyncWrap does the same).
+    // Node's AsyncWrap captures here too: the events come from the network, not a JS caller.
     if (auto* globalObject = context.jsGlobalObject())
         AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
 }
 
-// Listeners observe the async context that was active when the WebSocket was
-// constructed, matching Node.js.
 void WebSocket::dispatchEventInCreationContext(Event& event)
 {
     auto* context = scriptExecutionContext();

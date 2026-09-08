@@ -752,7 +752,11 @@ describe("WebSocket AsyncLocalStorage context", () => {
           contexts.close = als.getStore();
           closed.resolve();
         };
-        ws.onerror = () => closed.reject(new Error("unexpected error event"));
+        ws.onerror = () => {
+          const error = new Error("unexpected error event");
+          opened.reject(error);
+          closed.reject(error);
+        };
       });
     })();
 

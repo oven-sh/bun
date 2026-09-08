@@ -158,7 +158,7 @@ void initializeReadableStream(JSReadableStream* stream)
 // IsReadableStreamLocked(stream), widened by Bun's reader-less lock states.
 bool isReadableStreamLocked(JSReadableStream* stream)
 {
-    return !!stream->m_reader || stream->m_lockedWithoutReader || stream->nativeHandleDetached();
+    return !!stream->m_reader || stream->m_lockedWithoutReader || stream->m_consumedAsBody || stream->nativeHandleDetached();
 }
 
 // ReadableStreamHasDefaultReader(stream)

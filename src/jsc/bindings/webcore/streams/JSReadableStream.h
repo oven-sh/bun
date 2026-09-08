@@ -57,6 +57,11 @@ public:
     // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
     // isReadableStreamLocked() check.
     bool m_lockedWithoutReader : 1 { false };
+    // Bun: a fetch Body consumer (text()/json()/blob()/..., or a native path that took the
+    // source's bytes directly) drained this stream. The reader the spec acquires for that is
+    // never released, so unlike m_lockedWithoutReader nothing clears this. Part of every
+    // isReadableStreamLocked() check.
+    bool m_consumedAsBody : 1 { false };
     // Set by jsFunctionTransferToNativeReadableStream.
     bool m_transferred : 1 { false };
     // `typeof rawHighWaterMark === "number"` at construction time.

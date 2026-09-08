@@ -436,6 +436,11 @@ impl PendingValue {
                         _ => unreachable!(),
                     };
                     self.readable.deinit();
+                    if promise.is_ok() {
+                        // The consumer has its reader (or already finished); from here on the
+                        // stream belongs to this body read even after that reader is released.
+                        readable.mark_consumed_as_body(global_this);
+                    }
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
@@ -777,43 +782,35 @@ impl Value {
     pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding();
 
-        match self {
-            Value::Used => ReadableStream::used(global_this),
-            Value::Empty => ReadableStream::empty(global_this),
-            Value::Null => Ok(JSValue::NULL),
+        // Once handed out, the stream *is* the body: `.body` returns it again,
+        // `bodyUsed` follows it, and every reader goes through it.
+        let stream = match self {
+            Value::Used => return ReadableStream::used(global_this),
+            Value::Null => return Ok(JSValue::NULL),
+            Value::Locked(locked) => {
+                if let Some(readable) = locked.readable.get() {
+                    return Ok(readable.value);
+                }
+                return self.locked_to_native_stream(global_this, false);
+            }
+            Value::Empty => ReadableStream::empty(global_this)?,
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
-                let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
-
-                let stream = ReadableStream::from_js_direct(value).unwrap();
-                *self = Value::Locked(PendingValue {
-                    readable: webcore::readable_stream::Strong::init(stream, global_this),
-                    ..PendingValue::new(global_this)
-                });
-                Ok(value)
-            }
-            Value::Locked(locked) => {
-                if let Some(readable) = locked.readable.get() {
-                    return Ok(readable.value);
-                }
-                self.locked_to_native_stream(global_this, false)
+                ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?
             }
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
-                let value = ReadableStream::errored(global_this, reason)?;
-                // As for a blob above: this stream is the body from here on, so `.body` hands it
-                // out again, `bodyUsed` follows it, and the promise readers reject through it.
-                let stream = ReadableStream::from_js_direct(value).unwrap();
-                *self = Value::Locked(PendingValue {
-                    readable: webcore::readable_stream::Strong::init(stream, global_this),
-                    ..PendingValue::new(global_this)
-                });
-                Ok(value)
+                ReadableStream::errored(global_this, reason)?
             }
-        }
+        };
+        *self = Value::from_readable_stream_without_lock_check(
+            ReadableStream::from_js_direct(stream).unwrap(),
+            global_this,
+        );
+        Ok(stream)
     }
 
     /// `Body.textStream()`: a `ReadableStream<string>` of the body's UTF-8
@@ -1034,18 +1031,9 @@ impl Value {
                 )));
             }
 
-            match readable.ptr {
-                webcore::readable_stream::Source::Blob(blob) => {
-                    // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
-                    // lifetime of the ReadableStream JS wrapper.
-                    let result = unsafe { (*blob).to_any_blob(global_this) }
-                        .map_or(Value::Empty, Value::from);
-                    readable.force_detach(global_this);
-                    return Ok(result);
-                }
-                _ => {}
-            }
-
+            // The stream object itself becomes the body, whatever backs it. A
+            // native-backed one is still lifted back into a blob, but only when
+            // something consumes the body (`to_blob_if_possible`).
             return Ok(Value::from_readable_stream_without_lock_check(
                 readable,
                 global_this,
@@ -1231,8 +1219,13 @@ impl Value {
                 wtf_ref.deref();
                 new_blob
             }
+            // A zero-length body is spent by a read like any other (`use_as_any_blob` agrees).
             // `Blob::default()` leaves `global_this` null which matches the
             // don't-care contract here.
+            Value::Empty => {
+                *self = Value::Used;
+                Blob::default()
+            }
             _ => Blob::default(),
         }
     }
@@ -1766,8 +1759,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 let value = self.get_body_value();
                 if let Value::Locked(locked) = value {
@@ -1877,7 +1870,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
     fn throw_if_body_unusable(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         let unusable =
-            self.body_stream_check(global_object, |s, g| s.is_disturbed(g) || s.is_locked(g));
+            self.body_stream_check(global_object, ReadableStream::is_disturbed_or_locked);
         if unusable {
             return Err(global_object
                 .err(
@@ -1900,8 +1893,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -1950,8 +1943,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2005,8 +1998,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2056,8 +2049,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         if matches!(value, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2156,11 +2149,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let Value::Locked(locked) = value else {
                     unreachable!()
                 };
-                if !locked.action.is_none()
-                    || ((!this_value.is_empty() && readable.is_disturbed(global_object))
-                        || (this_value.is_empty() && readable.is_disturbed(global_object)))
-                {
+                if !locked.action.is_none() {
                     return Ok(handle_body_already_used(global_object));
+                }
+                if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
+                    return Ok(rejected);
                 }
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2222,6 +2215,29 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
             format_args!("Body already used"),
         )
         .reject()
+}
+
+/// A body whose stream is disturbed or locked is "unusable" and every reader
+/// rejects with a TypeError before touching it.
+/// <https://fetch.spec.whatwg.org/#body-unusable>
+fn handle_body_stream_unusable(
+    readable: &ReadableStream,
+    global_object: &JSGlobalObject,
+) -> Option<JSValue> {
+    if readable.is_disturbed(global_object) {
+        return Some(handle_body_already_used(global_object));
+    }
+    if readable.is_locked(global_object) {
+        return Some(
+            global_object
+                .err(
+                    jsc::ErrorCode::INVALID_STATE_TypeError,
+                    format_args!("Invalid state: ReadableStream is locked"),
+                )
+                .reject(),
+        );
+    }
+    None
 }
 
 /// If the body already failed, reject the read with that error. Every body

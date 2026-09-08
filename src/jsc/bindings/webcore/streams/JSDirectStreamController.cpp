@@ -233,11 +233,12 @@ static size_t byteLengthOf(JSValue value)
 
 bool DirectByteBuffer::tryGrowTo(size_t size)
 {
-    if (size <= m_capacity)
+    size_t current = capacity();
+    if (size <= current)
         return true;
     if (size > MAX_ARRAY_BUFFER_SIZE)
         return false;
-    size_t capacity = std::max<size_t>(size, m_capacity > MAX_ARRAY_BUFFER_SIZE / 2 ? MAX_ARRAY_BUFFER_SIZE : std::max<size_t>(64, m_capacity * 2));
+    size_t capacity = std::max<size_t>(size, current > MAX_ARRAY_BUFFER_SIZE / 2 ? MAX_ARRAY_BUFFER_SIZE : std::max<size_t>(64, current * 2));
     void* data = m_data ? Gigacage::tryRealloc(Gigacage::Primitive, m_data, capacity) : Gigacage::tryMalloc(Gigacage::Primitive, capacity);
     if (!data)
         return false;
@@ -293,7 +294,6 @@ Ref<ArrayBuffer> DirectByteBuffer::releaseAsArrayBuffer()
     std::span<const uint8_t> bytes { m_data, m_size };
     m_data = nullptr;
     m_size = 0;
-    m_capacity = 0;
     return ArrayBuffer::createAdopted(bytes);
 }
 
@@ -384,6 +384,9 @@ static JSValue writeToByteBuffer(JSGlobalObject* globalObject, JSDirectStreamCon
         Locker locker { controller->cellLock() };
         size_t sizeBefore = buffer.size();
         size_t capacityBefore = buffer.capacity();
+        // A steady producer fills about what it filled last time: allocate that once per batch.
+        if (!capacityBefore && buffer.lastCapacity())
+            buffer.tryReserve(std::min(buffer.lastCapacity(), directHighWaterMark(controller)));
         appended = string ? buffer.tryAppendUTF8(characters) : buffer.tryAppend(bytes);
         written = buffer.size() - sizeBefore;
         grownBy = buffer.capacity() - capacityBefore;

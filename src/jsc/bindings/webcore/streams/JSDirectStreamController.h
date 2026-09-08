@@ -33,7 +33,9 @@ public:
     ~DirectByteBuffer() { deallocate(); }
 
     size_t size() const { return m_size; }
-    size_t capacity() const { return m_capacity; }
+    size_t capacity() const { return m_data ? m_capacity : 0; }
+    // After releaseAsArrayBuffer(): the released batch's capacity, to size the next one.
+    size_t lastCapacity() const { return m_capacity; }
     bool isEmpty() const { return !m_size; }
     std::span<const uint8_t> span() const { return { m_data, m_size }; }
 

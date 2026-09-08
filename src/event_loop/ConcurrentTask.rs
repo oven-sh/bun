@@ -131,6 +131,31 @@ pub struct Task {
     pub ptr: *mut (),
 }
 
+/// A task whose queued pointer is a [`ThisPtr`](bun_ptr::ThisPtr) to
+/// `Target`, which keeps itself alive for the task; the dispatcher runs it or
+/// releases it through here. A zero-sized hop type per tag, declared next to
+/// `Target` with its own `unsafe impl` stating the ref protocol.
+///
+/// # Safety
+/// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
+/// task type uses it; and `Target`'s protocol keeps the pointee of every
+/// [`task`](Self::task) it queues alive until `run` / `release_unrun` (a
+/// `RefPtr` slot held for the queued task, or an owner that outlives the queue).
+pub unsafe trait TaskHop {
+    type Target;
+    /// The tag constant from [`task_tag`]; the `bun_runtime::dispatch` match
+    /// arms MUST agree.
+    const TAG: TaskTag;
+    fn run(this: bun_ptr::ThisPtr<Self::Target>) -> crate::JsResult<()>;
+    /// As [`Taskable::release_unrun`].
+    fn release_unrun(this: bun_ptr::ThisPtr<Self::Target>);
+
+    #[inline]
+    fn task(this: bun_ptr::ThisPtr<Self::Target>) -> Task {
+        Task::new(Self::TAG, this.as_ptr().cast::<()>())
+    }
+}
+
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
 /// freed when it will never run. Implement on every type that can be
 /// enqueued; the impl lives in whatever crate owns the type.

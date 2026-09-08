@@ -1582,11 +1582,7 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // Every way out of this block is a settled pump: the sink is ended in
-        // there (`end_js_pump`), and `file_sink`, the last reference on it,
-        // drops after the block, behind `detach_js_controller`. Only a pump
-        // that is still pending returns early: it hands all of that over to
-        // `FileStreamWrapper`.
+        // A settled pump ends the sink and breaks out to the detach below; only a pending one returns, handing both to `FileStreamWrapper`.
         let outcome: JsResult<JSValue> = 'piped: {
             if let Some(err) = assignment_result.to_error() {
                 file_sink.end_js_pump(None);
@@ -1645,8 +1641,7 @@ impl BlobExt for Blob {
                 }
             }
 
-            // The pump already finished. The promise settles with the byte
-            // count once the file is closed: now, unless a flush is draining.
+            // The pump already finished; the promise carries the byte count once the file is closed.
             readable_stream.done();
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
@@ -5741,8 +5736,7 @@ impl Drop for S3BlobDownloadTask {
 struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    /// The reference `pipe_readable_stream_to_blob` handed over, and the last
-    /// one on the sink. `Drop` releases it, behind `detach_js_controller`.
+    /// The last reference on the sink; `Drop` detaches the JS controller before releasing it.
     pub sink: RefPtr<webcore::FileSink>,
 }
 
@@ -5787,8 +5781,7 @@ pub(crate) fn on_file_stream_reject_request_stream(
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 
-    // What arrived is written out and the file is closed, as when a piped
-    // reader fails (`js_close`).
+    // Writes out what arrived and closes the file, as `js_close` does when a piped reader fails.
     this.sink.end_js_pump(None);
 
     this.promise.reject(global_this, Ok(err))?;

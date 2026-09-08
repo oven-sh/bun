@@ -1041,14 +1041,7 @@ ${classes
   .join("\n")}
 }
 
-// Stop the controller pointing at its native sink, and nothing else. The owner
-// of a sink calls this when it gives up the last reference it holds: the
-// controller cell can outlive the sink, and both a late controller.write() and
-// ~controller (which calls finalize, releasing a reference the controller never
-// took) would then read freed memory. This is the same native-pointer pair the
-// end() and close() host fns run before they touch JS, so it cannot throw, run
-// user code, or change the piped stream's state. detach() is the variant that
-// also tells the stream the sink closed.
+// detach() minus the onClose callback: for a sink owner about to free the sink while the controller cell may outlive it. Runs no JS.
 extern "C" void JSSinkController__detachSinkPtr(JSC::EncodedJSValue controllerValue)
 {
     JSC::JSValue value = JSC::JSValue::decode(controllerValue);

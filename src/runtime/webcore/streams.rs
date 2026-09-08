@@ -777,9 +777,7 @@ pub(crate) mod controller_abi {
         pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
         #[link_name = "JSSinkController__detachPtr"]
         pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
-        /// Nulls the controller's `m_sinkPtr` without telling the stream that
-        /// the sink closed. No JS runs, so a caller on an error path, or with
-        /// an exception already pending, can still use it.
+        /// `detach_ptr` without the `onClose` callback: only nulls `m_sinkPtr`, runs no JS.
         #[link_name = "JSSinkController__detachSinkPtr"]
         pub(crate) safe fn detach_sink_ptr(c: ::bun_jsc::JSValue);
         /// Returns undefined (drained inline), the pump promise, or the thrown Exception cell.

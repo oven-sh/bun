@@ -48,7 +48,7 @@ test("destructured Dirent methods throw TypeError instead of returning wrong res
   }
 });
 
-test("Dirent methods called with explicit undefined this throw TypeError", () => {
+test("Dirent methods called with explicit undefined or null this throw TypeError", () => {
   using dir = tempDir("dirent-undefined-this", {
     "a.txt": "",
   });
@@ -56,6 +56,22 @@ test("Dirent methods called with explicit undefined this throw TypeError", () =>
   const [entry] = readdirSync(String(dir), { withFileTypes: true });
   expect(() => entry.isFile.call(undefined)).toThrow(invalidThisError);
   expect(() => entry.isDirectory.call(undefined)).toThrow(invalidThisError);
+  expect(() => entry.isFile.call(null)).toThrow(invalidThisError);
+});
+
+test("Dirent methods on a non-Dirent object return false like Node.js", () => {
+  using dir = tempDir("dirent-object-this", {
+    "a.txt": "",
+  });
+
+  const [entry] = readdirSync(String(dir), { withFileTypes: true });
+  expect(entry.isFile.call({})).toBe(false);
+  expect(entry.isDirectory.call({})).toBe(false);
+  expect(entry.isFile.call(42)).toBe(false);
+
+  const bare = Object.create(Dirent.prototype);
+  expect(bare.isFile()).toBe(false);
+  expect(bare.isDirectory()).toBe(false);
 });
 
 test("Dirent constructed with missing or non-integer type returns false (does not throw)", () => {

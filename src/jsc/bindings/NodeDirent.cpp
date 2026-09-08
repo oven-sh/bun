@@ -196,44 +196,34 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     return JSValue::encode(object);
 }
 
-static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
+// A sloppy-mode host function sees the global object as `this` when the method is
+// called with no receiver. Strict-mode toThis() maps that back to undefined.
+static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue thisValue, Zig::GlobalObject* globalObject)
 {
-    JSObject* object = value.getObject();
-    if (object) [[likely]] {
-        auto* structure = getStructure(globalObject);
-        JSValue type;
-        bool hasType;
-        if (structure->id() == object->structure()->id()) {
-            // Fast path: matching canonical Dirent structure, the @data slot always exists.
-            type = object->getDirect(2);
-            hasType = true;
-        } else {
-            // Slow path: look up @data via the full property machinery so subclass
-            // instances and prototype-delegating wrappers (Object.create(dirent))
-            // still find the inherited type slot. Non-Dirent receivers (e.g. the
-            // global object when the method is destructured) do not have @data
-            // anywhere on their chain, so getPropertySlot returns false.
-            auto propertyName = Bun::builtinNames(vm).dataPrivateName();
-            JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
-            hasType = object->getPropertySlot(globalObject, propertyName, slot);
-            RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
-            if (hasType) {
-                type = slot.getValue(globalObject, propertyName);
-                RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
-            }
-        }
-
-        if (hasType) {
-            if (type.isAnyInt()) {
-                return JSC::toInt32(type.asNumber());
-            }
-            // Real Dirent instance, but the stored type is not an integer (e.g.
-            // `new Dirent(name)` with no type arg). Match Node.js: is*() returns false.
-            return std::numeric_limits<int32_t>::max();
-        }
+    JSValue value = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+    RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+    if (value.isUndefinedOrNull()) [[unlikely]] {
+        Bun::throwInvalidThisError(globalObject, scope, value, "Dirent"_s);
+        return std::numeric_limits<int32_t>::max();
     }
 
-    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Value of \"this\" must be of type Dirent"_s);
+    JSObject* object = value.getObject();
+    if (!object) [[unlikely]] {
+        return std::numeric_limits<int32_t>::max();
+    }
+    auto* structure = getStructure(globalObject);
+    JSValue type;
+    if (structure->id() != object->structure()->id()) {
+        type = object->get(globalObject, Bun::builtinNames(vm).dataPrivateName());
+        RETURN_IF_EXCEPTION(scope, std::numeric_limits<int32_t>::max());
+    } else {
+        type = object->getDirect(2);
+    }
+
+    if (type.isAnyInt()) {
+        return JSC::toInt32(type.asNumber());
+    }
+
     return std::numeric_limits<int32_t>::max();
 }
 

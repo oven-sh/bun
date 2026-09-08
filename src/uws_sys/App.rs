@@ -8,11 +8,13 @@ use bun_http_types::Method::Method;
 use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;
+use crate::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
     WebSocketBehavior, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::ThisPtr;
+use core::ptr::NonNull;
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -57,6 +59,28 @@ pub struct App<const SSL: bool> {
 
 /// Legacy name alias.
 pub type NewApp<const SSL: bool> = App<SSL>;
+
+/// Owning handle to a `uWS::TemplatedApp<SSL>`: dropping it destroys the app
+/// (and with it every route/filter registration and their user-data pointers).
+pub struct OwnedApp<const SSL: bool>(NonNull<App<SSL>>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    pub fn create(opts: &BunSocketContextOptions) -> Option<Self> {
+        App::<SSL>::create(opts).and_then(NonNull::new).map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut App<SSL> {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `App::create` and is destroyed exactly once, here.
+        unsafe { App::<SSL>::destroy(self.0.as_ptr()) }
+    }
+}
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
@@ -313,6 +337,37 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
+    /// [`on_client_error`](Self::on_client_error) whose handler receives the
+    /// registered `this`, the socket, the error code and the raw packet. The
+    /// registrant keeps `this` alive while the app exists.
+    pub fn on_client_error_this<U: 'static, H>(&mut self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, *mut us_socket_t, u8, &[u8]) + Copy + 'static,
+    {
+        extern "C" fn cb<U: 'static, H>(
+            user_data: *mut c_void,
+            _ssl: c_int,
+            socket: *mut us_socket_t,
+            error_code: u8,
+            raw_packet: *mut u8,
+            raw_packet_len: c_int,
+        ) where
+            H: Fn(ThisPtr<U>, *mut us_socket_t, u8, &[u8]) + Copy + 'static,
+        {
+            // SAFETY: `user_data` is the `ThisPtr<U>` registered below, kept alive
+            // by the registrant while the app exists; uWS hands a valid
+            // (possibly empty) `raw_packet[..raw_packet_len]`.
+            let (this, packet) = unsafe {
+                (
+                    ThisPtr::new(user_data.cast::<U>()),
+                    thunk::c_slice(raw_packet, usize::try_from(raw_packet_len).unwrap_or(0)),
+                )
+            };
+            thunk::zst::<H>()(this, socket, error_code, packet)
+        }
+        self.on_client_error(cb::<U, H>, this.as_ptr().cast())
+    }
+
     pub fn listen_with_config(
         &mut self,
         handler: c::uws_listen_handler,
@@ -332,6 +387,34 @@ impl<const SSL: bool> App<SSL> {
                 user_data,
             )
         }
+    }
+
+    /// [`listen_with_config`](Self::listen_with_config) whose (synchronous)
+    /// handler receives `this` and the listen socket (`None` on failure).
+    pub fn listen_with_config_this<U: 'static, H>(
+        &mut self,
+        _handler: H,
+        this: ThisPtr<U>,
+        config: c::uws_app_listen_config_t,
+    ) where
+        H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket<SSL>>>) + Copy + 'static,
+    {
+        self.listen_with_config(
+            Some(Self::listen_this_thunk::<U, H>),
+            this.as_ptr().cast(),
+            config,
+        )
+    }
+
+    extern "C" fn listen_this_thunk<U: 'static, H>(
+        socket: *mut UwsListenSocket,
+        user_data: *mut c_void,
+    ) where
+        H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket<SSL>>>) + Copy + 'static,
+    {
+        // SAFETY: `user_data` is the `ThisPtr<U>` handed to `listen_*_this`, live across this synchronous callback.
+        let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
+        thunk::zst::<H>()(this, NonNull::new(socket.cast::<ListenSocket<SSL>>()))
     }
 
     pub fn listen_on_unix_socket(
@@ -354,6 +437,30 @@ impl<const SSL: bool> App<SSL> {
                 user_data,
             )
         }
+    }
+
+    /// [`listen_on_unix_socket`](Self::listen_on_unix_socket) counterpart of
+    /// [`listen_with_config_this`](Self::listen_with_config_this).
+    pub fn listen_on_unix_socket_this<U: 'static, H>(
+        &mut self,
+        _handler: H,
+        this: ThisPtr<U>,
+        domain_name: &ZStr,
+        flags: i32,
+    ) where
+        H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket<SSL>>>) + Copy + 'static,
+    {
+        extern "C" fn cb<const SSL: bool, U: 'static, H>(
+            socket: *mut UwsListenSocket,
+            _domain: *const c_char,
+            _flags: i32,
+            user_data: *mut c_void,
+        ) where
+            H: Fn(ThisPtr<U>, Option<NonNull<ListenSocket<SSL>>>) + Copy + 'static,
+        {
+            App::<SSL>::listen_this_thunk::<U, H>(socket, user_data)
+        }
+        self.listen_on_unix_socket(cb::<SSL, U, H>, this.as_ptr().cast(), domain_name, flags)
     }
 
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
@@ -423,7 +530,53 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
-    pub fn ws(
+    /// [`filter`](Self::filter) whose handler receives the registered `this`.
+    /// The registrant keeps `this` alive while the app exists.
+    pub fn filter_this<U: 'static, H>(&mut self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, *mut us_socket_t, i32) + Copy + 'static,
+    {
+        extern "C" fn cb<U: 'static, H>(
+            socket: *mut us_socket_t,
+            opened: i32,
+            user_data: *mut c_void,
+        ) where
+            H: Fn(ThisPtr<U>, *mut us_socket_t, i32) + Copy + 'static,
+        {
+            // SAFETY: `user_data` is the `ThisPtr<U>` registered below, kept alive
+            // by the registrant while the app exists.
+            let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
+            thunk::zst::<H>()(this, socket, opened)
+        }
+        self.filter(cb::<U, H>, this.as_ptr().cast())
+    }
+
+    /// `.ws()` route whose upgrade handler is `S` and whose per-socket handler
+    /// is `T`. The registrant keeps `this` alive while the route is registered.
+    pub fn ws_this<S: WebSocketUpgradeServer<SSL>, T: WebSocketHandler>(
+        &mut self,
+        pattern: &[u8],
+        this: ThisPtr<S>,
+        id: usize,
+        behavior: &WebSocketBehavior,
+    ) {
+        // SAFETY: `this` is a live `S`, the upgrade-server type `Wrap::<S, ..>`
+        // recovers it as; the registrant keeps it alive while the route exists.
+        unsafe {
+            self.ws(
+                pattern,
+                this.as_ptr().cast(),
+                id,
+                Wrap::<S, T, SSL>::apply(behavior),
+            )
+        }
+    }
+
+    /// # Safety
+    /// `ctx` must point to a live value of the upgrade-server type `behavior_`
+    /// was built for (see [`WebSocketUpgradeServer`]) and stay live while the
+    /// route is registered.
+    pub unsafe fn ws(
         &mut self,
         pattern: &[u8],
         ctx: *mut c_void,

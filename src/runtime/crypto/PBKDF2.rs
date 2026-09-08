@@ -1,5 +1,3 @@
-use core::ffi::c_uint;
-
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
@@ -34,30 +32,13 @@ impl PBKDF2 {
             return false;
         }
         boringssl::ERR_clear_error();
-        // SAFETY: password/salt point to valid slices for the given lengths;
-        // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
-        let rc = unsafe {
-            boringssl::PKCS5_PBKDF2_HMAC(
-                if !password.is_empty() {
-                    password.as_ptr()
-                } else {
-                    core::ptr::null()
-                },
-                password.len(),
-                salt.as_ptr(),
-                salt.len(),
-                iteration_count as c_uint,
-                algorithm.md().unwrap(),
-                length,
-                output.as_mut_ptr(),
-            )
-        };
-
-        if rc <= 0 {
-            return false;
-        }
-
-        true
+        boringssl::pbkdf2_hmac(
+            password,
+            salt,
+            iteration_count,
+            algorithm.md().unwrap(),
+            &mut output[..length],
+        )
     }
 
     /// The second element is the validated callback on the `Async` flavor and

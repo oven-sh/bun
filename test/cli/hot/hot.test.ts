@@ -776,3 +776,59 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+it(
+  "a stopped server's deferred teardown does not evict a newer server registered under the same id",
+  async () => {
+    const root = join(cwd, "serve-same-id.js");
+    writeFileSync(
+      root,
+      `
+import { readFileSync, writeFileSync } from "fs";
+
+globalThis.generation ??= 0;
+const gen = ++globalThis.generation;
+
+let stopped;
+if (gen === 1) {
+  stopped = (() => {
+    const a = Bun.serve({ id: "same", port: 0, fetch: () => new Response("a") });
+    a.stop(true);
+    return new WeakRef(a);
+  })();
+}
+const b = Bun.serve({ id: "same", port: 0, fetch: () => new Response("gen" + globalThis.generation) });
+if (gen === 1) {
+  globalThis.port = b.port;
+  // Collect the stopped server's wrapper so its finalizer schedules the teardown task,
+  // then let that task run before triggering the reload.
+  const deadline = Date.now() + 30_000;
+  while (stopped.deref() !== undefined) {
+    if (Date.now() > deadline) throw new Error("stopped server was never collected");
+    await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+  }
+  for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+  writeFileSync(import.meta.path, readFileSync(import.meta.path));
+} else {
+  const res = await fetch(b.url);
+  console.log(b.port === globalThis.port, await res.text());
+  process.exit(0);
+}
+`,
+    );
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
+    expect(stderr).not.toContain("EADDRINUSE");
+    expect(stdout).toBe("true gen2\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

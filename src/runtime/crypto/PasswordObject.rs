@@ -409,8 +409,8 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
+// HOST_EXPORT(JSPasswordObject__create, c)
+pub fn password_object_create(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, 4);
     // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
     // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.

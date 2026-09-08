@@ -155,8 +155,8 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 /// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
 /// engines"), so passing null is fine.
 #[inline]
-fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
-    core::ptr::null_mut()
+fn boring_engine() -> Option<&'static bun_sha_hmac::sha::ffi::ENGINE> {
+    None
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -647,8 +647,7 @@ impl S3Credentials {
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -755,8 +754,7 @@ impl S3Credentials {
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,

@@ -112,7 +112,7 @@ impl DirectoryRoute {
             route: Some(RefPtr::from_this(this)),
             resp,
         };
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -355,7 +355,7 @@ impl DirectoryRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
+        if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
     }

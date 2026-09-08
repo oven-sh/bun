@@ -582,22 +582,23 @@ unsafe extern "C" {
     pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
-    pub safe fn EVP_md4() -> *const EVP_MD;
-    pub safe fn EVP_md5() -> *const EVP_MD;
-    pub safe fn EVP_ripemd160() -> *const EVP_MD;
-    pub safe fn EVP_sha1() -> *const EVP_MD;
-    pub safe fn EVP_sha224() -> *const EVP_MD;
-    pub safe fn EVP_sha256() -> *const EVP_MD;
-    pub safe fn EVP_sha384() -> *const EVP_MD;
-    pub safe fn EVP_sha512() -> *const EVP_MD;
-    pub safe fn EVP_sha512_224() -> *const EVP_MD;
-    pub safe fn EVP_sha512_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_224() -> *const EVP_MD;
-    pub safe fn EVP_sha3_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_384() -> *const EVP_MD;
-    pub safe fn EVP_sha3_512() -> *const EVP_MD;
-    pub safe fn EVP_blake2b256() -> *const EVP_MD;
-    pub safe fn EVP_blake2b512() -> *const EVP_MD;
+    pub fn EVP_MD_size(md: *const EVP_MD) -> usize;
+    pub safe fn EVP_md4() -> &'static EVP_MD;
+    pub safe fn EVP_md5() -> &'static EVP_MD;
+    pub safe fn EVP_ripemd160() -> &'static EVP_MD;
+    pub safe fn EVP_sha1() -> &'static EVP_MD;
+    pub safe fn EVP_sha224() -> &'static EVP_MD;
+    pub safe fn EVP_sha256() -> &'static EVP_MD;
+    pub safe fn EVP_sha384() -> &'static EVP_MD;
+    pub safe fn EVP_sha512() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_384() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_512() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b256() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b512() -> &'static EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
     // POD context by exclusive reference: BoringSSL only zero-initialises the

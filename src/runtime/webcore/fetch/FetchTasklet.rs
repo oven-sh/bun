@@ -2022,10 +2022,12 @@ impl FetchTasklet {
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // The one framing decision for this body, handed to the HTTP thread
-            // through the `Stream` below: a caller Content-Length it can honor,
-            // with no caller Transfer-Encoding next to it, frames the raw bytes;
-            // anything else goes out chunked. An upgraded connection keeps the
-            // header but tunnels its "body", so those bytes are not counted.
+            // through the `Stream` below: a caller Content-Length it can honor
+            // frames the raw bytes, anything else goes out chunked. A caller
+            // Transfer-Encoding (never forwarded itself) asks for chunked too, so
+            // a Content-Length next to it is not honored. An upgraded connection
+            // keeps the header but tunnels its "body", so those bytes are not
+            // counted.
             let content_length = if fetch_tasklet
                 .request_headers
                 .get(b"transfer-encoding")

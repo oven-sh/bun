@@ -972,11 +972,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if let Some(ts) = args.option(b"--tsconfig-override") {
-        let Some(cwd) = ctx.args.absolute_working_dir.as_deref() else {
-            return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
+        let base: &[u8] = match ctx.args.absolute_working_dir.as_deref() {
+            Some(cwd) => cwd,
+            // Like --cwd above: an absolute path needs no base, a relative one
+            // cannot be resolved once the cwd was deleted.
+            None if bun_paths::is_absolute(ts) => b"/",
+            None => return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into()),
         };
         let mut spill = Vec::new();
-        let joined = resolve_path::join_abs_string_spill::<platform::Auto>(cwd, &mut spill, &[ts]);
+        let joined = resolve_path::join_abs_string_spill::<platform::Auto>(base, &mut spill, &[ts]);
         opts.tsconfig_override = Some(Box::from(joined));
     }
 

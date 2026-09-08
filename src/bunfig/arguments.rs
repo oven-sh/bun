@@ -203,7 +203,17 @@ pub fn load_config(
             let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
-                Err(_) => return Ok(()),
+                // Nothing to auto-load without a working directory, but an
+                // explicit relative --config cannot be resolved either.
+                Err(_) if auto_loaded => return Ok(()),
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "{}\nwhile reading config \"{}\"",
+                        err,
+                        BStr::new(config_path_),
+                    );
+                    Global::exit(1);
+                }
             };
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }

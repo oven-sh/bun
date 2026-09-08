@@ -212,6 +212,7 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     beforeAll(() => {
       planted = tempDir("cwd-unlinked-planted", {
         "bin/x.cjs": `console.log("ran " + __filename);`,
+        "bin/tsconfig.json": `{}`,
         "package.json": JSON.stringify({ name: "above-the-executable", scripts: { canary: "echo canary script ran" } }),
       });
       bin = path.join(String(planted), "bin");
@@ -283,6 +284,24 @@ describe.if(isPosix)("cwd deleted before startup", () => {
       const { stderr, exitCode } = await runFromDeletedCwd("bun repl", `process.exit(42)\n`);
       expect(stderr).toBe("");
       expect(exitCode).toBe(42);
+    });
+
+    // Option values follow the same rule: an absolute path needs no cwd, a
+    // relative one is an error rather than silently ignored.
+    test.concurrent("an absolute --tsconfig-override still runs", async () => {
+      const tsconfig = path.join(bin, "tsconfig.json");
+      expect(await runFromDeletedCwd(`bun --tsconfig-override=${tsconfig} -p 6*7`)).toEqual({
+        stdout: "42\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a relative --config is an error, not skipped", async () => {
+      const { stdout, stderr, exitCode } = await runFromDeletedCwd(`bun --config=bunfig.custom.toml -p 6*7`);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(`while reading config "bunfig.custom.toml"`);
+      expect(exitCode).toBe(1);
     });
   });
 });

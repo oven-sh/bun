@@ -923,14 +923,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// The working directory the runtime starts from. `Arguments::parse`
     /// records it for `bun run`, `bun <file>` and node mode; contexts built
-    /// without it (bunx, compiled executables) ask `getcwd` here. If the
+    /// without it (the Windows `.bunx` fast path) ask `getcwd` here. If the
     /// process started inside a deleted directory, the executable's directory
     /// stands in (what Node's `Environment::GetCwd` does), so `bun -e`, the
-    /// REPLs, stdin, an absolute entry path and compiled executables still
-    /// boot while `process.cwd()` reports ENOENT. Only for callers with nothing
-    /// left to resolve against the real cwd; a relative entry path or a
-    /// package.json script must fail with `CurrentWorkingDirectoryUnlinked`
-    /// instead of acting on whatever lives next to the executable.
+    /// REPLs, stdin and an absolute entry path still boot while
+    /// `process.cwd()` reports ENOENT. Only for callers with nothing left to
+    /// resolve against the real cwd; a relative entry path or a package.json
+    /// script must fail with `CurrentWorkingDirectoryUnlinked` instead of
+    /// acting on whatever lives next to the executable.
     pub(crate) fn cwd_or_exe_dir(ctx: &mut ContextData) -> crate::Result<&[u8]> {
         let cwd: &[u8] = match ctx.args.absolute_working_dir {
             Some(ref cwd) => cwd,
@@ -1175,9 +1175,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
-
-        // The entry point is embedded, so nothing needs the real cwd to boot.
-        Self::cwd_or_exe_dir(ctx)?;
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete

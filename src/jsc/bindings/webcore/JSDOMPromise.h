@@ -51,7 +51,7 @@ public:
 
 private:
     DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
-        : DOMGuarded<JSC::JSPromise>(globalObject, promise)
+        : DOMGuarded<JSC::JSPromise>(globalObject, promise, HasPendingActivity::No)
     {
     }
 };

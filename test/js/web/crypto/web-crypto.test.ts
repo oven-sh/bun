@@ -35,6 +35,44 @@ describe("Web Crypto", () => {
     expect(lines).toStrictEqual(results);
   });
 
+  // An operation started inside a ShadowRealm must settle even when script drops its last
+  // reference to the realm before the result comes back: the pending promise keeps the realm
+  // alive. 4 bytes is hashed synchronously and only the settlement is posted to the event loop,
+  // 4e6 bytes is hashed on the work pool.
+  it("a pending digest keeps an unreferenced ShadowRealm alive until it settles", async () => {
+    const script = /* js */ `
+      const results = [];
+      for (const size of [4, 4_000_000]) {
+        new ShadowRealm().evaluate(
+          \`(size, report) => {
+            crypto.subtle.digest("SHA-256", new Uint8Array(size)).then(
+              d => report(size + ": " + (d instanceof ArrayBuffer) + " " + d.byteLength),
+              e => report(size + ": " + String(e)),
+            );
+          }\`,
+        )(size, line => results.push(line));
+      }
+      // Collect now, while both settlements are still queued or in flight, and again from later
+      // event loop turns (no realm frame on the stack) until both arrive or we give up.
+      Bun.gc(true);
+      let turns = 0;
+      (function collect() {
+        Bun.gc(true);
+        if (results.length < 2 && turns++ < 20) setImmediate(collect);
+      })();
+      process.on("exit", () => console.log(JSON.stringify(results.sort())));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(["4000000: true 32", "4: true 32"]);
+    expect(exitCode).toBe(0);
+  });
+
   it("has globals", () => {
     expect(crypto.subtle !== undefined).toBe(true);
     expect(CryptoKey.name).toBe("CryptoKey");

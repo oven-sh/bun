@@ -52,22 +52,31 @@ public:
     void clear();
 
 protected:
-    DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&);
+    // Yes when native code owes the guarded cell a settlement (DeferredPromise): the cell is a GC
+    // root until it is settled or cleared. That keeps a ShadowRealm or node:vm global that script
+    // no longer references alive until the operation started in it completes. No (DOMPromise):
+    // the cell is only visited through its global object, for as long as that global is reachable.
+    enum class HasPendingActivity : bool { No,
+        Yes };
+    DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&, HasPendingActivity);
 
     void contextDestroyed();
     bool isEmpty() const { return !m_guarded; }
+    void pendingActivityDone() { m_pendingActivity.clear(); }
 
     JSC::Weak<JSC::JSCell> m_guarded;
     JSC::Weak<JSDOMGlobalObject> m_globalObject;
 
 private:
     void removeFromGlobalObject();
+
+    JSC::Strong<JSC::JSCell> m_pendingActivity;
 };
 
 template<typename T> class DOMGuarded : public DOMGuardedObject {
 protected:
-    DOMGuarded(JSDOMGlobalObject& globalObject, T& guarded)
-        : DOMGuardedObject(globalObject, guarded)
+    DOMGuarded(JSDOMGlobalObject& globalObject, T& guarded, HasPendingActivity hasPendingActivity)
+        : DOMGuardedObject(globalObject, guarded, hasPendingActivity)
     {
     }
     T* guarded() const { return dynamicDowncast<T>(guardedObject()); }

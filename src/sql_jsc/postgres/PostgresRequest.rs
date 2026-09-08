@@ -49,6 +49,39 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
+/// The `int4` a JS number is sent as in binary format, or `None` when the
+/// value is not a number with an exact `int4` representation.
+fn exact_int4(value: JSValue) -> Option<i32> {
+    if value.is_int32() {
+        return Some(value.as_int32());
+    }
+    let n = value.get_number()?;
+    if n.trunc() == n && n >= f64::from(i32::MIN) && n <= f64::from(i32::MAX) {
+        return Some(n as i32);
+    }
+    None
+}
+
+/// Whether `write_bind` sends `value` in binary format for a parameter the
+/// server typed as `tag`. `Tag::is_binary_format_supported` lists the types Bun
+/// *decodes* in binary; encoding also depends on the JS value, and `time`,
+/// `float4`, `numeric` and the array types have no encoder at all. A value
+/// without a binary encoding is sent as text, so the server parses or rejects
+/// `String(value)` the way it already does for an `int2` or `int8` parameter.
+fn has_binary_encoding(tag: types::Tag, value: JSValue) -> bool {
+    match tag {
+        types::Tag::int4 => exact_int4(value).is_some(),
+        types::Tag::float8 => value.is_number(),
+        // A string is never re-encoded. This minimizes the room for mistakes
+        // on our end, such as stripping the timezone differently than what
+        // Postgres does when given a timestamp with timezone.
+        types::Tag::bool | types::Tag::timestamp | types::Tag::timestamptz | types::Tag::bytea => {
+            !value.is_string()
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
@@ -96,7 +129,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 && 'brk: {
                     iter.to(i as u32);
                     if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                        break 'brk value.is_string();
+                        break 'brk !has_binary_encoding(tag, value);
                     }
                     if iter.any_failed() {
                         return Err(AnyPostgresError::InvalidQueryBinding);
@@ -105,11 +138,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 });
 
         if force_text {
-            // If they pass a value as a string, let's avoid attempting to
-            // convert it to the binary representation. This minimizes the room
-            // for mistakes on our end, such as stripping the timezone
-            // differently than what Postgres does when given a timestamp with
-            // timezone.
             writer.short(0)?;
             continue;
         }
@@ -154,16 +182,8 @@ pub(crate) fn write_bind<Context: WriterContext>(
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
-        // If they pass a value as a string, let's avoid attempting to
-        // convert it to the binary representation. This minimizes the room
-        // for mistakes on our end, such as stripping the timezone
-        // differently than what Postgres does when given a timestamp with
-        // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
-            types::Tag::text
-        } else {
-            tag
-        };
+        let send_as_text = tag.is_binary_format_supported() && !has_binary_encoding(tag, value);
+        let effective_tag = if send_as_text { types::Tag::text } else { tag };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
                 // Use jsonStringifyFast for SIMD-optimized serialization
@@ -207,18 +227,14 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::int4 => {
+                let int4 = exact_int4(value).expect("effective_tag is int4 only for an exact int4");
                 let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
+                writer.int4(int4 as u32)?;
                 l.write_excluding_self()?;
             }
             types::Tag::float8 => {
                 let l = writer.length()?;
-                writer.f64(value.to_number(global).map_err(js_error_to_postgres)?)?;
+                writer.f64(value.as_number())?;
                 l.write_excluding_self()?;
             }
 

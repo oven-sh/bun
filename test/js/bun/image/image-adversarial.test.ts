@@ -710,9 +710,24 @@ describe("hostile option objects", () => {
     expect(meta).toEqual({ width: 2, height: 2, format: "png" });
   });
 
+  // https://fetch.spec.whatwg.org/#data-url-processor (step 11): the marker is
+  // `;`, zero or more spaces, then an ASCII case-insensitive "base64".
+  test.each(["BASE64", "Base64", " base64", "base64 "])("data: URL input with marker %j", async marker => {
+    const url = "data:image/png;" + marker + "," + Buffer.from(tinyPng).toString("base64");
+    const meta = await new Bun.Image(url).metadata();
+    expect(meta).toEqual({ width: 2, height: 2, format: "png" });
+  });
+
   test("data: URL with bad base64 throws", () => {
     expect(() => new Bun.Image("data:image/png;base64,!!!not base64!!!")).toThrow(/base64/);
   });
+
+  test.each(["data:image/png;base64x,iVBORw0KGgo=", "data:image/png;charset=base64,iVBORw0KGgo="])(
+    "data: URL without a base64 marker throws: %s",
+    url => {
+      expect(() => new Bun.Image(url)).toThrow(/only base64/);
+    },
+  );
 });
 
 // ─── 9. concurrency / re-use ─────────────────────────────────────────────────

@@ -186,6 +186,10 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
+    pub fn is_base64(&self) -> bool {
+        self.is_base64
+    }
+
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;

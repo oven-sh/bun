@@ -458,7 +458,8 @@ describe.concurrent("--cpu-prof", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("EFBIG");
     expect(stderr).toContain("Failed to write CPU profile to " + join(String(dir), "profiles", "CPU."));
     expect(readdirSync(join(String(dir), "profiles"))).toEqual([]);

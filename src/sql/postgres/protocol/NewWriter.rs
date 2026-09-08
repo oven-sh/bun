@@ -34,6 +34,24 @@ impl<C: WriterContext> LengthWriter<C> {
     }
 }
 
+/// A run of Int16 format codes written as text (0) up front and flipped to
+/// binary (1) per slot afterwards, so Bind can decide each parameter's format
+/// while encoding its value instead of in a separate earlier pass.
+#[derive(Copy, Clone)]
+pub struct FormatCodes<C: WriterContext> {
+    index: usize,
+    count: u16,
+    context: NewWriter<C>,
+}
+
+impl<C: WriterContext> FormatCodes<C> {
+    pub fn set_binary(self, slot: usize) -> Result<(), AnyPostgresError> {
+        debug_assert!(slot < usize::from(self.count));
+        self.context
+            .pwrite(&1u16.to_be_bytes(), self.index + slot * 2)
+    }
+}
+
 impl<C: WriterContext> NewWriter<C> {
     #[inline]
     pub fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
@@ -46,6 +64,22 @@ impl<C: WriterContext> NewWriter<C> {
         self.int4(0)?;
         Ok(LengthWriter {
             index: i,
+            context: self,
+        })
+    }
+
+    pub fn format_codes(self, count: u16) -> Result<FormatCodes<C>, AnyPostgresError> {
+        let index = self.offset();
+        const TEXT: [u8; 64] = [0; 64];
+        let mut remaining = usize::from(count) * 2;
+        while remaining > 0 {
+            let n = remaining.min(TEXT.len());
+            self.write(&TEXT[..n])?;
+            remaining -= n;
+        }
+        Ok(FormatCodes {
+            index,
+            count,
             context: self,
         })
     }

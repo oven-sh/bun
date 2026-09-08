@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::jsc::JSGlobalObject;
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -78,29 +78,19 @@ fn components_to_ms_utc(
         .ok()
 }
 
-pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
-    let double_value = if value.is_date() {
-        value.get_unix_timestamp()
-    } else if value.is_number() {
-        value.as_number()
-    } else if value.is_string() {
-        let str = value.to_bun_string(global_object).expect("unreachable");
-        bun_string_jsc::parse_date(&str, global_object)?
-    } else {
-        return Ok(0);
-    };
-
-    // Round-trip the ±Infinity the decoder produces back to DT_NOEND /
-    // DT_NOBEGIN; otherwise `f64::INFINITY as i64` saturates to i64::MAX and
-    // the subtract/multiply below overflows.
-    if double_value == f64::INFINITY {
-        return Ok(i64::MAX);
+/// `ms` is a non-NaN JS time value in milliseconds: a valid `Date`'s, or a
+/// number bound to a timestamp parameter. ±Infinity round-trip the ±Infinity
+/// the decoder produces back to DT_NOEND / DT_NOBEGIN (`f64::INFINITY as i64`
+/// would saturate to i64::MAX and the arithmetic below would overflow).
+pub(crate) fn from_unix_ms(ms: f64) -> i64 {
+    debug_assert!(!ms.is_nan());
+    if ms == f64::INFINITY {
+        return i64::MAX;
     }
-    if double_value == f64::NEG_INFINITY {
-        return Ok(i64::MIN);
+    if ms == f64::NEG_INFINITY {
+        return i64::MIN;
     }
-    let unix_timestamp: i64 = double_value as i64;
-    Ok(unix_timestamp
+    (ms as i64)
         .saturating_sub(POSTGRES_EPOCH_DATE)
-        .saturating_mul(US_PER_MS))
+        .saturating_mul(US_PER_MS)
 }

@@ -456,3 +456,27 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The code frame caps a source line at 1024 bytes. The cut has to land on a
+// character boundary, or the frame writes a partial UTF-8 sequence to stderr.
+describe.concurrent("code frame clamps a long source line on a character boundary", () => {
+  test.each([
+    // "1 | const s = \"" is 15 bytes, so byte 1024 of the line lands inside a character in both cases.
+    ["cjk (3-byte)", Buffer.alloc(3000, "中文字").toString(), "中文字中"],
+    ["emoji (4-byte)", Buffer.alloc(4000, "😀").toString(), "😀😀😀😀"],
+  ])("%s", async (_label, filler, expectedTail) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const s = "${filler}"; throw new Error("boom");`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+    const frameLine = stderr.subarray(0, stderr.indexOf(0x0a));
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(frameLine);
+    expect(decoded.startsWith('1 | const s = "')).toBe(true);
+    expect(decoded.endsWith(expectedTail)).toBe(true);
+    expect(frameLine.length).toBeLessThanOrEqual("1 | ".length + 1024);
+    expect(exitCode).toBe(1);
+  });
+});

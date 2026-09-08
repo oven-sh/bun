@@ -6210,6 +6210,18 @@ impl VirtualMachine {
         const MAX_LINE_LENGTH_WITH_DIVOT: usize = 512;
         const MAX_LINE_LENGTH: usize = 1024;
 
+        /// Truncates to `MAX_LINE_LENGTH` on a UTF-8 character boundary.
+        fn clamp_line(line: &[u8]) -> &[u8] {
+            if line.len() <= MAX_LINE_LENGTH {
+                return line;
+            }
+            let mut end = MAX_LINE_LENGTH;
+            while end > 0 && !bun_core::strings::is_utf8_char_boundary(line[end]) {
+                end -= 1;
+            }
+            &line[..end]
+        }
+
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).
         let line_numbers = exception.stack.source_line_numbers();
@@ -6226,7 +6238,7 @@ impl VirtualMachine {
             splat_space(writer, pad)?;
 
             let trimmed = source.trimmed_text();
-            let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+            let clamped = clamp_line(trimmed);
 
             let hl = bun_core::fmt::fmt_javascript(
                 clamped,
@@ -6316,7 +6328,7 @@ impl VirtualMachine {
 
                 if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
                     did_print_name = true;
-                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let clamped = clamp_line(trimmed);
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {
@@ -6353,7 +6365,7 @@ impl VirtualMachine {
                     let pad = max_line_number_pad.saturating_sub(int_size);
                     splat_space(writer, pad)?;
 
-                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let clamped = clamp_line(trimmed);
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {

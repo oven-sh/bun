@@ -901,7 +901,9 @@ describe("Bun.Transpiler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      const best = JSON.parse(stdout || "{}");
+      // A signal here means the 30s timeout killed a parse that hung.
+      expect(proc.signalCode).toBeNull();
+      const best = JSON.parse(stdout);
       // ~1 when linear, ~4 when quadratic.
       expect(best.long / best.short).toBeLessThan(2.5);
       expect(exitCode).toBe(0);

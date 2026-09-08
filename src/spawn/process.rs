@@ -370,14 +370,26 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
+        // Mutated only on the macOS ESRCH fallback below.
+        #[cfg(target_os = "macos")]
+        let mut rusage_result = *rusage;
+        #[cfg(not(target_os = "macos"))]
+        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
                 Ok(()) => {}
                 Err(err_) => {
                     #[cfg(target_os = "macos")]
-                    if err_.get_errno() == bun_sys::E::ESRCH && self.reap_on_thread().is_ok() {
-                        break 'brk None;
+                    if err_.get_errno() == bun_sys::E::ESRCH {
+                        if self.reap_on_thread().is_ok() {
+                            break 'brk None;
+                        }
+                        // No thread could be started: reap with a blocking `wait4`, as before.
+                        break 'brk Status::from(
+                            pid,
+                            &posix_spawn::wait4(pid, 0, Some(&mut rusage_result)),
+                        );
                     }
                     break 'brk Some(Status::Err(err_));
                 }
@@ -386,7 +398,7 @@ impl Process {
         });
 
         let Some(status) = status else { return };
-        self.on_exit(status, rusage);
+        self.on_exit(status, &rusage_result);
     }
 
     /// A blocking `wait4` on this thread can deadlock: a pty session leader's exit ends only once this loop drains the master.
@@ -421,15 +433,10 @@ impl Process {
 
         match self.watch() {
             Err(err) => {
-                #[cfg(target_os = "macos")]
+                #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    // Mid-exit: `WNOHANG` reaps it, or `on_wait_pid` hands it to `reap_on_thread`.
-                    self.wait(false);
-                    return Ok(self.has_exited());
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
+                    // macOS: `WNOHANG`, so a child still mid-exit goes to `reap_on_thread` instead of blocking here.
+                    self.wait(cfg!(not(target_os = "macos")));
                     return Ok(self.has_exited());
                 }
                 Err(err)
@@ -524,6 +531,11 @@ impl Process {
             }
             self.ref_();
             WaiterThread::append(self);
+            return Ok(());
+        }
+        // A `reap_on_thread` thread already waits on this pid; its result will arrive.
+        #[cfg(target_os = "macos")]
+        if matches!(self.poller, Poller::WaiterThread(_)) {
             return Ok(());
         }
 
@@ -636,6 +648,7 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
+            let ctx = self.event_loop_ctx();
             let mut stranded_watch_ref = false;
             // Route the `Fd` arm through the centralized `fd_poll_mut()`
             // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
@@ -643,7 +656,8 @@ impl Process {
                 stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
-                waiter.disable();
+                // The loop this process ref'd, which for a mini or spawnSync loop is not `js_vm_ctx()`.
+                waiter.unref(ctx);
             }
             self.poller = Poller::Detached;
             if stranded_watch_ref && !self.has_exited() {
@@ -887,6 +901,7 @@ pub enum PollerPosix {
     /// poll lives in `Store`; freed via `FilePoll::deinit`,
     /// never via Rust `drop`.
     Fd(core::ptr::NonNull<FilePoll>),
+    /// Waited on off-loop: the shared waiter thread (Linux without pidfd) or a one-shot `reap_on_thread` thread (macOS).
     WaiterThread(KeepAlive),
     Detached,
 }
@@ -1317,8 +1332,8 @@ pub mod waiter_thread_posix {
     #[repr(transparent)]
     struct SendPtr(*mut Process);
     // SAFETY: the pointee is refcounted (`ThreadSafeRefCount`) and the thread
-    // reads only `pid`, `event_loop` and `js_poster`, exactly as the shared
-    // waiter thread does with the pointers in its queue.
+    // touches it only through `post_wait_result`, exactly as the shared waiter
+    // thread does with the pointers in its queue.
     #[cfg(target_os = "macos")]
     unsafe impl Send for SendPtr {}
 
@@ -1341,7 +1356,9 @@ pub mod waiter_thread_posix {
         let thread = std::thread::Builder::new()
             .stack_size(STACK_SIZE)
             .spawn(move || {
-                Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
+                Output::Source::configure_named_thread_no_js(bun_core::ZStr::from_static(
+                    b"Waitpid\0",
+                ));
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
                 // SAFETY: the +1 ref taken before the spawn keeps the pointee live.

@@ -1541,4 +1541,48 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await Promise.all(Array.from({ length: N }, one));
     expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
+
+  // The child is the session leader of its pty, and on macOS its exit completes
+  // only after the parent drains the master. When the child got that far before
+  // the parent's kqueue watch (kevent: ESRCH), the parent blocked in wait4() on
+  // the event-loop thread and both hung. The churning worker slows the parent
+  // into that window; unfixed macOS builds hang by the fifth spawn.
+  test.skipIf(isWindows)("a pty child that exits before the parent watches it is still reaped", async () => {
+    using dir = tempDir("pty-early-exit", {
+      "churn.js": `
+        let keep = [];
+        function churn() {
+          for (let i = 0; i < 2000; i++) {
+            keep.push(new Uint8Array(1 + ((i * 7919) % 65536)), { a: i, s: Buffer.alloc(i % 300, "x").toString() }, new Array(i % 100).fill(i));
+            if (keep.length > 4000) keep = [];
+          }
+          setTimeout(churn, 0);
+        }
+        churn();
+      `,
+      "main-fixture.js": `
+        const worker = new Worker(new URL("./churn.js", import.meta.url).href);
+        for (let i = 0; i < 15; i++) {
+          const proc = Bun.spawn({ cmd: ["sh", "-c", "echo hi"], terminal: { data() {} } });
+          const code = await proc.exited;
+          if (code !== 0) throw new Error("exit code " + code + " at iteration " + i);
+        }
+        console.log("done");
+        worker.terminate();
+        process.exit(0);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  });
 });

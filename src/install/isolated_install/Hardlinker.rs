@@ -1,5 +1,7 @@
 use bun_alloc::AllocError;
 use bun_sys::walker_skippable::Walker;
+#[cfg(not(windows))]
+use bun_sys::FdDirExt;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // OS-unit paths are u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
@@ -264,7 +266,10 @@ impl Hardlinker {
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = crate::isolated_install::make_store_path(self.dest.slice());
+                            // Everything above the package directory is already
+                            // a real directory (see the call before this loop),
+                            // so this only creates the package's own subpaths.
+                            let _ = Fd::cwd().make_path(self.dest.slice());
                         }
                         EntryKind::File => {
                             match sys::linkat(
@@ -294,7 +299,7 @@ impl Hardlinker {
                                             break 'body Some(link_err1);
                                         };
 
-                                        let _ = crate::isolated_install::make_store_path(dest_parent);
+                                        let _ = Fd::cwd().make_path(dest_parent);
                                         match sys::linkat(
                                             entry.dir,
                                             entry.basename,

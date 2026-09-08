@@ -170,15 +170,23 @@ pub(crate) fn install_hoisted_packages(
     let mut new_node_modules = false;
     let cwd = Fd::cwd();
     let node_modules_folder: Dir = 'brk: {
-        // Attempt to open the existing node_modules folder. A symlink here is
-        // not the install tree: `make_open_real_dir` replaces it below, so the
-        // tree starts out empty either way.
+        // Attempt to open the existing node_modules folder
         match Dir::borrow(&cwd).open_real_dir(b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(_) => {}
         }
 
         new_node_modules = true;
+
+        // A symlink at `node_modules` is not an install tree, and following it
+        // writes the tree into the link target. Say so, because a person can
+        // have put it there on purpose, then replace the link with a real
+        // directory. The link target itself is left alone.
+        if Dir::borrow(&cwd).remove_symlink(b"node_modules") {
+            bun_core::warn!(
+                "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
+            );
+        }
 
         // Attempt to create a new node_modules folder
         match Dir::borrow(&cwd).make_open_real_dir(b"node_modules") {

@@ -1743,10 +1743,15 @@ pub(crate) fn install_isolated_packages(
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
-        // A symlink at `node_modules` is not an install tree. Drop the link
-        // (never its target) so the directory is created fresh below, instead
-        // of moving the old tree aside through it.
-        let _ = sys::Dir::cwd().remove_symlink(b"node_modules");
+        // A symlink at `node_modules` is not an install tree. Say so, because a
+        // person can have put it there on purpose, then drop the link (never
+        // its target) so the directory below is created fresh instead of the
+        // old tree being moved aside through it.
+        if sys::Dir::cwd().remove_symlink(b"node_modules") {
+            bun_core::warn!(
+                "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
+            );
+        }
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {

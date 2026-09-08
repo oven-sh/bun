@@ -116,32 +116,20 @@ impl Dir {
     /// instead of following when `name` is a symlink (`ENOTDIR` on Linux,
     /// `ELOOP` elsewhere).
     pub fn open_real_dir(&self, name: &[u8]) -> Maybe<Dir> {
-        #[cfg(not(windows))]
-        {
-            openat_a(
-                self.fd,
-                name,
-                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                0,
-            )
-            .map(Dir::from_fd)
-        }
+        // On Windows `no_follow` maps to `FILE_OPEN_REPARSE_POINT`, which
+        // opens the reparse point itself and succeeds. So reject the entry
+        // first and open it normally.
         #[cfg(windows)]
-        {
-            // `O_NOFOLLOW` maps to `FILE_OPEN_REPARSE_POINT`, which opens the
-            // reparse point itself and reports a junction as a directory. So
-            // test the entry by path first, then open it normally.
-            if self.entry_is_symlink(name) {
-                return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
-            }
-            self.open_dir(
-                name,
-                OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            )
+        if self.entry_is_symlink(name) {
+            return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
         }
+        self.open_dir(
+            name,
+            OpenDirOptions {
+                iterate: true,
+                no_follow: !cfg!(windows),
+            },
+        )
     }
 
     /// Open `name`, a single path component, relative to this dir, and create
@@ -235,21 +223,18 @@ impl Dir {
         }
         #[cfg(windows)]
         {
-            // `lstatat` fstats the opened reparse point, which reports a
-            // junction as a directory, so stat by path instead.
-            let mut dir_buf = bun_paths::path_buffer_pool::get();
-            let Ok(dir_path) = self.get_fd_path(&mut dir_buf) else {
-                return false;
+            // `O::NOFOLLOW` maps to `FILE_OPEN_REPARSE_POINT`, so this handle is
+            // the entry itself. `fstat` of it reports a junction as a plain
+            // directory (libuv does not read the reparse tag), so read the
+            // attributes off the handle instead. Handle-relative, so this needs
+            // no path for `self`.
+            let file = match openat_windows_a(self.fd, name, O::NOFOLLOW, 0) {
+                Ok(fd) => fd,
+                Err(_) => return false,
             };
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
-                &mut path_buf[..],
-                &[&*dir_path, name],
-            );
-            match lstat(path) {
-                Ok(st) => kind_from_mode(st.st_mode as Mode) == EntryKind::SymLink,
-                Err(_) => false,
-            }
+            let is_reparse_point = handle_is_reparse_point(file);
+            let _ = close(file);
+            is_reparse_point
         }
     }
 
@@ -428,6 +413,30 @@ pub const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
 #[cfg(windows)]
 pub const AT_REMOVEDIR: i32 = 0x200;
 
+/// `true` when the open handle is a reparse point: a symlink, a junction, or
+/// any other tag. Reads `FILE_BASIC_INFORMATION` off the handle, so the caller
+/// needs no path for it.
+#[cfg(windows)]
+fn handle_is_reparse_point(fd: Fd) -> bool {
+    use bun_windows_sys::externs as w;
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `fd` is a live HANDLE, `io` and `info` are valid for write.
+    let rc = unsafe {
+        w::ntdll::NtQueryInformationFile(
+            fd.native(),
+            &mut io,
+            core::ptr::from_mut(&mut info).cast(),
+            core::mem::size_of::<w::FILE_BASIC_INFORMATION>() as u32,
+            w::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if w::NT_ERROR(rc) {
+        return false;
+    }
+    (info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}
+
 /// `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
 #[inline]
 pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
@@ -591,8 +600,11 @@ impl Dir {
         }
         #[cfg(not(windows))]
         {
-            let _ = opts;
-            open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+            let mut flags = O::DIRECTORY | O::CLOEXEC | O::RDONLY;
+            if opts.no_follow {
+                flags |= O::NOFOLLOW;
+            }
+            openat_a(self.fd, sub_path, flags, 0).map(Dir::from_fd)
         }
     }
 }

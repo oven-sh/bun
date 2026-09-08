@@ -2274,15 +2274,21 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
-        // `symlink(2)` writes straight through a symlink planted at this
-        // entry's `node_modules`, so open the directories the installer owns on
-        // the way there without following one. Once per entry, not per
-        // dependency: the base is the same for every link below.
-        let _ = crate::isolated_install::make_store_path(dest.slice());
-
         let mut changed = false;
+        let mut base_is_real = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+
+            if !base_is_real {
+                // `symlink(2)` writes straight through a symlink planted at this
+                // entry's `node_modules`, so open the directories the installer
+                // owns on the way there without following one. Once per entry,
+                // not per dependency, and only when there is a link to write:
+                // an entry with no dependencies must not get an empty
+                // `node_modules`.
+                let _ = crate::isolated_install::make_store_path(dest.slice());
+                base_is_real = true;
+            }
 
             dest.set_length(base_len);
             let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget

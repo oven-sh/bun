@@ -1,6 +1,8 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ChildProcess, spawn } from "node:child_process";
 import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -370,6 +372,34 @@ describe("TracingChannel", () => {
         }),
       );
     }
+  });
+});
+
+describe("child_process channel", () => {
+  test("publishes from the ChildProcess constructor with an inspectable pre-spawn object, like Node", async () => {
+    // Node publishes at the end of the ChildProcess constructor, before spawn()
+    // sets spawnfile/pid, and the object is safe to inspect there
+    // (connected === false). Bun's connected getter used to throw pre-spawn.
+    const seen: Array<Record<string, unknown>> = [];
+    const onChild = ({ process: p }: any) => {
+      seen.push({
+        isChildProcess: p instanceof ChildProcess,
+        connected: p.connected,
+        pid: p.pid,
+        killed: p.killed,
+      });
+    };
+    subscribe("child_process", onChild);
+    try {
+      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: "ignore" });
+      const { promise, resolve, reject } = Promise.withResolvers<number | null>();
+      child.on("exit", resolve);
+      child.on("error", reject);
+      expect(await promise).toBe(0);
+    } finally {
+      unsubscribe("child_process", onChild);
+    }
+    expect(seen).toEqual([{ isChildProcess: true, connected: false, pid: undefined, killed: false }]);
   });
 });
 

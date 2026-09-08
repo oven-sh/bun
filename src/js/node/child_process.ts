@@ -1361,8 +1361,10 @@ class ChildProcess extends EventEmitter {
   }
 
   get connected() {
+    // undefined before spawn() (the state `child_process` channel subscribers
+    // observe), null after exit; Node reports false for both.
     const handle = this.#handle;
-    if (handle === null) return false;
+    if (handle == null) return false;
     return handle.connected ?? false;
   }
 

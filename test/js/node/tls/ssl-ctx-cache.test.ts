@@ -383,16 +383,18 @@ test("a server's shared SSL_CTX is interned by its client-certificate policy too
   // resumed handshake skips client authentication.
   const permissive = tls.createServer({ ...tlsCerts });
   const mutual = tls.createServer({ ...tlsCerts, requestCert: true });
-  const strict = tls.createServer({ ...tlsCerts, requestCert: true, rejectUnauthorized: false });
+  const optionalCert = tls.createServer({ ...tlsCerts, requestCert: true, rejectUnauthorized: false });
   // The same options still intern to one context, so the split above is the
   // policy and not a broken digest.
   const sameAsPermissive = tls.createServer({ ...tlsCerts });
+  const ctx = (s: tls.Server) => (s as any)._sharedCreds.context;
   try {
-    expect((permissive as any)._sharedCreds.context).not.toBe((mutual as any)._sharedCreds.context);
-    expect((mutual as any)._sharedCreds.context).not.toBe((strict as any)._sharedCreds.context);
-    expect((sameAsPermissive as any)._sharedCreds.context).toBe((permissive as any)._sharedCreds.context);
+    expect(ctx(permissive)).not.toBe(ctx(mutual));
+    expect(ctx(permissive)).not.toBe(ctx(optionalCert));
+    expect(ctx(mutual)).not.toBe(ctx(optionalCert));
+    expect(ctx(sameAsPermissive)).toBe(ctx(permissive));
   } finally {
-    for (const s of [permissive, mutual, strict, sameAsPermissive]) s.close();
+    for (const s of [permissive, mutual, optionalCert, sameAsPermissive]) s.close();
   }
 });
 

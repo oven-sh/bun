@@ -6080,6 +6080,56 @@ describe("stream getters over the lifecycle", () => {
     }
   });
 
+  // node's onSessionHeaders sets endAfterHeaders only from the header block that creates the
+  // stream: a later trailers block (END_STREAM) does not flip it on the server, and a client
+  // request stream never gets it, even when the response HEADERS frame carries END_STREAM.
+  it("endAfterHeaders comes only from the block that opened the stream", async () => {
+    const server = http2.createServer();
+    const serverSide = {};
+    const serverStreamClosed = Promise.withResolvers();
+    server.on("stream", stream => {
+      serverSide.atStream = stream.endAfterHeaders;
+      stream.on("trailers", () => (serverSide.atTrailers = stream.endAfterHeaders));
+      stream.on("end", () => {
+        serverSide.atEnd = stream.endAfterHeaders;
+        stream.respond({ ":status": 204 }, { endStream: true });
+      });
+      stream.on("close", () => {
+        serverSide.atClose = stream.endAfterHeaders;
+        serverStreamClosed.resolve();
+      });
+      stream.resume();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+        const clientSide = {};
+        const { promise, resolve, reject } = Promise.withResolvers();
+        req.on("wantTrailers", () => req.sendTrailers({ "x-t": "1" }));
+        req.on("response", (headers, flags) => {
+          clientSide.atResponse = req.endAfterHeaders;
+          clientSide.responseEndStream = (flags & http2.constants.NGHTTP2_FLAG_END_STREAM) !== 0;
+        });
+        req.on("error", reject);
+        req.on("close", () => {
+          clientSide.atClose = req.endAfterHeaders;
+          resolve();
+        });
+        req.resume();
+        req.end("body");
+        await Promise.all([promise, serverStreamClosed.promise]);
+        expect(serverSide).toEqual({ atStream: false, atTrailers: false, atEnd: false, atClose: false });
+        expect(clientSide).toEqual({ atResponse: false, responseEndStream: true, atClose: false });
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
   it("the http2.connect() listener receives the session and the socket", async () => {
     const server = http2.createServer();
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));

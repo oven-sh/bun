@@ -2299,7 +2299,8 @@ class Http2Stream extends Duplex {
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number = 0;
-  // END_STREAM flag of the received header block (node's onSessionHeaders); kept after close.
+  // END_STREAM flag of the header block that opened the stream (node's onSessionHeaders sets it
+  // only there: a server's request block, never a client's response or trailers). Kept after close.
   [kEndAfterHeaders]: boolean = false;
   headersSent: boolean = false;
   [bunHTTP2Headers]: any;
@@ -5151,7 +5152,6 @@ class ClientHttp2Session extends Http2Session {
             // clobbered by a stale read-modify-write (see the server-side note
             // at the stream handler above).
             stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-            stream[kEndAfterHeaders] = (flags & NGHTTP2_FLAG_END_STREAM) !== 0;
             if (header_status === 421) {
               // 421 Misdirected Request
               removeOriginFromSet(self, stream);

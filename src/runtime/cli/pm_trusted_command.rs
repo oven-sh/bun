@@ -637,7 +637,8 @@ impl TrustCommand {
         // `package_manager_command.rs`.
         // SAFETY: `load_lockfile` is `Ok` (errors exited in
         // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
+        // only for its scalar `format`/`migrated` fields (`save_format()`,
+        // `choose_config_version_with_saved()`), never through `ok.lockfile`.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);

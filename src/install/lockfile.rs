@@ -440,11 +440,24 @@ impl<'a> LoadResult<'a> {
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
     pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
+        let saved_config_version = match self {
+            LoadResult::Ok(ok) => ok.lockfile.saved_config_version,
+            LoadResult::NotFound | LoadResult::Err(_) => None,
+        };
+        self.choose_config_version_with_saved(saved_config_version)
+    }
+
+    /// `choose_config_version` for callers that already hold the loaded lockfile as `&mut` and so
+    /// must not read it through `ok.lockfile`; only the scalar `migrated` field is read here.
+    pub(crate) fn choose_config_version_with_saved(
+        &self,
+        saved_config_version: Option<ConfigVersion>,
+    ) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
             LoadResult::Ok(ok) => match ok.migrated {
                 Migrated::None => {
-                    if let Some(config_version) = ok.lockfile.saved_config_version {
+                    if let Some(config_version) = saved_config_version {
                         return (config_version, false);
                     }
 
@@ -1850,9 +1863,13 @@ impl Lockfile {
         let save_format = load_result.save_format(options);
         // `bun install` decides this up front; every other command that saves (`bun pm migrate`,
         // `bun pm trust`) keeps what the lockfile had, or what an install would have picked for it.
-        let config_version = options
-            .config_version
-            .unwrap_or_else(|| load_result.choose_config_version().0);
+        // `self` is the lockfile inside `load_result`, so read the saved version from `self`: callers
+        // rely on `load_result` being touched only for its scalar fields.
+        let config_version = options.config_version.unwrap_or_else(|| {
+            load_result
+                .choose_config_version_with_saved(self.saved_config_version)
+                .0
+        });
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
                 bun_core::pretty_errorln!(

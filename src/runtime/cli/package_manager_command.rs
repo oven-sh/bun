@@ -750,10 +750,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
             // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
             // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
-            // for `save_format()` / `loaded_from_binary_lockfile()` (scalar
-            // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
-            // so `&mut *lf` remains the sole live mutable view of the heap
-            // lockfile. `options` is read via `pm_raw` (disjoint allocation).
+            // for its scalar `format`/`migrated` fields (`save_format()`,
+            // `loaded_from_binary_lockfile()`, `choose_config_version_with_saved()`)
+            // and never dereferences `ok.lockfile`, so `&mut *lf` remains the sole
+            // live mutable view of the heap lockfile. `options` is read via
+            // `pm_raw` (disjoint allocation).
             unsafe {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }

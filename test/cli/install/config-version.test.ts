@@ -159,7 +159,7 @@ describe.concurrent("configVersion", () => {
       cmd: [bunExe(), "pm", "trust", "dep"],
       cwd: packageDir,
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [trustErr, trustExitCode] = await Promise.all([trust.stderr.text(), trust.exited]);

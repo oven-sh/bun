@@ -865,38 +865,42 @@ fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
 
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
-/// order, `Option<_>` fields are unwrapped, and a single space is written
-/// between fields (unconditionally — the separator is not elided when an
-/// optional field is `None`).
+/// order, `Option<_>` fields are unwrapped, and a single space separates
+/// adjacent fields that printed something (a `None` optional prints nothing
+/// and takes no separator).
 ///
 /// `access` maps a field ident to the expression that reads it (`self.f` for
 /// a struct, the binding name for a destructured enum variant).
 fn gen_field_seq_to_css<'a>(
-    fields: impl ExactSizeIterator<Item = &'a syn::Field> + Clone,
+    fields: impl Iterator<Item = &'a syn::Field>,
     access: impl Fn(&syn::Ident) -> TokenStream2,
 ) -> TokenStream2 {
-    let len = fields.len();
-    let last = len.saturating_sub(1);
-    let stmts = fields.enumerate().map(|(j, f)| {
-        let fname = f.ident.as_ref().unwrap();
-        let slot = access(fname);
-        let body = if is_option_type(&f.ty) {
+    let sep = quote! {
+        if __needs_space {
+            __dest.write_char(b' ')?;
+        }
+    };
+    let stmts = fields.map(|f| {
+        let slot = access(f.ident.as_ref().unwrap());
+        if is_option_type(&f.ty) {
             quote! {
                 if let ::core::option::Option::Some(__v) = &#slot {
+                    #sep
                     __v.to_css(__dest)?;
+                    __needs_space = true;
                 }
             }
         } else {
-            quote! { #slot.to_css(__dest)?; }
-        };
-        let sep = if len > 1 && j != last {
-            quote! { __dest.write_char(b' ')?; }
-        } else {
-            quote! {}
-        };
-        quote! { #body #sep }
+            quote! {
+                #sep
+                #slot.to_css(__dest)?;
+                __needs_space = true;
+            }
+        }
     });
-    quote! { #(#stmts)* }
+    // The store after the last field is dead. rustc does not lint derive
+    // output, so it needs no `allow(unused_assignments)`.
+    quote! { let mut __needs_space = false; #(#stmts)* }
 }
 
 /// `true` when `ty` is spelled `Option<…>` (any path ending in `Option` with one
@@ -929,8 +933,8 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
         // Auto-serializer for a payload struct: the printer is the field
-        // sequence, space-separated, with optionals unwrapped (and the
-        // inter-field space emitted unconditionally).
+        // sequence, space-separated, with optionals unwrapped (a `None`
+        // optional prints nothing and takes no separator).
         //
         // Proc-macros cannot see through a type name, so `ToCss` is derived
         // directly on the payload struct; the enum arm's

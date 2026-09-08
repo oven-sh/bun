@@ -1757,8 +1757,7 @@ impl PublishCommand {
                 ) {
                     Ok(dir) => dir.into_raw(),
                     Err(e) => {
-                        // `ENOTDIR`/`ELOOP`: it, or a directory on the way to it, is a symlink
-                        // (pack does not follow one either) or some other non-directory.
+                        // ENOTDIR/ELOOP: a symlink on the way; pack does not follow it either.
                         if matches!(
                             e.get_errno(),
                             bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP

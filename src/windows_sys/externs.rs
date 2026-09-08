@@ -352,9 +352,7 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
-/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`) — output of
-/// `NtQueryInformationFile(.., FileAttributeTagInformation)`. `ReparseTag` is
-/// 0 when the file is not a reparse point.
+/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`). `ReparseTag` is 0 unless a reparse point.
 #[repr(C)]
 pub struct FILE_ATTRIBUTE_TAG_INFORMATION {
     pub FileAttributes: ULONG,

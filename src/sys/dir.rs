@@ -423,15 +423,13 @@ impl Dir {
         open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd)
     }
 
-    /// Open `sub_path` as a `Dir` handle with sub-path access.
+    /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path
+    /// access.
     ///
-    /// `no_follow` refuses a link as the last component of `sub_path`:
-    /// `ENOTDIR` on Linux, `ELOOP` on the other POSIX targets and on Windows,
-    /// where the open itself takes the symlink or junction and this reports it.
-    /// On POSIX, `iterate` is advisory (the handle is opened with
-    /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
-    /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
-    /// handle is opened **without** `read_only` so the caller may
+    /// On POSIX, `iterate` is advisory and `no_follow` adds `O_NOFOLLOW` (the handle is
+    /// opened with `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows
+    /// the flags select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`,
+    /// and the handle is opened **without** `read_only` so the caller may
     /// create/rename children — unlike the read-only `open_dir_*` iteration
     /// helpers.
     #[inline]
@@ -448,6 +446,7 @@ impl Dir {
                 },
             )
             .map(Dir::from_fd)?;
+            // `no_follow` opened the link itself; refuse it with `ELOOP` like POSIX `O_NOFOLLOW`.
             if opts.no_follow && is_link_reparse_point(dir.fd)? {
                 return Err(Error::from_code(E::ELOOP, Tag::open).with_path(sub_path));
             }

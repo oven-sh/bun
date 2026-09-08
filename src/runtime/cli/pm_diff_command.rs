@@ -598,8 +598,7 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                // Same opens as pack: an optional (bin) entry that does not open is left out, and
-                // nothing is read through a symlink.
+                // Opened as pack opens them: never through a symlink, unopenable bins left out.
                 let mut opener = crate::cli::pack_command::PackFileOpener::new();
                 for (path, optional) in queue.into_paths() {
                     let rel = path.as_bytes();

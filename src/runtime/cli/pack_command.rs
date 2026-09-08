@@ -789,10 +789,7 @@ fn add_entire_tree(
     Ok(())
 }
 
-/// How the tree walk opens a directory below the package root: for iteration,
-/// and not through a symlink. The walk only descends into entries it listed as
-/// directories, so `no_follow` only refuses one that was replaced by a symlink
-/// since (`ENOTDIR` on Linux, `ELOOP` elsewhere).
+/// For iteration, and never through a symlink that replaced a directory the walk listed.
 pub(crate) const WALK_DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
     iterate: true,
     no_follow: true,
@@ -812,22 +809,18 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     }
 }
 
-/// What separates the components of a path handed to `openat`. Pack joins with
-/// `/`, but a `bin` path from package.json can carry a `\`, which Windows
-/// resolves as a separator too, so it has to be opened one side at a time there.
+/// Windows resolves a `\` inside a package.json `bin` path as a separator too.
 #[cfg(windows)]
 const PATH_SEPARATORS: &[u8] = b"/\\";
 #[cfg(not(windows))]
 const PATH_SEPARATORS: &[u8] = b"/";
 
-/// The components of a relative path, without the empty ones a doubled or
-/// trailing separator produces, and without `.`.
+/// The non-empty components of a relative path, `.` dropped.
 fn path_components<'a>(path: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + 'a {
     strings::tokenize_any(path, PATH_SEPARATORS).filter(|c| !strings::eql(c, b"."))
 }
 
-/// Refuses `..`, the one component that takes a path opened one component at a
-/// time out of the directory it started from.
+/// `..` is the one component that leaves the directory a walk started from.
 fn check_path_component(name: &[u8]) -> bun_sys::Maybe<()> {
     if strings::eql(name, b"..") {
         return Err(
@@ -837,8 +830,7 @@ fn check_path_component(name: &[u8]) -> bun_sys::Maybe<()> {
     Ok(())
 }
 
-/// Opens the directory at `sub_path` (relative, `/`-separated) for the tree
-/// walk, one component at a time, so that none is reached through a symlink.
+/// Opens `sub_path` below `root` one component at a time, never through a symlink.
 pub(crate) fn open_walk_dir_beneath(root: &Dir, sub_path: &[u8]) -> bun_sys::Maybe<Dir> {
     let mut dir: Option<Dir> = None;
     for component in path_components(sub_path) {
@@ -852,41 +844,27 @@ pub(crate) fn open_walk_dir_beneath(root: &Dir, sub_path: &[u8]) -> bun_sys::May
     dir.ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open))
 }
 
-/// Opens the files that go into the tarball. A path is resolved below the
-/// package root one component at a time with `O_NOFOLLOW`, so no file is read
-/// through a symlink, not even one that replaced a directory after the tree
-/// walk listed the files in it.
-///
-/// The directories that lead to the last file stay open. The pack queue pops
-/// its paths in sorted order, which keeps each subtree together, so every
-/// directory is opened once.
+/// Opens tarball members below the root one component at a time, never through a symlink.
 pub(crate) struct PackFileOpener {
-    /// Directory of the last file, relative to the root, no trailing `/`.
+    /// Directory of the last member, relative to the root.
     dir_path: Vec<u8>,
-    /// One open directory per component of `dir_path`, outermost first, with
-    /// the offset in `dir_path` where that component ends.
+    /// (end offset in `dir_path`, open directory) per component; sorted input opens each once.
     dirs: Vec<(usize, Dir)>,
 }
 
 impl PackFileOpener {
-    /// `O_PATH` where it exists: resolving the next component needs search
-    /// permission on a directory, as it did as part of a longer path, not read
-    /// permission.
+    /// `O_PATH` where it exists: passing through a directory needs search permission, not read.
     const DIR_FLAGS: i32 =
         bun_sys::O::PATH | bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW | bun_sys::O::CLOEXEC;
 
-    /// `O_NONBLOCK` so that a FIFO fails the file type check below instead of
-    /// blocking in `open()`. Windows has neither flag.
+    /// `O_NONBLOCK` so a FIFO fails the type check in `open()` below instead of blocking.
     #[cfg(not(windows))]
     const FILE_FLAGS: i32 =
         bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
     #[cfg(windows)]
     const FILE_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
 
-    /// Fails when `fd` is a symlink or a junction. `O_NOFOLLOW` refuses the
-    /// open on POSIX, so this only has work to do on Windows, where the same
-    /// flag opens the reparse point itself and a relative open still resolves
-    /// through it.
+    /// Windows `O_NOFOLLOW` opens the link itself and resolves through it, so ask the handle.
     fn check_not_a_link(fd: Fd, path: &[u8]) -> bun_sys::Maybe<()> {
         #[cfg(windows)]
         if bun_sys::is_link_reparse_point(fd)? {
@@ -906,12 +884,7 @@ impl PackFileOpener {
         }
     }
 
-    /// Opens `path` (relative to `root`, `/`-separated, normalized) for
-    /// reading. Fails with the `openat` error of the first component that does
-    /// not open this way (`ELOOP`, or `ENOTDIR` for a directory component on
-    /// Linux, when it is a symlink), with `EISDIR` when `path` names a
-    /// directory, and with `ENODEV` when it names another kind of file that
-    /// is not a regular one.
+    /// Fails `ELOOP`/`ENOTDIR` at a symlink, `EISDIR` at a directory, `ENODEV` at another non-file.
     pub(crate) fn open(
         &mut self,
         root: &Dir,
@@ -1975,8 +1948,8 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
 /// would create.
 ///
-/// `unbuffered_reader` is a *view* of a fd that the call site owns (a `File`
-/// whose Drop fires after the read loop). The
+/// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
+/// a `File` whose Drop fires after the read loop). The
 /// previous fd may already be closed; disarm its `File::Drop` before
 /// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]

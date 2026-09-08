@@ -3703,16 +3703,7 @@ mod windows_impl {
         // the caller's HANDLE, so it leaked a CRT slot per call).
         fstat_handle(fd)
     }
-    /// `true` when `fd` is a reparse point that names another path: a symlink,
-    /// a junction, or any other tag with the name-surrogate bit. Reparse points
-    /// that only decorate the file in place (dedup, cloud placeholders,
-    /// AppExecLink, WOF compression) are not links and report `false`.
-    ///
-    /// `O::NOFOLLOW` maps to `FILE_OPEN_REPARSE_POINT`, which opens the reparse
-    /// point itself instead of failing the open, and `NtCreateFile` still
-    /// resolves a relative path through such a handle. So a caller that must
-    /// not follow a link asks the handle it got. `fstat` cannot answer: libuv's
-    /// `uv_stat_t` reports a reparse point as the kind it points at.
+    /// `true` for a symlink or junction (name-surrogate tag), `false` for in-place tags like dedup.
     pub fn is_link_reparse_point(fd: Fd) -> Maybe<bool> {
         let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
         let mut info: w::FILE_ATTRIBUTE_TAG_INFORMATION = bun_core::ffi::zeroed();

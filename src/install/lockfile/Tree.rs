@@ -537,6 +537,23 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Whether an install's `--verbose` diagnostics are printed while its layout is computed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstallLog {
+    Verbose,
+    Quiet,
+}
+
+impl InstallLog {
+    pub(crate) fn of(manager: &PackageManager) -> InstallLog {
+        if manager.options.log_level.is_verbose() {
+            InstallLog::Verbose
+        } else {
+            InstallLog::Quiet
+        }
+    }
+}
+
 // `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
 // `Builder.lockfile` safety contract), so callers must thread `resolutions`
 // explicitly to avoid an aliasing read through the shared `&Lockfile`.
@@ -548,7 +565,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
-    log_skipped: bool,
+    log: InstallLog,
 ) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
@@ -568,7 +585,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
     if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
-        if log_skipped {
+        if log == InstallLog::Verbose {
             let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);
             if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
@@ -718,7 +735,7 @@ impl Tree {
                     manager,
                     lockfile,
                     &*builder.resolutions,
-                    manager.options.log_level.is_verbose(),
+                    InstallLog::of(manager),
                 ) {
                     continue;
                 }

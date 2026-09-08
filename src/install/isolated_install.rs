@@ -42,7 +42,7 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{InstallLog, is_filtered_dependency_or_workspace};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -206,19 +206,12 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
-/// Whether `build_store` prints an install's `--verbose` output: pass timings and skipped packages.
-#[derive(Clone, Copy)]
-pub(crate) enum StoreLog {
-    Verbose,
-    Quiet,
-}
-
 /// Every `(peer edge, package)` pair the isolated store wires, one per peer context of the owner.
 pub fn served_peers(
     manager: &PackageManager,
     lockfile: &Lockfile,
 ) -> Result<Vec<(DependencyID, PackageID)>, AllocError> {
-    let store = build_store(manager, lockfile, true, &[], None, StoreLog::Quiet)?;
+    let store = build_store(manager, lockfile, true, &[], None, InstallLog::Quiet)?;
     let nodes = store.nodes.slice();
     let node_pkg_ids = nodes.items_pkg_id();
     let node_dependencies = nodes.items_dependencies();
@@ -262,10 +255,10 @@ pub(crate) fn build_store(
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    log: StoreLog,
+    log: InstallLog,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
-    let verbose = matches!(log, StoreLog::Verbose);
+    let verbose = log == InstallLog::Verbose;
     let pkgs = lockfile.packages.slice();
     let pkg_dependency_slices = pkgs.items_dependencies();
     let pkg_resolutions = pkgs.items_resolution();
@@ -357,7 +350,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
-                    verbose,
+                    log,
                 ) {
                     provides.set(pkg_id as usize, bit);
                 }
@@ -428,7 +421,7 @@ pub(crate) fn build_store(
             manager,
             lockfile,
             resolutions,
-            verbose,
+            log,
         ) {
             continue;
         }
@@ -740,7 +733,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
-                    verbose,
+                    log,
                 ) {
                     continue;
                 }
@@ -1196,11 +1189,7 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
-    let log = if manager.options.log_level.is_verbose() {
-        StoreLog::Verbose
-    } else {
-        StoreLog::Quiet
-    };
+    let log = InstallLog::of(manager);
     let store: Store = build_store(
         &*manager,
         &*lockfile,

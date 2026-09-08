@@ -171,9 +171,17 @@ impl Dir {
             }
             _ => return Err(err),
         }
-        if let Err(e) = self.make_dir(name) {
-            if e != bun_errno::SystemErrno::EEXIST {
-                return Err(Error::from_code(e.into(), Tag::mkdir).with_path(name));
+        {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let len = name.len().min(buf.0.len() - 1);
+            buf.0[..len].copy_from_slice(&name[..len]);
+            buf.0[len] = 0;
+            // SAFETY: NUL-terminated above.
+            let name_z = ZStr::from_buf(&buf.0[..], len);
+            if let Err(e) = mkdirat(self.fd, name_z, 0o755) {
+                if e.get_errno() != E::EEXIST {
+                    return Err(e);
+                }
             }
         }
         self.open_real_dir(name)

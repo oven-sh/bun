@@ -1,5 +1,4 @@
 use bun_alloc::AllocError;
-#[cfg(not(windows))]
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // OS-unit paths are u8 on POSIX, u16

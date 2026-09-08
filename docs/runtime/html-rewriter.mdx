@@ -222,8 +222,8 @@ rewriter.on("div", {
     el.removeAttribute("class");
 
     // Content manipulation
-    el.setInnerContent("New content"); // Escapes HTML by default
-    el.setInnerContent("<p>HTML content</p>", { html: true }); // Parses HTML
+    el.setInnerContent("New content"); // Text by default: <, > and & are escaped (see "Text vs. HTML content")
+    el.setInnerContent("<p>HTML content</p>", { html: true }); // Written as HTML
     el.setInnerContent(""); // Clear content
 
     // Position manipulation
@@ -336,6 +336,35 @@ rewriter.onDocument({
   },
 });
 ```
+
+### Text vs. HTML content
+
+Every method that inserts content (`before`, `after`, `prepend`, `append`, `replace`, `setInnerContent`, and `end.append`) takes a string and an optional `{ html: true }`:
+
+- Without it, the string is text. `<`, `>` and `&` are written as `&lt;`, `&gt;` and `&amp;`, so the string can never add markup to the page.
+- With `{ html: true }`, the string is written as is.
+
+The escaping is the same in every element, `<script>` and `<style>` included (this matches Cloudflare Workers). A browser does not decode entities inside `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` or `<plaintext>`, so text inserted there keeps the entities: `el.append("if (a < b) run()")` on a `<script>` produces `if (a &lt; b) run()`, a syntax error. To insert script or style source, pass `{ html: true }` and make sure the string cannot close the element early:
+
+```ts
+// JSON state: "<" only occurs inside JSON strings, where "\u003c" means the same
+// thing, so this is lossless and rules out "</script>" and "<!--".
+rewriter.on('script[type="application/json"]', {
+  element(el) {
+    el.setInnerContent(JSON.stringify(state).replaceAll("<", "\\u003c"), { html: true });
+  },
+});
+
+// CSS or JavaScript source has no lossless escape. Refuse input that could end the element.
+rewriter.on("style", {
+  element(el) {
+    if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
+    el.append(css, { html: true });
+  },
+});
+```
+
+For JavaScript source, refuse `</script` and `<!--` (ASCII case-insensitive) the same way. `<textarea>` and `<title>` decode entities like ordinary elements, so the default escaping is correct there.
 
 ### Response Handling
 

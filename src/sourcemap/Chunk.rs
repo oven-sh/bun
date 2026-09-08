@@ -369,6 +369,17 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// `line_offset_table_byte_offset_list`.
     pub line_offset_table_first_non_ascii: RawSlice<u32>,
 
+    /// The input file's own source map (from its `sourceMappingURL` comment).
+    /// When set, every mapping is translated through it and a position it does
+    /// not cover gets no mapping, so `source_index` and `original_*` in the
+    /// chunk refer to `input_source_map.sources`, not to the input file.
+    pub input_source_map: Option<&'a crate::InputSourceMap>,
+
+    /// Line in the input file of the previous `add_source_mapping` call, the
+    /// seed for `find_line_with_hint`. (`prev_state.original_line` is a line in
+    /// some other file once an input source map has rewritten it.)
+    pub prev_input_line: u32,
+
     // This is a workaround for a bug in the popular "source-map" library:
     // https://github.com/mozilla/source-map/issues/261. The library will
     // sometimes return null when querying a source map unless every line
@@ -400,6 +411,8 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             has_prev_state: false,
             line_offset_table_byte_offset_list: RawSlice::EMPTY,
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
+            input_source_map: None,
+            prev_input_line: 0,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
@@ -607,9 +620,22 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.last_generated_update = output.len() as u32;
     }
 
+    /// Returns `false` when the input source map does not cover the position,
+    /// in which case nothing was appended.
     #[inline(always)]
-    pub(crate) fn append_mapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) -> bool {
+        if let Some(input_source_map) = self.input_source_map {
+            let Some(mapping) =
+                input_source_map.find(current_state.original_line, current_state.original_column)
+            else {
+                return false;
+            };
+            current_state.source_index = mapping.source_index;
+            current_state.original_line = mapping.original.lines.zero_based();
+            current_state.original_column = mapping.original.columns.zero_based();
+        }
         self.append_mapping_without_remapping(current_state);
+        true
     }
 
     #[inline(always)]
@@ -669,15 +695,13 @@ impl NewBuilder<'_, VLQSourceMap> {
         let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
         // The printer emits mappings in (mostly) source order, so the previous
-        // call's `original_line` is the right answer or one/two lines before
-        // it >95% of the time. Seed `find_line_with_hint` with it; the
-        // fallback is the same binary search as before.
-        let original_line = LineOffsetTable::find_line_with_hint(
-            byte_offsets,
-            loc,
-            self.prev_state.original_line as u32,
-        );
+        // call's line is the right answer or one/two lines before it >95% of
+        // the time. Seed `find_line_with_hint` with it; the fallback is the
+        // same binary search as before.
+        let original_line =
+            LineOffsetTable::find_line_with_hint(byte_offsets, loc, self.prev_input_line);
         let idx = original_line.max(0) as usize;
+        self.prev_input_line = idx as u32;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.
         // `MultiArrayList::get` builds a 272-byte `Slice` (`[*mut u8; 32]` +
@@ -716,7 +740,7 @@ impl NewBuilder<'_, VLQSourceMap> {
             });
         }
 
-        self.append_mapping(SourceMapState {
+        let appended = self.append_mapping(SourceMapState {
             generated_line: self.prev_state.generated_line,
             generated_column: self.generated_column.max(0),
             source_index: self.prev_state.source_index,
@@ -725,7 +749,9 @@ impl NewBuilder<'_, VLQSourceMap> {
         });
 
         // This line now has a mapping on it, so don't insert another one
-        self.line_starts_with_mapping = true;
+        if appended {
+            self.line_starts_with_mapping = true;
+        }
     }
 }
 

@@ -54,6 +54,9 @@ pub struct Ast<'a> {
     // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
+    /// The last `//# sourceMappingURL=` (or `//@`, `/*# */`) comment in the
+    /// file: the URL text and where it is.
+    pub source_mapping_url: Option<crate::Span>,
     /// `export default X` where `X` is an import binding in this file. When
     /// `X` resolves to a module namespace the linker binds importers of
     /// `default` through `X` (a namespace never changes identity, so the
@@ -125,6 +128,7 @@ impl<'a> Ast<'a> {
             import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
             directive: None,
+            source_mapping_url: None,
             export_default_alias_of_import: Ref::NONE,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),

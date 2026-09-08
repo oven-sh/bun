@@ -299,6 +299,23 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
+    /// Whether the value uses `var()` or `env()`, which makes a declaration valid at parse time.
+    pub(crate) fn has_variable_reference(&self) -> bool {
+        self.v.iter().any(|token_or_value| match token_or_value {
+            TokenOrValue::Var(_) | TokenOrValue::Env(_) => true,
+            TokenOrValue::Function(f) => f.arguments.has_variable_reference(),
+            TokenOrValue::UnresolvedColor(color) => match color {
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                    alpha.has_variable_reference()
+                }
+                UnresolvedColor::LightDark { light, dark } => {
+                    light.has_variable_reference() || dark.has_variable_reference()
+                }
+            },
+            _ => false,
+        })
+    }
+
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());

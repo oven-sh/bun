@@ -7735,7 +7735,12 @@ describe("css tests", () => {
     minify_test(".foo { color: red; --x: initial; all: var(--x) }", ".foo{--x:initial;all:var(--x)}");
     minify_test(".foo { all: var(--x); color: red }", ".foo{all:var(--x);color:red}");
     minify_test(".foo { all: var(--x); all: inherit }", ".foo{all:inherit}");
+    minify_test(".foo { color: red; all: foo(1px, var(--x)) }", ".foo{all:foo(1px,var(--x))}");
+    minify_test(".foo { color: red; all: env(--x) }", ".foo{all:env(--x)}");
     minify_test(".foo { ALL: Initial }", ".foo{all:initial}");
+    // Any other value is invalid. Browsers drop the declaration, so it resets nothing.
+    minify_test(".foo { color: red; all: none }", ".foo{color:red;all:none}");
+    minify_test(".foo { color: red; all: initial 0; margin: 0 }", ".foo{color:red;all:initial 0;margin:0}");
     // Rules only merge when the keywords are equal.
     minify_test(".a { all: initial } .b { all: unset }", ".a{all:initial}.b{all:unset}");
     minify_test(".a { all: initial } .b { all: initial }", ".a,.b{all:initial}");
@@ -7753,6 +7758,10 @@ describe("css tests", () => {
     minify_test(
       ".foo { direction: rtl; unicode-bidi: isolate; all: unset; color: red }",
       ".foo{all:unset;color:red;direction:rtl;unicode-bidi:isolate}",
+    );
+    minify_test(
+      ".foo { direction: rtl; direction: var(--d); unicode-bidi: embed; unicode-bidi: var(--u); all: unset }",
+      ".foo{direction:rtl;direction:var(--d);unicode-bidi:embed;unicode-bidi:var(--u);all:unset}",
     );
     // A typed `direction`/`unicode-bidi` stays ahead of a later unparsed one.
     minify_test(".foo { direction: rtl; direction: var(--d) }", ".foo{direction:rtl;direction:var(--d)}");

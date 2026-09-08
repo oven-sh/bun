@@ -503,7 +503,8 @@ impl<'bump> DeclarationHandler<'bump> {
                 true
             }
             css::Property::Unparsed(unparsed) => match unparsed.property_id {
-                css::PropertyId::All => {
+                // Any other non-keyword value is invalid, and browsers drop the declaration.
+                css::PropertyId::All if unparsed.value.has_variable_reference() => {
                     self.reset_for_all();
                     let bump = self.decls.bump();
                     self.decls
@@ -540,6 +541,7 @@ impl<'bump> DeclarationHandler<'bump> {
                 css::Property::Custom(custom) => {
                     matches!(custom.name, CustomPropertyName::Custom(..))
                 }
+                css::Property::Direction(..) | css::Property::UnicodeBidi(..) => true,
                 css::Property::Unparsed(unparsed) => matches!(
                     unparsed.property_id,
                     css::PropertyId::Direction | css::PropertyId::UnicodeBidi

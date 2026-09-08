@@ -396,8 +396,7 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-// Fields HttpResponse::upgrade() writes itself (RFC 6455 §4.2.2), plus the
-// framing fields a 1xx must not carry (RFC 9110 §8.6, RFC 9112 §6.1).
+// Written by HttpResponse::upgrade() itself (RFC 6455 §4.2.2), or not allowed in a 1xx (RFC 9110 §8.6).
 static bool isWebSocketHandshakeOwnedHeader(WebCore::HTTPHeaderName name)
 {
     switch (name) {

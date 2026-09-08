@@ -1034,12 +1034,19 @@ if (isDockerEnabled()) {
       // real is the raw 4-byte float; a parameterless query gets text, where
       // the server prints the shortest decimal that round-trips. Widening the
       // binary f32 with `as f64` gave 0.10000000149011612 for a stored 0.1.
-      const values = "unnest(array[0.1, 0.3, -2.5, 3.4e38, 1e-40, 16777217, 123456.789, 'NaN', 'Infinity']::real[])";
-      const expected = [0.1, 0.3, -2.5, 3.4e38, 1e-40, 16777216, 123456.79, NaN, Infinity];
+      const values =
+        "unnest(array[0.1, -0.1, 0.3, 1.5, -2.5, 1.0/3, 3.14159, 1e20, 3.4e38, 1e-40, 16777217, 123456.789, 0, 'NaN', 'Infinity', '-Infinity']::real[])";
+      const finite = [0.1, -0.1, 0.3, 1.5, -2.5, 0.33333334, 3.14159, 1e20, 3.4e38, 1e-40, 16777216, 123456.79, 0];
+      const expected = [...finite, NaN, Infinity, -Infinity];
       const binary = await sql.unsafe(`select x from ${values} as x where $1 = 1`, [1]);
       const text = await sql.unsafe(`select x from ${values} as x`);
       expect(binary.map(row => row.x)).toEqual(expected);
       expect(text.map(row => row.x)).toEqual(expected);
+      // real[] is unchanged: a Float32Array of the stored values on the binary
+      // path, a plain Array of the printed decimals on the text path.
+      const array = "select array[0.1, 0.3333333, 1.5]::real[] as x";
+      expect((await sql.unsafe(`${array} where $1 = 1`, [1]))[0].x).toEqual(new Float32Array([0.1, 0.3333333, 1.5]));
+      expect((await sql.unsafe(array))[0].x).toEqual([0.1, 0.3333333, 1.5]);
     });
 
     test("String", async () => {

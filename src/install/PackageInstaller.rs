@@ -1990,7 +1990,7 @@ impl<'a> PackageInstaller<'a> {
                             .append(alias.slice(string_buf!()))
                             .unwrap_or_oom();
 
-                        'enqueue_lifecycle_scripts: {
+                        let enqueued = 'enqueue_lifecycle_scripts: {
                             if self
                                 .manager()
                                 .postinstall_optimizer
@@ -2018,17 +2018,18 @@ impl<'a> PackageInstaller<'a> {
                                         bstr::BStr::new(pkg_name.slice(string_buf!())),
                                     );
                                 }
-                                break 'enqueue_lifecycle_scripts;
+                                break 'enqueue_lifecycle_scripts false;
                             }
 
-                            if self.enqueue_lifecycle_scripts(
+                            let enqueued = self.enqueue_lifecycle_scripts(
                                 alias.slice(string_buf!()),
                                 log_level,
                                 &mut folder_path,
                                 package_id,
                                 dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                                 resolution,
-                            ) {
+                            );
+                            if enqueued {
                                 if is_trusted_through_update_request {
                                     let (trusted_name, trusted_name_hash) =
                                         if resolution.tag == resolution::Tag::Npm {
@@ -2055,6 +2056,11 @@ impl<'a> PackageInstaller<'a> {
                                         .unwrap_or_oom();
                                 }
                             }
+                            enqueued
+                        };
+                        // nothing will run: drop a mark the package itself may have shipped under that name
+                        if !enqueued && resolution.tag.can_enqueue_install_task() {
+                            lockfile::package::scripts::clear_scripts_pending(folder_path.slice());
                         }
                     }
 

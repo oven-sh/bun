@@ -67,15 +67,27 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
 }
 
 /// For `readableStreamToBlob` (C++): type the Blob it built like the other body readers do.
+///
+/// # Safety
+/// `content_type` must point to `length` readable bytes for the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Body__setBlobContentType(blob: JSValue, content_type: *const u8, length: usize) {
+pub unsafe extern "C" fn Body__setBlobContentType(
+    blob: JSValue,
+    content_type: *const u8,
+    length: usize,
+) {
     let Some(blob) = <Blob as bun_jsc::JsClass>::from_js(blob) else {
         return;
     };
-    // SAFETY: C++ passes a live `(ptr, len)` UTF-8 buffer for the duration of the call.
+    // SAFETY: caller contract.
     let content_type = unsafe { bun_core::ffi::slice(content_type, length) };
     // SAFETY: `from_js` returned the live payload of a JSBlob wrapper.
     set_blob_content_type(unsafe { &*blob }, MimeType::init(content_type, true, None));
+}
+
+fn form_data_encoding(content_type: &[u8]) -> Option<Box<bun_core::form_data::AsyncFormData>> {
+    let encoding = bun_core::form_data::Encoding::get(content_type)?;
+    Some(bun_core::form_data::AsyncFormData::init(encoding))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1614,13 +1626,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>>;
 
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        let Some(content_type) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type.slice()) else {
-            return Ok(None);
-        };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
+        Ok(self
+            .get_content_type()?
+            .and_then(|content_type| form_data_encoding(content_type.slice())))
     }
 
     /// The MIME type a Blob made from this body gets, read when `blob()` is called.

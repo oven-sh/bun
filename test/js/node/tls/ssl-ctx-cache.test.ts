@@ -375,6 +375,27 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
   }
 });
 
+test("a server's shared SSL_CTX is interned by its client-certificate policy too", () => {
+  // The shared context carries the client-certificate policy in its verify
+  // mode, and one SSL_CTX is one session cache. Two servers that share key
+  // material but not that policy must get separate contexts: otherwise a
+  // session minted by the permissive server resumes on the mTLS server, and a
+  // resumed handshake skips client authentication.
+  const permissive = tls.createServer({ ...tlsCerts });
+  const mutual = tls.createServer({ ...tlsCerts, requestCert: true });
+  const strict = tls.createServer({ ...tlsCerts, requestCert: true, rejectUnauthorized: false });
+  // The same options still intern to one context, so the split above is the
+  // policy and not a broken digest.
+  const sameAsPermissive = tls.createServer({ ...tlsCerts });
+  try {
+    expect((permissive as any)._sharedCreds.context).not.toBe((mutual as any)._sharedCreds.context);
+    expect((mutual as any)._sharedCreds.context).not.toBe((strict as any)._sharedCreds.context);
+    expect((sameAsPermissive as any)._sharedCreds.context).toBe((permissive as any)._sharedCreds.context);
+  } finally {
+    for (const s of [permissive, mutual, strict, sameAsPermissive]) s.close();
+  }
+});
+
 // `tls.Server.close()` must release the listener's SSL_CTX ref immediately.
 // It used to be dropped only when the GC finalized the Listener, so a `Server`
 // the program still references — or any server at process exit — kept its CTX

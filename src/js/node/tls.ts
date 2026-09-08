@@ -136,8 +136,10 @@ function validateCiphers(ciphers: string, name: string = "options") {
   if (ciphers !== undefined && ciphers !== null) {
     validateString(ciphers, `${name}.ciphers`);
 
-    // TODO: right now we need this because we dont create the CTX before listening/connecting
-    // we need to change that in the future and let BoringSSL do the validation
+    // The cipher list reaches BoringSSL only once a context is built, and
+    // tls.DEFAULT_CIPHERS has no context of its own, so the grammar is checked
+    // here. The server and socket paths now build their context in the same
+    // call, so they could let BoringSSL report these instead.
     const ciphersSet = getValidCiphersSet();
     const requested = StringPrototypeSplit.$call(ciphers, ":");
     let sawLegacyEntry = false;
@@ -1143,7 +1145,14 @@ let CLIENT_RENEG_LIMIT = 3,
 // secureOptions): the same material the listen path hands to the native
 // listener, so whatever this build rejects the listener would reject too.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1520-L1542
-function buildSharedCreds(fields) {
+// requestCert/rejectUnauthorized come from the server, not from `fields`: the
+// native context bakes the client-certificate policy into its verify mode, and
+// the cache interns by a digest of these options. Two servers that share key
+// material but not that policy must not collapse onto one SSL_CTX - they would
+// then share a session cache, and a session from the permissive one would
+// resume on the mTLS one, where a resumed handshake skips client
+// authentication.
+function buildSharedCreds(fields, server) {
   return new InternalSecureContext(
     {
       key: fields.key,
@@ -1160,6 +1169,8 @@ function buildSharedCreds(fields) {
       secureProtocol: fields.secureProtocol,
       minVersion: fields.minVersion,
       maxVersion: fields.maxVersion,
+      requestCert: server._requestCert === true,
+      rejectUnauthorized: server._rejectUnauthorized !== false,
     },
     true,
   );
@@ -1370,7 +1381,9 @@ function Server(options, secureConnectionListener): void {
     // tls.createServer()), not from a later listen(). Build before assigning
     // so a throwing call leaves the previous credentials in place.
     const sharedCreds =
-      serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : buildSharedCreds(options ? next : this);
+      serverTLSOptions instanceof InternalSecureContext
+        ? serverTLSOptions
+        : buildSharedCreds(options ? next : this, this);
     if (options) {
       this.ALPNProtocols = next.ALPNProtocols;
       this.cert = next.cert;

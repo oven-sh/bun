@@ -443,6 +443,33 @@ for (const { body, fn } of bodyTypes) {
         expect([blob.type, await blob.text()]).toEqual(["text/x-custom", "a=1"]);
       });
 
+      test("a subprocess stdout stream body takes the header too", async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdout.write('a=1')"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const blob = await fn(proc.stdout, { "content-type": "text/x-custom" }).blob();
+        expect([blob.type, await blob.text()]).toEqual(["text/x-custom", "a=1"]);
+        expect(await proc.exited).toBe(0);
+      });
+
+      // clone() tees the body, so both copies hold it as a ReadableStream.
+      test("both copies of a clone()d stream body take the header", async () => {
+        const describeBlob = async (blob: Blob) => [blob.type, await blob.text()];
+        const results: string[][] = [];
+        for (const streamedByGetter of [false, true]) {
+          const subject = fn(streamedByGetter ? new TextEncoder().encode("a=1") : bodies.ReadableStream(), {
+            "content-type": "text/x-custom",
+          });
+          if (streamedByGetter) expect(subject.body).toBeInstanceOf(ReadableStream);
+          const clone = subject.clone();
+          results.push(await describeBlob(await clone.blob()), await describeBlob(await subject.blob()));
+        }
+        expect(results).toEqual(Array(4).fill(["text/x-custom", "a=1"]));
+      });
+
       test("typing the result leaves the Blob the body was made from alone", async () => {
         const original = new Blob(["a=1"]);
         const slice = original.slice(0, 1);
@@ -1639,28 +1666,35 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
 // Content-Type header. Its headers stay on the uws request until something asks
 // for them, and its body is usually still pending when the handler calls blob().
 describe("Bun.serve request.blob().type comes from the Content-Type header", () => {
-  test("for a pending body, before and after request.headers is read, and through new Response(request.body)", async () => {
+  test("for a pending body: directly, after request.headers is read or set, on both copies of a clone(), and through new Response(request.body)", async () => {
     const asked: Record<string, PromiseWithResolvers<void>> = {
       "/direct": Promise.withResolvers(),
       "/after-headers": Promise.withResolvers(),
+      "/set": Promise.withResolvers(),
+      "/clone": Promise.withResolvers(),
       "/wrapped": Promise.withResolvers(),
     };
+    const describeBlob = async (blob: Blob) => `${blob.type}|${await blob.text()}`;
     await using server = Bun.serve({
       port: 0,
       async fetch(request) {
         const path = new URL(request.url).pathname;
-        let blobPromise: Promise<Blob>;
+        let blobPromises: Promise<Blob>[];
         if (path === "/wrapped") {
           // A native byte stream that is still filling: read through the
           // stream, then typed with the wrapping Response's header.
-          blobPromise = new Response(request.body, { headers: { "content-type": "text/x-wrapped" } }).blob();
+          blobPromises = [new Response(request.body, { headers: { "content-type": "text/x-wrapped" } }).blob()];
+        } else if (path === "/clone") {
+          // clone() tees the pending body: both copies read through a stream.
+          const clone = request.clone();
+          blobPromises = [clone.blob(), request.blob()];
         } else {
           if (path === "/after-headers") expect(request.headers.get("content-type")).toBe("text/x-request");
-          blobPromise = request.blob();
+          if (path === "/set") request.headers.set("content-type", "text/x-set");
+          blobPromises = [request.blob()];
         }
         asked[path].resolve();
-        const blob = await blobPromise;
-        return new Response(`${blob.type}|${await blob.text()}`);
+        return new Response((await Promise.all((await Promise.all(blobPromises)).map(describeBlob))).join(" "));
       },
     });
     // Hold the body back until the handler has asked for the blob, so the read
@@ -1685,10 +1719,14 @@ describe("Bun.serve request.blob().type comes from the Content-Type header", () 
     expect({
       "/direct": await post("/direct"),
       "/after-headers": await post("/after-headers"),
+      "/set": await post("/set"),
+      "/clone": await post("/clone"),
       "/wrapped": await post("/wrapped"),
     }).toEqual({
       "/direct": "text/x-request|a=1",
       "/after-headers": "text/x-request|a=1",
+      "/set": "text/x-set|a=1",
+      "/clone": "text/x-request|a=1 text/x-request|a=1",
       "/wrapped": "text/x-wrapped|a=1",
     });
   });

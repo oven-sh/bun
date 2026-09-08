@@ -763,8 +763,10 @@ fn fetch_registry_tree(
         version
     };
     let found = 'found: {
-        if let Ok(r) = manifest.find_by_spec(version) {
-            break 'found r;
+        match manifest.find_by_spec(version) {
+            Ok(r) => break 'found r,
+            Err(bun_install::Error::DistTagNotFound | bun_install::Error::NoMatchingVersion) => {}
+            Err(err) => return Err(err.into()),
         }
         Status::clear();
         Output::err_generic(

@@ -506,7 +506,7 @@ describe.concurrent("bun info version spec", () => {
     });
   });
 
-  test.each(["github:a/b", "npm:other@1.0.0", "1.0.0.tgz"])(
+  test.each(["github:a/b", "file:./zz-tags", "npm:other@1.0.0", "1.0.0.tgz"])(
     "a spec that is neither a tag nor a range matches nothing: %s",
     async spec => {
       const { stdout, stderr, exitCode } = await info(`zz-tags@${spec}`, "version");

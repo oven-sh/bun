@@ -1380,7 +1380,7 @@ if (cluster.isPrimary) {
   const worker = cluster.fork();
   worker.on("message", m => {
     if (m !== "sent") return;
-    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 100);
+    console.log("primary alive"); worker.kill(); process.exit(0);
   });
 } else {
   process.send({ cmd: "NODE_CLUSTER", ack: null });
@@ -1406,7 +1406,7 @@ if (cluster.isPrimary) {
   worker.on("message", m => {
     console.log("sync code:", m.sync);
     console.log("probe errno truthy:", !!m.probeErrno);
-    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 50);
+    console.log("primary alive"); worker.kill(); process.exit(0);
   });
 } else {
   const http = require("node:http");

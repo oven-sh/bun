@@ -3679,7 +3679,7 @@ fn server_set_on_connection(
 
 /// `https.Server#setSecureContext()`: build a fresh `SSL_CTX` from `options`
 /// and swap it in as the listener's default; live connections keep the old
-/// ctx. <https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js>
+/// ctx. <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423>
 fn server_set_secure_context(
     global: &JSGlobalObject,
     server: JSValue,

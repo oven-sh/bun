@@ -345,7 +345,7 @@ function processServerTlsOptions(options) {
 
 // tls.Server#setSecureContext: rebuild credentials for future connections
 // (installed per-instance on TLS servers only, so http.Server lacks it).
-// https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423
 function serverSetSecureContext(this: Server, options) {
   validateObject(options, "options");
   // requestCert and rejectUnauthorized belong to the constructor; node's
@@ -2005,7 +2005,7 @@ function getNodeHTTPServerSocket() {
     // client sent none (matches Node's server-side TLSSocket.servername).
     // TLSSocket.prototype reads these off socket._handle (node's TLSWrap); the
     // native handle lives in kHandle here, so answer from it directly.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_wrap.js#L1000-L1080
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1147-L1209
     getCipher() {
       return this[kHandle]?.getCipher?.();
     }

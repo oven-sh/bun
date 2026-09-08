@@ -1946,7 +1946,7 @@ it.skipIf(!nodeExe())(
 describe("a peer reset with a queued write", () => {
   // Node completes the queued write with errnoException(UV_ECANCELED, 'write')
   // when the SSL engine is torn down, instead of dropping the callback.
-  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1318
   it("completes the write callback with ECANCELED", async () => {
     const server = net.createServer(c => {
       c.on("data", () => c.resetAndDestroy());

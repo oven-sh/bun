@@ -1368,7 +1368,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       self[kwriteCallback] = null;
       // Tearing down the SSL engine cancels its queued writes, and node reports
       // that as errnoException(UV_ECANCELED, 'write', ...) rather than a socket
-      // error. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
+      // error. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1318
       pendingWrite(
         self.encrypted
           ? new ErrnoException(uv().UV_ECANCELED, "write", "Canceled because of SSL destruction")

@@ -5,6 +5,7 @@ const { kHandle } = require("internal/shared");
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClusterAck", 2);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const validateFd = $newRustFunction("node_cluster_binding.rs", "clusterValidateFd", 1);
 const { UV_EBADF, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
@@ -398,6 +399,12 @@ function shareListenFd(worker, message) {
   }
   if (!Number.isInteger(fd) || fd < 0) {
     send(worker, { errno: UV_EBADF, ack: message.seq });
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1898-L1911 (createServerHandle)
+  const invalid = validateFd(fd);
+  if (invalid !== 0) {
+    send(worker, { errno: invalid, ack: message.seq });
     return;
   }
   try {

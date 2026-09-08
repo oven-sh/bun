@@ -170,35 +170,33 @@ const rewrittenByInstall: Record<string, Edit> = {
 };
 
 describe.concurrent("--frozen-lockfile fails on a package.json edit that bun install writes to bun.lock", () => {
-  for (const [name, edit] of Object.entries(rewrittenByInstall)) {
-    test(name, async () => {
-      const from = edit.from ?? root;
-      const { packageDir, lock } = await installed(from);
-      if (edit.root) await writeRoot(packageDir, edit.root(from));
-      if (edit.member) await writeMember(packageDir, edit.member(member));
+  test.each(Object.entries(rewrittenByInstall))("%s", async (_name, edit) => {
+    const from = edit.from ?? root;
+    const { packageDir, lock } = await installed(from);
+    if (edit.root) await writeRoot(packageDir, edit.root(from));
+    if (edit.member) await writeMember(packageDir, edit.member(member));
 
-      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 
-      expect(frozen.stderr).toContain(frozenError);
-      expect(frozen.stderr).toContain(
-        sectionNote(edit.section, edit.member ? "packages/member/package.json" : "package.json"),
-      );
-      expect(await lockText(packageDir)).toBe(lock);
-      expect(frozen.exitCode).toBe(1);
+    expect(frozen.stderr).toContain(frozenError);
+    expect(frozen.stderr).toContain(
+      sectionNote(edit.section, edit.member ? "packages/member/package.json" : "package.json"),
+    );
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(frozen.exitCode).toBe(1);
 
-      // What the failure protects: the lockfile a plain install leaves behind differs.
-      const plain = await bun(packageDir, "install");
+    // What the failure protects: the lockfile a plain install leaves behind differs.
+    const plain = await bun(packageDir, "install");
 
-      expect(plain.stderr).toContain("Saved lockfile");
-      expect(await lockText(packageDir)).not.toBe(lock);
-      expect(plain.exitCode).toBe(0);
+    expect(plain.stderr).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).not.toBe(lock);
+    expect(plain.exitCode).toBe(0);
 
-      const after = await bun(packageDir, "install", "--frozen-lockfile");
+    const after = await bun(packageDir, "install", "--frozen-lockfile");
 
-      expect(after.stderr).not.toContain("error:");
-      expect(after.exitCode).toBe(0);
-    });
-  }
+    expect(after.stderr).not.toContain("error:");
+    expect(after.exitCode).toBe(0);
+  });
 
   test("prints which section changed, also as bun ci", async () => {
     const unpatched = without(root, "patchedDependencies");
@@ -256,25 +254,23 @@ const notRecorded: Record<string, Pick<Edit, "root" | "member">> = {
 };
 
 describe.concurrent("--frozen-lockfile still passes", () => {
-  for (const [name, edit] of Object.entries(notRecorded)) {
-    test(name, async () => {
-      const { packageDir, lock } = await installed();
-      if (edit.root) await writeRoot(packageDir, edit.root(root));
-      if (edit.member) await writeMember(packageDir, edit.member(member));
+  test.each(Object.entries(notRecorded))("%s", async (_name, edit) => {
+    const { packageDir, lock } = await installed();
+    if (edit.root) await writeRoot(packageDir, edit.root(root));
+    if (edit.member) await writeMember(packageDir, edit.member(member));
 
-      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 
-      expect(frozen.stderr).not.toContain("error:");
-      expect(await lockText(packageDir)).toBe(lock);
-      expect(frozen.exitCode).toBe(0);
+    expect(frozen.stderr).not.toContain("error:");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(frozen.exitCode).toBe(0);
 
-      const plain = await bun(packageDir, "install");
+    const plain = await bun(packageDir, "install");
 
-      expect(plain.stderr).not.toContain("Saved lockfile");
-      expect(await lockText(packageDir)).toBe(lock);
-      expect(plain.exitCode).toBe(0);
-    });
-  }
+    expect(plain.stderr).not.toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(plain.exitCode).toBe(0);
+  });
 
   // The next four are edits a plain install does write to bun.lock, accepted on purpose.
 
@@ -454,34 +450,32 @@ const unchangedProjects: Record<string, Record<string, PackageJson>> = {
 };
 
 describe.concurrent("--frozen-lockfile still passes on an unchanged project with", () => {
-  for (const [name, files] of Object.entries(unchangedProjects)) {
-    test(name, async () => {
-      const { packageDir } = await registry.createTestDir({
-        bunfigOpts: { linker: "hoisted" },
-        files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
-      });
-      const first = await bun(packageDir, "install");
-      expect(first.stderr).toContain("Saved lockfile");
-      expect(first.exitCode).toBe(0);
-      const lock = await lockText(packageDir);
-
-      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
-
-      expect(frozen.stderr).not.toContain("error:");
-      expect(frozen.exitCode).toBe(0);
-
-      // And from a clean checkout, as CI runs it.
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      const ci = await bun(packageDir, "ci");
-
-      expect(ci.stderr).not.toContain("error:");
-      expect(ci.exitCode).toBe(0);
-
-      const plain = await bun(packageDir, "install");
-
-      expect(plain.stderr).not.toContain("Saved lockfile");
-      expect(await lockText(packageDir)).toBe(lock);
-      expect(plain.exitCode).toBe(0);
+  test.each(Object.entries(unchangedProjects))("%s", async (_name, files) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
     });
-  }
+    const first = await bun(packageDir, "install");
+    expect(first.stderr).toContain("Saved lockfile");
+    expect(first.exitCode).toBe(0);
+    const lock = await lockText(packageDir);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+
+    // And from a clean checkout, as CI runs it.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const ci = await bun(packageDir, "ci");
+
+    expect(ci.stderr).not.toContain("error:");
+    expect(ci.exitCode).toBe(0);
+
+    const plain = await bun(packageDir, "install");
+
+    expect(plain.stderr).not.toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(plain.exitCode).toBe(0);
+  });
 });

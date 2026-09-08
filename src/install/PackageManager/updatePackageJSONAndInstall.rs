@@ -767,16 +767,13 @@ pub(super) fn remove_leftover_node_modules(
         if entry.kind != bun_sys::EntryKind::SymLink {
             continue;
         }
-        // access(2) does not follow symlinks, so open() is the dangling check.
         let name = entry.name.slice_u8();
         name_buf[..name.len()].copy_from_slice(name);
         name_buf[name.len()] = 0;
         let name: &ZStr = ZStr::from_buf(&name_buf, name.len());
-        match bun_sys::File::openat(bin_dir.fd(), name, bun_sys::O::RDONLY, 0) {
-            Ok(file) => {
-                let _ = file.close();
-            }
-            Err(_) => {
+        // `fstatat` follows the link, so a missing target is a dangling bin.
+        if let Err(err) = bun_sys::fstatat(bin_dir.fd(), name) {
+            if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {
                 let _ = bun_sys::unlinkat(bin_dir.fd(), name);
             }
         }

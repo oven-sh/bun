@@ -773,8 +773,9 @@ test.concurrent.skipIf(isWindows)(
 );
 
 // The other direction: a TTY stdout keeps the styled banner when stderr is
-// not a terminal (`bun ./index.html 2>err.log`).
-test.concurrent.skipIf(isWindows)("startup banner on a TTY stdout is styled when stderr is piped", async () => {
+// not a terminal (`bun ./index.html 2>err.log`). "ignore" is /dev/null, which
+// is not a TTY either and, unlike an unread pipe, cannot fill up.
+test.concurrent.skipIf(isWindows)("startup banner on a TTY stdout is styled when stderr is not a TTY", async () => {
   using dir = tempDir("html-entry-banner-tty", bannerFixture);
   using pty = openPty();
   await using proc = Bun.spawn({
@@ -783,7 +784,7 @@ test.concurrent.skipIf(isWindows)("startup banner on a TTY stdout is styled when
     cwd: String(dir),
     stdin: "ignore",
     stdout: pty.slave,
-    stderr: "pipe",
+    stderr: "ignore",
   });
   // The child holds its own copy. Dropping ours lets the master read end when
   // the child exits instead of blocking.

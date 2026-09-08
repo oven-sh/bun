@@ -298,8 +298,8 @@ namespace WebCore {
 // owner: BunAsyncIterableSource.cpp — the async-iterable direct source's pull(controller) /
 // cancel(reason) / close(). `this` = the JSAsyncIteratorSourceOperation.
 #define FOR_EACH_WEB_STREAMS_METHOD_HANDLER(V) \
-    V(asyncIterableSourcePull)             \
-    V(asyncIterableSourceCancel)           \
+    V(asyncIterableSourcePull)                 \
+    V(asyncIterableSourceCancel)               \
     V(asyncIterableSourceClose)
 
 // The native trampolines behind every handler. Each is DEFINED (JSC_DEFINE_HOST_FUNCTION)

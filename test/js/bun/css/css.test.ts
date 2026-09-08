@@ -4881,11 +4881,54 @@ describe("css tests", () => {
   });
 
   describe("font", () => {
+    // The `font` shorthand also resets sub-properties the longhands leave
+    // alone (font-kerning, font-variant-*, font-feature-settings, ...), so it
+    // is only written when the source declared one.
     cssTest(
       `
       .foo {
         font-family: "Helvetica", "Times New Roman", sans-serif;
         font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`
+      .foo {
+        font-family: Helvetica, Times New Roman, sans-serif;
+        font-size: 12px;
+        font-style: italic;
+        font-variant-caps: small-caps;
+        font-weight: bold;
+        font-stretch: expanded;
+        line-height: 1.2em;
+      }
+`,
+    );
+
+    minify_test(
+      `
+      .foo {
+        font-family: "Helvetica", "Times New Roman", sans-serif;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: italic;
+        font-stretch: expanded;
+        font-variant-caps: small-caps;
+        line-height: 1.2em;
+      }
+    `,
+      indoc`.foo{font-family:Helvetica,Times New Roman,sans-serif;font-size:12px;font-style:italic;font-variant-caps:small-caps;font-weight:700;font-stretch:125%;line-height:1.2em}`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        font: 12px serif;
+        font-family: "Helvetica", "Times New Roman", sans-serif;
         font-weight: bold;
         font-style: italic;
         font-stretch: expanded;
@@ -4903,8 +4946,8 @@ describe("css tests", () => {
     minify_test(
       `
       .foo {
+        font: 12px serif;
         font-family: "Helvetica", "Times New Roman", sans-serif;
-        font-size: 12px;
         font-weight: bold;
         font-style: italic;
         font-stretch: expanded;
@@ -4958,8 +5001,8 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        font: 12px serif;
         font-family: "Helvetica", "Times New Roman", sans-serif;
-        font-size: 12px;
         font-weight: bold;
         font-style: italic;
         font-stretch: expanded;
@@ -4973,6 +5016,46 @@ describe("css tests", () => {
         font-variant-caps: all-small-caps;
       }
 `,
+    );
+
+    // `font` resets more sub-properties than the seven longhands it merges.
+    // Those must stay after the shorthand.
+    for (const decl of [
+      "font-kerning:none",
+      'font-feature-settings:"liga" 0',
+      'font-variation-settings:"wght" 700',
+      "font-optical-sizing:none",
+      "font-size-adjust:.5",
+      'font-language-override:"TRK"',
+      "font-width:condensed",
+      "font-variant:small-caps",
+      "font-variant-ligatures:none",
+      "font-variant-numeric:tabular-nums",
+      "font-variant-east-asian:ruby",
+      "font-variant-alternates:historical-forms",
+      "font-variant-position:sub",
+      "font-variant-emoji:text",
+      '-webkit-font-feature-settings:"liga" 0',
+      "FONT-KERNING:none",
+    ]) {
+      minify_test(`.foo { font: 12px serif; ${decl} }`, `.foo{font:12px serif;${decl}}`);
+      minify_test(
+        `.foo { font: 12px serif; ${decl}; font-weight: bold }`,
+        `.foo{font:12px serif;${decl};font-weight:700}`,
+      );
+      minify_test(`.foo { ${decl}; font: 12px serif }`, `.foo{${decl};font:12px serif}`);
+      minify_test(`.foo { font-family: serif; ${decl} }`, `.foo{font-family:serif;${decl}}`);
+    }
+    minify_test(
+      `.foo { font-family: serif; font-size: 12px; font-style: normal; font-weight: 400; font-stretch: normal; font-variant-caps: normal; line-height: 1.2; font-kerning: none }`,
+      `.foo{font-family:serif;font-size:12px;font-style:normal;font-variant-caps:normal;font-weight:400;font-stretch:100%;line-height:1.2;font-kerning:none}`,
+    );
+    // These are not sub-properties of `font`, so the shorthand may still move past them.
+    minify_test(`.foo { font: 12px serif; font-synthesis: none }`, `.foo{font-synthesis:none;font:12px serif}`);
+    minify_test(`.foo { font: 12px serif; font-palette: dark }`, `.foo{font-palette:dark;font:12px serif}`);
+    minify_test(
+      `.foo { font: 12px serif; -webkit-font-smoothing: antialiased }`,
+      `.foo{-webkit-font-smoothing:antialiased;font:12px serif}`,
     );
 
     minify_test(".foo { font: normal normal 600 9px/normal Charcoal; }", ".foo{font:600 9px Charcoal}");

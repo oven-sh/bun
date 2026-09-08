@@ -863,6 +863,11 @@ pub struct FontHandler {
     line_height: Option<LineHeight>,
     variant_caps: Option<FontVariantCaps>,
     flushed_properties: FontProperty,
+    /// A `font` shorthand was declared since the last flush. The buffered
+    /// longhands may only be emitted as `font` when this is set, because the
+    /// shorthand also resets sub-properties this handler does not track
+    /// (see `is_reset_by_font_shorthand`).
+    has_shorthand: bool,
     has_any: bool,
 }
 
@@ -874,6 +879,7 @@ impl FontHandler {
         context: &mut crate::PropertyHandlerContext<'_>,
     ) -> bool {
         use crate::properties::Property;
+        use crate::properties::custom::CustomPropertyName;
         // `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
         let arena = dest.bump();
@@ -927,14 +933,27 @@ impl FontHandler {
                 self.stretch = Some(val.stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
+                self.has_shorthand = true;
                 self.has_any = true;
-                // TODO: reset other properties
             }
             Property::Unparsed(val) => {
                 if is_font_property(&val.property_id) {
                     self.flush(dest, context);
                     self.flushed_properties
                         .insert(FontProperty::try_from_property_id(val.property_id.tag()).unwrap());
+                    dest.push(property.deep_clone(arena));
+                } else {
+                    return false;
+                }
+            }
+            Property::Custom(val) => {
+                // A sub-property that `font` resets but this handler does not
+                // track. Write any buffered `font` first so it stays ahead of
+                // this declaration instead of resetting it.
+                if matches!(val.name, CustomPropertyName::Unknown(_))
+                    && is_reset_by_font_shorthand(val.name.as_str())
+                {
+                    self.flush(dest, context);
                     dest.push(property.deep_clone(arena));
                 } else {
                     return false;
@@ -978,6 +997,7 @@ impl FontHandler {
         }
 
         self.has_any = false;
+        let has_shorthand = core::mem::take(&mut self.has_shorthand);
 
         let mut family: Option<Vec<FontFamily>> = self.family.take();
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
@@ -1017,15 +1037,20 @@ impl FontHandler {
             }
         }
 
-        if let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
-            family.as_ref(),
-            size.as_ref(),
-            style.as_ref(),
-            weight.as_ref(),
-            stretch.as_ref(),
-            line_height.as_ref(),
-            variant_caps.as_ref(),
-        ) {
+        // Without a `font` in the source, a synthesized one would also reset
+        // font-kerning, font-variant-*, font-feature-settings, etc., which the
+        // longhands alone leave untouched.
+        if has_shorthand
+            && let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
+                family.as_ref(),
+                size.as_ref(),
+                style.as_ref(),
+                weight.as_ref(),
+                stretch.as_ref(),
+                line_height.as_ref(),
+                variant_caps.as_ref(),
+            )
+        {
             let caps = *variant_caps_v;
             push_prop!(
                 Font,
@@ -1143,4 +1168,30 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
             | PropertyId::LineHeight
             | PropertyId::Font
     )
+}
+
+/// Sub-properties that the `font` shorthand sets or resets
+/// (https://drafts.csswg.org/css-fonts-4/#font-prop) but that have no
+/// `PropertyId` of their own, so they reach the handler as `Property::Custom`.
+/// `font-palette` and `font-synthesis-*` cascade independently and are not
+/// listed.
+fn is_reset_by_font_shorthand(name: &[u8]) -> bool {
+    let (_, name) = crate::VendorPrefix::strip_from(name);
+    crate::match_ignore_ascii_case! { name, {
+        b"font-variant"
+        | b"font-variant-alternates"
+        | b"font-variant-east-asian"
+        | b"font-variant-emoji"
+        | b"font-variant-ligatures"
+        | b"font-variant-numeric"
+        | b"font-variant-position"
+        | b"font-width"
+        | b"font-feature-settings"
+        | b"font-kerning"
+        | b"font-language-override"
+        | b"font-optical-sizing"
+        | b"font-size-adjust"
+        | b"font-variation-settings" => true,
+        _ => false,
+    }}
 }

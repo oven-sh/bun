@@ -1241,7 +1241,10 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 // the pipe buffer until JS starts reading, matching Node.
 describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   it("blocks the child until a reader attaches and delivers every byte", async () => {
-    const SIZE = 1024 * 1024;
+    // Must exceed the kernel socket buffer plus one stream highWaterMark on
+    // every platform. On macOS bun sizes child stdio socketpairs to 512 KB in
+    // each direction (~1 MiB total), so 1 MiB is not enough there.
+    const SIZE = 8 * 1024 * 1024;
     const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {
       stdio: ["ignore", "pipe", "ignore"],
       env: bunEnv,

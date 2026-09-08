@@ -49,6 +49,33 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
+/// Whether `value` goes on the wire in the binary format of `tag`. Both the
+/// format-code section and the value section of the Bind message ask this, so
+/// they agree. Binary needs an encoder arm in `write_bind` and a value that arm
+/// represents. Anything else (an object bound to int4, a `Temporal.Instant`
+/// bound to timestamptz, any value bound to numeric) is sent as `String(value)`
+/// in text format, and the server parses or rejects it, as it does for every
+/// parameter with `prepare: false`.
+fn binds_as_binary(tag: types::Tag, value: JSValue) -> bool {
+    // If they pass a value as a string, let's avoid attempting to convert it to
+    // the binary representation. This minimizes the room for mistakes on our
+    // end, such as stripping the timezone differently than what Postgres does
+    // when given a timestamp with timezone.
+    if value.is_string() {
+        return false;
+    }
+    match tag {
+        types::Tag::int4 | types::Tag::float8 => value.is_number(),
+        types::Tag::bool => value.is_boolean(),
+        types::Tag::timestamp | types::Tag::timestamptz => value.is_date() || value.is_number(),
+        // The bytea arm rejects a value it cannot encode.
+        types::Tag::bytea => true,
+        // numeric, float4, time, int4[] and float4[]: `DataCell` decodes their
+        // binary format in result rows, but nothing here encodes it.
+        _ => false,
+    }
+}
+
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
@@ -91,30 +118,19 @@ pub(crate) fn write_bind<Context: WriterContext>(
             types::Tag(Short::try_from(parameter_field).unwrap())
         };
 
-        let force_text = is_custom_type
-            || (tag.is_binary_format_supported()
-                && 'brk: {
-                    iter.to(i as u32);
-                    if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                        break 'brk value.is_string();
-                    }
-                    if iter.any_failed() {
-                        return Err(AnyPostgresError::InvalidQueryBinding);
-                    }
-                    break 'brk false;
-                });
+        let binary = tag.is_binary_format_supported()
+            && 'brk: {
+                iter.to(i as u32);
+                if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
+                    break 'brk binds_as_binary(tag, value);
+                }
+                if iter.any_failed() {
+                    return Err(AnyPostgresError::InvalidQueryBinding);
+                }
+                break 'brk true;
+            };
 
-        if force_text {
-            // If they pass a value as a string, let's avoid attempting to
-            // convert it to the binary representation. This minimizes the room
-            // for mistakes on our end, such as stripping the timezone
-            // differently than what Postgres does when given a timestamp with
-            // timezone.
-            writer.short(0)?;
-            continue;
-        }
-
-        writer.short(tag.format_code())?;
+        writer.short(if binary { 1 } else { 0 })?;
     }
 
     // The number of parameter values that follow (possibly zero). This
@@ -154,12 +170,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
         }
         bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
 
-        // If they pass a value as a string, let's avoid attempting to
-        // convert it to the binary representation. This minimizes the room
-        // for mistakes on our end, such as stripping the timezone
-        // differently than what Postgres does when given a timestamp with
-        // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        let effective_tag = if tag.is_binary_format_supported() && !binds_as_binary(tag, value) {
             types::Tag::text
         } else {
             tag
@@ -207,11 +218,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::int4 => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
                 let l = writer.length()?;
                 writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
                 l.write_excluding_self()?;

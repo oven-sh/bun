@@ -1233,6 +1233,20 @@ function foo() {}
         );
       });
 
+      it("enum nested in a namespace, read through a dotted name", () => {
+        // The namespace body is visited before the function body, so the member value is known there.
+        exp(
+          "namespace N { export enum E { A = 4 } }\nexport function f() {\n  const c = N.E.A + 1;\n  enum X { Q = c, R }\n  return X;\n}",
+          'var N;\n((N) => {\n  let E;\n  ((E) => {\n    E[E["A"] = 4] = "A";\n  })(E = N.E ||= {});\n})(N ||= {});\nexport function f() {\n  const c = 4 /* A */ + 1;\n  let X;\n  ((X) => {\n    X[X["Q"] = 5] = "Q";\n    X[X["R"] = 6] = "R";\n  })(X ||= {});\n  return X;\n}',
+        );
+      });
+
+      it("a long dotted name in a const initializer is walked without recursion", () => {
+        // The visitor still rejects the nesting depth; the const pre-pass must not overflow the stack first.
+        const code = "declare const a: any;\nconst x = a" + ".b".repeat(50000) + ";\nenum E { A = 1 }";
+        expect(() => ts.parsed(code, false, false)).toThrow("Maximum call stack size exceeded");
+      });
+
       // tsc folds a dotted name to a namespace's exported const too. Not implemented:
       // the namespace member map does not carry the value.
       it.todo("const reached through a namespace", () => {

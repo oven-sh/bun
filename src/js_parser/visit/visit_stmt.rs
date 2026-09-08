@@ -2349,34 +2349,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Resolves an unvisited `a.b.c` to the member map of the enum or namespace
-    /// it names.
+    /// it names. The parser builds a long chain as a deep `EDot` nest without
+    /// recursing, so this walks it without recursing too.
     fn eval_ts_namespace_chain(
         &mut self,
         expr: &Expr,
     ) -> Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>> {
-        let data = match expr.data {
-            js_ast::ExprData::EIdentifier(ident) => {
-                let name = self.load_name_from_ref(ident.ref_);
-                if name == b"arguments" {
-                    return None;
+        let mut member_names: smallvec::SmallVec<[&[u8]; 4]> = smallvec::SmallVec::new();
+        let mut current = *expr;
+        let root = loop {
+            match current.data {
+                js_ast::ExprData::EDot(dot) => {
+                    if dot.optional_chain.is_some() {
+                        return None;
+                    }
+                    member_names.push(dot.name.slice());
+                    current = dot.target;
                 }
-                let result = self
-                    .find_symbol_with_record_usage::<false>(expr.loc, name)
-                    .ok()?;
-                if result.is_inside_with_scope || result.r#ref.is_empty() {
-                    return None;
-                }
-                *self.ref_to_ts_namespace_member.get(&result.r#ref)?
+                js_ast::ExprData::EIdentifier(ident) => break ident,
+                _ => return None,
             }
-            js_ast::ExprData::EDot(dot) => {
-                if dot.optional_chain.is_some() {
-                    return None;
-                }
-                let map = self.eval_ts_namespace_chain(&dot.target)?;
-                (*map).get(dot.name.slice())?.data
-            }
-            _ => return None,
         };
+
+        let name = self.load_name_from_ref(root.ref_);
+        if name == b"arguments" {
+            return None;
+        }
+        let result = self
+            .find_symbol_with_record_usage::<false>(current.loc, name)
+            .ok()?;
+        if result.is_inside_with_scope || result.r#ref.is_empty() {
+            return None;
+        }
+        let mut data = *self.ref_to_ts_namespace_member.get(&result.r#ref)?;
+        // The innermost member was pushed last.
+        for member_name in member_names.iter().rev() {
+            let js_ast::ts::Data::Namespace(map) = data else {
+                return None;
+            };
+            data = (*map).get(member_name)?.data;
+        }
         match data {
             js_ast::ts::Data::Namespace(map) => Some(map),
             _ => None,

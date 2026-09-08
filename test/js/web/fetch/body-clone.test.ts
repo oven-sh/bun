@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {
   const stream = new ReadableStream({
@@ -908,9 +909,19 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
   //     Blob-backed stream
   //   - new Response(ReadableStream) → Locked with a user stream already
   //     rooted in the JS-side stream slot
+  //   - new Response(Bun.file()) → Blob over a file store, then .body
+  //     materializes a file-backed stream
+  //   - new Response(Bun.file().stream()) → Locked with an unread
+  //     file-backed stream
   const N = 8192;
   const payload = Buffer.alloc(N, "a");
+  const fileDir = tempDirWithFiles("body-clone-observe", { "payload.bin": payload });
   const cases: Array<[string, () => Promise<Request | Response>]> = [
+    ["Response with a Bun.file() body", async () => new Response(Bun.file(join(fileDir, "payload.bin")))],
+    [
+      "Response with a Bun.file() stream body",
+      async () => new Response(Bun.file(join(fileDir, "payload.bin")).stream()),
+    ],
     [
       "fetch() Response with a buffered body",
       async () => {
@@ -1051,6 +1062,125 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
     twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
     oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
     fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
+  });
+});
+
+// The readers and Bun.serve move an unread Bun.file()/Blob stream back into
+// the Blob it came from, type included. clone() must do the same instead of
+// teeing it into two plain JS streams, or the clone (and, once `.body` was
+// observed, the original too) answers differently from an un-cloned body.
+describe("clone() of a body over an unread native stream keeps the Blob behind it", () => {
+  const dir = tempDirWithFiles("body-clone-type", { "page.html": "<p>hi</p>" });
+  const file = () => Bun.file(join(dir, "page.html"));
+  const typed = () => new Blob(["<p>hi</p>"], { type: "text/html;charset=utf-8" });
+
+  async function typesAndText(original: Request | Response) {
+    const clone = original.clone();
+    const [a, b] = await Promise.all([original.blob(), clone.blob()]);
+    return { original: [a.type, await a.text()], clone: [b.type, await b.text()] };
+  }
+  const expected = {
+    original: ["text/html;charset=utf-8", "<p>hi</p>"],
+    clone: ["text/html;charset=utf-8", "<p>hi</p>"],
+  };
+
+  test("Response over Bun.file().stream()", async () => {
+    expect(await typesAndText(new Response(file().stream()))).toEqual(expected);
+  });
+
+  test("Request over Bun.file().stream()", async () => {
+    expect(await typesAndText(new Request("http://example.com/", { method: "POST", body: file().stream() }))).toEqual(
+      expected,
+    );
+  });
+
+  test("Response over Bun.file() after .body was observed", async () => {
+    const response = new Response(file());
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(await typesAndText(response)).toEqual(expected);
+  });
+
+  test("Response over a typed Blob after .body was observed", async () => {
+    const response = new Response(typed());
+    expect(response.body).toBeInstanceOf(ReadableStream);
+    expect(await typesAndText(response)).toEqual(expected);
+  });
+
+  test("the stream given to the constructor is locked after clone() and .body is a fresh stream", async () => {
+    const stream = file().stream();
+    const response = new Response(stream);
+    expect(response.body).toBe(stream);
+    const clone = response.clone();
+    expect(stream.locked).toBe(true);
+    expect(response.body).not.toBe(stream);
+    expect(await Promise.all([response.text(), clone.text()])).toEqual(["<p>hi</p>", "<p>hi</p>"]);
+  });
+
+  test("Bun.serve sends the file's Content-Type for a cloned Response over Bun.file().stream()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new URL(req.url).pathname === "/clone" ? new Response(file().stream()).clone() : new Response(file().stream()),
+    });
+    const results: Record<string, [string | null, string]> = {};
+    for (const path of ["/direct", "/clone"]) {
+      const res = await fetch(new URL(path, server.url));
+      results[path] = [res.headers.get("content-type"), await res.text()];
+    }
+    expect(results).toEqual({
+      "/direct": ["text/html;charset=utf-8", "<p>hi</p>"],
+      "/clone": ["text/html;charset=utf-8", "<p>hi</p>"],
+    });
+  });
+
+  // A pipe yields its bytes once, so two Blobs over it would compete for
+  // them. A body over such a store is read as one stream and teed instead,
+  // whether it was given as a stream or as the Blob itself, and both bodies
+  // see the whole input.
+  async function cloneInChild(bodyExpr: string, args: string[] = []) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = new Response(${bodyExpr});
+         const c = r.clone();
+         const [a, b] = await Promise.all([r.text(), c.text()]);
+         console.log(JSON.stringify([a, b]));`,
+        ...args,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("hello ");
+    await proc.stdin.flush();
+    proc.stdin.write("world");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const bothBodiesReadStdin = { stdout: `["hello world","hello world"]`, stderr: "", exitCode: 0 };
+
+  test("a body over Bun.stdin.stream() is still teed", async () => {
+    expect(await cloneInChild("Bun.stdin.stream()")).toEqual(bothBodiesReadStdin);
+  });
+
+  test("a body over Bun.stdin itself is teed, not duped", async () => {
+    expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
+  });
+
+  // The same store kind reached by path: stat says it is not a regular file.
+  test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
+    const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await writer.exited).toBe(0);
   });
 });
 

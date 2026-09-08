@@ -203,6 +203,96 @@ pub enum Step {
     Resolve,
 }
 
+/// Builds the parts of an HTML file's JavaScript module: every `<script src>`
+/// becomes `import "./script"` in a part of its own, in document order. The
+/// linker then treats the tag like an import statement: it orders the script
+/// after the files before it, and it calls the script's wrapper where the tag
+/// was when the script is wrapped (CommonJS, lazily initialized ESM, or a
+/// script with a top-level await that must not hold back the scripts after
+/// it). The other records (stylesheets, images) join the part of the next
+/// script, so `find_imported_css_files_in_js_order` still sees document order.
+fn html_module_parts(
+    ast: &mut ast::Ast<'static>,
+    import_records: &mut [ImportRecord],
+    bump: &'static Bump,
+    source: &Source,
+) -> core::result::Result<(), bun_alloc::AllocError> {
+    use bun_ast::base::{RefInt, RefTag};
+    use bun_ast::{DeclaredSymbol, DeclaredSymbolList, ImportKind, ImportRecordFlags, Ref, S};
+
+    // Keep the namespace export part, drop the lazy export statement.
+    ast.parts.truncate(1);
+    let mut record_indices = ast::PartImportRecordIndices::new_in(bun_alloc::AstAlloc);
+    for (import_record_index, record) in import_records.iter_mut().enumerate() {
+        let import_record_index = u32::try_from(import_record_index).expect("int cast");
+        record_indices.push(import_record_index);
+        if record.kind != ImportKind::Stmt {
+            continue;
+        }
+        record
+            .flags
+            .insert(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT);
+
+        let name: &'static [u8] = bun_alloc::arena_format!(
+            in bump,
+            "import_{}",
+            bun_core::fmt::fmt_identifier(
+                bun_paths::fs::PathName::init(record.path.text).non_unique_name_string_base()
+            )
+        )
+        .into_bump_str()
+        .as_bytes();
+        let namespace_ref = Ref::new(
+            RefInt::try_from(ast.symbols.len()).expect("int cast"),
+            source.index.0,
+            RefTag::Symbol,
+        );
+        ast.symbols.push(ast::Symbol {
+            kind: ast::symbol::Kind::Other,
+            original_name: ast::StoreStr::new(name),
+            ..Default::default()
+        });
+        ast.module_scope.generated.push(namespace_ref);
+        let part_index = u32::try_from(ast.parts.len()).expect("int cast");
+        ast.top_level_symbols_to_parts
+            .entry(namespace_ref)
+            .or_insert_with(bun_alloc::AstAlloc::vec)
+            .push(part_index);
+
+        let stmts: &mut [ast::Stmt] = bump.alloc_slice_copy(&[ast::Stmt::alloc(
+            S::Import {
+                namespace_ref,
+                import_record_index,
+                is_single_line: true,
+                ..Default::default()
+            },
+            Loc::EMPTY,
+        )]);
+        ast.parts.push(Part {
+            stmts: ast::StoreSlice::new_mut(stmts),
+            declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                ref_: namespace_ref,
+                is_top_level: true,
+            }])?,
+            import_record_indices: core::mem::replace(
+                &mut record_indices,
+                ast::PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
+            ),
+            ..Default::default()
+        });
+    }
+    if ast.parts.len() == 1 {
+        ast.parts.push(Part {
+            import_record_indices: record_indices,
+            ..Default::default()
+        });
+    } else if let Some(last) = ast.parts.last_mut() {
+        last.import_record_indices
+            .extend(record_indices.iter().copied());
+    }
+    Ok(())
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // init
 // ───────────────────────────────────────────────────────────────────────────
@@ -1198,7 +1288,7 @@ pub mod parse_worker {
             Loader::Html => {
                 // scope the scanner so its `&mut log` / `&source`
                 // borrows release before `new_lazy_export_ast` re-borrows them.
-                let import_records = {
+                let mut import_records = {
                     let mut scanner = HTMLScanner::init(log, source);
                     scanner.scan(&source.contents)?;
                     scanner.import_records
@@ -1207,7 +1297,6 @@ pub mod parse_worker {
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
                 // need in order to print code later.
-                let import_records_len = import_records.len();
                 let output_format = opts.output_format;
                 let mut ast = js_parser::new_lazy_export_ast(
                     bump,
@@ -1219,7 +1308,6 @@ pub mod parse_worker {
                     b"",
                 )?
                 .ok_or(AnyError::ParserError)?;
-                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1231,23 +1319,8 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                // Liveness for this synthetic part is seeded in
-                // `tree_shaking_and_code_splitting` (the per-part bitset
-                // does not exist at parse time).
-                ast.parts.as_mut_slice()[1] = Part {
-                    stmts: ast::StoreSlice::EMPTY,
-                    import_record_indices: {
-                        // Generate a single part that depends on all the import records.
-                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
-                            import_records_len as usize,
-                        );
-                        import_record_indices
-                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
-                        import_record_indices
-                    },
-                    ..Default::default()
-                };
+                html_module_parts(&mut ast, &mut import_records, bump, source)?;
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
                 if output_format == js_parser::options::Format::Esm

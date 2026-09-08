@@ -1,5 +1,17 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
+
+/** The script chunk `out/index.html` loads, relative to `out/`. */
+function pageScript(api: BundlerTestBundleAPI): string {
+  const src = api.readFile("out/index.html").match(/<script type="module" crossorigin src="([^"]+\.js)">/);
+  expect(src).not.toBeNull();
+  return "./" + src![1].replace(/^\.\//, "");
+}
+
+/** Writes `out/run.mjs`, which evaluates the page's script chunk like the browser's module loader would. */
+function writePageRunner(api: BundlerTestBundleAPI, after = "") {
+  api.writeFile("out/run.mjs", `await import(${JSON.stringify(pageScript(api))});\n${after}`);
+}
 
 describe("bundler", () => {
   // Basic test for bundling HTML with JS and CSS
@@ -247,6 +259,139 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
       expect(api.readFile("out/" + jsMatch![1])).toMatch(/"first"[\s\S]*"second"/);
       api.expectFile("out/second.js").toContain('console.log("second")');
     },
+  });
+
+  // The scripts of a page behave like separate <script type="module"> tags:
+  // a script that suspends on a top-level await does not hold back the
+  // scripts after it, and the chunk settles once every script has.
+  for (const minify of [false, true]) {
+    itBundled("html/top-level-await-does-not-block-later-scripts" + (minify ? "-minified" : ""), {
+      outdir: "out/",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      files: {
+        "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main id="m">catalogue</main>
+    <script src="./legacy-badge.js"></script>
+    <script type="module" src="./widget.js"></script>
+  </body>
+</html>`,
+        "/app.js": `
+import { currencies } from "./currencies.js";
+console.log("app: start");
+const cfg = await new Promise(resolve => setTimeout(() => resolve({ currency: currencies[0] }), 0));
+console.log("app: loaded " + cfg.currency);`,
+        "/currencies.js": `export const currencies = ["EUR"];`,
+        "/legacy-badge.js": `console.log("legacy badge");`,
+        "/widget.js": `
+console.log("widget: start");
+await 0;
+console.log("widget: ready");`,
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle: api => writePageRunner(api, `console.log("chunk settled");`),
+      run: {
+        file: "out/run.mjs",
+        stdout: "app: start\nlegacy badge\nwidget: start\nwidget: ready\napp: loaded EUR\nchunk settled",
+      },
+    });
+  }
+
+  // A single script has nothing after it to hold back, so its top-level
+  // await stays inline instead of costing a wrapper.
+  itBundled("html/single-top-level-await-script-stays-inline", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <img src="./logo.png">
+  </body>
+</html>`,
+      "/styles.css": `body { color: red; }`,
+      "/logo.png": `not really a png`,
+      "/app.js": `
+console.log("app: start");
+await 0;
+console.log("app: ready");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/" + pageScript(api));
+      expect(js).not.toContain("__esm");
+      expect(js).toContain("await 0");
+      writePageRunner(api, `console.log("chunk settled");`);
+    },
+    run: { file: "out/run.mjs", stdout: "app: start\napp: ready\nchunk settled" },
+  });
+
+  // A classic script that uses CommonJS features (here a UMD wrapper) is
+  // wrapped in a closure by the bundler. The page still runs it in its place.
+  itBundled("html/commonjs-script-runs-in-place", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./first.js"></script>
+    <script src="./umd-badge.js"></script>
+    <script src="./last.js"></script>
+  </body>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/umd-badge.js": `
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.Badge = factory();
+})(globalThis, function () {
+  console.log("umd badge");
+  return {};
+});`,
+      "/last.js": `console.log("last");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle: writePageRunner,
+    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast" },
+  });
+
+  // A script that another module also loads with import() is lazily
+  // initialized by the bundler. The page still runs it in its place.
+  itBundled("html/script-also-imported-dynamically-runs-in-place", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./first.js"></script>
+    <script type="module" src="./shared.js"></script>
+    <script type="module" src="./last.js"></script>
+  </body>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/shared.js": `
+export const value = 42;
+console.log("shared");`,
+      "/last.js": `
+console.log("last");
+import("./shared.js").then(m => console.log("value " + m.value));`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle: writePageRunner,
+    run: { file: "out/run.mjs", stdout: "first\nshared\nlast\nvalue 42" },
   });
 
   // Test CSS imports

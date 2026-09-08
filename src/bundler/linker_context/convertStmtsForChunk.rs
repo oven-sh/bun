@@ -102,6 +102,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         stmt.loc,
                         s.namespace_ref,
                         s.import_record_index,
+                        source_index,
                         bump,
                         ast,
                     )? {
@@ -122,6 +123,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             stmt.loc,
                             s.namespace_ref,
                             s.import_record_index,
+                            source_index,
                             bump,
                             ast,
                         )? {
@@ -405,6 +407,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         stmt.loc,
                         s.namespace_ref,
                         s.import_record_index,
+                        source_index,
                         bump,
                         ast,
                     )? {

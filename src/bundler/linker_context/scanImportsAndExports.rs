@@ -208,6 +208,28 @@ pub(crate) fn scan_imports_and_exports(
                 }
             }
 
+            // The scripts of an HTML file run like sibling `<script type="module">`
+            // tags: one that suspends on a top-level await does not hold back the
+            // scripts after it. Inlined into the chunk, its `await` would. So such a
+            // script gets an async `__esm` wrapper instead, which the HTML module
+            // starts in place without awaiting (`should_remove_import_export_stmt`)
+            // and awaits at the end of the chunk (`generate_entry_point_tail_js`).
+            // The last script holds nothing back and stays inline.
+            let html_last_script_record: usize = if col_ref!(loaders)[id] == Loader::Html {
+                col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .iter()
+                    .rposition(|record| {
+                        record.kind == ImportKind::Stmt
+                            && record.source_index.is_valid()
+                            && (record.source_index.get() as usize) < col_ref!(exports_kind).len()
+                            && col_ref!(css_asts)[record.source_index.get() as usize].is_none()
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
             for (import_record_index, record) in col_ref!(import_records_list)[id]
                 .as_slice()
                 .iter()
@@ -224,6 +246,14 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                if import_record_index < html_last_script_record
+                    && record.kind == ImportKind::Stmt
+                    && other_kind == ExportsKind::Esm
+                    && col_ref!(flags)[other_file].is_async_or_has_async_dependency
+                {
+                    col!(flags)[other_file].wrap = WrapKind::Esm;
+                }
 
                 // Union, per importee, of the export names its importers can
                 // observe: named static imports contribute their aliases, a

@@ -928,21 +928,11 @@ impl<'a> LinkerContext<'a> {
         // Size the per-file part-liveness bitsets now that `scan_imports_and_exports`
         // has finished pushing wrapper / entry-point parts.
         {
-            let loaders = self.parse_graph().input_files.items_loader();
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
-            for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
-                // The HTML loader's `ParseTask` builds its synthetic part 1 already
-                // live (so the JS-chunk visitor follows every embedded import record).
-                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts, so seed the bit here to preserve the old
-                // `Part::is_live = true` initializer.
-                if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
-                    bits.set(1);
-                }
-                parts_live.push(bits);
+            for parts in parts_col.iter() {
+                parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
             }
             self.graph.parts_live = parts_live;
         }
@@ -2185,6 +2175,7 @@ impl<'a> LinkerContext<'a> {
         loc: Loc,
         namespace_ref: Ref,
         import_record_index: u32,
+        source_index: u32,
         alloc: &Bump,
         ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
@@ -2193,8 +2184,14 @@ impl<'a> LinkerContext<'a> {
         if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(true);
         }
+        let is_html_script =
+            self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html;
         // Is this an external import?
         if !record.source_index.is_valid() {
+            // An external `<script src>` stays a tag in the HTML file.
+            if is_html_script {
+                return Ok(true);
+            }
             // Keep the "import" statement if import statements are supported
             if self.options.output_format.keep_es6_import_export_syntax() {
                 return Ok(false);
@@ -2298,7 +2295,10 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if other_flags.is_async_or_has_async_dependency {
+                // An HTML file starts an async script where its tag was and lets the
+                // scripts after it run meanwhile, like the browser does for separate
+                // module scripts. `generate_entry_point_tail_js` awaits it at the end.
+                if other_flags.is_async_or_has_async_dependency && !is_html_script {
                     stmts
                         .inside_wrapper_prefix
                         .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
@@ -3092,9 +3092,12 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
-        // via .url kind import records. Follow all import records for HTML files
-        // so these assets are marked live and included in the manifest.
+        // Everything an HTML file references is live: every script runs, and
+        // non-JS/CSS assets (favicons, images, etc.) referenced via .url kind
+        // import records must be included in the manifest. Its parts (one
+        // `import` per `<script src>`) are all live too, so that the wrapper
+        // and runtime dependencies `scan_imports_and_exports` attached to them
+        // are followed.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
@@ -3102,6 +3105,15 @@ impl<'a> LinkerContext<'a> {
                     if !self.graph.files_live.is_set(other as usize) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
+                }
+            }
+            let parts_len = ctx.parts[source_index as usize].len();
+            for part_index in (bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize + 1)..parts_len {
+                if !ctx.parts_live[source_index as usize].is_set(part_index) {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: u32::try_from(part_index).expect("int cast"),
+                        source_index,
+                    });
                 }
             }
             return;

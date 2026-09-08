@@ -909,6 +909,54 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         }
                     }
 
+                    // An HTML file starts its async scripts where their tags were, without
+                    // awaiting them (`should_remove_import_export_stmt`). The chunk still
+                    // finishes evaluating only once they settle: "await init_foo();"
+                    if c.parse_graph().input_files.items_loader()[source_index as usize]
+                        == options::Loader::Html
+                    {
+                        let meta_flags = c.graph.meta.items_flags();
+                        let wrapper_refs = c.graph.ast.items_wrapper_ref();
+                        for record in ast.import_records.as_slice() {
+                            if record.kind != bun_ast::ImportKind::Stmt
+                                || !record.source_index.is_valid()
+                            {
+                                continue;
+                            }
+                            let other = record.source_index.get() as usize;
+                            let other_flags = meta_flags[other];
+                            let wrapper_ref = wrapper_refs[other];
+                            if other_flags.wrap != crate::WrapKind::Esm
+                                || !other_flags.is_async_or_has_async_dependency
+                                || !c.graph.files_live.is_set(other)
+                                || wrapper_ref.is_empty()
+                            {
+                                continue;
+                            }
+                            stmts.push(Stmt::alloc(
+                                S::SExpr {
+                                    value: Expr::init(
+                                        E::Await {
+                                            value: Expr::init(
+                                                E::Call {
+                                                    target: Expr::init_identifier(
+                                                        wrapper_ref,
+                                                        bun_ast::Loc::EMPTY,
+                                                    ),
+                                                    ..Default::default()
+                                                },
+                                                bun_ast::Loc::EMPTY,
+                                            ),
+                                        },
+                                        bun_ast::Loc::EMPTY,
+                                    ),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ));
+                        }
+                    }
+
                     let sorted_and_filtered_export_aliases =
                         &c.graph.meta.items_sorted_and_filtered_export_aliases()
                             [source_index as usize];

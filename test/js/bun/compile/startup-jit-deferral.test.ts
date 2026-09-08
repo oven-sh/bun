@@ -7,9 +7,11 @@ import path from "node:path";
 
 const ENDED = "Ending startup JIT deferral window: ";
 
-// verboseOSR is chatty; keep only the deferral lines and the program's own stderr markers.
+// verboseOSR is chatty and unbuffered, and other JSC log lines can interleave with (or be glued onto) the one we
+// want, so extract the deferral messages by pattern rather than by whole lines. The program's own markers go to
+// stdout, which JSC does not write to.
 function deferralLines(stderr: string) {
-  return stderr.split("\n").filter(line => line.startsWith(ENDED) || line.startsWith("got "));
+  return [...stderr.matchAll(/Ending startup JIT deferral window: [^\n(]*\(scale was \d+\)/g)].map(m => m[0]);
 }
 
 describe("startup JIT deferral window", () => {
@@ -19,14 +21,14 @@ describe("startup JIT deferral window", () => {
     "fswrite.ts": `require("fs").writeSync(1, "ready\\n");`,
     "stdin.ts": `
       for await (const chunk of process.stdin) {
-        process.stderr.write("got " + chunk.length + "\\n");
+        process.stdout.write("got " + chunk.length + "\\n");
         break;
       }
     `,
     "unsafe.ts": `
       Bun.unsafe.endStartupJITDeferral();
       Bun.unsafe.endStartupJITDeferral(); // no-op once ended
-      process.stderr.write("got here\\n");
+      process.stdout.write("got here\\n");
     `,
     // Never interactive: spins past a short deadline, then calls a fresh function often enough that its first tier-up
     // check observes the passed deadline.
@@ -105,8 +107,9 @@ describe("startup JIT deferral window", () => {
     }
     {
       // Ended by the read, i.e. before the program wrote anything.
-      const { lines, exitCode } = await run(compile(d, "stdin.ts"), {}, "hello");
-      expect(lines).toEqual([ENDED + "first stdin data (scale was 8)", "got 5"]);
+      const { stdout, lines, exitCode } = await run(compile(d, "stdin.ts"), {}, "hello");
+      expect(stdout).toBe("got 5\n");
+      expect(lines).toEqual([ENDED + "first stdin data (scale was 8)"]);
       expect(exitCode).toBe(0);
     }
     {
@@ -164,8 +167,9 @@ describe("startup JIT deferral window", () => {
 
   test("Bun.unsafe.endStartupJITDeferral() ends it from the program", async () => {
     using dir = tempDir("startup-jit-deferral-unsafe", sources);
-    const { lines, exitCode } = await run(compile(String(dir), "unsafe.ts"));
-    expect(lines).toEqual([ENDED + "Bun.unsafe.endStartupJITDeferral (scale was 8)", "got here"]);
+    const { stdout, lines, exitCode } = await run(compile(String(dir), "unsafe.ts"));
+    expect(stdout).toBe("got here\n");
+    expect(lines).toEqual([ENDED + "Bun.unsafe.endStartupJITDeferral (scale was 8)"]);
     expect(exitCode).toBe(0);
     // Outside a compiled executable there is no window: a no-op.
     expect(Bun.unsafe.endStartupJITDeferral()).toBeUndefined();

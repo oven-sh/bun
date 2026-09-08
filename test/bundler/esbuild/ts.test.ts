@@ -357,6 +357,56 @@ describe("bundler", () => {
       stdout: `[123,null]`,
     },
   });
+  // TypeScript emits "module.exports = value" as the last statement of the
+  // module, so reads of module.exports before the end see the original object
+  // and reads after it see the assigned value, not `exports`.
+  itBundled("ts/ExportEqualsIsMovedToEnd", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import './function.cts'
+        import './namespace.cts'
+        import './enum.cts'
+      `,
+      "/function.cts": /* ts */ `
+        const before = typeof module.exports
+        export = function handler() { return 1 }
+        console.log('function.cts:', JSON.stringify([before, typeof module.exports]))
+        queueMicrotask(() => console.log('function.cts (later):', typeof module.exports, module.exports === exports))
+      `,
+      "/namespace.cts": /* ts */ `
+        namespace N { export const x = 1 }
+        export = N
+        console.log('namespace.cts:', JSON.stringify(module.exports))
+      `,
+      "/enum.cts": /* ts */ `
+        enum E { A = 1 }
+        export = E
+        console.log('enum.cts:', JSON.stringify(module.exports))
+        enum E { B = 2 }
+      `,
+    },
+    run: {
+      stdout: `
+        function.cts: ["object","object"]
+        namespace.cts: {}
+        enum.cts: {}
+        function.cts (later): function false
+      `,
+    },
+  });
+  itBundled("ts/ExportEqualsIsMovedToEndFormatCJS", {
+    files: {
+      "/entry.cts": /* ts */ `
+        const before = typeof module.exports
+        export = function handler() { return 1 }
+        console.log(JSON.stringify([before, typeof module.exports]))
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: `["object","object"]`,
+    },
+  });
   itBundled("ts/ExportNamespace", {
     files: {
       "/a.ts": /* ts */ `

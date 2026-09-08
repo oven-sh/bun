@@ -294,6 +294,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if !p.is_control_flow_dead && id.ref_.eql(p.module_ref) {
+                        // Earlier `module.exports` reads may already be rewritten to `exports`,
+                        // even when named exports were deoptimized by something else since.
+                        if name == b"exports"
+                            && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        {
+                            p.commonjs_module_exports_assigned_deoptimized = true;
+                        }
+
                         // Rewrite "module.require()" to "require()" for Webpack compatibility.
                         // See https://github.com/webpack/webpack/pull/7750 for more info.
                         // This also makes correctness a little easier.
@@ -301,9 +309,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
                         } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
-                            if identifier_opts.assign_target() != js_ast::AssignTarget::None {
-                                p.commonjs_module_exports_assigned_deoptimized = true;
-                            }
 
                             // Detect if we are doing
                             //

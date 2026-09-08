@@ -195,6 +195,65 @@ describe("with statement", () => {
   });
 });
 
+// TypeScript emits "module.exports = value" as the last statement of the
+// module, so reads of module.exports before the end see the original object
+// and the final export is still the assigned value.
+describe.concurrent('TypeScript "export =" is assigned after the last statement', () => {
+  const cases: Record<string, { mod: string; expected: string }> = {
+    "function expression": {
+      mod: `
+        const before = typeof module.exports;
+        export = function handler() { return 1 };
+        console.log(JSON.stringify([before, typeof module.exports]));
+      `,
+      expected: '["object","object"]\nfunction\n',
+    },
+    "namespace": {
+      mod: `
+        namespace N { export const x = 1 }
+        export = N;
+        console.log(JSON.stringify(module.exports));
+      `,
+      expected: '{}\n{"x":1}\n',
+    },
+    "between merged enum declarations": {
+      mod: `
+        enum E { A = 1 }
+        export = E;
+        console.log(JSON.stringify(module.exports));
+        enum E { B = 2 }
+      `,
+      expected: '{}\n{"1":"A","2":"B","A":1,"B":2}\n',
+    },
+  };
+
+  for (const [name, { mod, expected }] of Object.entries(cases)) {
+    test(name, async () => {
+      using dir = tempDir("export-equals", {
+        "mod.cts": mod,
+        "main.cts": `
+          const m = require("./mod.cts");
+          console.log(typeof m === "function" ? typeof m : JSON.stringify(m));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 test("math.pow", () => {
   function foo1(foo) {
     return 10 ** (foo / 20);

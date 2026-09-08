@@ -800,10 +800,13 @@ console.log(greet("world"));`,
     });
 
     // `</script` and `<!--` in the script are escaped for the <script> element
-    // (1 and 3 extra bytes each). The map must account for those bytes too.
-    test("the inlined script's map accounts for </script and <!-- escapes before a mapping", async () => {
+    // (1 and 3 extra bytes each). The map must account for those bytes: a
+    // mapping after the escapes moves by their total, and one before them (but
+    // after non-ASCII text on the same line) stays where it is.
+    test("the inlined script's map accounts for </script and <!-- escapes", async () => {
       const marker = "<!--".repeat(8) + "</script>";
-      const appJs = `export const marker = ${JSON.stringify(marker)};\nexport function greet(name) {\n  return name + marker;\n}\nconsole.log(greet("x"));\n`;
+      const appJs = `export const pre = "h\u00e9llo w\u00f6rld";\nexport const marker = ${JSON.stringify(marker)};\nexport function greet(name) {\n  return name + pre + marker;\n}\nconsole.log(greet("x"));\n`;
+      const lines = appJs.split("\n");
       for (const outdir of [undefined, "dist"]) {
         using dir = tempDir("compile-browser-escape-sourcemap", { ...assetFixture, "app.js": appJs });
         const { html, map } = await buildWithAsset(String(dir), {
@@ -815,16 +818,24 @@ console.log(greet("world"));`,
         const script = html.slice(html.indexOf(open) + open.length, html.indexOf("</script>"));
         const [firstLine] = script.split("\n");
         const escaped = "<!-\\x2D".repeat(8) + "<\\/script>";
+        expect(firstLine).toContain("h\u00e9llo w\u00f6rld");
         expect(firstLine).toContain(escaped);
-        const column = firstLine.indexOf("function greet");
-        expect(column).toBeGreaterThan(firstLine.indexOf(escaped));
+        const before = firstLine.indexOf("marker");
+        const after = firstLine.indexOf("function greet");
+        expect(before).toBeGreaterThan(firstLine.indexOf("w\u00f6rld"));
+        expect(before).toBeLessThan(firstLine.indexOf(escaped));
+        expect(after).toBeGreaterThan(firstLine.indexOf(escaped));
 
-        const original = await SourceMapConsumer.with(map, null, consumer =>
-          consumer.originalPositionFor({ line: 1, column }),
-        );
-        expect({ line: original.line, column: original.column }).toEqual({
-          line: 2,
-          column: appJs.split("\n")[1].indexOf("function greet"),
+        const original = await SourceMapConsumer.with(map, null, consumer => ({
+          before: consumer.originalPositionFor({ line: 1, column: before }),
+          after: consumer.originalPositionFor({ line: 1, column: after }),
+        }));
+        expect({
+          before: { line: original.before.line, column: original.before.column },
+          after: { line: original.after.line, column: original.after.column },
+        }).toEqual({
+          before: { line: 2, column: lines[1].indexOf("marker") },
+          after: { line: 3, column: lines[2].indexOf("function greet") },
         });
       }
     });

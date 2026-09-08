@@ -883,7 +883,9 @@ impl IntermediateOutput {
                                 match piece.query.kind() {
                                     QueryKind::Chunk => {
                                         if let Some(content) = scc[index].as_deref() {
-                                            count += content.len();
+                                            count += chunks[index]
+                                                .html_inline_context()
+                                                .escaped_len(content);
                                             continue;
                                         }
                                     }
@@ -1054,10 +1056,19 @@ impl IntermediateOutput {
                                         shift.after.advance(content);
                                         shifts.push(shift);
                                     }
-                                    // Chunk content was already escaped for its <script>/<style>
-                                    // element when that chunk was resolved (`inline_escape`).
-                                    remain[..content.len()].copy_from_slice(content);
-                                    remain = &mut remain[content.len()..];
+                                    let written = if piece.query.kind() == QueryKind::Chunk {
+                                        // The chunk escaped its own text when it was resolved
+                                        // (`inline_escape`), so this finds nothing there. It catches
+                                        // what was appended after that, e.g. a sourceMappingURL
+                                        // comment that carries --public-path.
+                                        chunks[index]
+                                            .html_inline_context()
+                                            .write_escaped(remain, content, None)
+                                    } else {
+                                        remain[..content.len()].copy_from_slice(content);
+                                        content.len()
+                                    };
+                                    remain = &mut remain[written..];
                                     continue;
                                 }
                             }

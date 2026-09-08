@@ -29,6 +29,27 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(&BunString::static_("."), global, false)
 }
 
+/// The `<path>` of a module key, which is `<path>?query` when the module was
+/// imported with a query. A Windows `\\?\` or `\\.\` device prefix is path.
+/// Keep in sync with `moduleKeyPathLength` (PathInlines.h).
+pub fn module_key_without_query(key: &[u8]) -> &[u8] {
+    let start = if cfg!(windows)
+        && key.len() >= 4
+        && bun_paths::is_sep_any(key[0])
+        && bun_paths::is_sep_any(key[1])
+        && (key[2] == b'?' || key[2] == b'.')
+        && bun_paths::is_sep_any(key[3])
+    {
+        4
+    } else {
+        0
+    };
+    match strings::index_of_char_usize(&key[start..], b'?') {
+        Some(query_start) => &key[..start + query_start],
+        None => key,
+    }
+}
+
 // C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 extern "C" fn node_module_paths_js_value(
@@ -40,12 +61,7 @@ extern "C" fn node_module_paths_js_value(
 
     let utf8 = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        // `in_str` is a module key, which may be `<path>?query`.
-        let path = match strings::index_of_char_usize(utf8.slice(), b'?') {
-            Some(query_start) => &utf8.slice()[..query_start],
-            None => utf8.slice(),
-        };
-        resolve_path::dirname::<bun_paths::platform::Auto>(path)
+        resolve_path::dirname::<bun_paths::platform::Auto>(module_key_without_query(utf8.slice()))
     } else {
         utf8.slice()
     };

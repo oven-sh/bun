@@ -52,6 +52,20 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
+/// Length of the `<path>` of a module key, which is `<path>?query` when the
+/// module was imported with a query. A Windows `\\?\` or `\\.\` device prefix
+/// is path. Keep in sync with `module_key_without_query` (resolver_jsc.rs).
+ALWAYS_INLINE unsigned moduleKeyPathLength(const WTF::String& key)
+{
+    unsigned start = 0;
+#if OS(WINDOWS)
+    if (key.length() >= 4 && IS_SLASH(key[0]) && IS_SLASH(key[1]) && (key[2] == '?' || key[2] == '.') && IS_SLASH(key[3]))
+        start = 4;
+#endif
+    size_t queryStart = key.find('?', start);
+    return queryStart == WTF::notFound ? key.length() : static_cast<unsigned>(queryStart);
+}
+
 #undef IS_LETTER
 #undef IS_SLASH
 

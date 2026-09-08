@@ -4518,8 +4518,7 @@ impl VirtualMachine {
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 // `source` is the referrer's module key, which may be `<path>?query`.
-                let mut source_query: &[u8] = b"";
-                let source_path = normalize_specifier_for_resolution(source, &mut source_query);
+                let source_path = crate::resolver_jsc::module_key_without_query(source);
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
                 // the resolve call (and the resolver only borrows it for the

@@ -529,12 +529,11 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
     JSValue dirname;
     if (parent.filename) {
         JSString* filename = parent.filename;
-        // The filename is a module key, which may be `<path>?query`.
-        auto filenameView = filename->value(globalObject);
+        auto filenameValue = filename->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto queryStart = filenameView->find('?');
-        if (queryStart != WTF::notFound) {
-            filename = JSC::jsSubstring(globalObject, filename, 0, queryStart);
+        unsigned pathLength = moduleKeyPathLength(filenameValue);
+        if (pathLength != filenameValue->length()) {
+            filename = JSC::jsSubstring(globalObject, filename, 0, pathLength);
             RETURN_IF_EXCEPTION(scope, {});
         }
         EncodedJSValue encodedFilename = JSValue::encode(filename);

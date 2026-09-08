@@ -554,22 +554,21 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-/// Live `process.env` decides when it has either key; otherwise the startup production mode stands.
+/// A production start is sticky; otherwise the live `process.env` can still opt in (a startup snapshot cannot).
 fn default_is_production(global: &JSGlobalObject, vm: &VirtualMachine) -> JsResult<bool> {
-    let process_env = global.process_env()?;
-    let is_production = |key: &str| -> JsResult<Option<bool>> {
-        Ok(match process_env.get(global, key)? {
-            Some(value) if value.is_string() => {
-                Some(value.to_js_string_view(global)?.eq_ascii(b"production"))
-            }
-            None | Some(_) => None,
-        })
-    };
-    let (node_env, bun_env) = (is_production("NODE_ENV")?, is_production("BUN_ENV")?);
-    if node_env.is_none() && bun_env.is_none() {
-        return Ok(vm.transpiler.options.production);
+    if vm.transpiler.options.production {
+        return Ok(true);
     }
-    Ok(node_env == Some(true) || bun_env == Some(true))
+    let process_env = global.process_env()?;
+    for key in ["NODE_ENV", "BUN_ENV"] {
+        if let Some(value) = process_env.get(global, key)?
+            && value.is_string()
+            && value.to_js_string_view(global)?.eq_ascii(b"production")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {

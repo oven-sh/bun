@@ -262,11 +262,11 @@ describe("Bun.serve development options", () => {
     server.stop();
   });
 
-  // The default for `development` is decided from `process.env.NODE_ENV` (or
-  // `BUN_ENV`) as it is when `Bun.serve()` is called, so a runtime assignment
-  // before the call counts (the same timing as frameworks that read it at app
-  // creation). With neither key present, the mode the process started in
-  // stands. An explicit `development` option still wins.
+  // `development` defaults to off when the process started in production mode
+  // (sticky), or when `process.env.NODE_ENV` / `BUN_ENV` is "production" at
+  // the time `Bun.serve()` is called, so a runtime assignment before the call
+  // counts like it does for frameworks that read it at app creation. An
+  // explicit `development` option still wins.
   const envTimingFixture = (key: string) => /* js */ `
     const key = ${JSON.stringify(key)};
     const results = {};
@@ -331,21 +331,20 @@ describe("Bun.serve development options", () => {
     });
 
     test.concurrent("production at launch", async () => {
+      // A production start is sticky: only an explicit `development: true`
+      // brings the dev error page back.
       expect(await runEnvTimingFixture(key, "production")).toEqual({
         "at launch": prodPage,
         "assigned production": prodPage,
         "assigned production, development: true": devPage,
-        "assigned development": devPage,
+        "assigned development": prodPage,
         "assigned development, development: false": prodPage,
-        // Absent again: the process started in production mode, so that stands.
         "deleted": prodPage,
       });
     });
   });
 
-  // A `process.env` without the key does not undo a production start: a
-  // `--define`d NODE_ENV, or a worker whose `env` option omits it.
-  test.concurrent("--define process.env.NODE_ENV still selects the production default", async () => {
+  test.concurrent("--define process.env.NODE_ENV selects the production default over the environment", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -353,16 +352,16 @@ describe("Bun.serve development options", () => {
         'process.env.NODE_ENV="production"',
         "-e",
         `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
-         console.log(JSON.stringify({ inEnvObject: Object.hasOwn(process.env, "NODE_ENV"), development: server.development }));
+         console.log(JSON.stringify({ inEnvObject: process.env["NODE" + "_ENV"], development: server.development }));
          await server.stop(true);`,
       ],
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      env: { ...bunEnv, NODE_ENV: "development", BUN_ENV: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ inEnvObject: false, development: false });
+    expect(JSON.parse(stdout)).toEqual({ inEnvObject: "development", development: false });
     expect(exitCode).toBe(0);
   });
 

@@ -811,25 +811,13 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    /// Whether an earlier install stopped before this package's lifecycle
-    /// scripts finished (see [`SCRIPTS_PENDING_FILE`]).
-    pub(crate) fn has_pending_scripts(&mut self, root_node_modules_dir: &Dir) -> bool {
-        let dest_len = self.destination_dir_subpath.len();
-        let name = SCRIPTS_PENDING_FILE.as_bytes();
-        let path_len = dest_len + SEP_STR.len() + name.len();
-        self.destination_dir_subpath_buf[dest_len] = SEP;
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len()..path_len].copy_from_slice(name);
-        self.destination_dir_subpath_buf[path_len] = 0;
-        // SAFETY: NUL written above.
-        let marker_path =
-            unsafe { ZStr::from_raw_mut(self.destination_dir_subpath_buf.as_mut_ptr(), path_len) };
-        let _restore = scopeguard::guard(
-            self.destination_dir_subpath_buf.as_mut_ptr(),
-            // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
-            // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
+    /// An earlier install stopped before this package's scripts finished; see [`SCRIPTS_PENDING_FILE`].
+    pub(crate) fn has_pending_scripts(&self, root_node_modules_dir: &Dir) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            buf.as_mut_slice(),
+            &[self.destination_dir_subpath.as_bytes(), SCRIPTS_PENDING_FILE.as_bytes()],
         );
-
         self.node_modules
             .file_exists_at(root_node_modules_dir, marker_path)
     }

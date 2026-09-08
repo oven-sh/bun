@@ -1614,7 +1614,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             }
             proc.kill("SIGKILL");
             await proc.exited;
-            process.kill(scriptPid, "SIGKILL");
+            try {
+              process.kill(scriptPid, "SIGKILL");
+            } catch (e) {
+              // the script may already have died with its parent
+              if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+            }
           }
           expect(await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))])).toEqual([
             false,

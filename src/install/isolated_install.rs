@@ -2295,10 +2295,8 @@ pub(crate) fn install_isolated_packages(
                                 }
                             }
                         })
-                        // An earlier install stopped before this entry's lifecycle
-                        // scripts finished (`SCRIPTS_PENDING_FILE`). Only a trusted,
-                        // project-local entry can have had scripts enqueued, so every
-                        // other entry skips the extra stat.
+                        // `SCRIPTS_PENDING_FILE`: only a trusted project-local entry can
+                        // have had scripts enqueued, so only it pays the stat
                         || (!uses_global_store
                             && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id)
                                 || lockfile_ro.has_trusted_dependency(

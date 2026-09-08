@@ -889,9 +889,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            // The isolated installer links binaries next and spawns
-                            // the remaining scripts as a new subprocess. When there
-                            // are none, this was the last script.
+                            // later scripts run as a new subprocess after `Binaries`; none left means done
                             if self.scripts.items[1..].iter().all(Option::is_none) {
                                 self.scripts.clear_scripts_pending();
                             }
@@ -1059,8 +1057,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {
-        // Never delete a workspace, a `bun link` target, or a folder dependency:
-        // those script cwds are the user's own directories.
+        // a workspace, `link:` or folder package's cwd is the user's own directory
         if !self.scripts.cwd_is_from_cache {
             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };

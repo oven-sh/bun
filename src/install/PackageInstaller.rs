@@ -156,7 +156,6 @@ impl NodeModulesFolder {
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
-    /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     pub(crate) fn file_exists_at(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> bool {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
@@ -1611,8 +1610,7 @@ impl<'a> PackageInstaller<'a> {
             || !needs_verify
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder)
-            // An earlier install stopped before this package's scripts finished.
-            // Only a trusted package can have had scripts enqueued.
+            // only a trusted package can have had scripts enqueued, so only it pays the stat
             || (is_trusted
                 && resolution.tag.can_enqueue_install_task()
                 && installer.has_pending_scripts(&self.root_node_modules_folder));
@@ -2480,9 +2478,7 @@ impl<'a> PackageInstaller<'a> {
                         + scripts_list.total as usize,
                 );
             }
-            // The scripts may not run for a while (the tree's dependencies
-            // install first). Mark the package now so that an install killed
-            // before they finish does not count it as installed.
+            // now, not at spawn time: the scripts wait for the tree's dependencies to install
             scripts_list.mark_scripts_pending();
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {
                 list: scripts_list,

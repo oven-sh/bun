@@ -418,11 +418,8 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
-    /// `cwd` is a package directory bun extracted from its cache (npm, git,
-    /// github, tarball), as opposed to the project root, a workspace, a
-    /// `bun link` target, or a folder dependency, which are the user's own
-    /// directories. Only a cache copy gets a [`SCRIPTS_PENDING_FILE`] and may
-    /// be deleted when an optional dependency's script fails.
+    /// `cwd` is bun's copy of an npm/git/tarball package out of the cache, not the user's own
+    /// directory (root, workspace, `link:`, folder). Only such a copy is marked or deleted.
     pub(crate) cwd_is_from_cache: bool,
 }
 
@@ -432,14 +429,12 @@ fn scripts_pending_file_path(package_dir: &[u8]) -> Option<bun_paths::AutoAbsPat
     Some(path)
 }
 
-/// Create [`SCRIPTS_PENDING_FILE`] in `package_dir` before its first lifecycle
-/// script is spawned. Best effort: without it a killed install is just not
-/// retried.
+/// Create [`SCRIPTS_PENDING_FILE`]. Best effort: without it a killed install is just not retried.
 pub fn mark_scripts_pending(package_dir: &[u8]) {
     let Some(path) = scripts_pending_file_path(package_dir) else {
         return;
     };
-    // Dropping the `File` closes it.
+    // dropping the `File` closes it
     let _ = bun_sys::File::openat(
         Fd::cwd(),
         path.slice(),
@@ -448,8 +443,7 @@ pub fn mark_scripts_pending(package_dir: &[u8]) {
     );
 }
 
-/// Remove [`SCRIPTS_PENDING_FILE`] once every script exited 0, or when it
-/// turns out there is nothing to run.
+/// Remove [`SCRIPTS_PENDING_FILE`]: every script exited 0, or there was nothing to run.
 pub fn clear_scripts_pending(package_dir: &[u8]) {
     let Some(mut path) = scripts_pending_file_path(package_dir) else {
         return;

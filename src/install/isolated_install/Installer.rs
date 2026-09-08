@@ -884,8 +884,7 @@ impl Task {
         let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        // (lifecycle scripts are trusted to run, trusted through `--trust`).
-        // Not for the root entry, which has no dependency id.
+        // (scripts are trusted to run, trusted through `--trust`); not for the root entry
         let entry_trust = || -> (bool, bool) {
             if installer
                 .trusted_dependencies_from_update_requests
@@ -1502,10 +1501,8 @@ impl Task {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
 
-                    // `LinkPackage` just finished for a fresh entry. It can wait in
-                    // `CheckIfBlocked` on its dependencies' scripts for a long time
-                    // before `RunPreinstall` enqueues its own, so mark it already.
-                    // `RunPreinstall` clears the mark if there is nothing to run.
+                    // Mark a fresh entry right after `LinkPackage`: it may wait in `CheckIfBlocked`
+                    // long before `RunPreinstall`, which clears the mark if nothing runs.
                     if !relinking
                         && pkg_res.tag.can_enqueue_install_task()
                         && manager_ref.options.do_.contains(Do::RUN_SCRIPTS)

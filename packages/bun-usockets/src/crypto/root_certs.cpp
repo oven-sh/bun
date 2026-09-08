@@ -370,6 +370,9 @@ struct us_user_root_set {
   // Built from `certs` when the set is published; handed out by
   // us_get_shared_default_ca_store().
   X509_STORE *shared;
+  // The set this one superseded: kept reachable so LeakSanitizer does not
+  // report the sets that are left allocated on purpose.
+  us_user_root_set *prev;
 };
 static std::atomic<us_user_root_set *> us_user_roots{nullptr};
 
@@ -410,9 +413,10 @@ extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
     sk_X509_pop_free(certs, X509_free);
     return 0;
   }
-  us_user_root_set *set = new us_user_root_set{certs, shared};
   // The previous set, if any, stays allocated; see the comment above.
-  us_user_roots.store(set, std::memory_order_release);
+  us_user_root_set *set = new us_user_root_set{certs, shared, us_user_roots.load(std::memory_order_relaxed)};
+  while (!us_user_roots.compare_exchange_weak(set->prev, set, std::memory_order_release, std::memory_order_relaxed)) {
+  }
   return 1;
 }
 

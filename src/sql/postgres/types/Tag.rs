@@ -56,7 +56,7 @@
 //  varbit                                |  1562 |     1563
 //  numeric                               |  1700 |     1231
 
-use super::int_types::short as Short;
+use super::int_types::{Int4, short as Short};
 
 // Non-exhaustive: any `short` value is a valid `Tag`. A `#[repr(i16)] enum`
 // cannot hold arbitrary values, so model as a transparent newtype with
@@ -179,6 +179,14 @@ pg_tags! {
 }
 
 impl Tag {
+    /// Maps a wire OID to a `Tag`. An OID outside the `Short` range is a
+    /// user-defined type and is handled as text. Every place that derives a
+    /// format code or picks a codec from an OID must go through this, so the
+    /// two sides agree.
+    pub fn from_oid(oid: Int4) -> Tag {
+        Short::try_from(oid).map_or(Tag::text, Tag)
+    }
+
     /// Types whose binary wire format `DataCell` can decode, so result columns
     /// of these types are requested in binary. Bind parameters are encoded by
     /// a shorter list, `ParamEncoding` in `bun_sql_jsc`.

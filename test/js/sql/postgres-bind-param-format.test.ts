@@ -4,12 +4,26 @@
 // the server reports (numeric, real, time, int4[], real[], ...) is sent as
 // `String(value)` and must be declared as text so the server parses it.
 //
-// Runs against a real Postgres server with the default `prepare: true`, where
+// The mock-server tests pin the exact Bind bytes. The container tests run the
+// same cases against a real Postgres with the default `prepare: true`, where
 // Bun binds with the parameter types from the server's ParameterDescription.
 
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
+import {
+  type PgBind,
+  pgBindComplete,
+  pgCommandComplete,
+  pgDataRow,
+  pgDecodeBind,
+  pgMockServer,
+  pgNoData,
+  pgParameterDescription,
+  pgParseComplete,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 // Stand-in for a decimal.js / big.js style value: not a string, but its text
 // form is what should reach the server.
@@ -19,6 +33,110 @@ class Textual {
     return this.text;
   }
 }
+
+/**
+ * Mock backend for one prepared query. Describe is answered with the given
+ * parameter OIDs and result columns, Execute with one `row`. Resolves with
+ * every Bind the client sent and the rows it decoded.
+ */
+async function runAgainstMock(opts: {
+  paramOids: number[];
+  columns?: { name: string; typeOid: number }[];
+  row?: (Buffer | null)[];
+  query: (sql: SQL) => Promise<any>;
+}): Promise<{ binds: PgBind[]; rows: any }> {
+  const binds: PgBind[] = [];
+  const columns = opts.columns ?? [];
+  const { server, port } = await pgMockServer((type, body, socket) => {
+    switch (type) {
+      case "P":
+        return pgParseComplete();
+      case "D":
+        return [pgParameterDescription(opts.paramOids), columns.length ? pgRowDescription(columns) : pgNoData()];
+      case "B":
+        binds.push(pgDecodeBind(body));
+        return pgBindComplete();
+      case "E":
+        return opts.row ? [pgDataRow(opts.row), pgCommandComplete("SELECT 1")] : pgCommandComplete("SELECT 0");
+      case "S":
+        return pgReadyForQuery();
+      case "X":
+        socket.end();
+        break;
+    }
+  });
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1 });
+    const rows = await opts.query(sql);
+    return { binds, rows };
+  } finally {
+    server.close();
+  }
+}
+
+describe("Bind format codes (mock server)", () => {
+  test("parameters typed numeric, float4, time, int4[] and float4[] are declared and sent as text", async () => {
+    const { binds } = await runAgainstMock({
+      // numeric, float4, time, int4_array, float4_array
+      paramOids: [1700, 700, 1083, 1007, 1021],
+      query: sql =>
+        sql.unsafe("select $1, $2, $3, $4, $5", [
+          new Textual("19.99"),
+          new Textual("1234"),
+          new Textual("12:34:56"),
+          sql.array([1, 2], "INT4"),
+          sql.array([1.5], "REAL"),
+        ]),
+    });
+    expect(binds).toHaveLength(1);
+    expect({
+      paramFormats: binds[0].paramFormats,
+      params: binds[0].params.map(p => p?.toString("latin1")),
+    }).toEqual({
+      paramFormats: [0, 0, 0, 0, 0],
+      params: ["19.99", "1234", "12:34:56", `{"1","2"}`, "{1.5}"],
+    });
+  });
+
+  test("parameters with a binary encoder are declared binary, a string value stays text", async () => {
+    const date = new Date("2000-01-01T00:00:01.000Z"); // 1_000_000 us after the Postgres epoch
+    const { binds } = await runAgainstMock({
+      // bool, int4, float8, timestamptz, bytea, int4 (bound from a string)
+      paramOids: [16, 23, 701, 1184, 17, 23],
+      query: sql => sql.unsafe("select $1, $2, $3, $4, $5, $6", [true, 7, 1.5, date, Buffer.from([1, 2]), "8"]),
+    });
+    expect(binds).toHaveLength(1);
+    expect({ paramFormats: binds[0].paramFormats, params: binds[0].params }).toEqual({
+      paramFormats: [1, 1, 1, 1, 1, 0],
+      params: [
+        Buffer.from([1]),
+        Buffer.from([0, 0, 0, 7]),
+        Buffer.from("3ff8000000000000", "hex"),
+        Buffer.from("00000000000f4240", "hex"),
+        Buffer.from([1, 2]),
+        Buffer.from("8"),
+      ],
+    });
+  });
+
+  test("a result column whose OID is above 65535 is requested and decoded as text", async () => {
+    // 65552 = 65536 + 16: a user-defined type whose low 16 bits alias `bool`.
+    const { binds, rows } = await runAgainstMock({
+      paramOids: [23],
+      columns: [
+        { name: "custom", typeOid: 65552 },
+        { name: "n", typeOid: 23 },
+      ],
+      row: [Buffer.from("(42,t)"), Buffer.from([0, 0, 0, 9])],
+      query: sql => sql`select custom, n from t where n = ${9}`,
+    });
+    expect(binds).toHaveLength(1);
+    expect({ resultFormats: binds[0].resultFormats, row: rows[0] }).toEqual({
+      resultFormats: [0, 1],
+      row: { custom: "(42,t)", n: 9 },
+    });
+  });
+});
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   const connect = () =>

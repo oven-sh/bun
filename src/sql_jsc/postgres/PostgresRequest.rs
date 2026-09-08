@@ -49,14 +49,14 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-/// How `write_bind` puts one parameter value on the wire. Both the
-/// format-code section and the value section of the Bind message are derived
-/// from this, so they cannot disagree.
+/// How `write_bind` puts one parameter value on the wire. It is decided once
+/// per parameter, and both the format-code section and the value section of
+/// the Bind message are written from it, so they cannot disagree.
 ///
 /// This is the encode side only. `Tag::is_binary_format_supported` is the
 /// decode side (result columns) and is wider: `DataCell` decodes binary
 /// numeric, float4, time, int4[] and float4[], but nothing here encodes them.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ParamEncoding {
     /// `String(value)`, format 0. The server parses it as the parameter's type.
     Text,
@@ -111,14 +111,6 @@ impl ParamEncoding {
     }
 }
 
-fn param_tag(parameter_field: Int4) -> types::Tag {
-    match Short::try_from(parameter_field) {
-        Ok(oid) => types::Tag(oid),
-        // Outside the `Short` range: a user-defined type, bound as text.
-        Err(_) => types::Tag::text,
-    }
-}
-
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
@@ -150,10 +142,14 @@ pub(crate) fn write_bind<Context: WriterContext>(
     // of parameters.
     writer.short(len)?;
 
+    // Decided once per parameter here and reused for the value section below,
+    // so a getter or `toString()` that runs in between cannot make the bytes
+    // disagree with the declared format code.
+    let mut encodings: Vec<ParamEncoding> = Vec::with_capacity(parameter_fields.len());
     let mut iter = QueryBindingIterator::init(values_array, columns_value, global)
         .map_err(js_error_to_postgres)?;
     for (i, &parameter_field) in parameter_fields.iter().enumerate() {
-        let mut encoding = ParamEncoding::for_tag(param_tag(parameter_field));
+        let mut encoding = ParamEncoding::for_tag(types::Tag::from_oid(parameter_field));
         if encoding.is_binary() {
             iter.to(i as u32);
             if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
@@ -163,6 +159,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
         }
         writer.short(encoding.format_code())?;
+        encodings.push(encoding);
     }
 
     // The number of parameter values that follow (possibly zero). This
@@ -173,28 +170,34 @@ pub(crate) fn write_bind<Context: WriterContext>(
     iter.to(0);
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        let tag: types::Tag = match parameter_fields.get(i) {
-            Some(&parameter_field) => param_tag(parameter_field),
-            // parameter in array but not in parameter_fields
-            // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
-            // with will describe better the error saying exactly how many parameters are missing and are expected
-            // Example:
-            // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
-            // errno: "08P01",
-            // code: "ERR_POSTGRES_SERVER_ERROR"
-            None => types::Tag::text,
-        };
+        // parameter in array but not in parameter_fields
+        // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
+        // with will describe better the error saying exactly how many parameters are missing and are expected
+        // Example:
+        // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
+        // errno: "08P01",
+        // code: "ERR_POSTGRES_SERVER_ERROR"
+        let index = i;
+        i += 1;
+        let encoding = encodings.get(index).copied().unwrap_or(ParamEncoding::Text);
         if value.is_empty_or_undefined_or_null() {
             bun_core::scoped_log!(Postgres, "  -> NULL");
             //  As a special case, -1 indicates a
             // NULL parameter value. No value bytes follow in the NULL case.
             writer.int4((-1i32) as u32)?;
-            i += 1;
             continue;
         }
-        bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
+        bun_core::scoped_log!(
+            Postgres,
+            "  -> {} as {:?}",
+            parameter_fields
+                .get(index)
+                .and_then(|&oid| types::Tag::from_oid(oid).tag_name())
+                .unwrap_or("(unknown)"),
+            encoding
+        );
 
-        match ParamEncoding::for_tag(tag).for_value(value) {
+        match encoding {
             ParamEncoding::Json => {
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 let str = value
@@ -257,8 +260,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
         }
-
-        i += 1;
     }
 
     let mut any_non_text_fields: bool = false;

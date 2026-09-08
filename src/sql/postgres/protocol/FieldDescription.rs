@@ -1,5 +1,5 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
-use crate::postgres::postgres_types::{self as types, Int4, Short};
+use crate::postgres::postgres_types::{self as types, Int4};
 use crate::postgres::protocol::new_reader::NewReader;
 use crate::shared::column_identifier::ColumnIdentifier;
 
@@ -13,9 +13,7 @@ pub struct FieldDescription {
 
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
-        // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype over
-        // the OID, so wrap the truncated value directly.
-        types::Tag(self.type_oid as Short)
+        types::Tag::from_oid(self.type_oid)
     }
 
     pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(

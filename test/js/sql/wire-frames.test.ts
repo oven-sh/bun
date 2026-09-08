@@ -18,11 +18,43 @@ import {
   pgCopyDone,
   pgCopyOutResponse,
   pgDataRow,
+  pgDecodeBind,
   pgErrorResponse,
   pgMinimalReadyServer,
   pgReadyForQuery,
   pgRowDescription,
 } from "./wire-frames";
+
+test("pgDecodeBind decodes a §55.7 Bind body", () => {
+  // portal "", statement "S1", 2 format codes [1, 0], 2 params (4-byte int4 7, NULL), 1 result format [1]
+  const body = Buffer.from(
+    "\x00S1\x00" +
+      "\x00\x02\x00\x01\x00\x00" +
+      "\x00\x02" +
+      "\x00\x00\x00\x04\x00\x00\x00\x07" +
+      "\xff\xff\xff\xff" +
+      "\x00\x01\x00\x01",
+    "binary",
+  );
+  expect(pgDecodeBind(body)).toEqual({
+    portal: "",
+    statement: "S1",
+    paramFormats: [1, 0],
+    params: [Buffer.from([0, 0, 0, 7]), null],
+    resultFormats: [1],
+  });
+  // 0 format codes means "all text"; 1 code applies to every parameter.
+  const none = Buffer.from(
+    "\x00\x00" + "\x00\x00" + "\x00\x02" + "\x00\x00\x00\x01a\x00\x00\x00\x01b" + "\x00\x00",
+    "binary",
+  );
+  expect(pgDecodeBind(none).paramFormats).toEqual([0, 0]);
+  const one = Buffer.from(
+    "\x00\x00" + "\x00\x01\x00\x01" + "\x00\x02" + "\x00\x00\x00\x01a\x00\x00\x00\x01b" + "\x00\x00",
+    "binary",
+  );
+  expect(pgDecodeBind(one).paramFormats).toEqual([1, 1]);
+});
 
 test("mysqlLenencInt encodes per page_protocol_basic_dt_integers.html", () => {
   expect(mysqlLenencInt(0)).toEqual(Buffer.from([0x00]));

@@ -61,6 +61,13 @@ The command attaches the capability to the `bun` binary itself. Replacing the bi
 
 ---
 
+systemd's resource-control and sandboxing options work with Bun. Two of them need care:
+
+- To cap memory, use `MemoryMax=`. `LimitAS=` (the same limit as `ulimit -v`) caps address space instead, and Bun reserves far more address space than the memory it uses. Bun sizes its startup reservations to fit the limit, but a value below a few hundred megabytes can still stop it from starting.
+- `MemoryDenyWriteExecute=yes` forbids executable memory, so JavaScriptCore's JIT is unavailable. JavaScript and WebAssembly still run, in the interpreter, which is several times slower for compute-heavy code.
+
+---
+
 With the service file configured, _enable_ the service. Once enabled, it starts automatically on reboot. Enabling the service requires `sudo` permissions.
 
 ```bash terminal icon="terminal"

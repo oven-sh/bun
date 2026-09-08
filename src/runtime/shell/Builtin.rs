@@ -724,10 +724,7 @@ impl Builtin {
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {
-                    // SAFETY: returned a live JSC-owned `*mut Value` borrowed
-                    // from a Response/Request wrapper.
-                    let body = unsafe { &mut *body };
-                    let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
+                    let is_file_blob = matches!(body.value.get(), crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
                         let _ = global.throw(format_args!(
@@ -735,7 +732,7 @@ impl Builtin {
                         ));
                         return Some(Yield::failed());
                     }
-                    let original_blob = body.use_();
+                    let original_blob = body.value.with_mut(|v| v.use_());
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
                         return None;

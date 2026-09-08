@@ -134,13 +134,16 @@ impl FileRoute {
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
         // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
+        // unsafe in `JSValue`); `body_value`/`get_init_headers`/
         // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
-            let body_value = response.get_body_value();
-            body_value.to_blob_if_possible();
-            let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
-            if needs_read {
+            let route = response.body_value().with_mut(|body_value| {
+                body_value.to_blob_if_possible();
+                let needs_read =
+                    matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
+                if !needs_read {
+                    return Ok(None);
+                }
                 // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
                 let is_fd = matches!(
                     body_value,
@@ -168,12 +171,15 @@ impl FileRoute {
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 
-                return Ok(Some(RefPtr::new(FileRoute::new(
+                Ok(Some(RefPtr::new(FileRoute::new(
                     blob,
                     headers,
                     None,
                     status_code,
-                ))));
+                ))))
+            })?;
+            if route.is_some() {
+                return Ok(route);
             }
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {

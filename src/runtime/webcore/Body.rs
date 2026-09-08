@@ -19,81 +19,27 @@ use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
-use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::JsCell;
+use bun_core::{Utf8Bytes, WTFString, WTFStringImplExt as _};
 use bun_jsc::StringJsc as _;
-use bun_jsc::bun_string_jsc;
-
-/// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
-/// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
-/// (and in `Blob::Any`, `Response::construct_json`).
-///
-/// # Safety (encapsulated)
-/// `Value::WTFStringImpl` always stores a non-null `*mut WTF::StringImpl`
-/// (constructed via `String::leak_wtf_impl()` / `r#ref()`); the body holds a
-/// +1 intrusive ref for as long as the variant is active, so the pointee is
-/// live for any borrow tied to `&s`. All `WTFStringImplStruct` methods take
-/// `&self` (refcount lives in a `Cell`), so a shared borrow suffices even for
-/// `r#ref()` / `deref()`.
-#[inline(always)]
-pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
-    // SAFETY: see fn doc — non-null, intrusive-refcounted, live while held.
-    unsafe { &**s }
-}
-
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `Store::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
-        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
-}
+use bun_jsc::{JsCell, bun_string_jsc};
 
 fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
+    if let Some(store) = blob.store.get().as_ref() {
+        blob::Store::set_mime_type(store, mime_type.clone());
     }
     blob.content_type
         .set(blob::BlobContentType::from(mime_type));
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
 }
 
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
 // R-2 (host-fn re-entrancy): `Body` is embedded inline in JS-exposed
-// `Response` (and aliased via `HiveRef` in `Request`). Every BodyMixin host
-// fn takes `&self` and projects `&mut Value` through this `JsCell`; the
-// `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
-// host call cannot stack two `&mut` to the same field.
+// `Response` (and pooled in a `HiveRef` for `Request`). Every BodyMixin host
+// fn takes `&self` and reaches the `Value` through this `JsCell` in
+// closure-scoped borrows, so a re-entrant host call cannot stack two `&mut`
+// to the same field.
 #[repr(C)]
 pub struct Body {
     pub value: JsCell<Value>, // = Value::Empty,
@@ -115,21 +61,13 @@ impl Body {
         }
     }
 
-    /// R-2 interior-mutability projection: `&self` → `&mut Value`.
-    /// Single-JS-thread invariant (see `JsCell`) makes this sound; keep the
-    /// returned borrow short and do not hold it across a call that re-enters
-    /// JS and may touch this same body.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn value_mut(&self) -> &mut Value {
-        // SAFETY: single-JS-thread invariant — `Body` lives inside a
-        // `Request`/`Response` JSC heap cell; concurrent access is impossible
-        // and re-entrant host fns each form a fresh short-lived borrow.
-        unsafe { self.value.get_mut() }
+    pub(crate) fn into_value(self) -> Value {
+        self.value.into_inner()
     }
 
     pub(crate) fn len(&self) -> blob::SizeType {
-        self.value_mut().size()
+        self.value.with_mut(|v| v.size())
     }
 }
 
@@ -157,7 +95,7 @@ impl Body {
             )
             .map_err(|_| core::fmt::Error)?;
 
-        match self.value_mut() {
+        match self.value.get() {
             Value::Blob(blob) => {
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
@@ -170,7 +108,7 @@ impl Body {
                 // global. Compute the size from the matched payload directly.
                 let size = match v {
                     Value::InternalBlob(b) => b.slice_const().len(),
-                    Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length(),
+                    Value::WTFStringImpl(s) => s.utf8_byte_length(),
                     _ => unreachable!(),
                 };
                 formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -204,7 +142,7 @@ impl Body {
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl Body {
     pub fn reset(&self) {
-        self.value_mut().reset();
+        self.value.with_mut(Value::reset);
     }
 }
 
@@ -326,8 +264,6 @@ impl PendingValue {
     /// If the size is unknown will be 0
     fn size_hint(&self) -> blob::SizeType {
         if let Some(readable) = self.readable.get() {
-            // BACKREF: see `Source::bytes()` — payload live while the
-            // ReadableStream JS wrapper (rooted via `self.readable`) is alive.
             if let Some(bytes) = readable.ptr.bytes() {
                 return bytes.size_hint.get();
             }
@@ -389,12 +325,17 @@ impl PendingValue {
         None
     }
 
+    /// Commit this pending body to `action`. The script half of the read —
+    /// draining an already-realised stream, or telling the producer to start
+    /// buffering (which may settle and so replace the `Value` this lives in)
+    /// — is returned for the caller to [`run`](LockedRead::run) once its
+    /// borrow of the body is released.
     fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
         action: Action,
         owned_readable: Option<ReadableStream>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<LockedRead> {
         self.action = action;
         if let Some(readable) = owned_readable.or_else(|| self.readable.get()) {
             match &mut self.action {
@@ -404,15 +345,13 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
-                    let promise = match &mut self.action {
-                        Action::GetJSON => global_this.readable_stream_to_json(readable.value),
-                        Action::GetArrayBuffer => {
-                            global_this.readable_stream_to_array_buffer(readable.value)
-                        }
-                        Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
-                        Action::GetText => global_this.readable_stream_to_text(readable.value),
-                        Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
-                        Action::GetFormData(form_data) => 'brk: {
+                    let (kind, encoding) = match &mut self.action {
+                        Action::GetJSON => (StreamRead::JSON, JSValue::UNDEFINED),
+                        Action::GetArrayBuffer => (StreamRead::ArrayBuffer, JSValue::UNDEFINED),
+                        Action::GetBytes => (StreamRead::Bytes, JSValue::UNDEFINED),
+                        Action::GetText => (StreamRead::Text, JSValue::UNDEFINED),
+                        Action::GetBlob => (StreamRead::Blob, JSValue::UNDEFINED),
+                        Action::GetFormData(form_data) => {
                             let fd = form_data.take().unwrap();
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
@@ -421,8 +360,7 @@ impl PendingValue {
                                 bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
                             };
                             // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
-                            break 'brk global_this
-                                .readable_stream_to_form_data(readable.value, encoding_js);
+                            (StreamRead::FormData, encoding_js)
                         }
                         _ => unreachable!(),
                     };
@@ -430,7 +368,11 @@ impl PendingValue {
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
-                    return promise;
+                    return Ok(LockedRead::Stream {
+                        readable,
+                        kind,
+                        encoding,
+                    });
                 }
                 Action::None => {}
             }
@@ -442,13 +384,74 @@ impl PendingValue {
             self.promise = Some(promise_value);
             promise_value.protect();
 
-            if let Some(on_start_buffering) = self.on_start_buffering.take() {
-                // Last use of `self`: the producer may settle the body (and so
-                // replace `*self`) before this returns.
-                let task = self.task.unwrap();
-                on_start_buffering(task);
+            // Last use of `self`: the producer may settle the body (and so
+            // replace `*self`) from inside the hook.
+            let start = self
+                .on_start_buffering
+                .take()
+                .map(|hook| (hook, self.task.unwrap()));
+            Ok(LockedRead::Buffer {
+                promise: promise_value,
+                start,
+            })
+        }
+    }
+}
+
+/// Which `readableStreamTo*` builtin drains the stream.
+pub enum StreamRead {
+    Text,
+    JSON,
+    ArrayBuffer,
+    Bytes,
+    Blob,
+    FormData,
+}
+
+/// The script half of a [`PendingValue::set_promise`] read; run it with no
+/// borrow of the body live (a JS-backed stream's `pull`, or the producer's
+/// start hook, can reach the same body again).
+#[must_use]
+pub enum LockedRead {
+    Stream {
+        readable: ReadableStream,
+        kind: StreamRead,
+        encoding: JSValue,
+    },
+    Buffer {
+        promise: JSValue,
+        start: Option<(fn(ctx: NonNull<c_void>), NonNull<c_void>)>,
+    },
+}
+
+impl LockedRead {
+    pub fn run(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            LockedRead::Stream {
+                readable,
+                kind,
+                encoding,
+            } => {
+                let _keep = jsc::EnsureStillAlive(readable.value);
+                match kind {
+                    StreamRead::JSON => global_this.readable_stream_to_json(readable.value),
+                    StreamRead::ArrayBuffer => {
+                        global_this.readable_stream_to_array_buffer(readable.value)
+                    }
+                    StreamRead::Bytes => global_this.readable_stream_to_bytes(readable.value),
+                    StreamRead::Text => global_this.readable_stream_to_text(readable.value),
+                    StreamRead::Blob => global_this.readable_stream_to_blob(readable.value),
+                    StreamRead::FormData => {
+                        global_this.readable_stream_to_form_data(readable.value, encoding)
+                    }
+                }
             }
-            Ok(promise_value)
+            LockedRead::Buffer { promise, start } => {
+                if let Some((on_start_buffering, task)) = start {
+                    on_start_buffering(task);
+                }
+                Ok(promise)
+            }
         }
     }
 }
@@ -499,6 +502,10 @@ pub(crate) trait BodyOwnerJs {
 // Pooled inline in `HiveRef` slots; boxing `Blob` would change
 // construction/match sites across many files and defeat the pool.
 #[allow(clippy::large_enum_variant)]
+// Plain tag + union rather than niche-filled through `WTFString`'s non-null
+// pointer: measurably cheaper moves/matches on the Request/Response
+// constructor and body-reader paths.
+#[repr(u8)]
 pub enum Value {
     Blob(Blob),
 
@@ -534,11 +541,9 @@ pub enum Value {
     /// ```
     ///
     /// This works for .json(), too.
-    // `bun_core::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
-    // pointer to an *intrusively* refcounted WTF::StringImpl. We hold the +1 directly
-    // (no Arc) and ref/deref explicitly at fixed points (from_js / clone /
-    // use_ / to_blob_if_possible / reset / use_as_any_blob*).
-    WTFStringImpl(WTFStringImpl),
+    // The body's own +1 on the *intrusively* refcounted `WTF::StringImpl`;
+    // released when the handle is dropped or moved out.
+    WTFStringImpl(WTFString),
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
@@ -554,20 +559,14 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
 } else {
     256
 };
-pub(crate) type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
+pub(crate) type HiveRef = bun_collections::HiveRef<Body, POOL_SIZE>;
 pub(crate) type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
-pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
+pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Body, POOL_SIZE>;
 
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
 pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
-    // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
-    // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const **(*state).body_value_pool };
-    // SAFETY: `pool` outlives every handle (process lifetime).
-    unsafe { BodyHiveHandle::new(value, pool) }
+    crate::jsc_hooks::body_hive_alloc(Body::new(value))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -665,7 +664,7 @@ impl ValueError {
 
 impl From<AnyBlob> for Value {
     /// Each arm moves its payload as is: a `WTFStringImpl`'s `+1` travels with
-    /// the pointer and is released by `Value::drop`, so nothing is ref'd here.
+    /// the handle, so nothing is ref'd here.
     fn from(blob: AnyBlob) -> Value {
         match blob {
             AnyBlob::Blob(b) => Value::Blob(b),
@@ -676,25 +675,21 @@ impl From<AnyBlob> for Value {
 }
 
 impl Value {
-    /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
+    /// The `Body` a `Request`/`Response` wrapper `value` owns, if it is one.
     ///
     /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
     /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
-    /// cannot be used. Instead, try both wrapper classes and return the inner
-    /// body pointer.
-    ///
-    /// Returns a raw pointer; the storage is owned
-    /// by the JSC heap cell and outlives the call only as long as `value` is
-    /// kept alive by the caller.
-    pub(crate) fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
+    /// cannot be used. The storage is owned by the JSC heap cell and outlives
+    /// the call only as long as `value` is kept alive by the caller.
+    pub(crate) fn from_request_or_response(value: JSValue) -> Option<&'static Body> {
         if value.is_empty_or_undefined_or_null() {
             return None;
         }
         if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
-            return Some(std::ptr::from_mut::<Value>(req.get_body_value()));
+            return Some(req.body());
         }
         if let Some(res) = value.as_class_ref::<crate::webcore::Response>() {
-            return Some(std::ptr::from_mut::<Value>(res.get_body_value()));
+            return Some(res.body());
         }
         None
     }
@@ -710,11 +705,11 @@ impl Value {
 
 impl Value {
     pub(crate) fn to_blob_if_possible(&mut self) {
-        if let Value::WTFStringImpl(str) = *self {
-            if let Utf8Bytes::Owned(bytes) = wtf_impl(&str).to_utf8() {
+        if let Value::WTFStringImpl(str) = &*self {
+            if let Utf8Bytes::Owned(bytes) = str.to_utf8() {
                 // The UTF-8 buffer is already heap-owned by the slice wrapper;
-                // transfer it (no copy). The deref is handled by `Value::drop` on the
-                // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
+                // transfer it (no copy). The overwritten `WTFStringImpl` handle
+                // releases its ref on assignment.
                 *self = Value::InternalBlob(InternalBlob {
                     bytes,
                     was_string: true,
@@ -735,7 +730,7 @@ impl Value {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
+            Value::WTFStringImpl(s) => s.utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             _ => 0,
         }
@@ -744,7 +739,7 @@ impl Value {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
-            Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
+            Value::WTFStringImpl(s) => s.memory_cost(),
             // Not `size_hint()`: a Locked body owns no bytes (they live in the
             // ByteStream buffer, separately accounted), so reporting the
             // content-length here mis-trains JSC's GC live-size estimate.
@@ -756,7 +751,7 @@ impl Value {
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
-            Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
+            Value::WTFStringImpl(s) => s.byte_slice().len(),
             // See memory_cost(): size_hint is anticipated, not allocated.
             Value::Locked(_) => 0,
             _ => 0,
@@ -888,31 +883,19 @@ impl Value {
             return ReadableStream::empty(global_this);
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
-        // `to_readable_stream()` below (freed by the GC finalizer).
-        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-            webcore::readable_stream::NewSource {
-                // `ByteStream::default()` is the post-setup state.
-                context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(global_this)),
-                ..Default::default()
-            },
-        );
-
+        // The JS wrapper made by `to_readable_stream()` below owns the source
+        // from here (freed by the GC finalizer).
+        let reader =
+            webcore::readable_stream::NewSource::new(ByteStream::new(drain_result), global_this);
         reader.producer.set(locked.producer);
 
-        reader.context.setup();
-        reader.context.apply_drain_result(drain_result);
-
-        let context_ptr: *mut ByteStream = &raw mut reader.context;
         let stream_value = if text_mode {
             reader.to_text_readable_stream(global_this)?
         } else {
             reader.to_readable_stream(global_this)?
         };
         let readable = ReadableStream {
-            ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+            ptr: webcore::readable_stream::Source::Bytes(reader.as_context_ptr()),
             value: stream_value,
         };
         locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
@@ -949,8 +932,8 @@ impl Value {
 
             debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
-            // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
-            return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
+            // `into_wtf()` moves the +1 ref out of the bun_core::String wrapper.
+            return Ok(Value::WTFStringImpl(str.into_wtf().unwrap()));
         }
 
         if js_type.is_typed_array_or_array_buffer() {
@@ -970,25 +953,22 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+        if let Some(form_data) = DOMFormData::from_js(value) {
+            return Ok(Value::Blob(Blob::from_dom_form_data(
+                global_this,
+                form_data,
+            )));
         }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
+        if let Some(search_params) = URLSearchParams::from_js(value) {
+            // S008: `URLSearchParams` is an `opaque_ffi!` ZST handle — safe deref.
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                bun_opaque::opaque_deref_mut(search_params.as_ptr()),
             )));
         }
 
         if js_type == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); `dupe_with_content_type` / `encode_for_body`
-            // both take `&self`.
             if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
@@ -1004,10 +984,9 @@ impl Value {
                 // Blob.Store frees via an Allocator, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
-                // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
-                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
+                let owned: Vec<u8> = encoded.as_slice().to_vec();
                 drop(encoded);
-                let blob = Blob::init(owned.into_vec(), global_this);
+                let blob = Blob::init(owned, global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);
@@ -1025,16 +1004,12 @@ impl Value {
                 )));
             }
 
-            match readable.ptr {
-                webcore::readable_stream::Source::Blob(blob) => {
-                    // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
-                    // lifetime of the ReadableStream JS wrapper.
-                    let result = unsafe { (*blob).to_any_blob(global_this) }
-                        .map_or(Value::Empty, Value::from);
-                    readable.force_detach(global_this);
-                    return Ok(result);
-                }
-                _ => {}
+            if let Some(blob) = readable.ptr.blob() {
+                let result = blob
+                    .to_any_blob(global_this)
+                    .map_or(Value::Empty, Value::from);
+                readable.force_detach(global_this);
+                return Ok(result);
             }
 
             return Ok(Value::from_readable_stream_without_lock_check(
@@ -1074,8 +1049,6 @@ impl Value {
                     .then(|| readable.ptr.bytes())
                     .flatten()
                     .map(|bytes| {
-                        // BACKREF: `Source::bytes()` payload is live for the
-                        // ReadableStream JS wrapper's lifetime.
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
                         bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
                             blob.slice(),
@@ -1146,8 +1119,6 @@ impl Value {
                             r?;
                             break 'inner;
                         };
-                        // `webcore::form_data::AsyncFormData` re-exports `bun_core::form_data::AsyncFormData`;
-                        // `to_js` is provided via the `AsyncFormDataExt` extension trait.
                         let result = async_form_data.to_js(global, blob.slice(), promise);
                         blob.detach();
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
@@ -1186,16 +1157,12 @@ impl Value {
 
         match self {
             Value::Blob(b) => {
-                // `Value` has `Drop`, so we cannot move the `Blob` out by
-                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
-                // (run by `Value::drop` on the assignment below) is a no-op.
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
                 new_blob
             }
             Value::InternalBlob(ib) => {
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
                 let new_blob = Blob::init(
                     ib.to_owned_slice(),
@@ -1208,19 +1175,13 @@ impl Value {
                 new_blob
             }
             Value::WTFStringImpl(wtf) => {
-                let wtf = *wtf;
-                // Transfer the body's +1 to local `wtf`; suppress `Value::drop` (which
-                // would deref) so the StringImpl stays alive across `to_utf8` and is
-                // released exactly once below.
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                let wtf_ref = wtf_impl(&wtf);
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
-                let new_blob = Blob::init(wtf_ref.to_utf8().into_vec(), global);
-                // Release the +1 the body held.
-                wtf_ref.deref();
+                let new_blob = Blob::init(wtf.to_utf8().into_vec(), global);
+                // Releases the body's ref on the string.
+                *self = Value::Used;
                 new_blob
             }
+            // Leave the non-payload variants (`Locked`/`Error`/`Null`/…) in place.
             // `Blob::default()` leaves `global_this` null which matches the
             // don't-care contract here.
             _ => Blob::default(),
@@ -1232,11 +1193,9 @@ impl Value {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
-                if wtf_impl(str).can_use_as_utf8() {
-                    // Transfer the body's +1 to AnyBlob; suppress `Value::drop` so the
-                    // assignment below does not deref the StringImpl we just handed out.
-                    let s = *str;
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+                if str.can_use_as_utf8() {
+                    let s = str.clone();
+                    *self = Value::Used;
                     return Some(AnyBlob::WTFStringImpl(s));
                 } else {
                     return None;
@@ -1254,29 +1213,22 @@ impl Value {
 
     pub(crate) fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
-        // `Value` has `Drop`, so we cannot `mem::replace` then
-        // destructure by value (E0509). Match by `&mut` and `mem::take` the
-        // payload; the trailing `*self = Used/Null` runs `Value::drop` on the
-        // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
-        // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
-            Value::WTFStringImpl(str) => 'brk: {
-                let str = *str;
-                let wtf_ref = wtf_impl(&str);
-                if let Utf8Bytes::Owned(utf8) = wtf_ref.to_utf8() {
-                    // The deref is handled by `Value::drop` on the
-                    // assignment below (the variant is still `WTFStringImpl(str)`).
-                    break 'brk AnyBlob::InternalBlob(InternalBlob {
+            Value::WTFStringImpl(str) => {
+                if let Utf8Bytes::Owned(utf8) = str.to_utf8() {
+                    // The handle's ref is released by the assignment below (the
+                    // variant is still `WTFStringImpl(str)`).
+                    AnyBlob::InternalBlob(InternalBlob {
                         // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
                         bytes: utf8,
                         was_string: true,
-                    });
+                    })
                 } else {
-                    // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                    break 'brk AnyBlob::WTFStringImpl(str);
+                    let s = str.clone();
+                    *self = Value::Used;
+                    AnyBlob::WTFStringImpl(s)
                 }
             }
             Value::Locked(l) => l
@@ -1291,14 +1243,14 @@ impl Value {
 
     pub(crate) fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
-        // see `use_as_any_blob` — match by `&mut` to avoid E0509.
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(s) => {
-                let s = *s;
-                // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+                // Copy the handle out (a ref) and drop the body's (a deref)
+                // rather than moving the whole `Value`.
+                let s = s.clone();
+                *self = Value::Used;
                 AnyBlob::WTFStringImpl(s)
             }
             Value::Locked(l) => l
@@ -1317,9 +1269,8 @@ impl Value {
         global: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         if let Value::Locked(_) = self {
-            // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
-            // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
-            // an empty readable), then overwrite with `Error`.
+            // Take the `PendingValue` out (leaves `Locked(default)`, which owns
+            // nothing), then overwrite with `Error`.
             let mut locked = match self {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
@@ -1354,8 +1305,6 @@ impl Value {
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
             if let Some(readable) = strong_readable.get() {
-                // BACKREF: see `Source::bytes()` — payload live for the
-                // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
                     bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
@@ -1380,14 +1329,15 @@ impl Value {
     }
 
     // mutates self to Null and is called explicitly at specific protocol points.
-    // Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`). Now
-    // delegates the actual resource release to `Drop` (below) via assignment, so a later
-    // `HiveArray::put()` → `drop_in_place` on the resulting `Null` is a guaranteed no-op
-    // (idempotent — no double-free).
+    // Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
+    // Every variant's payload releases what it owns when dropped (the Blob's
+    // store, the `WTF::StringImpl` ref, the InternalBlob's buffer, the Locked
+    // stream root, the Error's Strong), so the assignment below — like a
+    // `HiveRef<Body>` slot being recycled — is the whole release.
     pub fn reset(&mut self) {
         if let Value::Locked(locked) = self {
             // Locked stays Locked (callers may still inspect the variant after
-            // reset()); flip the `deinit` latch so Drop is a no-op afterwards.
+            // reset()).
             if !locked.deinit {
                 locked.deinit = true;
                 locked.readable.deinit();
@@ -1395,36 +1345,7 @@ impl Value {
             }
             return;
         }
-        // Assignment runs `Drop` on the old variant: deref WTFStringImpl, deinit
-        // Blob, free InternalBlob's Vec, reset Error. Null/Used/Empty are no-ops.
         *self = Value::Null;
-    }
-}
-
-/// Runs when a `HiveRef<Value>` slot is recycled
-/// (`HiveArray::Fallback::put` → `drop_in_place`; see
-/// `bun_collections::HiveRef::unref`). Without this impl `Request`/`Response`
-/// GC finalization leaked `WTFStringImpl` refs / `Blob` stores /
-/// `InternalBlob` buffers (H3 elysia rss).
-///
-/// Unlike `reset()` this never reassigns `*self` (it's already being torn
-/// down), so calling `reset()` first then dropping (or dropping a `Null`
-/// produced by `reset()`) is a no-op second pass — no double-free.
-impl Drop for Value {
-    fn drop(&mut self) {
-        match self {
-            Value::Locked(locked) => {
-                if !locked.deinit {
-                    locked.deinit = true;
-                    locked.readable.deinit();
-                }
-            }
-            Value::WTFStringImpl(s) => wtf_impl(s).deref(),
-            Value::Blob(b) => b.deinit(),
-            Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
-            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
-        }
     }
 }
 
@@ -1485,19 +1406,10 @@ impl Value {
             return Ok(Value::Null);
         }
 
-        // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
-        // `to_readable_stream()` below (freed by the GC finalizer).
-        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-            webcore::readable_stream::NewSource {
-                context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(global_this)),
-                ..Default::default()
-            },
-        );
-
-        reader.context.setup();
-        reader.context.apply_drain_result(drain_result);
+        // The JS wrapper made by `to_readable_stream()` below owns the source
+        // from here (freed by the GC finalizer).
+        let reader =
+            webcore::readable_stream::NewSource::new(ByteStream::new(drain_result), global_this);
 
         // reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else {
@@ -1506,10 +1418,9 @@ impl Value {
 
         reader.producer.set(locked.producer);
 
-        let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
-                ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+                ptr: webcore::readable_stream::Source::Bytes(reader.as_context_ptr()),
                 value: reader.to_readable_stream(global_this)?,
             },
             global_this,
@@ -1562,9 +1473,8 @@ impl Value {
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
 
-        if let Value::WTFStringImpl(s) = *self {
-            wtf_impl(&s).r#ref();
-            return Ok(Value::WTFStringImpl(s));
+        if let Value::WTFStringImpl(s) = self {
+            return Ok(Value::WTFStringImpl(s.clone()));
         }
 
         if matches!(self, Value::Null) {
@@ -1587,12 +1497,12 @@ impl Value {
 // ────────────────────────────────────────────────────────────────────────────
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
+pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
     let body_value = Value::from_js(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
     }
-    Ok(Body::new(body_value))
+    Ok(body_value)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1600,25 +1510,25 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Mixin trait with provided methods.
-/// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
-/// and optionally override `get_body_readable_stream`.
+/// Implementers supply `body`, `get_fetch_headers`, `get_form_data_encoding`.
 ///
-/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
-/// codegen shim still emits `this: &mut T` — `&mut T`
-/// auto-derefs to `&T` so the impls below compile against either.
+/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self` and
+/// reaches the body's `Value` in closure-scoped borrows of its `JsCell`.
 pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
-    /// R-2 interior-mutability boundary: implementors project `&mut Value`
-    /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);
-    /// see [`Body::value_mut`]. Single-JS-thread invariant — keep the borrow
-    /// short and do not hold it across a call that re-enters JS.
-    #[allow(clippy::mut_from_ref)]
-    fn get_body_value(&self) -> &mut Value;
+    /// The owner's `Body` (inline in `Response`, pooled for `Request`).
+    fn body(&self) -> &Body;
     /// `FetchHeaders` is an
     /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+
+    /// The body's `Value` slot.
+    #[inline]
+    fn body_value(&self) -> &JsCell<Value> {
+        &self.body().value
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // Twin methods (identical for Request/Response). These were previously
@@ -1630,13 +1540,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// JS-side `js.gc.stream` cache is the
     /// source of truth; fall back to the native `Locked.readable` slot.
     fn get_body_readable_stream(&self) -> Option<ReadableStream> {
+        self.readable_stream_of(self.body_value().get())
+    }
+
+    /// [`get_body_readable_stream`](Self::get_body_readable_stream) against an
+    /// already-borrowed `value`.
+    #[inline(always)]
+    fn readable_stream_of(&self, value: &Value) -> Option<ReadableStream> {
         if let Some(js_ref) = self.js_ref() {
             if let Some(stream) = Self::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
                 return ReadableStream::from_js_direct(stream);
             }
         }
-        if let Value::Locked(locked) = self.get_body_value() {
+        if let Value::Locked(locked) = value {
             return locked.readable.get();
         }
         None
@@ -1648,10 +1565,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if let Some(js_ref) = self.js_ref() {
             Self::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
-        if let Value::Locked(locked) = self.get_body_value() {
-            // `mem::take` swaps in `Default` and drops the old value.
-            let _ = core::mem::take(&mut locked.readable);
-        }
+        self.body_value().with_mut(|value| {
+            if let Value::Locked(locked) = value {
+                // `mem::take` swaps in `Default` and drops the old value.
+                let _ = core::mem::take(&mut locked.readable);
+            }
+        });
     }
 
     /// Migrate any `Locked.readable` strong ref
@@ -1659,13 +1578,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// wrapper owns the stream; native side must not hold it strongly).
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref() {
-            if let Value::Locked(locked) = self.get_body_value() {
-                if let Some(stream) = locked.readable.get() {
-                    stream.value.ensure_still_alive();
-                    Self::stream_set_cached(js_value, global_object, stream.value);
-                    locked.readable.downgrade(global_object);
+            self.body_value().with_mut(|value| {
+                if let Value::Locked(locked) = value {
+                    if let Some(stream) = locked.readable.get() {
+                        stream.value.ensure_still_alive();
+                        Self::stream_set_cached(js_value, global_object, stream.value);
+                        locked.readable.downgrade(global_object);
+                    }
                 }
-            }
+            });
         }
     }
 
@@ -1684,7 +1605,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 Self::body_set_cached(js_wrapper, global_this, cloned_stream);
             }
         }
-        if let Value::Locked(locked) = self.get_body_value() {
+        if let Value::Locked(locked) = self.body_value().get() {
             if let Some(readable) = locked.readable.get() {
                 Self::body_set_cached(this_value, global_this, readable.value);
             }
@@ -1696,21 +1617,19 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// JS-side cached stream when present, then repoint this owner's
     /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
-        let cloned = 'brk: {
+        let cloned = self.body_value().with_mut(|value| {
             if let Some(js_ref) = self.js_ref() {
                 if let Some(stream) = Self::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js_direct(stream);
                     if let Some(r) = readable.as_mut() {
-                        break 'brk self
-                            .get_body_value()
-                            .clone_with_readable_stream(global_this, Some(r))?;
+                        return value.clone_with_readable_stream(global_this, Some(r));
                     }
                 }
             }
-            self.get_body_value().clone(global_this)?
-        };
+            value.clone(global_this)
+        })?;
         if let Some(js_ref) = self.js_ref() {
-            if let Value::Locked(locked) = self.get_body_value() {
+            if let Value::Locked(locked) = self.body_value().get() {
                 if let Some(readable) = locked.readable.get() {
                     Self::body_set_cached(js_ref, global_this, readable.value);
                 }
@@ -1721,54 +1640,40 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let value = self.get_body_value();
-        if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
-        }
-        if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
-        }
-
-        if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let value = self.get_body_value();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetText, Some(readable));
-                }
-            }
-            let value = self.get_body_value();
-            if let Value::Locked(locked) = value {
-                if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+        self.body_value()
+            .with_mut(|value| {
+                if let Some(early) =
+                    self.pending_body_read(value, global_object, callframe.this(), false, || {
+                        Action::GetText
+                    })?
                 {
-                    return Ok(handle_body_already_used(global_object));
+                    return Ok(early);
                 }
-                return locked.set_promise(global_object, Action::GetText, None);
-            }
-        }
-
-        let value = self.get_body_value();
-        let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
-        blob.detach();
-        result
+                let mut blob = value.use_as_any_blob_allow_non_utf8_string();
+                let result =
+                    JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
+                blob.detach();
+                result.map(BodyRead::Settled)
+            })?
+            .finish(global_object)
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let body = self.get_body_value();
-
-        if matches!(body, Value::Used) {
-            return ReadableStream::used(global_this);
-        }
-        if matches!(body, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                return Ok(readable.value);
+        let stream = self.body_value().with_mut(|body| {
+            if matches!(body, Value::Used) {
+                return ReadableStream::used(global_this).map(Err);
             }
-        }
-        let stream = self.get_body_value().to_readable_stream(global_this)?;
+            if matches!(body, Value::Locked(_)) {
+                if let Some(readable) = self.readable_stream_of(body) {
+                    return Ok(Err(readable.value));
+                }
+            }
+            body.to_readable_stream(global_this).map(Ok)
+        })?;
+        let stream = match stream {
+            Ok(created) => created,
+            Err(existing) => return Ok(existing),
+        };
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);
@@ -1787,18 +1692,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // A `Locked` body whose stream is already materialized (user-provided
         // ReadableStream, or `.body` was accessed first) is decoded via a reader
         // on that existing stream.
-        if matches!(self.get_body_value(), Value::Locked(_)) {
+        if matches!(self.body_value().get(), Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
                 let text = ReadableStream::text_decode_from(global_this, readable.value)?;
                 self.detach_readable_stream(global_this);
-                *self.get_body_value() = Value::Used;
+                self.body_value().set(Value::Used);
                 return Ok(text);
             }
         }
 
         // Step 2: null body → a new empty closed ReadableStream.
         // Steps 3-6: decode directly from the body's backing bytes.
-        let stream = self.get_body_value().to_text_readable_stream(global_this)?;
+        let stream = self
+            .body_value()
+            .with_mut(|value| value.to_text_readable_stream(global_this))?;
         if stream.is_null() {
             return ReadableStream::empty(global_this);
         }
@@ -1813,19 +1720,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         check: fn(&ReadableStream, &JSGlobalObject) -> bool,
     ) -> bool {
-        // reshaped for borrowck — `get_body_readable_stream` needs `&self`,
-        // so we can't hold a `match` borrow on `get_body_value()` across it.
-        match self.get_body_value() {
+        match self.body_value().get() {
             Value::Used => true,
             Value::Locked(pending) if !pending.action.is_none() => true,
-            Value::Locked(_) => 'brk: {
-                if let Some(readable) = self.get_body_readable_stream() {
-                    break 'brk check(&readable, global_object);
+            value @ Value::Locked(pending) => {
+                if let Some(readable) = self.readable_stream_of(value) {
+                    return check(&readable, global_object);
                 }
-                if let Value::Locked(pending) = self.get_body_value() {
-                    if let Some(stream) = pending.readable.get() {
-                        break 'brk check(&stream, global_object);
-                    }
+                if let Some(stream) = pending.readable.get() {
+                    return check(&stream, global_object);
                 }
                 false
             }
@@ -1854,48 +1757,81 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(())
     }
 
-    fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let value = self.get_body_value();
+    /// Front half of `text()` / `json()` / `arrayBuffer()` / `bytes()`,
+    /// run inside the body borrow: reject a used or failed body, or commit a
+    /// still-streaming one to `action` (its script half comes back as
+    /// [`BodyRead::Locked`]). `None`: the body is buffered — read it out.
+    #[inline(always)]
+    fn pending_body_read(
+        &self,
+        value: &mut Value,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        to_blob_if_possible: bool,
+        action: fn() -> Action,
+    ) -> JsResult<Option<BodyRead>> {
         if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
+            return Ok(Some(BodyRead::Settled(handle_body_already_used(
+                global_object,
+            ))));
         }
         if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
+            return Ok(Some(BodyRead::Settled(rejected)));
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
+            if let Some(readable) = self.readable_stream_of(value) {
                 if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
+                    return Ok(Some(BodyRead::Settled(handle_body_already_used(
+                        global_object,
+                    ))));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
+                if to_blob_if_possible {
+                    value.to_blob_if_possible();
+                }
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetJSON, Some(readable));
+                    return locked
+                        .set_promise(global_object, action(), Some(readable))
+                        .map(|r| Some(BodyRead::Locked(r)));
                 }
             }
-            let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value)
                 {
-                    return Ok(handle_body_already_used(global_object));
+                    return Ok(Some(BodyRead::Settled(handle_body_already_used(
+                        global_object,
+                    ))));
                 }
-                // reshaped for borrowck
-                let _ = locked;
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
+                if to_blob_if_possible {
+                    value.to_blob_if_possible();
+                }
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetJSON, None);
+                    return locked
+                        .set_promise(global_object, action(), None)
+                        .map(|r| Some(BodyRead::Locked(r)));
                 }
             }
         }
+        Ok(None)
+    }
 
-        let value = self.get_body_value();
-        let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
-        blob.detach();
-        result
+    fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        self.body_value()
+            .with_mut(|value| {
+                if let Some(early) =
+                    self.pending_body_read(value, global_object, callframe.this(), true, || {
+                        Action::GetJSON
+                    })?
+                {
+                    return Ok(early);
+                }
+                let mut blob = value.use_as_any_blob_allow_non_utf8_string();
+                let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
+                blob.detach();
+                result.map(BodyRead::Settled)
+            })?
+            .finish(global_object)
     }
 
     fn get_array_buffer(
@@ -1904,54 +1840,24 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
-        let value = self.get_body_value();
-
-        if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
-        }
-        if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
-        }
-
-        if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(
-                        global_object,
-                        Action::GetArrayBuffer,
-                        Some(readable),
-                    );
-                }
-            }
-            let value = self.get_body_value();
-            if let Value::Locked(locked) = value {
-                if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+        self.body_value()
+            .with_mut(|value| {
+                if let Some(early) =
+                    self.pending_body_read(value, global_object, callframe.this(), true, || {
+                        Action::GetArrayBuffer
+                    })?
                 {
-                    return Ok(handle_body_already_used(global_object));
+                    return Ok(early);
                 }
-                let _ = locked;
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetArrayBuffer, None);
-                }
-            }
-        }
-
-        // toArrayBuffer in AnyBlob checks for non-UTF8 strings
-        let value = self.get_body_value();
-        let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_array_buffer(g, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+                // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+                let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
+                let result = JSPromise::wrap(global_object, |g| {
+                    blob.to_array_buffer(g, Lifetime::Transfer)
+                });
+                blob.detach();
+                result.map(BodyRead::Settled)
+            })?
+            .finish(global_object)
     }
 
     fn get_bytes(
@@ -1959,50 +1865,24 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let value = self.get_body_value();
-
-        if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
-        }
-        if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
-        }
-
-        if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, Some(readable));
-                }
-            }
-            let value = self.get_body_value();
-            if let Value::Locked(locked) = value {
-                if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+        self.body_value()
+            .with_mut(|value| {
+                if let Some(early) =
+                    self.pending_body_read(value, global_object, callframe.this(), true, || {
+                        Action::GetBytes
+                    })?
                 {
-                    return Ok(handle_body_already_used(global_object));
+                    return Ok(early);
                 }
-                let _ = locked;
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, None);
-                }
-            }
-        }
-
-        // toArrayBuffer in AnyBlob checks for non-UTF8 strings
-        let value = self.get_body_value();
-        let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_uint8_array(g, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+                // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+                let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
+                let result = JSPromise::wrap(global_object, |g| {
+                    blob.to_uint8_array(g, Lifetime::Transfer)
+                });
+                blob.detach();
+                result.map(BodyRead::Settled)
+            })?
+            .finish(global_object)
     }
 
     fn get_form_data(
@@ -2010,35 +1890,34 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let value = self.get_body_value();
-
-        if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
-        }
-        if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
-        }
-
-        if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                if readable.is_disturbed(global_object) {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                let _ = readable; // not consumed in this branch
+        if let Some(settled) = self.body_value().with_mut(|value| {
+            if matches!(value, Value::Used) {
+                return Some(handle_body_already_used(global_object));
             }
-            let value = self.get_body_value();
-            if let Value::Locked(locked) = value {
-                if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
-                {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let _ = locked;
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
+            if let Some(rejected) = handle_body_error(value, global_object) {
+                return Some(rejected);
             }
+
+            if matches!(value, Value::Locked(_)) {
+                if let Some(readable) = self.readable_stream_of(value) {
+                    if readable.is_disturbed(global_object) {
+                        return Some(handle_body_already_used(global_object));
+                    }
+                    value.to_blob_if_possible();
+                    let _ = readable; // not consumed in this branch
+                }
+                if let Value::Locked(locked) = value {
+                    if !locked.action.is_none()
+                        || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    {
+                        return Some(handle_body_already_used(global_object));
+                    }
+                    value.to_blob_if_possible();
+                }
+            }
+            None
+        }) {
+            return Ok(settled);
         }
 
         let Some(encoder) = self.get_form_data_encoding()? else {
@@ -2053,24 +1932,25 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 .reject());
         };
 
-        let value = self.get_body_value();
-        if let Value::Locked(_locked) = value {
-            let owned_readable = self.get_body_readable_stream();
-            // reshaped for borrowck — re-borrow after self method call.
-            let value = self.get_body_value();
-            let Value::Locked(locked) = value else {
-                unreachable!()
-            };
-            return locked.set_promise(
-                global_object,
-                Action::GetFormData(Some(encoder)),
-                owned_readable,
-            );
-        }
-
-        let mut blob: AnyBlob = value.use_as_any_blob();
-        // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
-        // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
+        let (mut blob, encoder) = match self.body_value().with_mut(|value| {
+            if let Value::Locked(_) = value {
+                let owned_readable = self.readable_stream_of(value);
+                let Value::Locked(locked) = value else {
+                    unreachable!()
+                };
+                return locked
+                    .set_promise(
+                        global_object,
+                        Action::GetFormData(Some(encoder)),
+                        owned_readable,
+                    )
+                    .map(Ok);
+            }
+            Ok(Err((value.use_as_any_blob(), encoder)))
+        })? {
+            Ok(read) => return read.run(global_object),
+            Err(buffered) => buffered,
+        };
         let encoding = match encoder.encoding {
             bun_core::form_data::Encoding::URLEncoded => webcore::form_data::Encoding::URLEncoded,
             bun_core::form_data::Encoding::Multipart(b) => {
@@ -2106,76 +1986,99 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let value = self.get_body_value();
+        self.body_value()
+            .with_mut(|value| {
+                if matches!(value, Value::Used) {
+                    return Ok(BodyRead::Settled(handle_body_already_used(global_object)));
+                }
+                if let Some(rejected) = handle_body_error(value, global_object) {
+                    return Ok(BodyRead::Settled(rejected));
+                }
 
-        if matches!(value, Value::Used) {
-            return Ok(handle_body_already_used(global_object));
-        }
-        if let Some(rejected) = handle_body_error(value, global_object) {
-            return Ok(rejected);
-        }
+                if matches!(value, Value::Locked(_)) {
+                    if let Some(readable) = self.readable_stream_of(value) {
+                        let Value::Locked(locked) = &*value else {
+                            unreachable!()
+                        };
+                        if !locked.action.is_none()
+                            || ((!this_value.is_empty() && readable.is_disturbed(global_object))
+                                || (this_value.is_empty() && readable.is_disturbed(global_object)))
+                        {
+                            return Ok(BodyRead::Settled(handle_body_already_used(global_object)));
+                        }
+                        value.to_blob_if_possible();
+                        if let Value::Locked(locked) = value {
+                            return locked
+                                .set_promise(global_object, Action::GetBlob, Some(readable))
+                                .map(BodyRead::Locked);
+                        }
+                    }
+                    if let Value::Locked(locked) = &*value {
+                        if !locked.action.is_none()
+                            || ((!this_value.is_empty()
+                                && locked.is_disturbed::<Self>(global_object, this_value))
+                                || (this_value.is_empty()
+                                    && locked.readable.is_disturbed(global_object)))
+                        {
+                            return Ok(BodyRead::Settled(handle_body_already_used(global_object)));
+                        }
+                        value.to_blob_if_possible();
+                        if let Value::Locked(locked) = value {
+                            return locked
+                                .set_promise(global_object, Action::GetBlob, None)
+                                .map(BodyRead::Locked);
+                        }
+                    }
+                }
 
-        if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream() {
-                let value = self.get_body_value();
-                let Value::Locked(locked) = value else {
-                    unreachable!()
-                };
-                if !locked.action.is_none()
-                    || ((!this_value.is_empty() && readable.is_disturbed(global_object))
-                        || (this_value.is_empty() && readable.is_disturbed(global_object)))
-                {
-                    return Ok(handle_body_already_used(global_object));
+                let blob_owned = value.use_();
+                let blob = &blob_owned;
+                if blob.content_type().is_empty() {
+                    if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
+                        // `fetch_headers` is a live C++ FetchHeaders handle;
+                        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                        let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
+                        if let Some(content_type) =
+                            fetch_headers.fast_get(HTTPHeaderName::ContentType)
+                        {
+                            let content_slice = content_type.to_utf8();
+                            let mime_type = MimeType::init(content_slice.slice(), true, None);
+                            set_blob_content_type(blob, mime_type);
+                            // content_slice dropped (replaces defer content_slice.deinit())
+                        }
+                    }
+                    if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+                        set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+                    }
                 }
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, Some(readable));
-                }
-            }
-            let value = self.get_body_value();
-            if let Value::Locked(locked) = value {
-                if !locked.action.is_none()
-                    || ((!this_value.is_empty()
-                        && locked.is_disturbed::<Self>(global_object, this_value))
-                        || (this_value.is_empty() && locked.readable.is_disturbed(global_object)))
-                {
-                    return Ok(handle_body_already_used(global_object));
-                }
-                let _ = locked;
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, None);
-                }
-            }
-        }
-
-        let value = self.get_body_value();
-        let blob_owned = value.use_();
-        let blob = &blob_owned;
-        if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                }
-            }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-            }
-        }
-        Ok(JSPromise::resolved_promise_value(
-            global_object,
-            blob_owned.to_js(global_object),
-        ))
+                Ok(BodyRead::Settled(JSPromise::resolved_promise_value(
+                    global_object,
+                    blob_owned.to_js(global_object),
+                )))
+            })?
+            .finish(global_object)
     }
 
     fn get_blob_without_call_frame(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.get_blob_with_this_value(global_object, JSValue::ZERO)
+    }
+}
+
+/// Outcome of the borrow-scoped half of a `BodyMixin` read.
+pub(crate) enum BodyRead {
+    /// Settled inside the borrow (used / errored / disturbed / buffered): the promise.
+    Settled(JSValue),
+    /// Still streaming: run this once the borrow is released.
+    Locked(LockedRead),
+}
+
+impl BodyRead {
+    #[inline(always)]
+    fn finish(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            BodyRead::Settled(value) => Ok(value),
+            BodyRead::Locked(read) => read.run(global_object),
+        }
     }
 }
 

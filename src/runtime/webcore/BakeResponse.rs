@@ -7,8 +7,8 @@ use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRes
 
 pub(crate) fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(
-        BakeResponseClass__constructForSSR,
-        BakeResponseClass__constructRender
+        crate::generated_host_exports::BakeResponseClass__constructForSSR,
+        crate::generated_host_exports::BakeResponseClass__constructRender
     );
 }
 
@@ -18,8 +18,7 @@ bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     // `&JSGlobalObject` discharges the only deref'd-param precondition;
     // `this` is stored opaquely in the JS wrapper (module-private — sole
-    // caller is `to_js_for_ssr`, whose own signature carries the
-    // ownership-transfer contract).
+    // caller is `to_js_for_ssr`, which hands over a fresh heap allocation).
     safe fn BakeResponse__createForSSR(
         global_object: &JSGlobalObject,
         this: *mut Response,
@@ -38,47 +37,31 @@ pub enum SSRKind {
 }
 
 /// Create the JS `BakeResponse` wrapper for `this`. The C++ wrapper **adopts**
-/// the `*mut Response` allocation (freed in `BakeResponseClass__finalize`), so
-/// callers must hand over a heap pointer they no longer own — typically via
-/// `heap::alloc`.
-///
-/// # Safety
-/// `this` must be a valid heap-allocated `Response` whose ownership is being
-/// transferred to the JS GC. After this call the caller must not free or
-/// dereference `this`.
-unsafe fn to_js_for_ssr(
-    this: *mut Response,
-    global_object: &JSGlobalObject,
-    kind: SSRKind,
-) -> JSValue {
-    // SAFETY: caller contract — `this` is a valid exclusive heap allocation.
-    unsafe { &mut *this }.calculate_estimated_byte_size();
-    BakeResponse__createForSSR(global_object, this, kind as u8)
+/// the allocation (its reference is released in `BakeResponseClass__finalize`).
+fn to_js_for_ssr(this: Box<Response>, global_object: &JSGlobalObject, kind: SSRKind) -> JSValue {
+    this.calculate_estimated_byte_size();
+    BakeResponse__createForSSR(global_object, bun_core::heap::into_raw(this), kind as u8)
 }
 
-// C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn BakeResponseClass__constructForSSR(
-        global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
-        bake_ssr_has_jsx: *mut c_int,
-        js_this: JSValue,
-    ) -> *mut c_void {
-        // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
-        let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
-        match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
-            Ok(response) => response.cast::<c_void>(),
-            Err(JsError::Thrown) => core::ptr::null_mut(),
-            Err(JsError::Terminated) => {
-                // A constructor runs beneath script: rethrow so the caller keeps unwinding.
-                let _ = bun_jsc::Stopped.throw(global_object);
-                core::ptr::null_mut()
-            }
-            Err(JsError::OutOfMemory) => {
-                let _ = global_object.throw_out_of_memory();
-                core::ptr::null_mut()
-            }
+/// C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).
+// HOST_EXPORT(BakeResponseClass__constructForSSR, jsc)
+pub fn construct_for_ssr(
+    global_object: &JSGlobalObject,
+    call_frame: &CallFrame,
+    bake_ssr_has_jsx: &mut c_int,
+    js_this: JSValue,
+) -> *mut c_void {
+    match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
+        Ok(response) => bun_core::heap::into_raw(response).cast::<c_void>(),
+        Err(JsError::Thrown) => core::ptr::null_mut(),
+        Err(JsError::Terminated) => {
+            // A constructor runs beneath script: rethrow so the caller keeps unwinding.
+            let _ = bun_jsc::Stopped.throw(global_object);
+            core::ptr::null_mut()
+        }
+        Err(JsError::OutOfMemory) => {
+            let _ = global_object.throw_out_of_memory();
+            core::ptr::null_mut()
         }
     }
 }
@@ -88,7 +71,7 @@ fn constructor(
     callframe: &CallFrame,
     bake_ssr_has_jsx: &mut c_int,
     js_this: JSValue,
-) -> JsResult<*mut Response> {
+) -> JsResult<Box<Response>> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
 
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
@@ -111,54 +94,29 @@ fn constructor(
     Response::constructor(global_this, callframe, js_this)
 }
 
-// Raw JSHostFn shim that #[bun_jsc::host_fn] would emit for `construct_redirect`;
-// TODO(refactor): replace this hand-written export with the macro.
-// C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn BakeResponseClass__constructRedirect(
-        global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JSValue {
-        bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
-    }
-}
-
-fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+// HOST_EXPORT(BakeResponseClass__constructRedirect)
+pub fn construct_redirect(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let response = Response::construct_redirect_impl(global_this, callframe)?;
-    let response = Box::new(response);
 
     let vm = global_this.bun_vm().as_mut();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
         // Ownership of the allocation transfers to the JS wrapper.
-        let ptr = bun_core::heap::into_raw(response);
-        // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
-        return Ok(unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
+        return Ok(to_js_for_ssr(response, global_this, SSRKind::Redirect));
     }
 
     // Ownership of the allocation transfers to the JS wrapper (freed in
     // `ResponseClass__finalize`).
-    let ptr = bun_core::heap::into_raw(response);
-    // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
-    // the C++ wrapper which owns it thereafter.
-    Ok(unsafe { &mut *ptr }.to_js(global_this))
-}
-
-// C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn BakeResponseClass__constructRender(
-        global_object: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JSValue {
-        bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
-    }
+    Ok(response.into_js(global_this))
 }
 
 /// This function is only available on JSBakeResponse
-fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+// HOST_EXPORT(BakeResponseClass__constructRender)
+pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 
@@ -194,8 +152,10 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         Init {
             status_code: 200,
             headers: {
-                let mut headers = HeadersRef::create_empty();
-                headers.put(HTTPHeaderName::Location, &path_str, global_this)?;
+                let headers = HeadersRef::create_empty();
+                headers
+                    .headers()
+                    .put(HTTPHeaderName::Location, &path_str, global_this)?;
                 Some(headers)
             },
             ..Default::default()
@@ -206,9 +166,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.
-    let ptr = bun_core::heap::into_raw(response);
-    // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
-    let response_js = unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
+    let response_js = to_js_for_ssr(response, global_this, SSRKind::Render);
     response_js.ensure_still_alive();
 
     Ok(response_js)

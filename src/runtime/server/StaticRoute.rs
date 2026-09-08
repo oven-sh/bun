@@ -158,24 +158,18 @@ impl StaticRoute {
 
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
-            let body_value = response.get_body_value();
-            let was_string = body_value.was_string();
-            body_value.to_blob_if_possible();
-
-            let blob: AnyBlob = 'brk: {
+            let was_string = response.body_value().get().was_string();
+            let blob: AnyBlob = response.body_value().with_mut(|body_value| {
+                body_value.to_blob_if_possible();
                 match body_value {
-                    BodyValue::Used => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Response body has already been used"
-                        )));
-                    }
+                    BodyValue::Used => Err(global_this.throw_invalid_arguments(format_args!(
+                        "Response body has already been used"
+                    ))),
 
-                    BodyValue::Null | BodyValue::Empty => {
-                        break 'brk AnyBlob::InternalBlob(InternalBlob {
-                            bytes: Vec::<u8>::new(),
-                            was_string: false,
-                        });
-                    }
+                    BodyValue::Null | BodyValue::Empty => Ok(AnyBlob::InternalBlob(InternalBlob {
+                        bytes: Vec::<u8>::new(),
+                        was_string: false,
+                    })),
 
                     BodyValue::Blob(_)
                     | BodyValue::InternalBlob(_)
@@ -195,16 +189,14 @@ impl StaticRoute {
                         );
                         *body_value = BodyValue::Blob(blob.dupe());
 
-                        break 'brk AnyBlob::Blob(blob);
+                        Ok(AnyBlob::Blob(blob))
                     }
 
-                    _ => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body."
-                        )));
-                    }
+                    _ => Err(global_this.throw_invalid_arguments(format_args!(
+                        "Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body."
+                    ))),
                 }
-            };
+            })?;
 
             if let Some(h) = response.get_init_headers_mut() {
                 h.fast_remove(HTTPHeaderName::TransferEncoding);

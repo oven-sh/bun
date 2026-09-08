@@ -206,6 +206,24 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
     Some(unsafe { &mut (*state).cron_jobs })
 }
 
+/// Move `value` into a slot (refcount 1) of this thread's pooled `Body`
+/// storage.
+#[inline]
+pub(crate) fn body_hive_alloc(value: crate::webcore::Body) -> crate::webcore::body::BodyHiveHandle {
+    let state = runtime_state();
+    debug_assert!(
+        !state.is_null(),
+        "body_hive_alloc before init_runtime_state"
+    );
+    // SAFETY: `state` is this thread's live boxed `RuntimeState`. The pool box
+    // is freed only in `deinit_runtime_state`, after the VM — and with it every
+    // `Request` / `RequestContext` that holds a slot handle — is torn down.
+    unsafe {
+        let pool = &raw const **(*state).body_value_pool;
+        crate::webcore::body::BodyHiveHandle::new(value, pool)
+    }
+}
+
 #[inline]
 pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     let state = runtime_state();

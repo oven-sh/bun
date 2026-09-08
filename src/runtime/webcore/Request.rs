@@ -1,7 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::cell::Cell;
-use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use bun_jsc::JsCell;
@@ -10,7 +9,7 @@ use enumset::EnumSet;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
-use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
+use crate::webcore::body::{self, Body, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
@@ -31,12 +30,19 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
 use bun_ptr::weak_ptr::WeakPtrData;
-use core::mem::ManuallyDrop;
 
 impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
-        // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+    fn weak_ptr_data(&self) -> &WeakPtrData {
+        &self.weak_ptr_data
+    }
+
+    /// The JS wrapper is gone but a `WeakRef` (RequestContext.request_weakref)
+    /// still holds the allocation: release inner resources now so they aren't
+    /// pinned until the last `WeakPtr` drops.
+    fn finalize_contents(&self) {
+        drop(self.body.take());
+        self.js_ref.with_mut(|r| r.finalize());
+        self.finalize_without_deinit();
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
@@ -60,11 +66,7 @@ const _: () = {
             // `js_ref = .init_weak(...)`, and `check_body_stream_ref` —
             // otherwise the wrapper reports size 0 and any Locked-body
             // ReadableStream is never migrated into the GC slot.
-            let ptr = bun_core::heap::into_raw(Box::new(self));
-            // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
-            // `to_js` hands it to the C++ wrapper which takes ownership (freed
-            // via `RequestClass__finalize`). Same pattern as `do_clone`.
-            unsafe { Request::to_js(&*ptr, global) }
+            Request::to_js_boxed(Box::new(self), global)
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             js::get_constructor(global)
@@ -76,9 +78,8 @@ const _: () = {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
-/// `finalize`, so stay plain.
+/// field layout is unchanged. `method`/`flags`/`request_context`/
+/// `weak_ptr_data` are only written during construction, so stay plain.
 #[repr(C)]
 pub struct Request {
     pub(crate) url: JsCell<BunString>,
@@ -91,10 +92,9 @@ pub struct Request {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
-    /// hold their own `+1` on the same slot. `ManuallyDrop` because
-    /// `finalize()` decouples from `Box` and must release this handle exactly
-    /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
-    body: ManuallyDrop<BodyHiveHandle>,
+    /// hold their own `+1` on the same slot. `None` only once the JS wrapper
+    /// has been finalized ([`HasWeakPtrData::finalize_contents`]).
+    body: JsCell<Option<BodyHiveHandle>>,
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
@@ -166,8 +166,8 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 
 impl BodyMixin for Request {
     #[inline]
-    fn get_body_value(&self) -> &mut BodyValue {
-        Request::get_body_value(self)
+    fn body(&self) -> &Body {
+        Request::body(self)
     }
     #[inline]
     fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
@@ -190,38 +190,28 @@ impl BodyMixin for Request {
 
 // ─── header accessors & simple getters ──────────────────────────────────────
 impl Request {
-    /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn get_body_value(&self) -> &mut BodyValue {
-        self.body_value_mut()
+    /// The pooled `Body` this request (and, under `Bun.serve`, its
+    /// `RequestContext`) share.
+    #[inline(always)]
+    pub(crate) fn body(&self) -> &Body {
+        self.body
+            .get()
+            .as_deref()
+            .expect("Request body used after finalize")
     }
 
-    /// Immutable view of the body value.
+    /// The pooled body's `Value` slot.
     #[inline]
-    fn body_value(&self) -> &BodyValue {
-        &self.body
+    pub(crate) fn body_value(&self) -> &JsCell<BodyValue> {
+        &self.body().value
     }
 
-    /// R-2: `&self` → `&mut` through the slot's raw pointer. The slot is shared
-    /// with `RequestContext.request_body` but never `&mut`-borrowed concurrently
-    /// (single-threaded event-loop sequencing). Keep the borrow short.
+    /// The cached headers as the `&mut` the C++ accessors take (opaque ZST
+    /// handle — see [`HeadersRef::headers`]).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn body_value_mut(&self) -> &mut BodyValue {
-        // SAFETY: see R-2 invariant above.
-        unsafe { &mut (*self.body.as_ptr()).value }
-    }
-
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
-    /// single-JS-thread invariant (see `JsCell` docs) means no other
-    /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn headers_mut(&self) -> &mut Option<HeadersRef> {
-        // SAFETY: single-JS-thread; callers below keep the borrow short and do
-        // not re-enter a path that touches `self.headers`.
-        unsafe { self.headers.get_mut() }
+    fn fetch_headers_mut(&self) -> Option<&mut FetchHeaders> {
+        self.headers.get().as_ref().map(HeadersRef::headers)
     }
 
     // Returns if the request has headers already cached/set.
@@ -243,10 +233,10 @@ impl Request {
     pub(crate) fn ensure_fetch_headers(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
+    ) -> JsResult<&mut FetchHeaders> {
         if self.headers.get().is_some() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            return Ok(self.fetch_headers_mut().unwrap());
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -257,21 +247,16 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
+            let blob_source;
+            let content_type: Option<&[u8]> = match self.body_value().get() {
+                BodyValue::Blob(blob) => Some(blob.content_type_slice()),
                 BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
+                    Some(readable) => match readable.ptr.blob() {
+                        Some(blob) => {
+                            blob_source = blob;
+                            Some(blob_source.content_type.get().as_slice())
                         }
-                        _ => None,
+                        None => None,
                     },
                     None => None,
                 },
@@ -279,11 +264,8 @@ impl Request {
             };
 
             if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
                 if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
+                    self.fetch_headers_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         &BunString::ascii(content_type_),
                         global_this,
@@ -292,11 +274,10 @@ impl Request {
             }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        Ok(self.fetch_headers_mut().unwrap())
     }
 
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
+    pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&HeadersRef> {
         if self.headers.get().is_none() {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
@@ -306,8 +287,8 @@ impl Request {
             }
         }
 
-        let headers = self.headers_mut().as_mut()?;
-        if headers.is_empty() {
+        let headers = self.headers.get().as_ref()?;
+        if headers.headers().is_empty() {
             return None;
         }
         Some(headers)
@@ -330,8 +311,8 @@ impl Request {
             }
         }
 
-        if let Some(head) = self.headers_mut().as_mut() {
-            if head.is_empty() {
+        if let Some(head) = self.headers.get().as_ref() {
+            if head.headers().is_empty() {
                 return Ok(None);
             }
 
@@ -350,13 +331,13 @@ impl Request {
             }
         }
 
-        if let Some(headers) = self.headers_mut().as_mut() {
+        if let Some(headers) = self.fetch_headers_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_utf8()));
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body_value() {
+        if let BodyValue::Blob(blob) = self.body_value().get() {
             let ct = blob.content_type_slice();
             if !ct.is_empty() {
                 return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
@@ -372,7 +353,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
-            + self.body_value().memory_cost()
+            + self.body_value().get().memory_cost()
     }
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
@@ -424,7 +405,7 @@ impl Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
-            body: ManuallyDrop::new(body),
+            body: JsCell::new(Some(body)),
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags::default(),
@@ -456,7 +437,7 @@ impl Request {
     #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
-            self.body_value().estimated_size()
+            self.body_value().get().estimated_size()
                 + self.size_of_url()
                 + core::mem::size_of::<Request>(),
         );
@@ -482,6 +463,12 @@ impl Request {
 
         self.check_body_stream_ref(global_object);
         js_value
+    }
+
+    /// Hand a heap `Request` to a new JS wrapper, which owns it from here
+    /// (freed via `RequestClass__finalize`).
+    pub fn to_js_boxed(this: Box<Self>, global_object: &JSGlobalObject) -> JSValue {
+        Box::leak(this).to_js(global_object)
     }
 }
 
@@ -544,7 +531,7 @@ impl Request {
             writer,
             "{} ({}) {{",
             class_label,
-            bun_fmt::size(self.body_value_mut().size() as usize, Default::default())
+            bun_fmt::size(self.body().len() as usize, Default::default())
         )?;
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
@@ -616,7 +603,7 @@ impl Request {
                 )
                 .map_err(js_err)?;
 
-            match self.body_value_mut() {
+            match self.body_value().get() {
                 BodyValue::Blob(blob) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
@@ -625,7 +612,7 @@ impl Request {
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    let size = self.body_value_mut().size();
+                    let size = self.body().len();
                     if size == 0 {
                         let empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
@@ -705,7 +692,7 @@ impl Request {
         fetch_request_mode_to_js(self.flags.mode, global_this)
     }
 
-    pub(crate) fn finalize_without_deinit(&mut self) {
+    pub(crate) fn finalize_without_deinit(&self) {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
 
@@ -716,30 +703,11 @@ impl Request {
     }
 
     pub fn finalize(self: Box<Self>) {
-        // weak_ptr_data may have outstanding refs aliasing this allocation;
-        // hand ownership back to the raw pointer FIRST so a panic in the work
-        // below leaks instead of Box-drop UAF-ing those weak holders.
-        let this = bun_core::heap::release(self);
-        // Release the request's `+1` on the body slot. `ManuallyDrop` so the
-        // hot-path `Box::from_raw().drop()` below cannot re-run this.
-        // SAFETY: `this` is live and this is the sole release point for `body`.
-        unsafe { ManuallyDrop::drop(&mut this.body) };
-        if this.weak_ptr_data.on_finalize() {
-            // Hot path: no outstanding weak refs. Reclaim and drop the whole
-            // allocation in one shot — `Box::from_raw`'s drop runs
-            // `drop_in_place` over every field (headers / url / signal /
-            // js_ref) once, without the `Cell::set`
-            // read-write-drop round-trips the old `finalize_without_deinit()`
-            // call performed here before re-dropping the (now-empty) fields.
-            // SAFETY: `this` is the live Box-allocated payload.
-            drop(unsafe { Box::from_raw(this) });
-        } else {
-            // Cold path: weak_ptr_data still has outstanding refs — keep the
-            // allocation alive, but release inner resources now so they aren't
-            // pinned until the last `WeakPtr` drops.
-            this.js_ref.with_mut(|r| r.finalize());
-            this.finalize_without_deinit();
-        }
+        // No outstanding weak refs: the whole allocation (headers / url /
+        // signal / body / js_ref) drops in one shot. Otherwise
+        // `finalize_contents` releases them now and the last `WeakPtr` frees
+        // the allocation.
+        bun_ptr::weak_ptr::finalize_owner(self);
     }
 
     pub(crate) fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -747,7 +715,7 @@ impl Request {
     }
 
     pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
-        if let Some(headers_ref) = self.headers_mut().as_mut() {
+        if let Some(headers_ref) = self.fetch_headers_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
                 return referrer.to_js(global_object);
             }
@@ -973,22 +941,18 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    /// Every early return drops `req`, whose fields release what they hold
+    /// (headers / url / signal / the pooled body slot).
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
         this_value: JSValue,
     ) -> JsResult<Request> {
-        let mut success = false;
-        // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(BodyValue::Null);
-        // Snapshot the seed slot pointer for the repoint check below; `body`
-        // (the +1) is moved into `req.body` next.
-        let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
-            body: ManuallyDrop::new(body),
+            body: JsCell::new(Some(body::hive_alloc(BodyValue::Null))),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
             method: Method::GET,
             flags: Flags::default(),
@@ -996,42 +960,17 @@ impl Request {
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
-        // A scopeguard cannot capture `&mut req` while the
-        // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
-        let cleanup = |req: &mut Request,
-                       body_seed_ptr: *mut crate::webcore::body::HiveRef,
-                       success: bool| {
-            // Snapshot before the `!success` drop — reading a `ManuallyDrop`
-            // after `ManuallyDrop::drop()` is documented use-after-drop.
-            let req_body_ptr = req.body.as_ptr();
-            if !success {
-                req.finalize_without_deinit();
-                // SAFETY: `req.body` is live; this is the sole release on this path.
-                unsafe { ManuallyDrop::drop(&mut req.body) };
-            }
-            if req_body_ptr != body_seed_ptr {
-                // `clone_into` `ptr::write`-overwrote `req.body`, orphaning the
-                // seed slot's +1. Recover and drop it.
-                // SAFETY: `body_seed_ptr` is a live +1 leaked by the ptr::write.
-                drop(unsafe { BodyHiveHandle::from_raw(body_seed_ptr) });
-            }
-        };
 
-        macro_rules! bail {
-            ($e:expr) => {{
-                cleanup(&mut req, body_seed_ptr, success);
-                return $e;
-            }};
-        }
-
+        // The pooled body slot is fresh (nothing else references it yet), so
+        // the body producers below write straight into it.
         if arguments.is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': 1 argument required, but only 0 present."
-            ))));
+            )));
         } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
-            bail!(Err(global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object, got undefined"
-            ))));
+            )));
         }
 
         let url_or_object = arguments[0];
@@ -1045,19 +984,16 @@ impl Request {
             bun_jsc::DOMURL::cast_(url_or_object, global_this.vm()).is_some();
 
         if is_first_argument_a_url {
-            let str = match BunString::from_js(arguments[0], global_this) {
-                Ok(s) => s,
-                Err(e) => bail!(Err(e)),
-            };
+            let str = BunString::from_js(arguments[0], global_this)?;
             req.url.set(str);
 
             if !req.url.get().is_empty() {
                 fields.insert(Fields::Url);
             }
         } else if !url_or_object_type.is_object() {
-            bail!(Err(global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
-            ))));
+            )));
         }
 
         let values_to_try_: [JSValue; 2] = [
@@ -1083,21 +1019,12 @@ impl Request {
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
-                    let request = unsafe { &*request };
+                if let Some(request) = value.as_direct_class_ref::<Request>() {
                     if values_to_try.len() == 1 {
-                        match Request::clone_into(
-                            request,
-                            &mut req,
-                            global_this,
-                            fields.contains(Fields::Url),
-                        ) {
-                            Ok(()) => {}
-                            Err(e) => bail!(Err(e)),
-                        }
-                        success = true;
-                        cleanup(&mut req, body_seed_ptr, success);
+                        let preserved_url = fields.contains(Fields::Url).then(|| req.url.take());
+                        // The seed `req` (and its pooled body slot) is dropped;
+                        // the clone starts from a fresh `js_ref`.
+                        req = request.clone_with_url(global_this, preserved_url)?;
                         return Ok(req);
                     }
 
@@ -1122,53 +1049,40 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        match request.clone_headers(global_this) {
-                            Ok(Some(headers)) => {
-                                req.headers.set(Some(headers));
-                                fields.insert(Fields::Headers);
-                            }
-                            Ok(None) => {}
-                            Err(e) => bail!(Err(e)),
+                        if let Some(headers) = request.clone_headers(global_this)? {
+                            req.headers.set(Some(headers));
+                            fields.insert(Fields::Headers);
                         }
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match request.body_value() {
+                        match request.body_value().get() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.clone_body_value_via_cached_stream(global_this) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
-                                    Err(e) => bail!(Err(e)),
-                                }
+                                req.body().value.with_mut(|slot| -> JsResult<()> {
+                                    *slot =
+                                        request.clone_body_value_via_cached_stream(global_this)?;
+                                    Ok(())
+                                })?;
                                 fields.insert(Fields::Body);
                             }
                         }
                     }
                 }
 
-                if let Some(response) = value.as_direct::<Response>() {
-                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &mut *response };
+                if let Some(response) = value.as_direct_class_ref::<Response>() {
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
+                        if response.get_init_headers().is_some() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            match headers.clone_this(global_this) {
-                                Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
-                                    fields.insert(Fields::Headers);
-                                }
-                                Err(e) => bail!(Err(e)),
-                            }
+                            req.headers.set(response.clone_init_headers(global_this)?);
+                            fields.insert(Fields::Headers);
                         }
                     }
 
@@ -1181,15 +1095,14 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match response.get_body_value() {
+                        match response.body_value().get() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match response.clone_body_value_via_cached_stream(global_this) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
-                                    Err(e) => bail!(Err(e)),
-                                }
+                                req.body().value.with_mut(|slot| -> JsResult<()> {
+                                    *slot =
+                                        response.clone_body_value_via_cached_stream(global_this)?;
+                                    Ok(())
+                                })?;
                                 fields.insert(Fields::Body);
                             }
                         }
@@ -1198,53 +1111,40 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
-                        fields.insert(Fields::Body);
-                        // fetch spec Request(init): `keepalive: true` with a ReadableStream
-                        // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(global_this, "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(
-                                        global_this.throw_type_error(format_args!("keepalive"))
-                                    ));
-                                }
-                                Ok(_) => {}
-                                Err(e) => bail!(Err(e)),
+                if let Some(body_) = value.fast_get(global_this, bun_jsc::BuiltinName::Body)? {
+                    fields.insert(Fields::Body);
+                    // fetch spec Request(init): `keepalive: true` with a ReadableStream
+                    // body throws before body extraction (Node's message is "keepalive").
+                    if crate::webcore::ReadableStream::is_readable_stream(body_) {
+                        if let Some(keepalive) = value.get(global_this, "keepalive")? {
+                            if keepalive.to_boolean() {
+                                return Err(global_this.throw_type_error(format_args!("keepalive")));
                             }
-                        }
-                        match BodyValue::from_js(global_this, body_) {
-                            Ok(v) => {
-                                *req.body_value_mut() = v;
-                            }
-                            Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
+                    req.body().value.with_mut(|slot| -> JsResult<()> {
+                        *slot = BodyValue::from_js(global_this, body_)?;
+                        Ok(())
+                    })?;
                 }
 
                 // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
                 if global_this.has_exception() {
-                    bail!(Err(JsError::Thrown));
+                    return Err(JsError::Thrown);
                 }
             }
 
             if !fields.contains(Fields::Url) {
-                match value.fast_get(global_this, bun_jsc::BuiltinName::Url) {
-                    Ok(Some(url)) => {
-                        match BunString::from_js(url, global_this) {
-                            Ok(s) => req.url.set(s),
-                            Err(e) => bail!(Err(e)),
-                        }
+                match value.fast_get(global_this, bun_jsc::BuiltinName::Url)? {
+                    Some(url) => {
+                        req.url.set(BunString::from_js(url, global_this)?);
                         if !req.url.get().is_empty() {
                             fields.insert(Fields::Url);
                         }
 
                         // first value
                     }
-                    Ok(None) => {
+                    None => {
                         // Short-circuit ordering: only probe
                         // `implementsToString` (which performs JS property
                         // lookup with observable side effects) when the first
@@ -1252,15 +1152,8 @@ impl Request {
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
                         {
-                            let implements = match value.implements_to_string(global_this) {
-                                Ok(b) => b,
-                                Err(e) => bail!(Err(e)),
-                            };
-                            if implements {
-                                let str = match BunString::from_js(value, global_this) {
-                                    Ok(s) => s,
-                                    Err(e) => bail!(Err(e)),
-                                };
+                            if value.implements_to_string(global_this)? {
+                                let str = BunString::from_js(value, global_this)?;
                                 req.url.set(str);
                                 if !req.url.get().is_empty() {
                                     fields.insert(Fields::Url);
@@ -1268,7 +1161,6 @@ impl Request {
                             }
                         }
                     }
-                    Err(e) => bail!(Err(e)),
                 }
             }
 
@@ -1276,107 +1168,92 @@ impl Request {
                 // WebIDL `AbortSignal?`: present iff the member is not undefined.
                 // `fast_get` maps absent/undefined → None; `null` is Some(null) and
                 // means "present, detach" (no fallback to the input Request's signal).
-                match value.fast_get(global_this, bun_jsc::BuiltinName::signal) {
-                    Ok(Some(signal_)) => {
-                        fields.insert(Fields::Signal);
-                        if signal_.is_null() {
-                            // explicit detach; leave `req.signal` as None
-                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                            // Keep it alive
-                            signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd.
-                            req.signal.set(Some(signal));
-                        } else {
-                            bail!(Err(global_this.throw_type_error(format_args!(
-                                "Failed to construct 'Request': signal is not of type AbortSignal."
-                            ))));
-                        }
+                if let Some(signal_) = value.fast_get(global_this, bun_jsc::BuiltinName::signal)? {
+                    fields.insert(Fields::Signal);
+                    if signal_.is_null() {
+                        // explicit detach; leave `req.signal` as None
+                    } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
+                        // Keep it alive
+                        signal_.ensure_still_alive();
+                        // `ref_from_js` already ref'd.
+                        req.signal.set(Some(signal));
+                    } else {
+                        return Err(global_this.throw_type_error(format_args!(
+                            "Failed to construct 'Request': signal is not of type AbortSignal."
+                        )));
                     }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
                 }
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(global_this, value) {
-                    Ok(Some(response_init)) => {
-                        let header_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Headers)
-                                {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if header_check {
-                            if let Some(headers) = response_init.headers {
-                                if !fields.contains(Fields::Headers) {
-                                    req.headers.set(Some(headers));
-                                    fields.insert(Fields::Headers);
-                                } else {
-                                    drop(headers); // headers.deref()
-                                }
-                            }
-                        }
-
-                        let method_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(global_this, bun_jsc::BuiltinName::Method) {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if method_check {
-                            if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
-                                fields.insert(Fields::Method);
+                if let Some(response_init) =
+                    crate::webcore::response::Init::init(global_this, value)?
+                {
+                    let header_check = !explicit_check
+                        || (explicit_check
+                            && value
+                                .fast_get(global_this, bun_jsc::BuiltinName::Headers)?
+                                .is_some());
+                    if header_check {
+                        if let Some(headers) = response_init.headers {
+                            if !fields.contains(Fields::Headers) {
+                                req.headers.set(Some(headers));
+                                fields.insert(Fields::Headers);
+                            } else {
+                                drop(headers); // headers.deref()
                             }
                         }
                     }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
+
+                    let method_check = !explicit_check
+                        || (explicit_check
+                            && value
+                                .fast_get(global_this, bun_jsc::BuiltinName::Method)?
+                                .is_some());
+                    if method_check {
+                        if !fields.contains(Fields::Method) {
+                            req.method = response_init.method;
+                            fields.insert(Fields::Method);
+                        }
+                    }
                 }
             }
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
-                    Ok(Some(redirect_value)) => {
-                        req.flags.redirect = redirect_value;
-                        fields.insert(Fields::Redirect);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
+                if let Some(redirect_value) =
+                    value.get_optional_enum::<FetchRedirect>(global_this, "redirect")?
+                {
+                    req.flags.redirect = redirect_value;
+                    fields.insert(Fields::Redirect);
                 }
             }
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(global_this, "cache") {
-                    Ok(Some(cache_value)) => {
-                        req.flags.cache = cache_value;
-                        fields.insert(Fields::Cache);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
+                if let Some(cache_value) =
+                    value.get_optional_enum::<FetchCacheMode>(global_this, "cache")?
+                {
+                    req.flags.cache = cache_value;
+                    fields.insert(Fields::Cache);
                 }
             }
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(global_this, "mode") {
-                    Ok(Some(mode_value)) => {
-                        req.flags.mode = mode_value;
-                        fields.insert(Fields::Mode);
-                    }
-                    Ok(None) => {}
-                    Err(e) => bail!(Err(e)),
+                if let Some(mode_value) =
+                    value.get_optional_enum::<FetchRequestMode>(global_this, "mode")?
+                {
+                    req.flags.mode = mode_value;
+                    fields.insert(Fields::Mode);
                 }
             }
         }
 
         if req.url.get().is_empty() {
-            bail!(Err(global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': url is required."
-            ))));
+            )));
         }
 
         let href = bun_url::href_from_string(req.url.get());
@@ -1387,7 +1264,7 @@ impl Request {
                 "Failed to construct 'Request': Invalid URL \"{}\"",
                 req.url.get()
             ));
-            bail!(Err(global_this.throw_value(err)));
+            return Err(global_this.throw_value(err));
         }
 
         // hrefFromString increments the reference count if they end up being
@@ -1398,36 +1275,21 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
+        if let BodyValue::Blob(blob) = req.body_value().get() {
+            if let Some(headers) = req.fetch_headers_mut() {
                 let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
+                if !ct.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
+                    headers.put(
                         HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
+                        &BunString::ascii(ct),
                         global_this,
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
+                    )?;
                 }
             }
         }
 
         req.calculate_estimated_byte_size();
         req.check_body_stream_ref(global_this);
-        success = true;
-
-        cleanup(&mut req, body_seed_ptr, success);
         Ok(req)
     }
 
@@ -1451,93 +1313,51 @@ impl Request {
         let this_value = callframe.this();
         let cloned = self.clone(global_this)?;
 
-        let cloned_ptr = bun_core::heap::into_raw(cloned);
-        // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
-        let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
+        let js_wrapper = Request::to_js_boxed(cloned, global_this);
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
-    pub(crate) fn clone_into(
+    /// A clone of this request (fetch spec `Request.clone` step 2) with a
+    /// fresh pooled body; `url` overrides the cloned URL when given.
+    fn clone_with_url(
         &self,
-        req: &mut Request,
         global_this: &JSGlobalObject,
-        preserve_url: bool,
-    ) -> JsResult<()> {
-        // allocator param dropped (global mimalloc)
+        url: Option<BunString>,
+    ) -> JsResult<Request> {
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
-        // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
-        // Last fallible call; an early return here leaves `req.url` untouched.
-        // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
+        // Last fallible call; `body` (a `BodyHiveHandle`) drops on the `?`
+        // error path, releasing its +1.
         let headers = self.clone_headers(global_this)?;
-        let url = if preserve_url {
-            req.url.take()
-        } else {
-            self.url.get().clone()
+        let url = match url {
+            Some(url) => url,
+            None => self.url.get().clone(),
         };
 
-        // `ptr::write` is a raw bit-overwrite — no destructors run on the old
-        // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
-        // sentinel.
-        // The old `req.body` hive ref is intentionally NOT unref'd here:
-        // `clone()` seeds it with a dangling sentinel, and `construct_into`
-        // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
-        // SAFETY: `req` is a valid &mut, fully initialized by the caller;
-        // nothing between here and the write can panic.
-        unsafe {
-            core::ptr::write(
-                req,
-                Request {
-                    url: JsCell::new(url),
-                    headers: JsCell::new(headers),
-                    signal: JsCell::new(None),
-                    body: ManuallyDrop::new(body),
-                    js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
-                    flags: self.flags,
-                    request_context: AnyRequestContext::NULL,
-                    weak_ptr_data: WeakPtrData::EMPTY,
-                    reported_estimated_size: Cell::new(0),
-                },
-            );
-        }
+        let req = Request {
+            url: JsCell::new(url),
+            headers: JsCell::new(headers),
+            signal: JsCell::new(None),
+            body: JsCell::new(Some(body)),
+            js_ref: JsCell::new(JsRef::empty()),
+            method: self.method,
+            flags: self.flags,
+            request_context: AnyRequestContext::NULL,
+            weak_ptr_data: WeakPtrData::EMPTY,
+            reported_estimated_size: Cell::new(0),
+        };
 
         if let Some(signal) = self.signal.get() {
             // `AbortSignalRef::clone` → C++ `ref()`.
             req.signal.set(Some(signal.clone()));
         }
-        Ok(())
+        Ok(req)
     }
 
     pub(crate) fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
-        // allocator param dropped (global mimalloc)
-        // `clone_into` `ptr::write`s the new fields over the seed
-        // without reading or dropping it.
-        let mut req = Box::new(Request {
-            url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
-            signal: JsCell::new(None),
-            // `clone_into` `ptr::write`s the whole struct without dropping the
-            // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
-            // suppresses drop, so the `?` error path won't unref the dangling ptr.
-            // SAFETY: never deref'd or dropped — overwritten by `clone_into`.
-            body: ManuallyDrop::new(unsafe {
-                BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
-            }),
-            js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
-            flags: Flags::default(),
-            request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::EMPTY,
-            reported_estimated_size: Cell::new(0),
-        });
-        // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
-        Ok(req)
+        Ok(Box::new(self.clone_with_url(global_this, None)?))
     }
 }
 
@@ -1553,7 +1373,7 @@ impl Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
-            body: ManuallyDrop::new(body),
+            body: JsCell::new(Some(body)),
             js_ref: JsCell::new(JsRef::empty()),
             method,
             flags: Flags {

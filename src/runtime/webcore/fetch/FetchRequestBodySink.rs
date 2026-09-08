@@ -61,7 +61,7 @@ pub struct FetchRequestBodySink {
     pub high_water_mark: BlobSizeType,
     /// Shared pending drain promise for `write()` and `flush(true)`; resolved
     /// in `on_drain()`.
-    pub pending: WritablePending,
+    pub pending: bun_ptr::JsCell<WritablePending>,
     /// Bytes written since last on_drain; >0 guarantees a drain ack is owed.
     pub pending_bytes: BlobSizeType,
     pub ended: bool,
@@ -74,7 +74,7 @@ impl Default for FetchRequestBodySink {
             task: None,
             source: SourceHandle::default(),
             high_water_mark: 16384,
-            pending: WritablePending::default(),
+            pending: bun_ptr::JsCell::new(WritablePending::default()),
             pending_bytes: 0,
             ended: false,
             done: false,
@@ -141,9 +141,10 @@ impl FetchRequestBodySink {
         // on each so the event loop reaches the I/O poll before resuming; batching
         // sync writes here lets the HTTP thread re-enqueue the drain ack before
         // the microtask loop yields and starves uWS callbacks and timers.
-        self.pending.consumed = len;
-        self.pending.result = Writable::Owned(len);
-        Writable::Pending(core::ptr::from_mut(&mut self.pending))
+        let pending = self.pending.get_mut_unique();
+        pending.consumed = len;
+        pending.result = Writable::Owned(len);
+        Writable::Pending(bun_ptr::BackRef::new(&self.pending))
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
@@ -174,9 +175,9 @@ impl FetchRequestBodySink {
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
-        if self.pending.state == PendingState::Pending {
+        if self.pending.get().state == PendingState::Pending {
             return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
+                JSPromise::opaque_ref(self.pending.get_mut_unique().promise(global_this)).to_js(),
             );
         }
         if self.done || self.ended {
@@ -188,9 +189,9 @@ impl FetchRequestBodySink {
         if wait && self.pending_bytes > 0 {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
-            self.pending.result = Writable::Owned(self.pending_bytes);
+            self.pending.get_mut_unique().result = Writable::Owned(self.pending_bytes);
             return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
+                JSPromise::opaque_ref(self.pending.get_mut_unique().promise(global_this)).to_js(),
             );
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -261,7 +262,7 @@ impl FetchRequestBodySink {
     pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;
-        self.pending.run();
+        self.pending.get_mut_unique().run();
         self.source.ready(None, None);
     }
 

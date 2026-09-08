@@ -918,8 +918,8 @@ describe("bundler", () => {
     },
   });
   // A publicPath without a trailing slash gets exactly one "/" before the
-  // output-relative path in every emitter: cross-chunk imports, HTML tags,
-  // CSS url(), file-loader strings, and sourceMappingURL.
+  // output-relative path in every emitter: static and dynamic cross-chunk
+  // imports, HTML tags, CSS url(), file-loader strings, and sourceMappingURL.
   itBundled("edgecase/PublicPathWithoutTrailingSlash", {
     files: {
       "/src/index.html": /* html */ `
@@ -937,8 +937,10 @@ describe("bundler", () => {
       "/src/pages/a/entry.ts": /* ts */ `
         import { shared } from "../../shared";
         import logo from "../../logo.svg";
+        import("../../lazy").then(m => console.log(m.lazy));
         console.log(shared(), logo);
       `,
+      "/src/lazy.ts": `export const lazy = "lazy";`,
       "/src/pages/b/entry.ts": /* ts */ `
         import { shared } from "../../shared";
         console.log(shared());
@@ -969,6 +971,7 @@ describe("bundler", () => {
 
       const entry = api.readFile("/out/pages/a/entry.js");
       expect(entry).toMatch(/from "https:\/\/cdn\.example\/app\/chunk-[a-z0-9]+\.js"/);
+      expect(entry).toMatch(/import\("https:\/\/cdn\.example\/app\/(pages\/a\/)?[a-z0-9-]+\.js"\)/);
       expect(entry).toContain(`//# sourceMappingURL=${prefix}pages/a/entry.js.map\n`);
 
       const jsUrls = readdirSync(api.outdir, { recursive: true })

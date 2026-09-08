@@ -730,6 +730,37 @@ pub(crate) fn compute_chunks(
         }
     }
 
+    {
+        let opts = &bv2.transpiler().options;
+        let output_base: &[u8] = if !opts.output_dir.is_empty() {
+            &opts.output_dir
+        } else {
+            // stdout / in-memory `Bun.build`: "" joins to the working directory.
+            bun_paths::dirname(&opts.outfile).unwrap_or(b"")
+        };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let sanitize_parent_dirs = !this.options.compile_mode.is_executable();
+        let mut rel_path: Vec<u8> = Vec::new();
+        let mut join_buf = bun_paths::path_buffer_pool::get();
+        for chunk in chunks.iter_mut() {
+            rel_path.clear();
+            // `[hash]` is unknown until the chunk is printed; it prints as "" here,
+            // which only matters for the directory part if a template puts it there.
+            chunk
+                .template
+                .print(&mut rel_path, sanitize_parent_dirs)
+                .expect("write to Vec<u8>");
+            let chunk_dir = resolve_path::dirname::<bun_paths::platform::Auto>(&rel_path);
+            chunk.output_dir_abs = Box::from(resolve_path::join_abs_string_buf::<
+                bun_paths::platform::Auto,
+            >(
+                top_level_dir,
+                &mut join_buf[..],
+                &[output_base, chunk_dir],
+            ));
+        }
+    }
+
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`
     // above borrows into it. (The builder `Drop`s on error and `unique_key_buf`
     // is only assigned here on success, so no rollback guard is needed.)

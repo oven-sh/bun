@@ -122,6 +122,7 @@ pub(crate) fn init_external_modules(
         node_modules: StringSet::default(),
         abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
+        abs_patterns: Vec::new(),
     };
 
     match target {
@@ -166,6 +167,19 @@ pub(crate) fn init_external_modules(
                 prefix: Box::from(&external[0..i]),
                 suffix: Box::from(&external[i + 1..]),
             });
+
+            // `./lib/*` names files, not specifiers: also match it against the
+            // resolved path so `../lib/x.js` from a subdirectory is covered.
+            if !bun_paths::is_package_path(external) {
+                let normalized = validate_path(log, fs, cwd, external, b"external path");
+                if let Some(star) = strings::index_of_char(&normalized, b'*') {
+                    let star = star as usize;
+                    result.abs_patterns.push(WildcardPattern {
+                        prefix: Box::from(&normalized[0..star]),
+                        suffix: Box::from(&normalized[star + 1..]),
+                    });
+                }
+            }
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
@@ -1228,6 +1242,10 @@ pub struct BundleOptions<'a> {
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
+    /// `bun build --outfile`. The CLI writes this file itself, so `output_dir`
+    /// stays empty; the linker only reads its directory as the place the output
+    /// lands (see `Chunk::output_dir_abs`).
+    pub outfile: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
     pub(crate) write: bool,
@@ -1470,6 +1488,7 @@ impl<'a> BundleOptions<'a> {
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
+            outfile: self.outfile.clone(),
             root_dir: self.root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
@@ -1699,6 +1718,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
+            outfile: Box::default(),
             target,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below

@@ -1379,6 +1379,11 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// Absolute directory of the file being written. Import records flagged
+    /// `PRINT_PATH_RELATIVE_TO_OUTPUT` hold an absolute file path and print
+    /// relative to this; when empty they print as-is.
+    pub output_dir: &'a [u8],
 }
 
 impl<'a> Options<'a> {
@@ -1434,6 +1439,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            output_dir: b"",
         }
     }
 }
@@ -3609,10 +3615,10 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"(");
-                    self.print_string_literal_utf8(
-                        self.import_record(e.import_record_index as usize).path.text,
-                        true,
+                    let path = self.import_record_path_text(
+                        self.import_record(e.import_record_index as usize),
                     );
+                    self.print_string_literal_utf8(path, true);
                     self.print(b")");
 
                     if wrap {
@@ -5601,10 +5607,9 @@ pub(crate) mod __gated_printer {
                         self.print_whitespacer(ws!(b"from "));
                     }
 
-                    let irp = &self.import_record(s.import_record_index as usize).path.text;
-                    self.print_import_record_path(
-                        self.import_record(s.import_record_index as usize),
-                    );
+                    let record = self.import_record(s.import_record_index as usize);
+                    let irp = self.import_record_path_text(record);
+                    self.print_import_record_path(record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
@@ -5785,7 +5790,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_whitespacer(ws!(b"} from "));
-                    let irp = &import_record.path.text;
+                    let irp = self.import_record_path_text(import_record);
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
 
@@ -6318,7 +6323,7 @@ pub(crate) mod __gated_printer {
                         // reshaped for borrowck — `module_info()` borrows `&mut self`,
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
-                        let import_record_path = &record.path.text;
+                        let import_record_path = self.import_record_path_text(record);
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
@@ -6498,12 +6503,43 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
+        /// The specifier written for `import_record`: `path.text`, except that a
+        /// `PRINT_PATH_RELATIVE_TO_OUTPUT` record (an absolute file path) becomes
+        /// relative to `options.output_dir`.
+        pub(crate) fn import_record_path_text(&self, import_record: &ImportRecord) -> &'a [u8] {
+            let text: &'static [u8] = import_record.path.text;
+            if !import_record
+                .flags
+                .contains(ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT)
+                || self.options.output_dir.is_empty()
+            {
+                return text;
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let rel = bun_paths::resolve_path::relative_platform_buf::<
+                bun_paths::resolve_path::platform::Loose,
+                false,
+            >(&mut buf[..], self.options.output_dir, text);
+            if rel.starts_with(b"./")
+                || rel.starts_with(b"../")
+                || rel == b".."
+                || bun_paths::is_absolute(rel)
+            {
+                return self.bump.alloc_slice_copy(rel);
+            }
+            let out = self.bump.alloc_slice_fill_copy(rel.len() + 2, 0u8);
+            out[..2].copy_from_slice(b"./");
+            out[2..].copy_from_slice(rel);
+            out
+        }
+
         pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord) {
             if IS_JSON {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(import_record.path.text, false);
+            let text = self.import_record_path_text(import_record);
+            let quote = best_quote_char_for_string(text, false);
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
@@ -6512,11 +6548,11 @@ pub(crate) mod __gated_printer {
                 self.print(quote);
                 self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(import_record.path.text, quote);
+                self.print_string_characters_utf8(text, quote);
                 self.print(quote);
             } else {
                 self.print(quote);
-                self.print_string_characters_utf8(import_record.path.text, quote);
+                self.print_string_characters_utf8(text, quote);
                 self.print(quote);
             }
         }

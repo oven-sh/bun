@@ -1780,6 +1780,137 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
+  // A `./` or `../` specifier that matches an `external` file is relative to the
+  // importer. Once hoisted into an output file it has to be relative to that
+  // file instead, wherever the file lands (two nested entry points here).
+  itBundled("edgecase/ExternalFileRelativeToOutputFile", {
+    files: {
+      "/src/a/entry.js": /* js */ `
+        import lib from "../lib.js";
+        import viaDir from "../dir/mod.js";
+        console.log("a", lib.id, viaDir);
+      `,
+      "/src/b/deep/entry.js": /* js */ `
+        import lib from "../../lib.js";
+        export const id = "b " + lib.id;
+        console.log(id);
+      `,
+      "/src/dir/mod.js": /* js */ `
+        import lib from "../lib.js";
+        export default "mod(" + lib.id + ")";
+      `,
+      "/src/lib.js": `export default { id: "lib" };`,
+    },
+    entryPoints: ["/src/a/entry.js", "/src/b/deep/entry.js"],
+    outputPaths: ["/out/a/entry.js", "/out/b/deep/entry.js"],
+    external: ["./src/lib.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const imports = (file: string) => new Bun.Transpiler().scanImports(api.readFile(file)).map(i => i.path);
+      expect(imports("/out/a/entry.js")).toEqual(["../../src/lib.js", "../../src/lib.js"]);
+      expect(imports("/out/b/deep/entry.js")).toEqual(["../../../src/lib.js"]);
+    },
+    run: [
+      { file: "/out/a/entry.js", stdout: "a lib mod(lib)" },
+      { file: "/out/b/deep/entry.js", stdout: "b lib" },
+    ],
+  });
+  itBundled("edgecase/ExternalFileRelativeToOutputFileSplitting", {
+    files: {
+      "/src/a/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("a", shared);
+      `,
+      "/src/b/entry.js": /* js */ `
+        import { shared } from "../shared.js";
+        console.log("b", shared);
+      `,
+      "/src/shared.js": /* js */ `
+        import lib from "./vendor/lib.js";
+        export const shared = "shared(" + lib.id + ")";
+      `,
+      "/src/vendor/lib.js": `export default { id: "lib" };`,
+    },
+    backend: "api",
+    entryPoints: ["/src/a/entry.js", "/src/b/entry.js"],
+    outputPaths: ["/out/a/entry.js", "/out/b/entry.js"],
+    external: ["{{root}}/src/vendor/lib.js"],
+    splitting: true,
+    outdir: "/out",
+    chunkNaming: "chunks/[name]-[hash].[ext]",
+    onAfterBundle(api) {
+      const chunk = readdirSync(join(api.root, "out", "chunks"))[0];
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out/chunks/" + chunk)).map(i => i.path);
+      expect(imports).toEqual(["../../src/vendor/lib.js"]);
+    },
+    run: [
+      { file: "/out/a/entry.js", stdout: "a shared(lib)" },
+      { file: "/out/b/entry.js", stdout: "b shared(lib)" },
+    ],
+  });
+  itBundled("edgecase/ExternalFileRelativeToOutfile", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import lib from "./lib.js";
+        console.log(lib.id);
+      `,
+      "/src/lib.js": `export default { id: "lib" };`,
+    },
+    backend: "cli",
+    external: ["./src/lib.js"],
+    outfile: "/dist/js/app.js",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/dist/js/app.js")).map(i => i.path);
+      expect(imports).toEqual(["../../src/lib.js"]);
+    },
+    run: { file: "/dist/js/app.js", stdout: "lib" },
+  });
+  // Same, when an onResolve plugin declines and the native resolver runs second.
+  itBundled("edgecase/ExternalFileRelativeToOutputFileAfterPlugin", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import lib from "../vendor/lib.js";
+        console.log(lib.id);
+      `,
+      "/vendor/lib.js": `export default { id: "lib" };`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /lib/ }, () => undefined);
+    },
+    external: ["./vendor/lib.js"],
+    outdir: "/out/nested",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out/nested/entry.js")).map(i => i.path);
+      expect(imports).toEqual(["../../vendor/lib.js"]);
+    },
+    run: { file: "/out/nested/entry.js", stdout: "lib" },
+  });
+  // A `./`-prefixed wildcard names files, so besides matching specifiers as
+  // written (kept as written, like esbuild) it also matches by resolved path:
+  // `../vendor/b.js` from a subdirectory is as external as `./vendor/a.js` from
+  // the root, instead of being bundled while the other is left external.
+  itBundled("edgecase/ExternalRelativeWildcardMatchesResolvedPath", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from "./vendor/a.js";
+        import viaSub from "./sub/mod.js";
+        console.log(a, viaSub);
+      `,
+      "/sub/mod.js": /* js */ `
+        import b from "../vendor/b.js";
+        export default "sub(" + b + ")";
+      `,
+      "/vendor/a.js": `export default "a";`,
+      "/vendor/b.js": `export default "b";`,
+    },
+    external: ["./vendor/*"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).not.toContain(`"b"`);
+      expect(new Bun.Transpiler().scanImports(entry).map(i => i.path)).toEqual(["./vendor/a.js", "../vendor/b.js"]);
+    },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

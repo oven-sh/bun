@@ -2588,6 +2588,20 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                if let Some(file_path) = self.external_file_path(
+                    &import_record.specifier,
+                    import_record.kind,
+                    &path,
+                    target,
+                ) {
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    record.path = file_path;
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT);
+                }
                 return;
             }
 
@@ -6008,6 +6022,34 @@ pub mod bv2_impl {
             Ok(out)
         }
 
+        /// A `./` or `../` specifier that matched an `external` file is relative to the
+        /// importer, so it cannot be copied into the output. Returns the path to store on
+        /// the import record instead: the absolute `resolved` path (with a cwd-relative
+        /// `pretty`), which the JS printer rebases onto the output file
+        /// (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` for any other external: bare and
+        /// absolute specifiers print as written, and CSS `@import`/`url()` print through
+        /// their own path.
+        fn external_file_path(
+            &self,
+            specifier: &[u8],
+            kind: ImportKind,
+            resolved: &Fs::Path<'static>,
+            target: options::Target,
+        ) -> Option<Fs::Path<'static>> {
+            if !resolved.is_file()
+                || !bun_paths::is_absolute(resolved.text)
+                || bun_paths::is_absolute(specifier)
+                || kind.is_from_css()
+            {
+                return None;
+            }
+            Some(path_as_static(
+                &self
+                    .path_with_pretty_initialized(resolved, target)
+                    .expect("oom"),
+            ))
+        }
+
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6678,6 +6720,16 @@ pub mod bv2_impl {
                         )
                     {
                         import_record.path = path_as_static(&resolve_result.path_pair.primary);
+                    } else if let Some(file_path) = self.external_file_path(
+                        import_record.path.text,
+                        import_record.kind,
+                        path,
+                        target,
+                    ) {
+                        import_record.path = file_path;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,

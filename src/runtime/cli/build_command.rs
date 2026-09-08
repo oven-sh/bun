@@ -654,6 +654,7 @@ impl BuildCommand {
                 )
                 .expect("unreachable");
                 this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
+                this_transpiler.options.outfile = outfile.into();
                 if let Some(dir) = bun_core::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }

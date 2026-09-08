@@ -877,6 +877,7 @@ dependencies = [
  "bun_crash_handler",
  "bun_io",
  "bun_options_types",
+ "bun_paths",
  "bun_ptr",
  "bun_sourcemap",
  "bun_wyhash",

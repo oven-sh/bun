@@ -65,6 +65,11 @@ pub struct Chunk {
     pub(crate) final_rel_path: Box<[u8]>,
     /// The path template used to generate `final_rel_path`
     pub(crate) template: PathTemplate,
+    /// Absolute directory this chunk's file lands in: the outdir (or, without
+    /// one, `--outfile`'s directory or the working directory) joined with the
+    /// directory part of `template`. Relative specifiers in the chunk's output
+    /// resolve against it, so `external` file paths are printed relative to it.
+    pub(crate) output_dir_abs: Box<[u8]>,
 
     /// For code splitting
     pub(crate) cross_chunk_imports: Vec<ChunkImport>,
@@ -210,6 +215,7 @@ impl Default for Chunk {
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             final_rel_path: Box::default(),
             template: PathTemplate::default(),
+            output_dir_abs: Box::default(),
             cross_chunk_imports: Vec::new(),
             content: Content::default(),
             entry_point: EntryPoint::default(),

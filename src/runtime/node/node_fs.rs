@@ -456,17 +456,10 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// Makes the destination directory for one level of a recursive copy and
-/// reports whether it is fresh: made by this copy, here or at a level above
-/// (`in_fresh_dir`). The copy creates every file below a fresh directory
-/// exclusively, so an entry that another writer races into the tree, or that a
-/// swapped ancestor now leads to, is never written through.
-///
-/// A directory that already holds the name is merged into. Any other entry
-/// there (a file, a symlink, a junction) fails with EEXIST: `mkdir(2)` reports
-/// EEXIST for all of them, and only a look at the name that does not follow a
-/// link tells a directory from a link to one. GNU `cp -r` and `fs.cp` refuse
-/// the same way.
+/// Makes the destination directory for one level of a recursive copy. Returns
+/// whether this copy made it, here or at a level above (`in_fresh_dir`): files
+/// below such a directory are created exclusively. An existing directory is
+/// merged into; a file or a link at the name is EEXIST, as in GNU `cp -r`.
 fn cp_mkdir_dest(nodefs: &mut NodeFS, dest: &OSPathSliceZ, in_fresh_dir: bool) -> Maybe<bool> {
     let err = match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
         Ok(()) => return Ok(true),
@@ -4196,10 +4189,9 @@ pub mod args {
     }
 
     impl CpFlags {
-        /// The mode one file of the copy is created with. `in_fresh_dir`: the
-        /// directory that holds the file was made by this copy, so only another
-        /// writer racing the copy can have put something at the name, and an
-        /// exclusive create refuses to write through whatever that is.
+        /// The mode for one file of the copy. Below a directory this copy made
+        /// (`in_fresh_dir`) the create is exclusive: only a racing writer can
+        /// have put an entry there, and it must not be written through.
         pub(crate) fn copyfile_mode(self, in_fresh_dir: bool) -> constants::Copyfile {
             constants::Copyfile::from_raw(if self.error_on_exist || !self.force || in_fresh_dir {
                 constants::COPYFILE_EXCL

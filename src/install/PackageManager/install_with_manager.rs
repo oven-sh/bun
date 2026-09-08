@@ -796,7 +796,10 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            let mut changed_section = frozen_changed_section(manager, root_package_json_path);
+            // The package.json section that changed and the directory of that package.json.
+            let mut changed_section: Option<(&'static str, Box<[u8]>)> =
+                frozen_changed_section(manager, root_package_json_path)
+                    .map(|section| (section, Box::default()));
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -807,9 +810,13 @@ pub fn install_with_manager(
                         // Every package resolved as locked. A plain install would still rewrite
                         // bun.lock for a retyped specifier, a dependency that changed group, or a
                         // trustedDependencies / patchedDependencies edit, so those fail too.
-                        changed_section = loaded_manifest_sections.as_ref().and_then(|loaded| {
-                            manager.lockfile.manifest_sections().changed_since(loaded)
-                        });
+                        if let Some(loaded) = &loaded_manifest_sections {
+                            changed_section = manager
+                                .lockfile
+                                .manifest_sections()
+                                .changed_since(loaded)
+                                .map(|(section, dir)| (section, Box::from(dir)));
+                        }
                         if changed_section.is_none() {
                             break 'frozen_lockfile;
                         }
@@ -831,10 +838,12 @@ pub fn install_with_manager(
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
-                if let Some(section) = changed_section {
+                if let Some((section, dir)) = &changed_section {
                     bun_core::note!(
-                        "{} in package.json changed since {} was saved",
+                        "{} in {}{}package.json changed since {} was saved",
                         section,
+                        bstr::BStr::new(dir),
+                        if dir.is_empty() { "" } else { "/" },
                         loaded_lockfile_name(&load_result)
                     );
                 }

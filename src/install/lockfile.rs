@@ -2804,39 +2804,48 @@ impl<'a> EqlSorter<'a> {
 /// The sections of bun.lock that come from the manifests rather than from resolution, as
 /// `bun_lock::Stringifier::save_from_binary` writes them: each workspace's dependency lists, and
 /// the `trustedDependencies` names and `patchedDependencies` entries that apply to a package placed
-/// in the tree. Overrides and catalogs are left to the differ's flags, workspace versions out on
-/// purpose (release tooling bumps them without an install).
+/// in the tree. Overrides and catalogs are left to the differ's flags, and workspace versions are
+/// left out on purpose (release tooling bumps them without an install).
 pub(crate) struct ManifestSections {
     /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
     workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
-    /// Sorted. `None` when the lockfile has no list, which is also what `turbo prune` wrote before
-    /// vercel/turborepo#13740 while copying the root package.json that declares one.
+    /// Sorted. `None` when the lockfile has no list.
     trusted_dependencies: Option<Vec<Box<[u8]>>>,
     /// Sorted (`name@version`, patch path).
     patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
 impl ManifestSections {
-    /// The section to name when `self`, taken before installing, no longer matches `loaded`.
-    pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<&'static str> {
-        if self.workspaces != loaded.workspaces {
-            return Some("dependencies");
+    /// The section to name, and the directory of the package.json it is in, when `self` (taken
+    /// before installing) no longer matches `loaded`.
+    pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
+        if self.workspaces.len() != loaded.workspaces.len() {
+            return Some(("workspaces", b""));
         }
-        if let Some(recorded) = &loaded.trusted_dependencies {
+        for (now, recorded) in self.workspaces.iter().zip(&loaded.workspaces) {
+            if now != recorded {
+                return Some(("dependencies", &now.0));
+            }
+        }
+
+        // A lockfile without the list is not compared: `turbo prune` before vercel/turborepo#13740
+        // dropped it while copying the package.json that declares it.
+        if let Some(recorded) = loaded.trusted_dependencies.as_deref() {
             let declared = self.trusted_dependencies.as_deref().unwrap_or_default();
             let added = declared
                 .iter()
                 .any(|name| recorded.binary_search(name).is_err());
-            // The recorded list is the union over every workspace's package.json, so in a
-            // workspace project a name also goes missing when the workspace that declared it is
-            // not on disk (a pruned checkout); like a catalog entry, only an addition counts there.
+            // The recorded list is the union over every workspace's package.json, so a checkout
+            // without one of those workspaces declares fewer names: with workspaces only an added
+            // name counts, like a catalog entry.
             let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
             if added || removed {
-                return Some("trustedDependencies");
+                return Some(("trustedDependencies", b""));
             }
         }
+
         if self.patched_dependencies != loaded.patched_dependencies {
-            return Some("patchedDependencies");
+            return Some(("patchedDependencies", b""));
         }
         None
     }

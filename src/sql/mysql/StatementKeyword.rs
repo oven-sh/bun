@@ -12,6 +12,8 @@ pub struct KeywordCursor {
     /// Just past the keyword last returned, inside that statement.
     pos: usize,
     started: bool,
+    /// How the statement at `pos` was lexed; its body is scanned on the next call.
+    backslash_escapes: bool,
     keyword: (usize, usize),
 }
 
@@ -19,6 +21,7 @@ impl KeywordCursor {
     /// Range of the next statement's leading keyword in `sql` (Latin-1 or
     /// UTF-16 units), empty when it has none. Past the last statement (a
     /// `CALL` yields several results) the previous keyword is returned again.
+    /// `backslash_escapes` is how the server lexed that next statement.
     pub fn next<T: Copy + Into<u32>>(
         &mut self,
         sql: &[T],
@@ -26,12 +29,13 @@ impl KeywordCursor {
     ) -> Range<usize> {
         let mut pos = self.pos;
         if self.started {
-            match statement_end(sql, pos, backslash_escapes) {
+            match statement_end(sql, pos, self.backslash_escapes) {
                 Some(end) => pos = end + 1,
                 None => return self.keyword.0..self.keyword.1,
             }
         }
         self.started = true;
+        self.backslash_escapes = backslash_escapes;
         pos = skip_to_keyword(sql, pos);
         let start = pos;
         while pos < sql.len() && is_alpha(sql[pos]) {

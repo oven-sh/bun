@@ -4,6 +4,7 @@ pub struct MySQLQueryResult {
     pub last_insert_id: u64,
     pub affected_rows: u64,
     pub is_last_result: bool,
-    /// False when the session has `NO_BACKSLASH_ESCAPES` set.
+    /// Whether this result's statement was lexed with backslash escapes on
+    /// (`NO_BACKSLASH_ESCAPES` unset).
     pub backslash_escapes: bool,
 }

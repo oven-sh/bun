@@ -1416,9 +1416,13 @@ impl MySQLConnection {
         last_insert_id: u64,
         affected_rows: u64,
     ) {
+        // The mode this result's statement was lexed with is the one in
+        // effect before it ran, so read it before taking the new flags.
+        let backslash_escapes = !self
+            .status_flags
+            .has(StatusFlag::SERVER_STATUS_NO_BACKSLASH_ESCAPES);
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
-        let backslash_escapes = !status_flags.has(StatusFlag::SERVER_STATUS_NO_BACKSLASH_ESCAPES);
         debug!(
             "handleResultSetOK: {} {}",
             status_flags.to_int(),

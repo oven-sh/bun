@@ -82,11 +82,9 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        // The single-file transpiler behind --no-bundle can only print ESM. For
-        // cjs (also implied by --bytecode), convert each entry point with the
-        // linker instead and mark every import external: one output per input,
-        // nothing inlined, every statement kept. esbuild converts the format of
-        // unbundled files the same way.
+        // The --no-bundle transpiler only prints ESM. For cjs (and --bytecode),
+        // convert each file with the linker instead: every import external,
+        // tree shaking off.
         let no_bundle = ctx.bundler_options.transform_only;
         let convert_format_only =
             no_bundle && ctx.bundler_options.output_format == options::Format::Cjs;

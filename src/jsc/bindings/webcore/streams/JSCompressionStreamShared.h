@@ -14,9 +14,14 @@ extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JS
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr, bool* more);
 // Off-thread step, completed by Bun__CompressionStream__deliverAsync.
 extern "C" void CompressionStreamCoder__transformAsync(void* coder, JSC::JSGlobalObject* global, JSC::EncodedJSValue streamCell, JSC::EncodedJSValue chunk, const uint8_t* input, size_t inputLen, bool finish);
+// JS thread only, with no off-thread step in flight.
+extern "C" size_t CompressionStreamCoder__memoryCost(const void* coder);
 
 namespace Bun {
 namespace WebStreams {
+
+// After construction and after every step: zstd and brotli allocate their buffers lazily.
+void reportCoderMemoryCost(JSC::VM&, WebCore::JSTransformStream*, const void* coder);
 
 std::optional<CompressionFormat> parseCompressionFormat(JSC::JSGlobalObject*, JSC::JSValue formatValue);
 // The optional second constructor argument, read like a queuing strategy: its highWaterMark (bytes,

@@ -80,6 +80,8 @@ public:
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
+    // Lockless: the receiving port's wrapper reports it to the GC as extra memory.
+    size_t queuedBytes(uint8_t side) const { return m_sides[side].queuedBytes.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
     bool isOtherSideClosedByRequest(uint8_t side) const { return state(1 - side) & ClosedByRequest; }
 
@@ -108,6 +110,8 @@ private:
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };
+        // Sum of memoryCost() over `inbox` + `draining`. Written only while holding `lock`.
+        std::atomic<size_t> queuedBytes { 0 };
     };
     Side m_sides[2];
 };

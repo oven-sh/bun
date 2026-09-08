@@ -8,6 +8,7 @@ export default [
     refCounted: true,
     hasPendingActivity: false,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

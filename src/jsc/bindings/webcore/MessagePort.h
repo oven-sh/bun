@@ -101,6 +101,8 @@ public:
 
     MessagePortPipe* pipe() const { return m_pipe.ptr(); }
     uint8_t side() const { return m_side; }
+    // Bytes queued for this port, not yet delivered. Lockless (GC thread safe).
+    size_t memoryCost() const { return m_pipe->queuedBytes(m_side); }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }

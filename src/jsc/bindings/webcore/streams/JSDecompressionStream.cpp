@@ -165,6 +165,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     }
     auto* stream = JSDecompressionStream::create(vm, structure);
     stream->m_coder = coder;
+    reportCoderMemoryCost(vm, stream, coder);
     vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
         CompressionStreamCoder__destroy(std::exchange(static_cast<JSDecompressionStream*>(cell)->m_coder, nullptr));
     }));

@@ -1151,6 +1151,9 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkAbi for HTTPServerWritable<SSL
     fn create_controller_extern(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue {
         http_sink_dispatch!(create_controller(global, ptr))
     }
+    fn report_memory_cost_extern(value: JSValue, cost: usize) {
+        http_sink_dispatch!(report_memory_cost(value, cost))
+    }
 }
 
 impl<const SSL: bool> HTTPServerWritable<SSL> {

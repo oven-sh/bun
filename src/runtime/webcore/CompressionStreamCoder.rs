@@ -16,13 +16,15 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
+use bun_alloc::c_thunks;
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
 use bun_zstd::c as zstd;
@@ -141,6 +143,8 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
+    /// Bytes zlib / brotli hold now. Boxed: the allocator hooks keep its address.
+    native_bytes: Box<AtomicUsize>,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -191,9 +195,16 @@ impl CompressionStreamCoder {
         decompress: bool,
         high_water_mark: usize,
     ) -> Result<Box<Self>, CodecError> {
+        let native_bytes = Box::new(AtomicUsize::new(0));
+        let opaque = ptr::from_ref::<AtomicUsize>(&native_bytes)
+            .cast_mut()
+            .cast::<c_void>();
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
+                s.alloc_func = Some(c_thunks::counted_malloc_items);
+                s.free_func = Some(c_thunks::counted_free);
+                s.user_data = opaque;
                 // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
                 // SAFETY: `s` is a zeroed, #[repr(C)] z_stream; zlibVersion() is
                 // a static C string.
@@ -216,6 +227,9 @@ impl CompressionStreamCoder {
             }
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => {
                 let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
+                s.alloc_func = Some(c_thunks::counted_malloc_items);
+                s.free_func = Some(c_thunks::counted_free);
+                s.user_data = opaque;
                 // SAFETY: as above.
                 let rc = unsafe {
                     zlib::inflateInit2_(
@@ -234,17 +248,25 @@ impl CompressionStreamCoder {
                 }
             }
             (Format::Brotli, false) => {
-                // SAFETY: FFI — the default-allocator instance (all nulls).
+                // SAFETY: FFI; the hooks and `opaque` outlive the instance.
                 let p = NonNull::new(unsafe {
-                    brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
+                    brotli::BrotliEncoderCreateInstance(
+                        Some(c_thunks::counted_malloc_size),
+                        Some(c_thunks::counted_free),
+                        opaque,
+                    )
                 })
                 .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
-                // SAFETY: FFI — the default-allocator instance (all nulls).
+                // SAFETY: FFI; the hooks and `opaque` outlive the instance.
                 let p = NonNull::new(unsafe {
-                    brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
+                    brotli::BrotliDecoderCreateInstance(
+                        Some(c_thunks::counted_malloc_size),
+                        Some(c_thunks::counted_free),
+                        opaque,
+                    )
                 })
                 .ok_or(CodecError::Message("failed to initialize brotli decoder"))?;
                 Backend::BrotliDecode(p)
@@ -268,7 +290,27 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
+            native_bytes,
         }))
+    }
+
+    /// JS thread, between steps only: zstd walks its context to answer.
+    fn memory_cost(&self) -> usize {
+        let codec = match &self.backend {
+            Backend::Deflate(_) | Backend::Inflate { .. } => {
+                core::mem::size_of::<zlib::z_stream>() + self.native_bytes.load(Ordering::Relaxed)
+            }
+            Backend::BrotliEncode(_) | Backend::BrotliDecode(_) => {
+                self.native_bytes.load(Ordering::Relaxed)
+            }
+            // SAFETY: the context is live until `drop`, and no step runs
+            // concurrently with this read.
+            Backend::ZstdEncode(p) => unsafe { zstd::ZSTD_sizeof_CCtx(p.as_ptr()) },
+            // SAFETY: as above.
+            Backend::ZstdDecode(p) => unsafe { zstd::ZSTD_sizeof_DCtx(p.as_ptr()) },
+        };
+        let pending = self.pending.as_ref().map_or(0, |p| p.input.capacity());
+        core::mem::size_of::<Self>() + core::mem::size_of::<AtomicUsize>() + codec + pending
     }
 
     const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
@@ -775,6 +817,18 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
         // the cell's reference has not been released yet.
         unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(this) };
     }
+}
+
+/// See [`CompressionStreamCoder::memory_cost`].
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn CompressionStreamCoder__memoryCost(this: *const CompressionStreamCoder) -> usize {
+    if this.is_null() {
+        return 0;
+    }
+    // SAFETY: `this` was returned by `CompressionStreamCoder__create` and the
+    // cell's reference has not been released yet.
+    unsafe { &*this }.memory_cost()
 }
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as

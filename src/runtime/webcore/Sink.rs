@@ -71,6 +71,8 @@ macro_rules! decl_js_sink_externs {
                     g: &::bun_jsc::JSGlobalObject,
                     p: *mut ::core::ffi::c_void,
                 ) -> ::bun_jsc::JSValue;
+                #[link_name = concat!($abi, "__reportMemoryCost")]
+                pub(crate) safe fn report_memory_cost(v: ::bun_jsc::JSValue, cost: usize);
             }
         }
     };
@@ -103,6 +105,9 @@ macro_rules! impl_js_sink_abi {
                     ptr: *mut ::core::ffi::c_void,
                 ) -> ::bun_jsc::JSValue {
                     __abi::create_controller(global, ptr)
+                }
+                fn report_memory_cost_extern(value: ::bun_jsc::JSValue, cost: usize) {
+                    __abi::report_memory_cost(value, cost)
                 }
             }
         };
@@ -182,6 +187,8 @@ pub trait JsSinkAbi {
         global: &crate::webcore::jsc::JSGlobalObject,
         ptr: *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
+    /// `${abi_name}__reportMemoryCost`: GC extra memory for the sink or controller cell `value`.
+    fn report_memory_cost_extern(value: crate::webcore::jsc::JSValue, cost: usize);
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
@@ -413,6 +420,11 @@ impl<T: JsSinkType> JSSink<T> {
         }
     }
 
+    /// After a JS-driven call on `this_value` (the sink or controller cell).
+    fn sync_memory_cost(this: &JSSink<T>, this_value: crate::webcore::jsc::JSValue) {
+        T::report_memory_cost_extern(this_value, Self::js_memory_cost(&this.sink));
+    }
+
     /// `${abi_name}__construct` host-fn body.
     pub(crate) fn js_construct(
         global: &crate::webcore::jsc::JSGlobalObject,
@@ -471,10 +483,9 @@ impl<T: JsSinkType> JSSink<T> {
             }
             // Borrowed view over GC-kept buffer for the duration of the call.
             let data = bun_ptr::RawSlice::new(slice);
-            return Ok(this
-                .sink
-                .write_bytes(&streams::Result::Temporary(data))
-                .to_js(global));
+            let wrote = this.sink.write_bytes(&streams::Result::Temporary(data));
+            Self::sync_memory_cost(this, frame.this());
+            return Ok(wrote.to_js(global));
         }
 
         if !arg.is_string() {
@@ -493,17 +504,15 @@ impl<T: JsSinkType> JSSink<T> {
             let utf16 = view.utf16();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
             let data = bun_ptr::RawSlice::new(bytes);
-            return Ok(this
-                .sink
-                .write_utf16(&streams::Result::Temporary(data))
-                .to_js(global));
+            let wrote = this.sink.write_utf16(&streams::Result::Temporary(data));
+            Self::sync_memory_cost(this, frame.this());
+            return Ok(wrote.to_js(global));
         }
 
         let data = bun_ptr::RawSlice::new(view.latin1());
-        Ok(this
-            .sink
-            .write_latin1(&streams::Result::Temporary(data))
-            .to_js(global))
+        let wrote = this.sink.write_latin1(&streams::Result::Temporary(data));
+        Self::sync_memory_cost(this, frame.this());
+        Ok(wrote.to_js(global))
     }
 
     /// `${abi_name}__flush` host-fn body.
@@ -525,13 +534,17 @@ impl<T: JsSinkType> JSSink<T> {
             let wait = frame.arguments_count() > 0
                 && frame.argument(0).is_boolean()
                 && frame.argument(0).as_boolean();
-            return match this.sink.flush_from_js(global, wait) {
+            let flushed = this.sink.flush_from_js(global, wait);
+            Self::sync_memory_cost(this, frame.this());
+            return match flushed {
                 sys::Result::Ok(value) => Ok(value),
                 sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
             };
         }
 
-        match this.sink.flush() {
+        let flushed = this.sink.flush();
+        Self::sync_memory_cost(this, frame.this());
+        match flushed {
             sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         }
@@ -565,7 +578,9 @@ impl<T: JsSinkType> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        match this.sink.start(config) {
+        let started = this.sink.start(config);
+        Self::sync_memory_cost(this, frame.this());
+        match started {
             sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         }
@@ -586,7 +601,9 @@ impl<T: JsSinkType> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        let result = match this.sink.end_from_js(global) {
+        let ended = this.sink.end_from_js(global);
+        Self::sync_memory_cost(this, frame.this());
+        let result = match ended {
             sys::Result::Ok(value) => Ok(value),
             sys::Result::Err(err) => Err(global.throw_value(err.to_js(global)?)),
         };

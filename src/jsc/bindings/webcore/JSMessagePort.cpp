@@ -416,9 +416,15 @@ void JSMessagePort::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
+    visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCost());
 }
 
 DEFINE_VISIT_CHILDREN(JSMessagePort);
+
+size_t JSMessagePort::estimatedSize(JSCell* cell, VM& vm)
+{
+    return Base::estimatedSize(cell, vm) + uncheckedDowncast<JSMessagePort>(cell)->wrapped().memoryCost();
+}
 
 template<typename Visitor>
 void JSMessagePort::visitOutputConstraints(JSCell* cell, Visitor& visitor)

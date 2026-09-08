@@ -34,6 +34,8 @@ namespace WebCore {
 struct MessageWithMessagePorts {
     RefPtr<SerializedScriptValue> message;
     Vector<TransferredMessagePort> transferredPorts;
+
+    size_t memoryCost() const { return message ? message->memoryCost() : 0; }
 };
 
 } // namespace WebCore

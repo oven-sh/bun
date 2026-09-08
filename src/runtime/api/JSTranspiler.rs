@@ -2,6 +2,7 @@
 
 use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use crate::Error;
@@ -49,6 +50,8 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
+    /// Re-synced when the retained output buffer grows: the GC thread reads it concurrently.
+    estimated_size: AtomicUsize,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -997,6 +1000,7 @@ impl JSTranspiler {
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
+            estimated_size: AtomicUsize::new(0),
             ref_count: bun_ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1055,7 +1059,54 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
+        this.estimated_size
+            .store(this.compute_estimated_size(), Ordering::Relaxed);
         Ok(bun_core::heap::into_raw(this))
+    }
+
+    /// `Transpiler__estimatedSize` (JSBundler.classes.ts `estimatedSize: true`).
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.estimated_size.load(Ordering::Relaxed)
+    }
+
+    /// After a call that can grow retained memory (transformSync keeps its output buffer).
+    fn sync_estimated_size(&self, global: &JSGlobalObject) {
+        let size = self.compute_estimated_size();
+        let previous = self.estimated_size.swap(size, Ordering::Relaxed);
+        if size > previous {
+            global.vm().deprecated_report_extra_memory(size - previous);
+        }
+    }
+
+    /// Mutator thread only: it reads the define hash maps.
+    fn compute_estimated_size(&self) -> usize {
+        use bun_js_parser::defines::{DotDefine, IdentifierDefine};
+        use core::mem::size_of;
+
+        let config = self.config.get();
+        let define = &self.transpiler.get().options.define;
+        let identifiers = define.identifiers.capacity()
+            * (size_of::<bun_collections::StringHashMapKey>() + size_of::<IdentifierDefine>() + 1);
+        let dots = define.dots.capacity()
+            * (size_of::<bun_collections::StringHashMapKey>() + size_of::<Vec<DotDefine>>() + 1)
+            + define
+                .dots
+                .values()
+                .map(|v| v.capacity() * size_of::<DotDefine>())
+                .sum::<usize>();
+        let output = self
+            .buffer_writer
+            .get()
+            .as_ref()
+            .map_or(0, |w| w.buffer.list.capacity());
+        size_of::<Self>()
+            + self.arena.allocated_bytes()
+            + output
+            + config.tsconfig_buf.len()
+            + config.macros_buf.len()
+            + size_of::<bun_js_parser::defines::Define>()
+            + identifiers
+            + dots
     }
 }
 
@@ -1529,6 +1580,7 @@ impl JSTranspiler {
         buffer_writer = printer.ctx;
         let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
         self.buffer_writer.set(Some(buffer_writer));
+        self.sync_estimated_size(global);
         result
     }
 }

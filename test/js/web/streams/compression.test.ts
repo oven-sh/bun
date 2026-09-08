@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, expectNativeMemoryReportedToGC, isASAN } from "harness";
 import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import zlib from "node:zlib";
@@ -1237,6 +1237,20 @@ describe("bounded output per input chunk", () => {
     },
   );
 });
+
+// A gzip deflate context is ~200 KiB of window and hash tables outside the JS
+// heap. The cell reports it as extra memory, so a loop that drops unused
+// streams still triggers collections (1.4 GiB RSS at 1e6 streams before).
+test.concurrent.each(["CompressionStream", "DecompressionStream"])(
+  "%s reports its codec state to the GC",
+  async ctor => {
+    await expectNativeMemoryReportedToGC("", `new ${ctor}("gzip")`, {
+      drop: 300,
+      live: 50,
+      minBytesEach: ctor === "CompressionStream" ? 128 * 1024 : 8 * 1024,
+    });
+  },
+);
 
 // The native coder (a gzip deflate context is ~280 KiB of zlib state) must be
 // released eagerly at the transform's terminal (ClearAlgorithms: post-flush,

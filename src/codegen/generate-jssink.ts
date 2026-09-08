@@ -93,18 +93,21 @@ function header() {
 
             void detach() {
                 m_sinkPtr = nullptr;
-
+                m_memoryCostForGC = 0;
             }
 
             static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
             static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
             static size_t memoryCost(void* sinkPtr);
+            // ${name}__reportMemoryCost: the buffered bytes, as GC extra memory.
+            void reportMemoryCost(size_t cost);
 
             void ref();
             void unref();
                                                                                                                                                                                     
             void* m_sinkPtr;
             int m_refCount { 1 };
+            size_t m_memoryCostForGC { 0 };
 
             uintptr_t m_onDestroy { 0 };
                                                                                                                                                                                     
@@ -196,6 +199,8 @@ public:
 
     void* wrapped() const { return m_sinkPtr; }
     SinkID sinkId() const { return m_sinkId; }
+    // See JS*Sink::reportMemoryCost.
+    void reportMemoryCost(size_t cost);
 
     void* m_sinkPtr;
     SinkID m_sinkId;
@@ -203,6 +208,7 @@ public:
     mutable WriteBarrier<JSC::JSObject> m_onClose;
     mutable JSC::Weak<JSObject> m_weakReadableStream;
     uintptr_t m_onDestroy { 0 };
+    size_t m_memoryCostForGC { 0 };
 
 protected:
     JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, SinkID sinkId, uintptr_t onDestroy)
@@ -296,12 +302,37 @@ ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).j
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
 
 const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
+
+void JSReadableSinkControllerBase::reportMemoryCost(size_t cost)
+{
+    if (cost > m_memoryCostForGC)
+        vm().heap.reportExtraMemoryAllocated(this, cost - m_memoryCostForGC);
+    m_memoryCostForGC = cost;
+}
 `;
   var templ = head;
 
   for (let name of classes) {
     const { className, controller, prototypeName, controllerName, controllerPrototypeName, constructor } = names(name);
     templ += `
+
+  void ${className}::reportMemoryCost(size_t cost) {
+    if (cost > m_memoryCostForGC)
+      vm().heap.reportExtraMemoryAllocated(this, cost - m_memoryCostForGC);
+    m_memoryCostForGC = cost;
+  }
+
+  // JSSink::sync_memory_cost (Sink.rs): after a JS-driven write/start/flush/end on either cell.
+  extern "C" void ${name}__reportMemoryCost(JSC::EncodedJSValue value, size_t cost)
+  {
+    JSC::JSValue thisValue = JSC::JSValue::decode(value);
+    if (auto* sink = dynamicDowncast<${className}>(thisValue)) {
+      sink->reportMemoryCost(cost);
+      return;
+    }
+    if (auto* controller = dynamicDowncast<${controller}>(thisValue))
+      controller->reportMemoryCost(cost);
+  }
 
   void ${className}::ref() {
     if (!m_sinkPtr)
@@ -668,6 +699,7 @@ void JS${controllerName}::detach() {
 
     auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
     auto destroy = std::exchange(m_onDestroy, 0);
+    m_memoryCostForGC = 0;
 
     m_onPull.clear();
     m_onClose.clear();
@@ -830,6 +862,7 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // Avoid duplicating in the heap snapshot
     visitor.appendHidden(thisObject->m_onPull);
     visitor.appendHidden(thisObject->m_onClose);
+    visitor.reportExtraMemoryVisited(thisObject->m_memoryCostForGC);
     
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
@@ -844,6 +877,7 @@ void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${className}* thisObject = uncheckedDowncast<${className}>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.reportExtraMemoryVisited(thisObject->m_memoryCostForGC);
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);

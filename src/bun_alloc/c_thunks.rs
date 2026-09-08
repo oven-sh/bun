@@ -10,6 +10,7 @@
 //! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`].
 
 use core::ffi::{c_uint, c_void};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::default_alloc as raw;
 
@@ -36,6 +37,40 @@ pub use mi_free_opaque as mi_free_ctx;
 pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
     // SAFETY: bytes was allocated by the default allocator (or is null).
     unsafe { raw::free(bytes) };
+}
+
+/// brotli-shape alloc that adds the block's usable size to the `AtomicUsize` at `opaque`.
+pub unsafe extern "C" fn counted_malloc_size(opaque: *mut c_void, size: usize) -> *mut c_void {
+    let ptr = raw::malloc(size);
+    if !ptr.is_null() {
+        // SAFETY: `opaque` is live (caller contract); `ptr` is a live allocation.
+        unsafe {
+            (*opaque.cast::<AtomicUsize>()).fetch_add(raw::usable_size(ptr), Ordering::Relaxed);
+        }
+    }
+    ptr
+}
+
+/// zlib-shape counterpart of [`counted_malloc_size`].
+pub unsafe extern "C" fn counted_malloc_items(
+    opaque: *mut c_void,
+    items: c_uint,
+    size: c_uint,
+) -> *mut c_void {
+    // SAFETY: same contract as `counted_malloc_size`.
+    unsafe { counted_malloc_size(opaque, items as usize * size as usize) }
+}
+
+/// `free(ptr)` that subtracts the block's usable size from the `AtomicUsize` at `opaque`.
+pub unsafe extern "C" fn counted_free(opaque: *mut c_void, ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: caller contract.
+    unsafe {
+        (*opaque.cast::<AtomicUsize>()).fetch_sub(raw::usable_size(ptr), Ordering::Relaxed);
+        raw::free(ptr);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

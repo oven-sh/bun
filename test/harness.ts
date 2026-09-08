@@ -366,6 +366,55 @@ export async function expectRssDeltaBelow(
   expect(exitCode).toBe(0);
 }
 
+/**
+ * Checks that a wrapper object reports the native memory it owns to the GC.
+ *
+ * Runs a probe in a child bun. `setup` runs once; `create` is an expression
+ * that makes one object (it may reference what `setup` defined). The probe:
+ * 1. drops `drop` objects in a loop with no explicit GC (one microtask turn
+ *    each) and counts, through a FinalizationRegistry, how many the GC
+ *    collected on its own. Native memory the GC cannot see never triggers a
+ *    collection, so that count stays 0.
+ * 2. keeps `live` objects alive across a `Bun.gc(true)` and measures the
+ *    `heapStats().extraMemorySize` delta they account for. Each must report at
+ *    least `minBytesEach`.
+ */
+export async function expectNativeMemoryReportedToGC(
+  setup: string,
+  create: string,
+  { drop, live, minBytesEach }: { drop: number; live: number; minBytesEach: number },
+) {
+  const probe = `
+    const { heapStats } = require("bun:jsc");
+    ${setup}
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    for (let i = 0; i < ${drop}; i++) {
+      registry.register(${create}, i);
+      await 0;
+    }
+    // Cleanup callbacks run from the event loop, so give it a few turns. Far
+    // below the 1 s idle GC timer, so an unfixed build still sees no collection.
+    for (let i = 0; i < 50 && collected === 0; i++) await new Promise(resolve => setImmediate(resolve));
+
+    Bun.gc(true);
+    const before = heapStats().extraMemorySize;
+    const kept = [];
+    for (let i = 0; i < ${live}; i++) kept.push(${create});
+    Bun.gc(true);
+    const extraBytes = heapStats().extraMemorySize - before;
+    if (kept.length !== ${live}) throw new Error("unreachable");
+    console.log(JSON.stringify({ collected, extraBytes }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", probe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { collected, extraBytes } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(collected).toBeGreaterThan(drop / 10);
+  expect(extraBytes).toBeGreaterThanOrEqual(live * minBytesEach);
+  expect(exitCode).toBe(0);
+}
+
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
   return (emptyBunMaxRSS ??= (async () => {

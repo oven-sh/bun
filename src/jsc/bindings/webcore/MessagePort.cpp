@@ -142,7 +142,11 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         }
     }
 
-    m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
+    MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
+    size_t cost = message.memoryCost();
+    m_pipe->send(m_side, WTF::move(message));
+    // No cell: the peer's wrapper may not exist or may be on another thread.
+    vm.heap.reportExtraMemoryAllocated(nullptr, cost);
     return {};
 }
 

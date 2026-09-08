@@ -131,6 +131,11 @@ static void* coderOf(JSTransformStream* stream)
     return nullptr;
 }
 
+void reportCoderMemoryCost(VM& vm, JSTransformStream* stream, const void* coder)
+{
+    stream->reportNativeMemoryCost(vm, CompressionStreamCoder__memoryCost(coder));
+}
+
 // One step, with its output already handed to the consumer.
 struct CodecStepResult {
     // The coder stopped at its output bound; the chunk needs another step.
@@ -148,11 +153,13 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     CodecStepResult step;
     if (void* sinkPtr = stream->m_nativeSinkPtr) {
         JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr, &step.more));
+        reportCoderMemoryCost(vm, stream, coder);
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
     }
     JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &step.more));
+    reportCoderMemoryCost(vm, stream, coder);
     RETURN_IF_EXCEPTION(scope, step);
     auto* view = dynamicDowncast<JSArrayBufferView>(out);
     if (view && view->length()) {
@@ -418,6 +425,8 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     }
 
     stream->m_asyncCodecInFlight = false;
+    if (void* coder = coderOf(stream))
+        reportCoderMemoryCost(vm, stream, coder);
     // A terminal abandoned the chunk while this step ran (the delivery above may have been it).
     if (!stream->m_codecPromise) {
         nativeTransformReleaseStateIfIdle(stream);

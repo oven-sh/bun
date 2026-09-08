@@ -30,6 +30,7 @@ public:
     // visitChildrenImpl MUST visit every WriteBarrier field below.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, JSC::VM&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -79,6 +80,11 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };
+    // Native state bytes last reported to the GC for this cell; visitChildren reports it back.
+    size_t m_nativeMemoryCost { 0 };
+
+    // Reports growth as extra memory and caches `cost`; call with 0 once the state is freed.
+    void reportNativeMemoryCost(JSC::VM&, size_t cost);
 
 protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);

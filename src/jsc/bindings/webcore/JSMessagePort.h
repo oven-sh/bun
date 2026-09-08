@@ -62,6 +62,7 @@ public:
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, JSC::VM&);
     MessagePort& wrapped() const
     {
         return static_cast<MessagePort&>(Base::wrapped());

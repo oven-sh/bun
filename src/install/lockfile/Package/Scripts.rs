@@ -1,8 +1,8 @@
 use bstr::BStr;
 
-use bun_core::ZBox;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
+use bun_core::{UnwrapOrOom as _, ZBox};
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
@@ -242,6 +242,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                owns_pending_file: false,
             });
         }
 
@@ -417,9 +418,37 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    /// `cwd` holds a [`List::PENDING_FILE_NAME`] written for these scripts;
+    /// `LifecycleScriptSubprocess` removes it after the last one exits 0.
+    /// Isolated installs track the file per store entry instead
+    /// (`Installer::on_task_complete`).
+    pub(crate) owns_pending_file: bool,
 }
 
 impl List {
+    /// Empty file kept in a package directory that bun copied out of its
+    /// cache while the package's lifecycle scripts still have to run. It is
+    /// written when the package is linked and removed after the last script
+    /// exits 0. An install that stops in between (killed, or exited because
+    /// another package's script failed) leaves it behind, so the next install
+    /// reinstalls the package and runs its scripts instead of treating the
+    /// linked directory as complete.
+    pub const PENDING_FILE_NAME: &'static [u8] = b".bun-scripts-pending";
+
+    pub fn write_pending_file(package_dir: &[u8]) {
+        let mut path = bun_paths::AutoAbsPath::from(package_dir).unwrap_or_oom();
+        path.append(Self::PENDING_FILE_NAME).unwrap_or_oom();
+        // Best effort: without the file an interrupted install is not
+        // repaired, which is no worse than not trying.
+        let _ = bun_sys::File::write_file(Fd::cwd(), path.slice_z(), b"");
+    }
+
+    pub fn remove_pending_file(package_dir: &[u8]) {
+        let mut path = bun_paths::AutoAbsPath::from(package_dir).unwrap_or_oom();
+        path.append(Self::PENDING_FILE_NAME).unwrap_or_oom();
+        let _ = bun_sys::unlink(path.slice_z());
+    }
+
     pub fn print_scripts(
         &self,
         resolution: &Resolution,

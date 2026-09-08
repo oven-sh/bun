@@ -1,0 +1,22 @@
+{
+  "_id": "lifecycle-blocking",
+  "name": "lifecycle-blocking",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "lifecycle-blocking",
+      "version": "1.0.0",
+      "scripts": {
+        "postinstall": "bun postinstall.js"
+      },
+      "_id": "lifecycle-blocking@1.0.0",
+      "dist": {
+        "integrity": "sha512-pmXNp+QsWzKVXZ6NUoZdQZa/vr6dfMflvaPaX0ufBu0R41u34u+lbzr69jhhkMvjdmtidQF0Oc9b29Jp63UOrw==",
+        "shasum": "d8e69cd1235cb73d5fb9144ceeab58c9f7231e04",
+        "tarball": "http://localhost:4873/lifecycle-blocking/-/lifecycle-blocking-1.0.0.tgz"
+      }
+    }
+  }
+}

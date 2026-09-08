@@ -1,0 +1,25 @@
+{
+  "_id": "lifecycle-blocking-parent",
+  "name": "lifecycle-blocking-parent",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "lifecycle-blocking-parent",
+      "version": "1.0.0",
+      "dependencies": {
+        "lifecycle-blocking": "1.0.0"
+      },
+      "scripts": {
+        "postinstall": "bun postinstall.js"
+      },
+      "_id": "lifecycle-blocking-parent@1.0.0",
+      "dist": {
+        "integrity": "sha512-FiDac1dhHs5aDRw5FVAz35I3+ehOz2YI4IFWJemkEOufnF+bBj7xtSPFJR4nPky287r+abM/b7U8aAbRDGavyg==",
+        "shasum": "63ad99ce8c6133a8c5c59c7d02a28c797c0d3fc9",
+        "tarball": "http://localhost:4873/lifecycle-blocking-parent/-/lifecycle-blocking-parent-1.0.0.tgz"
+      }
+    }
+  }
+}

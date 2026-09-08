@@ -939,6 +939,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     );
                 }
 
+                if self.scripts.owns_pending_file {
+                    ScriptsList::remove_pending_file(self.scripts.cwd.as_bytes());
+                }
+
                 if let Some(ctx) = &self.ctx {
                     let installer = ctx.installer_mut();
                     let previous_step = installer.store.entries.items_step()

@@ -15,6 +15,7 @@ use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
 
+use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
@@ -839,6 +840,24 @@ impl<'a> PackageInstall<'a> {
             return self.verify_patch_hash(patch, root_node_modules_dir);
         }
         verified
+    }
+
+    /// An earlier install stopped before this package's lifecycle scripts
+    /// finished (see [`ScriptsList::PENDING_FILE_NAME`]).
+    pub(crate) fn has_pending_lifecycle_scripts(
+        &self,
+        resolution_tag: resolution::Tag,
+        root_node_modules_dir: &Dir,
+    ) -> bool {
+        if !resolution_tag.can_enqueue_install_task() {
+            return false;
+        }
+        let pending_file_path = path::resolve_path::join_z::<path::platform::Auto>(&[
+            self.destination_dir_subpath.as_bytes(),
+            ScriptsList::PENDING_FILE_NAME,
+        ]);
+        self.node_modules
+            .file_exists_at(root_node_modules_dir, pending_file_path)
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because

@@ -522,6 +522,15 @@ impl<'a> Installer<'a> {
             );
         }
 
+        if state == CompleteState::Success
+            && self.tasks[entry_id.get() as usize].pending_scripts_file
+        {
+            self.tasks[entry_id.get() as usize].pending_scripts_file = false;
+            let mut pkg_dir = AutoAbsPath::init_top_level_dir();
+            self.append_store_path(&mut pkg_dir, entry_id);
+            package::scripts::List::remove_pending_file(pkg_dir.slice());
+        }
+
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
@@ -662,6 +671,10 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// `Step::LinkPackage` wrote a [`package::scripts::List::PENDING_FILE_NAME`]
+    /// into this entry's package directory. `Installer::on_task_complete`
+    /// removes it once the entry, scripts included, is done.
+    pub(crate) pending_scripts_file: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -1331,8 +1344,7 @@ impl Task {
                                         },
                                     }
 
-                                    step = self.next_step(current_step);
-                                    continue 'step;
+                                    break 'backend;
                                 }
                             }
 
@@ -1401,8 +1413,7 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
 
                             // fallthrough copyfile
@@ -1469,12 +1480,20 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
                         }
                     }
-                    // unreachable: every backend arm continues to next_step or returns
+
+                    if installer.tracks_pending_lifecycle_scripts(self.entry_id) {
+                        let mut pkg_dir = AutoAbsPath::init_top_level_dir();
+                        installer.append_store_path(&mut pkg_dir, self.entry_id);
+                        package::scripts::List::write_pending_file(pkg_dir.slice());
+                        self.pending_scripts_file = true;
+                    }
+
+                    step = self.next_step(current_step);
+                    continue 'step;
                 }
 
                 Step::SymlinkDependencies => {
@@ -1595,22 +1614,8 @@ impl Task {
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if installer
-                            .trusted_dependencies_from_update_requests
-                            .contains(&pkg_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if lockfile.has_trusted_dependency(
-                            dep.name.slice(string_buf),
-                            pkg_name.slice(string_buf),
-                            &pkg_res,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
+                    let (is_trusted, is_trusted_through_update_request) =
+                        installer.dependency_trust(self.entry_id);
 
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
@@ -2437,6 +2442,48 @@ impl<'a> Installer<'a> {
             return false;
         }
         self.store.entries.items_entry_hash()[entry_id.get() as usize] != 0
+    }
+
+    /// `(trusted, trusted through "bun add --trust" in this run)`: whether
+    /// this entry's dependency lifecycle scripts are allowed to run.
+    pub(crate) fn dependency_trust(&self, entry_id: StoreEntryId) -> (bool, bool) {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        if self
+            .trusted_dependencies_from_update_requests
+            .contains(&pkg_id)
+        {
+            return (true, true);
+        }
+        if dep_id == invalid_dependency_id {
+            return (false, false);
+        }
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let trusted = lockfile.has_trusted_dependency(
+            lockfile.buffers.dependencies[dep_id as usize]
+                .name
+                .slice(string_buf),
+            lockfile.packages.items_name()[pkg_id as usize].slice(string_buf),
+            &lockfile.packages.items_resolution()[pkg_id as usize],
+        );
+        (trusted, false)
+    }
+
+    /// Whether this entry keeps a [`package::scripts::List::PENDING_FILE_NAME`]
+    /// in its package directory from `Step::LinkPackage` until its lifecycle
+    /// scripts finish: bun copies the package out of its cache into the
+    /// project store and runs whatever scripts it has.
+    pub(crate) fn tracks_pending_lifecycle_scripts(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        self.lockfile().packages.items_resolution()[pkg_id as usize]
+            .tag
+            .can_enqueue_install_task()
+            && self.manager().options.do_.contains(Do::RUN_SCRIPTS)
+            && !self.entry_uses_global_store(entry_id)
+            && self.dependency_trust(entry_id).0
     }
 
     /// Absolute path to the global virtual-store directory for `entry_id`:

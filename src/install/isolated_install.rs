@@ -2017,6 +2017,7 @@ pub(crate) fn install_isolated_packages(
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     relink: installer::Relink::Off,
+                    pending_scripts_file: false,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),
@@ -2247,7 +2248,7 @@ pub(crate) fn install_isolated_packages(
                             }
                             let exists = sys::exists_z(store_path.slice_z());
 
-                            break 'needs_install match &patch_info {
+                            let missing = match &patch_info {
                                 installer::PatchInfo::None => !exists,
                                 // checked above
                                 installer::PatchInfo::Remove(_) => unreachable!(),
@@ -2259,6 +2260,21 @@ pub(crate) fn install_isolated_packages(
                                     !sys::exists_z(store_path.slice_z())
                                 }
                             };
+                            if missing {
+                                break 'needs_install true;
+                            }
+
+                            // An earlier install stopped before this entry's
+                            // lifecycle scripts finished.
+                            if installer.tracks_pending_lifecycle_scripts(entry_id) {
+                                store_path.set_length(scope_for_patch_tag_path);
+                                store_path
+                                    .append(crate::lockfile::package::scripts::List::PENDING_FILE_NAME)
+                                    .assume_ok();
+                                break 'needs_install sys::exists_z(store_path.slice_z());
+                            }
+
+                            false
                         }
                         // An entry that lost global-store eligibility since the
                         // previous install (newly patched, newly trusted, a dep

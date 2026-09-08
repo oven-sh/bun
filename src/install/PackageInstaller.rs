@@ -22,7 +22,8 @@ use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
-    self as Package, PackageColumns, scripts::Scripts as PackageScripts,
+    self as Package, PackageColumns, scripts::List as ScriptsList,
+    scripts::Scripts as PackageScripts,
 };
 use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
@@ -154,6 +155,33 @@ impl NodeModulesFolder {
             Err(_) => return false,
         };
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
+    }
+
+    #[inline(never)]
+    fn file_exists_at_without_opening_directories(
+        &self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> bool {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
+        bun_sys::exists_at(
+            root_node_modules_dir.fd(),
+            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+        )
+    }
+
+    pub(crate) fn file_exists_at(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> bool {
+        if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
+            return self
+                .file_exists_at_without_opening_directories(root_node_modules_dir, file_path);
+        }
+
+        let dir = match self.open_dir(root_node_modules_dir) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        bun_sys::exists_at(&dir, file_path)
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -1570,11 +1598,29 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
+        let is_trusted_through_update_request = self
+            .trusted_dependencies_from_update_requests
+            .contains(&package_id);
+        let is_trusted = is_trusted_through_update_request
+            || self.lockfile().has_trusted_dependency(
+                alias.slice(string_buf!()),
+                pkg_name.slice(string_buf!()),
+                resolution,
+            );
+
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
-            || !installer.verify(resolution, &self.root_node_modules_folder);
+            || !installer.verify(resolution, &self.root_node_modules_folder)
+            || (is_trusted
+                && self
+                    .manager()
+                    .options
+                    .do_
+                    .contains(Options::Do::RUN_SCRIPTS)
+                && installer
+                    .has_pending_lifecycle_scripts(resolution.tag, &self.root_node_modules_folder));
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1935,22 +1981,6 @@ impl<'a> PackageInstaller<'a> {
                     let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if self
-                            .trusted_dependencies_from_update_requests
-                            .contains(&package_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
 
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
@@ -2236,13 +2266,10 @@ impl<'a> PackageInstaller<'a> {
             let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =
                 dep.name_hash as TruncatedPackageNameHash;
-            let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
+            let (is_newly_trusted, add_to_lockfile) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
-                if self
-                    .trusted_dependencies_from_update_requests
-                    .contains(&package_id)
-                {
-                    break 'brk (true, true, true);
+                if is_trusted_through_update_request {
+                    break 'brk (true, true);
                 }
 
                 if let Some(added) = self
@@ -2252,20 +2279,14 @@ impl<'a> PackageInstaller<'a> {
                     .get(&truncated_dep_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!())
-                        && self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        )
-                    {
-                        break 'brk (true, false, added.add_to_lockfile);
+                    if *added.name == *alias.slice(string_buf!()) && is_trusted {
+                        break 'brk (true, added.add_to_lockfile);
                     }
                 }
-                break 'brk (false, false, false);
+                break 'brk (false, false);
             };
 
-            if resolution.tag != resolution::Tag::Root && is_trusted {
+            if resolution.tag != resolution::Tag::Root && is_newly_trusted {
                 let mut folder_path =
                     AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                 folder_path
@@ -2424,7 +2445,7 @@ impl<'a> PackageInstaller<'a> {
             }
         };
 
-        let Some(scripts_list) = scripts_list else {
+        let Some(mut scripts_list) = scripts_list else {
             return false;
         };
 
@@ -2434,6 +2455,11 @@ impl<'a> PackageInstaller<'a> {
             .do_
             .contains(Options::Do::RUN_SCRIPTS)
         {
+            if resolution.tag.can_enqueue_install_task() {
+                ScriptsList::write_pending_file(package_path.slice());
+                scripts_list.owns_pending_file = true;
+            }
+
             // Bind once: two sequential `manager_mut()` derives would each
             // create a fresh Unique from the raw root under SB, popping the
             // first while `scripts_node` (derived through it) is still live.

@@ -1080,10 +1080,12 @@ impl Diff {
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
         // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
-        // (sort, recursive `generate`) don't conflict with these read views; the
-        // recursive call only sorts `overrides`/`catalogs` and never reallocates
-        // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
-        // pointers remain valid for the loop body.
+        // (sort, recursive `generate`) don't conflict with these read views. The
+        // recursive call parses workspace and `file:` package.json files into
+        // `to_lockfile` (growing its `buffers.dependencies`), so `to_deps` is also
+        // re-derived after every call that can recurse. Nothing ever grows
+        // `from_lockfile`'s `buffers.dependencies`/`resolutions`, so `from_deps` and
+        // `from_resolutions` remain valid for the loop body.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1621,12 +1623,6 @@ impl Diff {
                             Features::WORKSPACE,
                         )?;
 
-                        // `parse_with_json` may have grown `to_lockfile.buffers
-                        // .dependencies` — re-derive the slice.
-                        to_deps = to
-                            .dependencies
-                            .get(to_lockfile.buffers.dependencies.as_slice())
-                            .into();
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
@@ -1641,6 +1637,13 @@ impl Diff {
                             None,
                             removed_names,
                         )?;
+                        // `parse_with_json` above and the `file:` packages the recursive call
+                        // parses may have grown `to_lockfile.buffers.dependencies` — re-derive
+                        // the slice.
+                        to_deps = to
+                            .dependencies
+                            .get(to_lockfile.buffers.dependencies.as_slice())
+                            .into();
 
                         if pm.options.log_level.is_verbose()
                             && (diff.add + diff.remove + diff.update) > 0

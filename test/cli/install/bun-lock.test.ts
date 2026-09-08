@@ -1867,7 +1867,14 @@ describe.each(["hoisted", "isolated"] as const)(
         JSON.stringify(
           {
             root: { name: "root", dependencies: { vdir: "file:./vendor/vdir" } },
-            workspace: { name: "root", workspaces: ["packages/*"] },
+            // The root diff visits workspaces first; its other dependencies are compared after the
+            // workspace (and the file: package inside it) were parsed into the same buffers.
+            workspace: {
+              name: "root",
+              workspaces: ["packages/*"],
+              dependencies: { "basic-1": "1.0.0" },
+              devDependencies: { "no-deps-bins": "1.0.0" },
+            },
             override: { name: "root", dependencies: { vdir: "1.0.0" }, overrides: { vdir: "file:./vendor/vdir" } },
           }[declaredBy],
         ),

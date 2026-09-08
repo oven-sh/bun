@@ -412,12 +412,9 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. The syscall refuses an
-/// existing destination with `EEXIST`. Without `COPYFILE_EXCL` the copy must
-/// overwrite, so remove `dest` and clone again. Errors on `src` are reported
-/// before the unlink, so they leave `dest` intact. When `src` and `dest` are
-/// the same file the unlink would delete the source, so refuse with `EINVAL`
-/// like the read/write copy paths do.
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. `clonefile` refuses an existing
+/// `dest` with `EEXIST`, so without `COPYFILE_EXCL` unlink `dest` and retry.
+/// `EINVAL` when `src` and `dest` are the same inode: the unlink would delete `src`.
 #[cfg(target_os = "macos")]
 fn clonefile_force(
     src: &ZStr,

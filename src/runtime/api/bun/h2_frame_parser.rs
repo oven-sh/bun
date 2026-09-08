@@ -5777,7 +5777,7 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         while let Some((header_name, js_value)) = iter.next()? {
-            if header_name.length() == 0 {
+            if header_name.length() == 0 || js_value.is_undefined() {
                 continue;
             }
 
@@ -5795,13 +5795,6 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
 
-            if js_value.is_undefined_or_null() {
-                let exception = global_object.to_type_error(
-                    bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                    format_args!("Invalid value for header \"{}\"", BStr::new(name)),
-                );
-                return Err(global_object.throw_value(exception));
-            }
             let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
                 Ok(n) => n,
                 Err(_) => {
@@ -5849,17 +5842,6 @@ impl H2FrameParser {
                 }
 
                 while let Some(item) = value_iter.next()? {
-                    if item.is_empty_or_undefined_or_null() {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value for header \"{}\"",
-                                BStr::new(validated_name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-
                     let value_view = item.to_js_string_view(global_object)?;
 
                     // All-digit names can't be passed to get_truthy (integer-index-like names
@@ -5906,6 +5888,23 @@ impl H2FrameParser {
                 let value_bytes = header_value_bytes(&value_view);
                 collect(value_bytes.as_ref(), never_index)?;
             }
+        }
+
+        // Every field was skipped (undefined values): nghttp2 peers reject a zero-length header
+        // block, so end the stream the way noTrailers() does, with an empty DATA frame.
+        if pending.fields.is_empty() {
+            stream.wait_for_trailers = false;
+            let _ = this.send_data(
+                &mut stream,
+                b"",
+                JSValue::UNDEFINED,
+                SendDataOptions {
+                    close: true,
+                    suppress_half_closed_local_dispatch: false,
+                    defer_write_callback: false,
+                },
+            );
+            return Ok(JSValue::UNDEFINED);
         }
 
         let mut encoded_headers: Vec<u8> = Vec::new();
@@ -6236,7 +6235,7 @@ impl H2FrameParser {
                 },
             )?;
             while let Some((header_name, js_value)) = iter.next()? {
-                if header_name.length() == 0 {
+                if header_name.length() == 0 || js_value.is_undefined() {
                     continue;
                 }
                 let name_slice = header_name.to_utf8();
@@ -6270,9 +6269,6 @@ impl H2FrameParser {
                             .throw());
                     }
                 } else if ignore_pseudo_headers == 0 {
-                    continue;
-                }
-                if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
@@ -6323,17 +6319,6 @@ impl H2FrameParser {
                         single_value_headers[idx] = true;
                     }
                     while let Some(item) = value_iter.next()? {
-                        if item.is_empty_or_undefined_or_null() {
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(validated_name)
-                                    ),
-                                )
-                                .throw());
-                        }
                         collect_value(item)?;
                     }
                 } else {
@@ -6789,7 +6774,7 @@ impl H2FrameParser {
             )?;
 
             while let Some((header_name, js_value)) = iter.next()? {
-                if header_name.length() == 0 {
+                if header_name.length() == 0 || js_value.is_undefined() {
                     continue;
                 }
 
@@ -6844,14 +6829,6 @@ impl H2FrameParser {
                     continue;
                 }
 
-                if js_value.is_undefined_or_null() {
-                    let exception = global_object.to_type_error(
-                        bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                        format_args!("Invalid value for header \"{}\"", BStr::new(name)),
-                    );
-                    return Err(global_object.throw_value(exception));
-                }
-
                 if js_value.js_type().is_array() {
                     bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
                     let mut value_iter = js_value.array_iterator(global_object)?;
@@ -6871,18 +6848,6 @@ impl H2FrameParser {
                     }
 
                     while let Some(item) = value_iter.next()? {
-                        if item.is_empty_or_undefined_or_null() {
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(validated_name)
-                                    ),
-                                )
-                                .throw());
-                        }
-
                         let value_view = item.to_js_string_view(global_object)?;
 
                         let never_index = if Self::is_index_like_name(validated_name) {
@@ -6912,7 +6877,7 @@ impl H2FrameParser {
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
                     }
-                } else if !js_value.is_empty_or_undefined_or_null() {
+                } else {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if single_value_headers[idx] {

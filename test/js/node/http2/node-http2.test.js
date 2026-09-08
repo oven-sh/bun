@@ -4487,6 +4487,9 @@ it("http2 pushStream sends each element of a single-value header when strictSing
   ]);
 });
 
+// The first push is rejected after a valid field ("ok") was already walked. The rejected
+// block must not advance the shared HPACK table, or the second push (the same "ok", node
+// stringifies null like `${null}`) fails the session with COMPRESSION_ERROR.
 it("http2 pushStream reports an unsendable array element through the callback", async () => {
   const results = [];
   const blocks = await pushedHeaderBlocks(stream => {
@@ -4515,8 +4518,16 @@ it("http2 pushStream reports an unsendable array element through the callback", 
     code: "ERR_HTTP2_INVALID_HEADER_VALUE",
     message: 'Invalid value for header "x-custom"',
   };
-  expect(results).toEqual([invalidValue, invalidValue]);
-  expect(blocks).toEqual([]);
+  expect(results).toEqual([invalidValue, "pushed"]);
+  expect(blocks).toEqual([
+    {
+      id: 4,
+      path: "/pushed",
+      sensitive: [],
+      headers: { "x-custom": "ok, null" },
+      fields: ["x-custom", "ok", "x-custom", "null"],
+    },
+  ]);
 });
 
 // Every kind of field name the native header-block materializer distinguishes, in one request and
@@ -6036,15 +6047,13 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
       error: "ERR_HTTP2_INVALID_HEADER_VALUE",
     },
     "invalid name": { headers: { "x-a": "AAAA", "x-b": "BBBB", "bad name": "v" }, error: "ERR_INVALID_HTTP_TOKEN" },
-    "null value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-n": null }, error: "ERR_HTTP2_INVALID_HEADER_VALUE" },
     "symbol value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-s": Symbol("s") }, error: "TypeError" },
     "throwing toString": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-t": throwingToString }, error: "BOOM" },
   };
   const kinds = Object.keys(poisons);
   // respond() drops a string value with CR/LF/NUL instead of throwing, so those two kinds do not
-  // apply to it. pushStream() skips a null value (node's mapToHeaders does the same).
+  // apply to it.
   const respondKinds = kinds.filter(k => k !== "invalid value" && k !== "invalid array element");
-  const pushKinds = kinds.filter(k => k !== "null value");
   const errorOf = err => err.code ?? err.constructor.name;
   const cleanResponse = { ":status": 200, "x-clean": "clean-value", "content-type": "text/plain" };
 
@@ -6262,7 +6271,7 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
     );
   });
 
-  it.each(pushKinds)("pushStream() that fails on an %s", async kind => {
+  it.each(kinds)("pushStream() that fails on an %s", async kind => {
     const pushErrors = [];
     await withServer(
       (stream, headers) => {
@@ -6330,5 +6339,182 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
         expect(sessionErrors).toEqual([]);
       },
     );
+  });
+});
+
+// Header-object faces node's mapToHeaders normalizes in JS before nghttp2 sees the block:
+// undefined skipped, null and array items stringified, connection-specific fields rejected up
+// front. The sensitiveHeaders row checks the marked field itself still arrives.
+describe("header object normalization matches node", () => {
+  const nonPseudo = headers =>
+    Object.fromEntries(Object.entries(headers).filter(([k]) => !k.startsWith(":") && k !== "date"));
+
+  async function roundTrip({ respond, request = {}, trailers }) {
+    const server = http2.createServer();
+    let requestHeaders;
+    server.on("stream", (stream, headers) => {
+      requestHeaders = nonPseudo(headers);
+      stream.respond(respond ?? { ":status": 200 }, trailers ? { waitForTrailers: true } : undefined);
+      if (trailers) stream.on("wantTrailers", () => stream.sendTrailers(trailers));
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const req = client.request({ ":path": "/", ...request });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let responseHeaders;
+        let trailerHeaders;
+        req.on("response", h => (responseHeaders = nonPseudo(h)));
+        req.on("trailers", h => (trailerHeaders = nonPseudo(h)));
+        req.on("error", reject);
+        req.resume();
+        req.on("end", resolve);
+        req.end();
+        await promise;
+        return { requestHeaders, responseHeaders, trailerHeaders };
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  const faces = {
+    "x-undefined": undefined,
+    "x-null": null,
+    "x-array": ["1", undefined, null, "2"],
+    "x-empty-array": [],
+    "x-secret": "s3cret",
+    [http2.sensitiveHeaders]: ["x-secret"],
+    "x-ok": "ok",
+  };
+  const expected = {
+    "x-null": "null",
+    "x-array": "1, undefined, null, 2",
+    "x-secret": "s3cret",
+    "x-ok": "ok",
+  };
+
+  it("client.request() headers", async () => {
+    const { requestHeaders } = await roundTrip({ request: faces });
+    expect(requestHeaders).toEqual(expected);
+  });
+
+  it("stream.respond() headers", async () => {
+    const { responseHeaders } = await roundTrip({ respond: { ":status": 200, ...faces } });
+    expect(responseHeaders).toEqual(expected);
+  });
+
+  it("stream.sendTrailers() headers", async () => {
+    const { trailerHeaders } = await roundTrip({ trailers: faces });
+    expect(trailerHeaders).toEqual(expected);
+  });
+
+  it("a trailer object whose every value is undefined ends the stream without a trailer block", async () => {
+    const { trailerHeaders, responseHeaders } = await roundTrip({ trailers: { "grpc-message": undefined } });
+    expect(responseHeaders).toEqual({});
+    expect(trailerHeaders).toBeUndefined();
+  });
+
+  it("an undefined value or an empty array is not a field, whatever the name", async () => {
+    const { requestHeaders } = await roundTrip({
+      request: { "bad name": undefined, ":bogus": undefined, connection: [], te: [], "x-ok": "ok" },
+    });
+    expect(requestHeaders).toEqual({ "x-ok": "ok" });
+  });
+
+  // The rejected block had already walked "x-a: ok". It must not advance the shared HPACK
+  // table, or the next request (which repeats "x-a: ok") fails the session with COMPRESSION_ERROR.
+  it("a request rejected for an invalid value leaves the session usable", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const outcome = headers =>
+          new Promise(resolve => {
+            const req = client.request({ ":path": "/", ...headers });
+            let status;
+            req.on("response", h => (status = h[":status"]));
+            req.on("error", e => resolve(e.code));
+            req.on("end", () => resolve(status));
+            req.resume();
+            req.end();
+          });
+        expect(await outcome({ "x-a": "ok", "x-b": "a\nb" })).toBe("ERR_HTTP2_INVALID_HEADER_VALUE");
+        expect(await outcome({ "x-a": "ok" })).toBe(200);
+        expect(await outcome({ "x-a": "ok" })).toBe(200);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("content-length: 0 on a GET is sent as is", async () => {
+    const { requestHeaders } = await roundTrip({ request: { "content-length": 0 } });
+    expect(requestHeaders).toEqual({ "content-length": "0" });
+  });
+
+  it("connection-specific headers throw ERR_HTTP2_INVALID_CONNECTION_HEADERS synchronously", async () => {
+    const server = http2.createServer();
+    const serverErrors = [];
+    server.on("stream", stream => {
+      for (const headers of [{ connection: "close" }, { te: "gzip" }, { te: ["trailers", "gzip"] }]) {
+        try {
+          stream.respond({ ":status": 200, ...headers });
+          serverErrors.push("no error");
+        } catch (e) {
+          serverErrors.push(e.code);
+        }
+      }
+      stream.respond({ ":status": 200, te: "trailers" });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const clientErrors = [];
+        for (const headers of [
+          { Connection: "keep-alive" },
+          { upgrade: "h2c" },
+          { "transfer-encoding": "chunked" },
+          { te: "gzip" },
+        ]) {
+          try {
+            client.request({ ":path": "/", ...headers });
+            clientErrors.push("no error");
+          } catch (e) {
+            clientErrors.push(e.code);
+          }
+        }
+        expect(clientErrors).toEqual(Array(4).fill("ERR_HTTP2_INVALID_CONNECTION_HEADERS"));
+
+        const req = client.request({ ":path": "/", te: "trailers" });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let status;
+        req.on("response", h => (status = h[":status"]));
+        req.on("error", reject);
+        req.resume();
+        req.on("end", resolve);
+        req.end();
+        await promise;
+        expect(status).toBe(200);
+        expect(serverErrors).toEqual(Array(3).fill("ERR_HTTP2_INVALID_CONNECTION_HEADERS"));
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
   });
 });

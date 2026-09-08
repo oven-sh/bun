@@ -151,10 +151,13 @@ impl File {
         self.kind
     }
 
-    /// What the bundler may assume about this file when it skips parsing it.
-    pub(crate) fn cache_kind(&self) -> bun_bundler::bake_types::CacheKind {
+    /// What an importer may link to without this file being bundled again.
+    /// `None` when there is nothing: a stylesheet that was only reached
+    /// through `@import` or `composes` has no asset and no module of its own.
+    pub(crate) fn cache_kind(&self) -> Option<bun_bundler::bake_types::CacheKind> {
         use bun_bundler::bake_types::CacheKind;
-        match self.content {
+        Some(match self.content {
+            Content::CssChild => return None,
             Content::CssModule { .. } => CacheKind::CssModule,
             _ => match self.kind {
                 FileKind::Unknown => CacheKind::Unknown,
@@ -162,7 +165,7 @@ impl File {
                 FileKind::Asset => CacheKind::Asset,
                 FileKind::Css => CacheKind::Css,
             },
-        }
+        })
     }
 
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.

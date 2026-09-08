@@ -883,6 +883,51 @@ devTest("css module composes from another file", {
     await c.style("." + classes[0]).fontWeight.expect.toBe("700");
   },
 });
+devTest("css module that was only composed from gets imported directly", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      console.log("btn:" + styles.btn.split(" ").length);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("btn:1");
+    // base.module.css enters the graph as a child of button.module.css only.
+    await dev.write(
+      "button.module.css",
+      `
+        .btn {
+          composes: base from "./base.module.css";
+          color: red;
+        }
+      `,
+    );
+    await c.expectMessage("btn:2");
+    // Now a module imports it directly. It has no module of its own yet, so it
+    // must be bundled again instead of being treated as cached.
+    await dev.write(
+      "index.ts",
+      `
+        import styles from "./button.module.css";
+        import base from "./base.module.css";
+        console.log("base:" + Object.keys(base).join(",") + " " + (styles.btn.split(" ")[0] === base.base));
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("base:base true");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

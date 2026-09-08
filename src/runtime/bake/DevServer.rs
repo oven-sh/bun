@@ -5083,13 +5083,12 @@ impl DevServer {
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
                 if !g.stale_files.is_set(index) {
-                    return Some(CacheEntry {
-                        kind: g
-                            .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).expect("int cast"),
-                            ))
-                            .cache_kind(),
-                    });
+                    return g
+                        .get_file_by_index(incremental_graph::FileIndex::init(
+                            u32::try_from(index).expect("int cast"),
+                        ))
+                        .cache_kind()
+                        .map(|kind| CacheEntry { kind });
                 }
                 return None;
             }};

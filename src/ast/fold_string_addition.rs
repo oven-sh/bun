@@ -2,42 +2,9 @@ use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-// ── local rope helpers ─────────────────────────────────────────────────────
-// `EString` has no `push` / `clone_rope_nodes` inherent methods yet;
-// provide the minimal surface here.
-
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
     data::Store::append(s)
-}
-
-/// Link `other` onto `lhs`'s rope tail.
-fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
-    debug_assert!(lhs.is_utf8());
-    debug_assert!(other.is_utf8());
-
-    // `other` is a freshly Store-appended node; mutate via `StoreRef::DerefMut`.
-    if other.rope_len == 0 {
-        other.rope_len = other.data.len() as u32;
-    }
-    if lhs.rope_len == 0 {
-        lhs.rope_len = lhs.data.len() as u32;
-    }
-    lhs.rope_len += other.rope_len;
-
-    if lhs.next.is_none() {
-        lhs.next = Some(other);
-        lhs.end = Some(other);
-    } else {
-        let mut end = lhs.end.unwrap();
-        while end.get().next.is_some() {
-            end = end.get().end.unwrap();
-        }
-        // `end` points into the live Store; rope nodes are mutated in place
-        // via `StoreRef::DerefMut` (single-threaded visitor).
-        end.next = Some(other);
-        lhs.end = Some(other);
-    }
 }
 
 /// Deep-copy the `next` chain into fresh Store nodes so mutating the result
@@ -72,7 +39,12 @@ fn join_strings(
     left: &E::EString,
     right: &E::EString,
     has_inlined_enum_poison: bool,
-) -> E::EString {
+    bump: &Arena,
+) -> Option<E::EString> {
+    if !E::EString::can_join(&[left, right]) {
+        return None;
+    }
+
     let mut new = if has_inlined_enum_poison {
         // Inlined enums can be shared by multiple call sites. In
         // this case, we need to ensure that the ENTIRE rope is
@@ -98,16 +70,16 @@ fn join_strings(
     //     C = ("3" + B) + "4",
     //   };
     //   console.log(A.B, A.C);
-    let rhs_clone = store_append_string(if has_inlined_enum_poison {
+    let mut rhs_clone = store_append_string(if has_inlined_enum_poison {
         clone_rope_nodes(right)
     } else {
         right.shallow_clone()
     });
 
-    estring_push(&mut new, rhs_clone);
+    new.append(&mut rhs_clone, bump);
     new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
 
-    new
+    Some(new)
 }
 
 /// Concat two `TemplatePart` slices into the bump arena.
@@ -174,47 +146,40 @@ pub fn fold_string_addition(
                 rhs = str;
             }
 
-            if left.is_utf8() {
-                match rhs.data {
-                    // "bar" + "baz" => "barbaz"
-                    Data::EString(right) => {
-                        if right.is_utf8() {
-                            let has_inlined_enum_poison = matches!(l.data, Data::EInlinedEnum(_))
-                                || matches!(r.data, Data::EInlinedEnum(_));
+            match rhs.data {
+                // "bar" + "baz" => "barbaz"
+                Data::EString(right) => {
+                    let has_inlined_enum_poison = matches!(l.data, Data::EInlinedEnum(_))
+                        || matches!(r.data, Data::EInlinedEnum(_));
 
-                            return Some(Expr::init(
-                                join_strings(left.get(), right.get(), has_inlined_enum_poison),
-                                lhs.loc,
-                            ));
-                        }
-                    }
-                    // "bar" + `baz${bar}` => `barbaz${bar}`
-                    Data::ETemplate(right) => {
-                        if right.head.is_utf8() {
-                            return Some(Expr::init(
-                                E::Template {
-                                    tag: None,
-                                    parts: right.parts,
-                                    head: e::TemplateContents::Cooked(join_strings(
-                                        left.get(),
-                                        right.head.cooked(),
-                                        matches!(l.data, Data::EInlinedEnum(_)),
-                                    )),
-                                },
-                                l.loc,
-                            ));
-                        }
-                    }
-                    _ => {
-                        // other constant-foldable ast nodes would have been converted to .e_string
+                    if let Some(joined) =
+                        join_strings(left.get(), right.get(), has_inlined_enum_poison, bump)
+                    {
+                        return Some(Expr::init(joined, lhs.loc));
                     }
                 }
-
-                // "'x' + `y${z}`" => "`xy${z}`"
-                if let Data::ETemplate(t) = rhs.data {
-                    if t.tag.is_none() {
-                        // (intentionally empty)
+                // "bar" + `baz${bar}` => `barbaz${bar}`
+                Data::ETemplate(right) => {
+                    if let (None, e::TemplateContents::Cooked(head)) = (&right.tag, &right.head)
+                        && let Some(joined) = join_strings(
+                            left.get(),
+                            head,
+                            matches!(l.data, Data::EInlinedEnum(_)),
+                            bump,
+                        )
+                    {
+                        return Some(Expr::init(
+                            E::Template {
+                                tag: None,
+                                parts: right.parts,
+                                head: e::TemplateContents::Cooked(joined),
+                            },
+                            l.loc,
+                        ));
                     }
+                }
+                _ => {
+                    // other constant-foldable ast nodes would have been converted to .e_string
                 }
             }
 
@@ -231,73 +196,45 @@ pub fn fold_string_addition(
                 rhs = str;
             }
 
+            // Untagged: every part is cooked and unshared, so `rhs` joins onto the last one in place.
             if left.tag.is_none() {
+                let last: &mut E::EString = match left.parts().len() {
+                    0 => left.head.cooked_mut(),
+                    n => left.parts_mut()[n - 1].tail.cooked_mut(),
+                };
                 match rhs.data {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
                     Data::EString(right) => {
-                        if right.is_utf8() {
-                            // Mutation of this node is fine because it will be not
-                            // be shared by other places. Note that e_template will
-                            // be treated by enums as strings, but will not be
-                            // inlined unless they could be converted into
-                            // .e_string.
-                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
-                            // provenance) — write through `parts_mut()`.
-                            if !left.parts().is_empty() {
-                                let i = left.parts().len() - 1;
-                                let last_tail = &left.parts()[i].tail;
-                                if last_tail.is_utf8() {
-                                    let new_tail = e::TemplateContents::Cooked(join_strings(
-                                        last_tail.cooked(),
-                                        right.get(),
-                                        matches!(r.data, Data::EInlinedEnum(_)),
-                                    ));
-                                    left.parts_mut()[i].tail = new_tail;
-                                    return Some(lhs);
-                                }
-                            } else if left.head.is_utf8() {
-                                let new_head = join_strings(
-                                    left.head.cooked(),
-                                    right.get(),
-                                    matches!(r.data, Data::EInlinedEnum(_)),
-                                );
-                                left.head = e::TemplateContents::Cooked(new_head);
-                                return Some(lhs);
-                            }
+                        if let Some(joined) = join_strings(
+                            last,
+                            right.get(),
+                            matches!(r.data, Data::EInlinedEnum(_)),
+                            bump,
+                        ) {
+                            *last = joined;
+                            return Some(lhs);
                         }
                     }
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
                     Data::ETemplate(right) => {
-                        if right.tag.is_none() && right.head.is_utf8() {
-                            if !left.parts().is_empty() {
-                                let i = left.parts().len() - 1;
-                                let last_tail = &left.parts()[i].tail;
-                                if last_tail.is_utf8() && right.head.is_utf8() {
-                                    let new_tail = e::TemplateContents::Cooked(join_strings(
-                                        last_tail.cooked(),
-                                        right.head.cooked(),
-                                        matches!(r.data, Data::EInlinedEnum(_)),
-                                    ));
-                                    left.parts_mut()[i].tail = new_tail;
-
-                                    let new_parts = if right.parts().is_empty() {
-                                        left.parts
-                                    } else {
-                                        concat_parts(bump, left.parts(), right.parts())
-                                    };
-                                    left.parts = new_parts;
-                                    return Some(lhs);
-                                }
-                            } else if left.head.is_utf8() && right.head.is_utf8() {
-                                let new_head = join_strings(
-                                    left.head.cooked(),
-                                    right.head.cooked(),
-                                    matches!(r.data, Data::EInlinedEnum(_)),
-                                );
-                                left.head = e::TemplateContents::Cooked(new_head);
-                                left.parts = right.parts;
-                                return Some(lhs);
+                        if let (None, e::TemplateContents::Cooked(right_head)) =
+                            (&right.tag, &right.head)
+                            && let Some(joined) = join_strings(
+                                last,
+                                right_head,
+                                matches!(r.data, Data::EInlinedEnum(_)),
+                                bump,
+                            )
+                        {
+                            *last = joined;
+                            if !right.parts().is_empty() {
+                                left.parts = if left.parts().is_empty() {
+                                    right.parts
+                                } else {
+                                    concat_parts(bump, left.parts(), right.parts())
+                                };
                             }
+                            return Some(lhs);
                         }
                     }
                     _ => {

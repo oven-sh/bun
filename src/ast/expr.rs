@@ -1379,15 +1379,8 @@ impl Expr {
             }
             _ => None,
         };
-        slice.map(|s| {
-            Expr::init(
-                E::String {
-                    data: s.into(),
-                    ..Default::default()
-                },
-                expr.loc,
-            )
-        })
+        // A regexp source can be non-ASCII.
+        slice.map(|s| Expr::init(E::EString::init_re_encode_utf8(s, bump), expr.loc))
     }
 
     #[inline]
@@ -2155,6 +2148,34 @@ impl Data {
                 Ok(Data::EInlinedEnum(StoreRef::from_bump(item)))
             }
             _ => Ok(this),
+        }
+    }
+
+    /// [`E::EString::init_re_encode_utf8`] over every string of a JSON-shaped literal tree.
+    pub fn re_encode_utf8_strings(&mut self, bump: &Bump) {
+        match self {
+            Data::EString(s) => {
+                if s.is_utf8() && s.next.is_none() {
+                    let data = s.data;
+                    **s = E::EString::init_re_encode_utf8(data.slice(), bump);
+                }
+            }
+            Data::EObject(obj) => {
+                for property in obj.properties.slice_mut() {
+                    if let Some(key) = property.key.as_mut() {
+                        key.data.re_encode_utf8_strings(bump);
+                    }
+                    if let Some(value) = property.value.as_mut() {
+                        value.data.re_encode_utf8_strings(bump);
+                    }
+                }
+            }
+            Data::EArray(arr) => {
+                for item in arr.items.slice_mut() {
+                    item.data.re_encode_utf8_strings(bump);
+                }
+            }
+            _ => {}
         }
     }
 } // end `impl Data` (deep_clone)

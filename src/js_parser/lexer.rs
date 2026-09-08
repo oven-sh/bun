@@ -2311,7 +2311,7 @@ impl<'a> Lexer<'a> {
                     return Err(e);
                 }
                 let first_non_ascii = strings::first_non_ascii16(&tmp);
-                // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
+                // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding joins two ascii strings as a rope instead of a copy.
                 let out = if first_non_ascii.is_some() {
                     let dup = self.arena.alloc_slice_copy(&tmp);
                     js_ast::E::String::init_utf16(dup)

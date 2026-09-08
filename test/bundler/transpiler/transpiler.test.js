@@ -2395,6 +2395,35 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  // A define value is parsed as JSON outside the lexer; a non-ASCII string must fold per UTF-16
+  // code unit like a source literal (`U[0]`, template `.length`, `+D`), not per UTF-8 byte. Run in
+  // a subprocess: a debug build asserts on the byte-wise fold instead of printing a wrong string.
+  it("non-ascii define values fold like string literals", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "ts",
+            target: "bun",
+            define: { U: JSON.stringify("é😀"), E: '"\\\\u00e9"', D: JSON.stringify("\\u2028 12 ") },
+          });
+          const code = t.transformSync("globalThis.out = [U, U[0], U[1], \`\${U}\`.length, U.length, (U + '')[0], E, E[0], +D, ~D];");
+          (0, eval)(code);
+          process.stdout.write(JSON.stringify(globalThis.out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["é😀","é","\\ud83d",3,3,"é","é","é",12,-13]');
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -3042,7 +3071,10 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
       expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
-      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
+      // Two lone surrogates join into the code unit sequence of the pair, as at run time.
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrintedMin_(`console.log(("\\uD800" + "\\uDF34").length)`, "console.log(2)");
+      expectPrintedMin_(`console.log("a" + "é" + "😀")`, 'console.log("aé\\uD83D\\uDE00")');
     });
 
     it("fold string addition", () => {
@@ -3192,8 +3224,10 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
-      // no rope string for non-ascii
-      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
+      // non-ascii strings join into one UTF-16 string, whose length is its code unit count
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = 2`);
+      expectBunPrinted_(`export const foo = ("a" + "é" + "😀").length;`, `export const foo = 4`);
+      expectBunPrinted_("export const foo = `a${'é'}b${1}😀`.length;", `export const foo = 6`);
     });
 
     describe("Bun.js", () => {

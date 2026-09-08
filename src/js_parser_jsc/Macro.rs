@@ -1085,6 +1085,7 @@ fn expr_from_blob(
             Err(_) => return Err(crate::Error::MacroFailed),
         };
         out_expr.loc = loc;
+        out_expr.data.re_encode_utf8_strings(bump);
         match &mut out_expr.data {
             ExprData::EObject(obj) => obj.was_originally_macro = true,
             ExprData::EArray(arr) => arr.was_originally_macro = true,
@@ -1103,22 +1104,9 @@ fn expr_from_blob(
         );
 
     if is_text_like {
-        let mut output = bun_core::MutableString::init_empty();
-        bun_core::quote_for_json(bytes, &mut output, true)?;
-        let owned = output.to_owned_slice();
-        // strip the surrounding quotes; copy into the bump arena so the
-        // `E.String` data outlives `owned`.
-        let unquoted: &[u8] = if owned.len() >= 2 {
-            &owned[1..owned.len() - 1]
-        } else {
-            &owned[..]
-        };
-        let data = Str::new(bump.alloc_slice_copy(unquoted));
+        // The text itself (the printer escapes it), copied out of the blob's store.
         return Ok(Expr::init(
-            E::String {
-                data,
-                ..Default::default()
-            },
+            E::String::init_re_encode_utf8(bump.alloc_slice_copy(bytes), bump),
             loc,
         ));
     }

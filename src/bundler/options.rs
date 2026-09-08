@@ -957,7 +957,7 @@ pub(crate) fn defines_from_transform_options(
             .iter()
             .zip(environment_defines.values().iter())
             .filter_map(|(k, v)| match &v.value {
-                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
+                defines::DefineValue::EString(s) => Some((k.as_ref(), s.get())),
                 _ => None,
             }),
         drop.iter().copied(),

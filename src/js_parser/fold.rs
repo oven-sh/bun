@@ -439,23 +439,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             // inline module.id
                             p.ignore_usage(p.module_ref);
-                            return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(p.source.path.pretty, p.arena),
+                                name_loc,
+                            ));
                         } else if p.options.bundle
                             && name == b"filename"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.filename
                             p.ignore_usage(p.module_ref);
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
-                            );
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(
+                                    p.source.path.name().filename,
+                                    p.arena,
+                                ),
+                                name_loc,
+                            ));
                         } else if p.options.bundle
                             && name == b"path"
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.path
                             p.ignore_usage(p.module_ref);
-                            return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(p.source.path.pretty, p.arena),
+                                name_loc,
+                            ));
                         }
                     }
 
@@ -606,17 +616,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().dir), name_loc),
-                            );
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(p.source.path.name().dir, p.arena),
+                                name_loc,
+                            ));
                         } else if name == b"file" {
                             // Inline import.meta.file (filename only)
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
-                            );
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(
+                                    p.source.path.name().filename,
+                                    p.arena,
+                                ),
+                                name_loc,
+                            ));
                         } else if name == b"path" {
                             // Inline import.meta.path (full path)
-                            return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
+                            return Some(p.new_expr(
+                                E::EString::init_re_encode_utf8(p.source.path.text, p.arena),
+                                name_loc,
+                            ));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
                             let bunstr = bun_core::String::from_bytes(p.source.path.text);

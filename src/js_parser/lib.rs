@@ -545,19 +545,20 @@ pub mod defines {
         }
 
         /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        /// `env_defines` keys are unique (they come from a map).
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
-            env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
+            env_defines: impl IntoIterator<Item = (&'i [u8], &'i E::EString)>,
             drop: impl IntoIterator<Item = &'i [u8]>,
         ) -> Option<u64> {
             let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
-            let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
+            let mut env_defines: Vec<(&[u8], &E::EString)> = env_defines.into_iter().collect();
             let mut drop: Vec<&[u8]> = drop.into_iter().filter(|item| !item.is_empty()).collect();
             if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
                 return None;
             }
             defines.sort_unstable();
-            env_defines.sort_unstable();
+            env_defines.sort_unstable_by_key(|(key, _)| *key);
             drop.sort_unstable();
             drop.dedup();
 
@@ -567,11 +568,21 @@ pub mod defines {
                 hasher.update(bytes);
             };
             // Separate sections: `init` lets a later env pair override a user pair.
-            for pairs in [defines, env_defines] {
-                update(&(pairs.len() as u64).to_le_bytes());
-                for (key, value) in pairs {
-                    update(key);
-                    update(value);
+            update(&(defines.len() as u64).to_le_bytes());
+            for (key, value) in defines {
+                update(key);
+                update(value);
+            }
+            update(&(env_defines.len() as u64).to_le_bytes());
+            for (key, value) in env_defines {
+                update(key);
+                // Tag the encoding: the UTF-16 bytes of `"中"` are the 8-bit bytes of `"-N"`.
+                if value.is_utf8() {
+                    update(&[0]);
+                    update(value.slice8());
+                } else {
+                    update(&[1]);
+                    update(bytemuck::cast_slice::<u16, u8>(value.slice16()));
                 }
             }
             update(&(drop.len() as u64).to_le_bytes());

@@ -15,6 +15,38 @@ test("non-ascii regexp literals", () => {
   expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
 });
 
+// A `--define` value is parsed as JSON outside the lexer. The runtime transpiler
+// folds `U[0]`, `` `${U}`.length `` and `+D`; a non-ASCII value has to fold per
+// UTF-16 code unit like a source literal, not per UTF-8 byte.
+test("non-ascii --define values fold like string literals", async () => {
+  using dir = tempDir("define-non-ascii", {
+    "index.ts": `
+      declare const U: string, D: string;
+      console.log(JSON.stringify([U, U[0], U[1], U[3], \`\${U}\`.length, U.length, (U + "")[0], U === "é😀", +D, -D, ~D]));
+      switch (U[0]) {
+        case "é":
+          console.log("case é");
+          break;
+        default:
+          console.log("default");
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--define", 'U="é😀"', "--define", 'D="\u2028 12 "', "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({
+    stdout: '["é😀","é","\\ud83d",null,3,3,"é",true,12,-12,-13]\ncase é\n',
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("ascii regex with escapes", () => {
   expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
 });

@@ -918,7 +918,7 @@ fn export_replacement_value(
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
         return Ok(Some(Expr::init(
-            bun_ast::E::EString::init(data),
+            bun_ast::E::EString::init_re_encode_utf8(data, arena),
             bun_ast::Loc::EMPTY,
         )));
     }

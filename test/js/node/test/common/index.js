@@ -308,7 +308,22 @@ const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
-const isASan = process.config.variables.asan === 1;
+// Bun: process.config.variables.asan is always 0 (node-gyp would otherwise
+// build addons with -fsanitize=address), so ask the runtime directly. Lazy,
+// because loading bun:internal-for-testing pulls in many internal modules.
+// The binding is expose-internals-gated; fall back to the CI binary name.
+let isASan;
+function getIsASan() {
+  if (isASan !== undefined) return isASan;
+  if (process.config.variables.asan === 1) return (isASan = true);
+  try {
+    const { isASANEnabled } = require('bun:internal-for-testing');
+    if (typeof isASANEnabled === 'function') return (isASan = isASANEnabled());
+  } catch {
+    // gated in release builds without BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+  }
+  return (isASan = path.basename(process.execPath).includes('bun-asan'));
+}
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
 function isPi() {
@@ -1223,7 +1238,9 @@ const common = {
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
-  isASan,
+  get isASan() {
+    return getIsASan();
+  },
   isDebug,
   isDumbTerminal,
   isFreeBSD,

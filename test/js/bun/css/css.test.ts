@@ -7706,7 +7706,10 @@ describe("css tests", () => {
     minify_test(".foo { all: initial; all: initial }", ".foo{all:initial}");
     minify_test(".foo { all: initial; all: revert }", ".foo{all:revert}");
     minify_test(".foo { background: red; all: revert-layer }", ".foo{all:revert-layer}");
-    minify_test(".foo { background: red; all: revert-layer; background: green }", ".foo{all:revert-layer;background:green}");
+    minify_test(
+      ".foo { background: red; all: revert-layer; background: green }",
+      ".foo{all:revert-layer;background:green}",
+    );
     minify_test(".foo { --test: red; all: revert-layer }", ".foo{--test:red;all:revert-layer}");
     minify_test(".foo { unicode-bidi: embed; all: revert-layer }", ".foo{all:revert-layer;unicode-bidi:embed}");
     minify_test(".foo { direction: rtl; all: revert-layer }", ".foo{all:revert-layer;direction:rtl}");
@@ -7719,7 +7722,10 @@ describe("css tests", () => {
     // margin, border, ...) are reset by a later `all` too.
     minify_test(".foo { font: 12px serif; all: initial }", ".foo{all:initial}");
     minify_test(".foo { margin: 0; all: unset; color: red }", ".foo{all:unset;color:red}");
-    minify_test(".foo { border: 1px solid red; color: red; all: inherit; margin-top: 1px }", ".foo{all:inherit;margin-top:1px}");
+    minify_test(
+      ".foo { border: 1px solid red; color: red; all: inherit; margin-top: 1px }",
+      ".foo{all:inherit;margin-top:1px}",
+    );
     minify_test(".foo { color: red; all: unset } .foo { margin: 0 }", ".foo{all:unset;margin:0}");
     minify_test(".foo { margin: 0 } .foo { all: unset }", ".foo{all:unset}");
     cssTest(".foo { font: 12px serif; all: initial }", ".foo {\n  all: initial;\n}\n");
@@ -7740,12 +7746,21 @@ describe("css tests", () => {
     // Custom properties, `direction` and `unicode-bidi` survive in every form.
     minify_test(".foo { --x: 1; all: unset; --x: 2 }", ".foo{--x:1;all:unset;--x:2}");
     minify_test(".foo { --x: 1; all: unset; --y: 2 }", ".foo{--x:1;all:unset;--y:2}");
-    minify_test(".foo { direction: var(--d); unicode-bidi: var(--u); all: unset }", ".foo{direction:var(--d);unicode-bidi:var(--u);all:unset}");
-    minify_test(".foo { direction: rtl; unicode-bidi: isolate; all: unset; color: red }", ".foo{all:unset;color:red;direction:rtl;unicode-bidi:isolate}");
+    minify_test(
+      ".foo { direction: var(--d); unicode-bidi: var(--u); all: unset }",
+      ".foo{direction:var(--d);unicode-bidi:var(--u);all:unset}",
+    );
+    minify_test(
+      ".foo { direction: rtl; unicode-bidi: isolate; all: unset; color: red }",
+      ".foo{all:unset;color:red;direction:rtl;unicode-bidi:isolate}",
+    );
     // A typed `direction`/`unicode-bidi` stays ahead of a later unparsed one.
     minify_test(".foo { direction: rtl; direction: var(--d) }", ".foo{direction:rtl;direction:var(--d)}");
     minify_test(".foo { direction: var(--d); direction: rtl }", ".foo{direction:var(--d);direction:rtl}");
-    minify_test(".foo { unicode-bidi: embed; unicode-bidi: var(--u) }", ".foo{unicode-bidi:embed;unicode-bidi:var(--u)}");
+    minify_test(
+      ".foo { unicode-bidi: embed; unicode-bidi: var(--u) }",
+      ".foo{unicode-bidi:embed;unicode-bidi:var(--u)}",
+    );
     minify_test(".foo { direction: ltr; color: red; direction: rtl }", ".foo{color:red;direction:rtl}");
     minify_test(".foo { unicode-bidi: Bidi-Override }", ".foo{unicode-bidi:bidi-override}");
     minify_test(".foo { unicode-bidi: isolate-override; unicode-bidi: plaintext }", ".foo{unicode-bidi:plaintext}");

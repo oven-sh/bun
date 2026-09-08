@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use crate::{JSValue, VM};
+use crate::{ErrorCode, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core as bstr;
 
 bun_opaque::opaque_ffi! {
@@ -56,5 +56,22 @@ impl DOMURL {
         }
         debug_assert!(path.tag() != bun_core::Tag::Dead);
         Ok(path)
+    }
+
+    /// [`file_system_path`](Self::file_system_path) for a path argument: a URL
+    /// that is not a non-empty `file:` path throws `ERR_INVALID_URL_SCHEME` /
+    /// `ERR_INVALID_FILE_URL_PATH` / `ERR_INVALID_FILE_URL_HOST` /
+    /// `ERR_INVALID_ARG_VALUE`, like `fileURLToPath()`.
+    pub fn file_system_path_for_js(&mut self, global: &JSGlobalObject) -> JsResult<bstr::String> {
+        let code = match self.file_system_path() {
+            Ok(path) if !path.is_empty() => return Ok(path),
+            Ok(_) => ErrorCode::INVALID_ARG_VALUE,
+            Err(ToFileSystemPathError::NotFileUrl) => ErrorCode::INVALID_URL_SCHEME,
+            Err(ToFileSystemPathError::InvalidPath) => ErrorCode::INVALID_FILE_URL_PATH,
+            Err(ToFileSystemPathError::InvalidHost) => ErrorCode::INVALID_FILE_URL_HOST,
+        };
+        Err(global
+            .err(code, format_args!("URL must be a non-empty \"file:\" path"))
+            .throw())
     }
 }

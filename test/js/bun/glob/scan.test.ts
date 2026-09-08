@@ -190,6 +190,73 @@ describe("glob.match", async () => {
     }
   });
 
+  test("cwd accepts a file URL, and a non-options object in the cwd slot throws", async () => {
+    using dir = tempDir("glob-scan-url-cwd", {
+      "real/REAL.txt": "",
+      "real/sub/INNER.txt": "",
+      "other/OTHER.txt": "",
+    });
+    const real = path.join(String(dir), "real");
+
+    // Run from a sibling directory so that a silently ignored cwd shows up as
+    // ["OTHER.txt"]. Both URL spellings (with and without the trailing slash
+    // that `new URL("./real/", import.meta.url)` produces) must work.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const real = process.argv[1];
+          const urls = [Bun.pathToFileURL(real), Bun.pathToFileURL(real + ${JSON.stringify(path.sep)})];
+          const results = {};
+          const attempt = async (label, fn) => {
+            try {
+              results[label] = (await fn()).sort();
+            } catch (e) {
+              results[label] = "throw: " + e.message;
+            }
+          };
+          for (const [i, u] of urls.entries()) {
+            await attempt("scanSync(URL" + i + ")", () => [...new Bun.Glob("**/*.txt").scanSync(u)]);
+            await attempt("scan(URL" + i + ")", () => Array.fromAsync(new Bun.Glob("**/*.txt").scan(u)));
+            await attempt("scanSync({cwd: URL" + i + "})", () => [...new Bun.Glob("**/*.txt").scanSync({ cwd: u })]);
+            await attempt("scan({cwd: URL" + i + "})", () => Array.fromAsync(new Bun.Glob("**/*.txt").scan({ cwd: u })));
+          }
+          await attempt("scanSync(string)", () => [...new Bun.Glob("**/*.txt").scanSync(real)]);
+          await attempt("scanSync(Buffer)", () => [...new Bun.Glob("*").scanSync(Buffer.from(real))]);
+          await attempt("scanSync([real])", () => [...new Bun.Glob("*").scanSync([real])]);
+          await attempt("scanSync({cwd: Buffer})", () => [...new Bun.Glob("*").scanSync({ cwd: Buffer.from(real) })]);
+          await attempt("scanSync(http URL)", () => [...new Bun.Glob("*").scanSync(new URL("http://example.com/real"))]);
+          await attempt("scanSync({cwd: http URL})", () => [...new Bun.Glob("*").scanSync({ cwd: new URL("http://example.com/real") })]);
+          console.log(JSON.stringify(results));
+        `,
+        real,
+      ],
+      env: bunEnv,
+      cwd: path.join(String(dir), "other"),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const found = ["REAL.txt", path.join("sub", "INNER.txt")].sort();
+    expect(JSON.parse(await proc.stdout.text())).toEqual({
+      "scanSync(URL0)": found,
+      "scan(URL0)": found,
+      "scanSync({cwd: URL0})": found,
+      "scan({cwd: URL0})": found,
+      "scanSync(URL1)": found,
+      "scan(URL1)": found,
+      "scanSync({cwd: URL1})": found,
+      "scan({cwd: URL1})": found,
+      "scanSync(string)": found,
+      "scanSync(Buffer)": "throw: scanSync: expected first argument to be a string, URL, or options object",
+      "scanSync([real])": "throw: scanSync: expected first argument to be a string, URL, or options object",
+      "scanSync({cwd: Buffer})": "throw: scanSync: invalid `cwd`, not a string or URL",
+      "scanSync(http URL)": 'throw: URL must be a non-empty "file:" path',
+      "scanSync({cwd: http URL})": 'throw: URL must be a non-empty "file:" path',
+    });
+    expect(await proc.exited).toBe(0);
+  });
+
   test("oversized cwd throws instead of crashing", async () => {
     const glob = new Glob("*.ts");
     const tooLong = Buffer.alloc(100_000, "x").toString();

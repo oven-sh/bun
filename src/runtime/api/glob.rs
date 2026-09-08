@@ -6,8 +6,8 @@ use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
-    JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, DOMURL, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext,
+    JsPtr, JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
@@ -38,7 +38,16 @@ impl ScanOpts {
         absolute: bool,
         fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = BunString::from_js(cwd_val, global_this)?;
+        let cwd_string = if let Some(url) = DOMURL::cast(cwd_val) {
+            url.file_system_path_for_js(global_this)?
+        } else if cwd_val.is_string() {
+            BunString::from_js(cwd_val, global_this)?
+        } else {
+            return Err(global_this.throw(format_args!(
+                "{}: invalid `cwd`, not a string or URL",
+                fn_name
+            )));
+        };
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
@@ -114,19 +123,19 @@ impl ScanOpts {
         if opts_obj.is_undefined_or_null() {
             return Ok(Some(out));
         }
-        if !opts_obj.is_object() {
-            if opts_obj.is_string() {
-                {
-                    let result =
-                        Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
-                    if !result.is_empty() {
-                        out.cwd = Some(result);
-                    }
-                }
-                return Ok(Some(out));
+        // `scan(cwd)`: a string or a `file:` URL in the options slot is the cwd.
+        if opts_obj.is_string() || DOMURL::cast(opts_obj).is_some() {
+            let result = Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
+            if !result.is_empty() {
+                out.cwd = Some(result);
             }
+            return Ok(Some(out));
+        }
+        // A Buffer or an array is an object too, but never an options bag. Taking
+        // it as one would silently scan `process.cwd()`.
+        if !opts_obj.is_object() || opts_obj.js_type().is_array_like() {
             return Err(global_this.throw(format_args!(
-                "{}: expected first argument to be an object",
+                "{}: expected first argument to be a string, URL, or options object",
                 fn_name
             )));
         }
@@ -166,17 +175,9 @@ impl ScanOpts {
         }
 
         if let Some(cwd_val) = opts_obj.get_truthy(global_this, "cwd")? {
-            if !cwd_val.is_string() {
-                return Err(
-                    global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name))
-                );
-            }
-
-            {
-                let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
-                if !result.is_empty() {
-                    out.cwd = Some(result);
-                }
+            let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
+            if !result.is_empty() {
+                out.cwd = Some(result);
             }
         }
 

@@ -33,17 +33,18 @@ The `Glob` class implements the following interface:
 
 ```ts
 class Glob {
-  scan(root: string | ScanOptions): AsyncIterable<string>;
-  scanSync(root: string | ScanOptions): Iterable<string>;
+  scan(root: string | URL | ScanOptions): AsyncIterable<string>;
+  scanSync(root: string | URL | ScanOptions): Iterable<string>;
 
   match(path: string): boolean;
 }
 
 interface ScanOptions {
   /**
-   * The root directory to start matching from. Defaults to `process.cwd()`
+   * The root directory to start matching from, as a path or a `file:` URL.
+   * Defaults to `process.cwd()`
    */
-  cwd?: string;
+  cwd?: string | URL;
 
   /**
    * Allow patterns to match entries that begin with a period (`.`).

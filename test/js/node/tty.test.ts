@@ -197,9 +197,10 @@ describe("ReadStream.prototype.setRawMode", () => {
 
 // Runs `script` in a child attached to a fresh PTY and drives it through a
 // phase protocol: the child prints a marker, the parent reads termios and
-// types the next line. Resolves with the child's exit code. With
-// `controllingTerminal` the PTY is created by the spawn itself, which is the
-// only form that makes the child a session leader on it (so /dev/tty opens).
+// types the next line. Markers beyond the last phase (the child's final
+// record) are awaited too, so `output()` is complete when this resolves.
+// With `controllingTerminal` the PTY is created by the spawn itself, which is
+// the only form that makes the child a session leader on it (so /dev/tty opens).
 async function runInPty(
   script: string,
   phases: ((terminal: Bun.Terminal, output: () => string) => void | Promise<void>)[],
@@ -241,9 +242,9 @@ async function runInPty(
       : new Promise<void>(resolve => waiters.push({ marker, resolve }));
     return Promise.race([seen, exitedEarly]);
   };
-  for (let i = 0; i < phases.length; i++) {
+  for (let i = 0; i < opts.markers.length; i++) {
     await phase(opts.markers[i]);
-    await phases[i](terminal, () => buffer);
+    if (i < phases.length) await phases[i](terminal, () => buffer);
   }
   const code = await proc.exited;
   return { code, output: () => buffer };
@@ -338,7 +339,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           terminal.write("x");
         },
       ],
-      { markers: ["P1"] },
+      { markers: ["P1", "RESULT "] },
     );
     expect(code).toBe(0);
     const match = Bun.stripANSI(output()).match(/RESULT (\[.*\])/);
@@ -410,7 +411,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           terminal.write("\x04");
         },
       ],
-      { markers: ["P1", "P2", "P3", "CHILDREADY", "CHILD:hello child"] },
+      { markers: ["P1", "P2", "P3", "CHILDREADY", "CHILD:hello child", "RESULT "] },
     );
     expect(code).toBe(0);
     const text = Bun.stripANSI(output());
@@ -464,7 +465,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           terminal.write("after destroy\n");
         },
       ],
-      { markers: ["P1 ", "CHILDREADY"], controllingTerminal: true },
+      { markers: ["P1 ", "CHILDREADY", "P2 "], controllingTerminal: true },
     );
     expect(code).toBe(0);
     const text = Bun.stripANSI(output());
@@ -504,7 +505,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           terminal.write("\x04");
         },
       ],
-      { markers: ["started=0", "READ 1"] },
+      { markers: ["started=0", "READ 1", "RESULT "] },
     );
     expect(code).toBe(0);
     const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);
@@ -631,7 +632,7 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
           terminal.write("abc\n");
         },
       ],
-      { markers: ["P1"] },
+      { markers: ["P1", "RESULT "] },
     );
     expect(code).toBe(0);
     const result = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1]);
@@ -673,7 +674,7 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
           terminal.write("\x04");
         },
       ],
-      { markers: ["P1"] },
+      { markers: ["P1", "RESULT "] },
     );
     expect(code).toBe(0);
     const events = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\[.*\])/)![1]);
@@ -736,7 +737,7 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
           terminal.write("from the terminal\n");
         },
       ],
-      { markers: ["CHILDREADY"], controllingTerminal: true },
+      { markers: ["CHILDREADY", "RESULT "], controllingTerminal: true },
     );
     expect(code).toBe(0);
     const text = Bun.stripANSI(output());

@@ -18,13 +18,14 @@ function ReadStream(fd, options): void {
 
   const ctx: { code?: string; syscall?: string; message?: string; errno?: number } = {};
   const tty = new TTY(fd, ctx);
-  if (ctx.code !== undefined) {
+  const { code, syscall, message, errno } = ctx;
+  if (code !== undefined) {
     // Node's ERR_TTY_INIT_FAILED is a SystemError: it carries the uv context.
-    const err = $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${ctx.code} (${ctx.message})`);
+    const err = $ERR_TTY_INIT_FAILED(`${syscall} returned ${code} (${message})`);
     err.name = "SystemError";
     err.info = ctx;
-    err.errno = ctx.errno;
-    err.syscall = ctx.syscall;
+    err.errno = errno;
+    err.syscall = syscall;
     throw err;
   }
 

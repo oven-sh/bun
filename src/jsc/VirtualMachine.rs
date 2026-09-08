@@ -3404,9 +3404,8 @@ fn normalize_specifier_for_resolution<'a>(
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
     // In a `data:` URL everything after the comma is the payload; a `?` is
-    // part of the data, not a query string. The scheme is case-insensitive;
-    // the resolver folds it to lowercase.
-    if bun_core::strings::has_prefix_case_insensitive(specifier_, b"data:") {
+    // part of the data, not a query string.
+    if bun_resolver::data_url::DataURL::has_scheme(specifier_) {
         return specifier_;
     }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {

@@ -841,8 +841,7 @@ impl String {
         self.to_encoded_slice().starts_with_ascii(ascii)
     }
 
-    /// Like [`Self::starts_with_ascii`], but ASCII letters in `self` match
-    /// `ascii` in either case.
+    /// [`Self::starts_with_ascii`] ignoring ASCII letter case.
     #[inline]
     pub fn starts_with_ascii_case_insensitive(&self, ascii: &[u8]) -> bool {
         self.to_encoded_slice()

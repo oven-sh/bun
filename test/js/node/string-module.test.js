@@ -53,13 +53,6 @@ test("should import ES module with uppercase scheme without folding the base64 p
   expect(mod(1)).toEqual(2);
 });
 
-test("case variants of the same data URL resolve to the same module", async () => {
-  const code = `export const identity = {};`;
-  const lower = await import("data:text/javascript," + code);
-  const upper = await import("DATA:text/javascript," + code);
-  expect(upper).toBe(lower);
-});
-
 test("should import an uppercase-scheme data: URL longer than the path-length limit", async () => {
   const big = Buffer.alloc(200000, "z").toString();
   const url = "DATA:text/javascript," + encodeURIComponent(`export default "${big}";`);

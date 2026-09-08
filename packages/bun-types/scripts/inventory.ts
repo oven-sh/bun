@@ -50,10 +50,14 @@ const PRESETS: Record<string, { lib: string[] }> = {
 
 function parseArgs(argv: string[]) {
   const out = { out: DEFAULT_OUT, presets: [] as string[], check: false, keep: false };
+  const valueOf = (flag: string, value: string | undefined) => {
+    if (value === undefined) throw new Error(`${flag} needs a value`);
+    return value;
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--out") out.out = resolve(argv[++i]!);
-    else if (arg === "--preset") out.presets.push(argv[++i]!);
+    if (arg === "--out") out.out = resolve(valueOf(arg, argv[++i]));
+    else if (arg === "--preset") out.presets.push(valueOf(arg, argv[++i]));
     else if (arg === "--check") out.check = true;
     else if (arg === "--keep") out.keep = true;
     else throw new Error(`unknown argument: ${arg}`);
@@ -67,6 +71,14 @@ function parseArgs(argv: string[]) {
 
 /** TypeScript reports file names with forward slashes on every platform. */
 const toPosix = (path: string) => path.replaceAll("\\", "/");
+
+/**
+ * TypeScript resolves files under node_modules to their real path with the
+ * native realpath. On Windows only the native one expands 8.3 short names
+ * (`C:\Users\RUNNER~1`, which is what `os.tmpdir()` can return), so every path
+ * this script compares against a TypeScript file name goes through it too.
+ */
+const realPathOf = (path: string) => toPosix(realpathSync.native(path));
 
 function readVersion(packageJson: string): string | undefined {
   return existsSync(packageJson) ? JSON.parse(readFileSync(packageJson, "utf8")).version : undefined;
@@ -85,8 +97,14 @@ function pinnedDependencies(): string[] {
   }
   const pins = [`@types/node@${nodeTypesVersion}`];
   // undici-types is a dependency of @types/node, so resolve it from there.
-  const requireFromNodeTypes = createRequire(join(realpathSync(nodeTypesDir), "index.d.ts"));
-  const undiciVersion = readVersion(requireFromNodeTypes.resolve("undici-types/package.json"));
+  const requireFromNodeTypes = createRequire(join(realpathSync.native(nodeTypesDir), "index.d.ts"));
+  let undiciPackageJson: string | undefined;
+  try {
+    undiciPackageJson = requireFromNodeTypes.resolve("undici-types/package.json");
+  } catch {
+    // This @types/node does not depend on undici-types, so there is nothing to pin.
+  }
+  const undiciVersion = undiciPackageJson && readVersion(undiciPackageJson);
   if (undiciVersion) pins.push(`undici-types@${undiciVersion}`);
   return pins;
 }
@@ -152,16 +170,15 @@ const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? 
 
 function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string): string[] {
   const checker = program.getTypeChecker();
-  const nodeModules = toPosix(join(projectDir, "node_modules"));
-  const packageDir = toPosix(realpathSync(join(projectDir, "node_modules", "bun-types")));
-  const tsLibDir = toPosix(dirname(ts.getDefaultLibFilePath(program.getCompilerOptions())));
+  const packageDir = realPathOf(join(projectDir, "node_modules", "bun-types"));
+  const tsLibDir = realPathOf(dirname(ts.getDefaultLibFilePath(program.getCompilerOptions())));
 
   const realPaths = new Map<string, string>();
   function realPath(fileName: string): string {
     let real = realPaths.get(fileName);
     if (real === undefined) {
       try {
-        real = toPosix(realpathSync(fileName));
+        real = realPathOf(fileName);
       } catch {
         // A module path inside `import("...")` type text has no extension.
         real = toPosix(fileName);
@@ -175,10 +192,10 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
     const real = realPath(fileName);
     if (real.startsWith(packageDir + "/")) return "bun-types/" + real.slice(packageDir.length + 1);
     if (real.startsWith(tsLibDir + "/")) return real.slice(tsLibDir.length + 1);
-    if (real.startsWith(nodeModules + "/")) return real.slice(nodeModules.length + 1);
-    // bun's isolated installs link node_modules/<name> into node_modules/.bun/<name>@<version>/node_modules/<name>.
-    const store = real.lastIndexOf("/node_modules/");
-    if (store >= 0) return real.slice(store + "/node_modules/".length);
+    // `<package>/<file>` for both layouts bun can install: hoisted
+    // (node_modules/<package>) and isolated (node_modules/.bun/<package>@<version>/node_modules/<package>).
+    const dependency = real.lastIndexOf("/node_modules/");
+    if (dependency >= 0) return real.slice(dependency + "/node_modules/".length);
     return toPosix(relative(projectDir, fileName));
   }
 
@@ -498,7 +515,8 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const tempDir = await mkdtemp(join(tmpdir(), "bun-types-inventory-"));
+  // The canonical form, so the paths built from it match TypeScript's file names (see realPathOf).
+  const tempDir = realpathSync.native(await mkdtemp(join(tmpdir(), "bun-types-inventory-")));
   try {
     const { projectDir, versions } = await createProject(tempDir);
     let failed = false;

@@ -554,14 +554,8 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-/// Whether `development` defaults to off for a `Bun.serve()` call made now.
-///
-/// `NODE_ENV` / `BUN_ENV` are read from the live `process.env`, not the
-/// startup snapshot in `vm.env_loader()`, so a runtime assignment or `delete`
-/// made before the call counts (the timing frameworks get when they read
-/// `process.env.NODE_ENV` at app creation). When neither is set, a process
-/// put in production mode by other means (`--define process.env.NODE_ENV`)
-/// still defaults to off.
+/// The live `process.env.NODE_ENV` / `BUN_ENV` decide. With neither set, only a
+/// production flag that did not come from the env (`--define`) still counts.
 fn default_is_production(global: &JSGlobalObject, vm: &VirtualMachine) -> JsResult<bool> {
     let process_env = global.process_env()?;
     let is_production = |key: &str| -> JsResult<Option<bool>> {

@@ -1166,10 +1166,8 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
-    /// The live `process.env` object (the same object as `Bun.env` and
-    /// `import.meta.env`). Runtime writes such as `process.env.FOO = "x"` and
-    /// `delete process.env.FOO` land only on this object, while
-    /// `VirtualMachine::env_loader()` keeps the startup snapshot.
+    /// The live `process.env` object. Runtime `process.env` writes land only
+    /// here; `VirtualMachine::env_loader()` is the startup snapshot.
     pub fn process_env(&self) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || Bun__Process__getEnvObject(self))
     }

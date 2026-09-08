@@ -578,13 +578,14 @@ console.log(message);`,
     test("existing directives are extended in place and satisfied ones are left alone", async () => {
       using dir = tempDir("compile-browser-csp-existing", {
         "index.html": `<!doctype html><html><head>
-<meta http-equiv="content-security-policy" content=" Script-Src 'self' https://cdn.example.com ;style-src 'unsafe-inline'; img-src * ; font-src 'self' data:; media-src 'none';;">
-<link rel="stylesheet" href="./a.css"></head>
+<meta http-equiv="content-security-policy" content=" Script-Src 'self' https://cdn.example.com ;style-src 'unsafe-inline'; img-src * ; font-src 'self' data:; media-src 'none'; manifest-src ;;">
+<link rel="stylesheet" href="./a.css"><link rel="manifest" href="./app.webmanifest"></head>
 <body><video src="./v.mp4"></video><script src="./app.js"></script></body></html>`,
         "a.css": `@font-face { font-family: f; src: url(./f.woff2); } body { background: url("./i.png"); }`,
         "f.woff2": "not really a font",
         "i.png": png,
         "v.mp4": "not really a video",
+        "app.webmanifest": `{ "name": "app" }`,
         "app.js": `console.log("app");`,
       });
 
@@ -593,14 +594,16 @@ console.log(message);`,
       expect(html).toContain('url("data:font/woff2;base64,');
       expect(html).toContain('url("data:image/png;base64,');
       expect(html).toContain('<video src="data:video/mp4;base64,');
+      expect(html).toContain('<link rel="manifest" href="data:application/manifest+json;base64,');
 
       // script-src: hash appended (directive names are case-insensitive).
       // style-src: 'unsafe-inline' already allows the <style>.
       // img-src: `*` does not match data:, so it is added.
       // font-src: already lists data:.
-      // media-src 'none': the video was blocked on the multi-file site too.
+      // media-src 'none', manifest-src with no sources: blocked on the
+      // multi-file site too, so they stay that way.
       expect(policies(html)).toEqual([
-        `Script-Src 'self' https://cdn.example.com ${sha256(script)}; style-src 'unsafe-inline'; img-src * data:; font-src 'self' data:; media-src 'none'`,
+        `Script-Src 'self' https://cdn.example.com ${sha256(script)}; style-src 'unsafe-inline'; img-src * data:; font-src 'self' data:; media-src 'none'; manifest-src`,
       ]);
     });
 
@@ -672,7 +675,7 @@ document.querySelector("img").src = logo;`,
       using dir = tempDir("compile-browser-csp-entities", {
         // What a server-side renderer that escapes `'` leaves behind.
         "index.html": `<!doctype html><html><head>
-<meta http-equiv="Content-Security-Policy" content="default-src &#x27;self&#x27;; style-src &#39;unsafe-inline&#39;; script-src 'self' &quot;">
+<meta http-equiv="Content-Security-Policy" content="default-src &#x27;self&#x27;; style-src &#39;unsafe-inline&#39;; script-src 'self' &quot;; report-uri /csp?a&##;b&amp;c&bogus;">
 <link rel="stylesheet" href="./a.css"></head><body><script src="./app.js"></script></body></html>`,
         "a.css": `body { color: red }`,
         "app.js": `console.log("app");`,
@@ -681,9 +684,11 @@ document.querySelector("img").src = logo;`,
       const script = inlineScript(html)!;
       // 'unsafe-inline' is recognized through the references, so style-src
       // gets no hash (a hash would turn 'unsafe-inline' off). The rewritten
-      // value is re-escaped for the double-quoted attribute.
+      // value is re-escaped for the double-quoted attribute. `&` sequences
+      // that are not a reference stay literal text, so their `;` separates
+      // directives like any other.
       expect(policies(html)).toEqual([
-        `default-src 'self'; style-src 'unsafe-inline'; script-src 'self' &quot; ${sha256(script)}`,
+        `default-src 'self'; style-src 'unsafe-inline'; script-src 'self' &quot; ${sha256(script)}; report-uri /csp?a&amp;##; b&amp;c&amp;bogus`,
       ]);
     });
 

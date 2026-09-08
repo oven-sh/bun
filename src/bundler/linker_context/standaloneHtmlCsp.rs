@@ -137,7 +137,7 @@ pub(crate) fn resolve_for_html_chunk(
                 BStr::new(pretty_path),
                 BStr::new(&rewrite.summary),
             )
-            .ok();
+            .expect("infallible: in-memory write");
             c.log_disjoint().add_msg(bun_ast::Msg {
                 kind: bun_ast::Kind::Note,
                 data: bun_ast::Data {
@@ -172,18 +172,16 @@ fn decode_character_references(raw: &[u8]) -> Cow<'_, [u8]> {
     let mut utf8 = [0u8; 8];
     while !rest.is_empty() {
         // `rest` starts with `&`.
-        let reference_len = rest[1..]
-            .iter()
-            .take(48)
-            .position(|&b| !(b.is_ascii_alphanumeric() || b == b'#'))
-            .map(|name_len| name_len + 2)
-            .filter(|&len| len > 2 && rest[len - 1] == b';');
-        match reference_len
-            .and_then(|len| bun_md::helpers::decode_entity_to_utf8(&rest[..len], &mut utf8))
-        {
-            Some(decoded) => {
-                out.extend_from_slice(decoded);
-                rest = &rest[reference_len.unwrap()..];
+        let decoded = bun_md::helpers::find_entity(rest, 0).and_then(|len| {
+            Some((
+                len,
+                bun_md::helpers::decode_entity_to_utf8(&rest[..len], &mut utf8)?,
+            ))
+        });
+        match decoded {
+            Some((len, bytes)) => {
+                out.extend_from_slice(bytes);
+                rest = &rest[len..];
             }
             None => {
                 out.push(b'&');
@@ -244,7 +242,7 @@ impl DataUrlKinds {
         }
     }
 
-    fn any(&self) -> bool {
+    fn any(self) -> bool {
         self.image || self.font || self.media || self.manifest
     }
 }
@@ -289,10 +287,16 @@ impl<'a> Directive<'a> {
             .any(|s| strings::eql_case_insensitive_ascii_check_length(s, source))
     }
 
+    /// `'none'`, or an empty source list, which matches nothing either.
     fn is_none(&self) -> bool {
         let mut sources = self.sources();
-        matches!(sources.next(), Some(s) if strings::eql_case_insensitive_ascii_check_length(s, b"'none'"))
-            && sources.next().is_none()
+        match sources.next() {
+            None => true,
+            Some(s) => {
+                strings::eql_case_insensitive_ascii_check_length(s, b"'none'")
+                    && sources.next().is_none()
+            }
+        }
     }
 
     /// A nonce or hash in the list makes browsers ignore `'unsafe-inline'`.
@@ -386,7 +390,7 @@ fn rewrite(policy: &[u8], inlined: &InlinedContent<'_>) -> Option<Rewrite> {
         };
         let effective = &directives[index];
         if effective.is_none() {
-            // `'none'` blocked this content on the multi-file site too.
+            // `'none'` (or an empty list) blocked this on the multi-file site too.
             continue;
         }
 

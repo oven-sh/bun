@@ -1258,7 +1258,7 @@ impl Query {
 
     #[inline]
     pub(crate) fn kind(self) -> QueryKind {
-        // Tags 5..=7 are never assigned; match exhaustively
+        // Tag 7 is never assigned; match exhaustively
         // (an out-of-range tag would be a bug, not UB).
         match (self.0 >> 29) as u8 {
             0 => QueryKind::None,

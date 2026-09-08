@@ -54,6 +54,7 @@ export const SSLConfig = b.dictionary(
     ca: SSLConfigFile,
     cert: SSLConfigFile,
     key: SSLConfigFile,
+    pfx: SSLConfigFile,
     secureOptions: {
       type: b.u32,
       default: 0,

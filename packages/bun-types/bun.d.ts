@@ -4633,7 +4633,15 @@ declare module "bun" {
    */
   interface TLSOptions {
     /**
-     * Passphrase for the TLS key
+     * One or more PKCS#12 archives containing a private key and certificate chain.
+     * Encrypted archives use {@link passphrase}. Every archive in an array uses the same passphrase.
+     *
+     * Choose either `pfx` or the PEM options `key`, `cert`, `keyFile`, and `certFile`.
+     */
+    pfx?: BufferSource | BunFile | Array<BufferSource | BunFile> | undefined;
+
+    /**
+     * Passphrase for the TLS key or PKCS#12 archive.
      */
     passphrase?: string;
 

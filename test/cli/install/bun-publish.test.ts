@@ -922,65 +922,114 @@ describe.concurrent("credentials in the registry url", () => {
     expect(exitCode).toBe(1);
   });
 
-  // A scheme that is not http or https must not fall back to plaintext HTTP.
-  // The mock is a plain HTTP listener, so a downgraded request shows up in `mock.requests`.
-  test.each(["htps", "htp", "ftp"])("%s:// registry url scheme is rejected before sending a request", async scheme => {
-    using mock = registryMock();
-    const packageDir = await packageDirFor("bad-scheme-pkg");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `[install]\nregistry = { url = "${scheme}://localhost:${mock.port}/", token = "secret-token" }\n`,
-    );
+  // A registry url whose scheme is not http or https must be rejected, not sent as plaintext HTTP.
+  // The mock is a plain HTTP listener, so a downgraded request would show up in `mock.requests`.
+  type BadRegistrySetup = (port: number) => {
+    files: Record<string, string>;
+    args?: string[];
+    name?: string;
+    received: string;
+  };
+  describe.each<[string, BadRegistrySetup]>([
+    [
+      "bunfig registry with a typo in https",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with an ftp scheme",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "ftp://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `ftp://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig scoped registry",
+      port => ({
+        name: "@corp/bad-scheme-pkg",
+        files: {
+          "bunfig.toml": `[install.scopes]\n"@corp" = { url = "htp://localhost:${port}/", token = "secret-token" }\n`,
+        },
+        received: `htp://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry with the token in the url, --dry-run",
+      port => ({
+        files: { "bunfig.toml": `[install]\nregistry = "htps://:secret-token@localhost:${port}/"\n` },
+        args: ["--dry-run"],
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      "bunfig registry without a scheme",
+      port => ({
+        files: { "bunfig.toml": `[install]\nregistry = { url = "localhost:${port}/npm/", token = "secret-token" }\n` },
+        received: `localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      "bunfig registry without a scheme, with userinfo",
+      port => ({
+        files: {
+          "bunfig.toml": `[install]\nregistry = { url = "pubuser:secret-token@localhost:${port}/npm/", token = "secret-token" }\n`,
+        },
+        received: `localhost:${port}/npm/`,
+      }),
+    ],
+    [
+      ".npmrc registry",
+      port => ({
+        files: { ".npmrc": `registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=secret-token\n` },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+    [
+      ".npmrc scoped registry",
+      port => ({
+        name: "@corp/bad-scheme-pkg",
+        files: { ".npmrc": `@corp:registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=secret-token\n` },
+        received: `htps://localhost:${port}/`,
+      }),
+    ],
+  ])("%s that is not http:// or https://", (_, setup) => {
+    test("is rejected before sending a request, without echoing credentials", async () => {
+      using mock = registryMock();
+      const { files, args = [], name = "bad-scheme-pkg", received } = setup(mock.port);
+      const packageDir = await packageDirFor(name);
+      for (const [file, contents] of Object.entries(files)) {
+        await write(join(packageDir, file), contents);
+      }
 
-    const { err, exitCode } = await publish(env, packageDir);
-    expect(err).toBe(
-      `error: Registry URL must be http:// or https://\nReceived: "${scheme}://localhost:${mock.port}/"\n`,
-    );
-    expect(mock.requests).toEqual([]);
-    expect(exitCode).toBe(1);
+      const { out, err, exitCode } = await publish(env, packageDir, ...args);
+      expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "${received}"\n`);
+      expect(out).not.toContain("secret-token");
+      expect(mock.requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
   });
 
-  test("registry url without a scheme is rejected and echoed as written", async () => {
+  test("an upper-case HTTP:// registry url is accepted", async () => {
     using mock = registryMock();
-    const packageDir = await packageDirFor("no-scheme-pkg");
+    const packageDir = await packageDirFor("upper-case-scheme-pkg");
     await write(
       join(packageDir, "bunfig.toml"),
-      `[install]\nregistry = { url = "localhost:${mock.port}/npm/", token = "secret-token" }\n`,
+      `[install]\nregistry = { url = "HTTP://localhost:${mock.port}/", token = "secret-token" }\n`,
     );
 
-    const { err, exitCode } = await publish(env, packageDir);
-    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "localhost:${mock.port}/npm/"\n`);
-    expect(mock.requests).toEqual([]);
-    expect(exitCode).toBe(1);
-  });
-
-  test("scoped registry with a bad scheme is rejected before sending a request", async () => {
-    using mock = registryMock();
-    const packageDir = await packageDirFor("@corp/bad-scheme-pkg");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `[install.scopes]\n"@corp" = { url = "htps://localhost:${mock.port}/", token = "secret-token" }\n`,
-    );
-
-    const { err, exitCode } = await publish(env, packageDir);
-    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
-    expect(mock.requests).toEqual([]);
-    expect(exitCode).toBe(1);
-  });
-
-  test("bad scheme is rejected with --dry-run", async () => {
-    using mock = registryMock();
-    const packageDir = await packageDirFor("bad-scheme-dry-run-pkg");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `[install]\nregistry = "htps://:secret-token@localhost:${mock.port}/"\n`,
-    );
-
-    const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
-    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
-    expect(out).not.toContain("secret-token");
-    expect(mock.requests).toEqual([]);
-    expect(exitCode).toBe(1);
+    const { out, err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + upper-case-scheme-pkg@1.0.0");
+    expect(mock.requests).toEqual([
+      { method: "PUT", pathname: "/upper-case-scheme-pkg", authorization: "Bearer secret-token" },
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

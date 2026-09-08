@@ -849,14 +849,9 @@ impl PublishCommand {
         let registry_url = registry.url.url();
 
         if !registry_url.has_http_like_protocol() {
-            return Err(PublishError::InvalidRegistryUrl(
-                if registry_url.protocol.is_empty() {
-                    // `href_without_auth()` would print a scheme-less URL as `http://...`.
-                    Box::from(registry.url.href())
-                } else {
-                    registry_url.href_without_auth()
-                },
-            ));
+            return Err(PublishError::InvalidRegistryUrl(redacted_registry_href(
+                &registry_url,
+            )));
         }
 
         if registry.token.is_empty()
@@ -2090,8 +2085,6 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
-    /// The registry URL has a scheme other than http or https. The HTTP
-    /// client would send it as plaintext HTTP, with the token.
     #[error("InvalidRegistryUrl")]
     InvalidRegistryUrl(Box<[u8]>),
 }
@@ -2107,13 +2100,40 @@ impl PublishError {
             }
             PublishError::InvalidRegistryUrl(href) => {
                 Output::err_generic(
-                    "Registry URL must be http:// or https://\nReceived: \"{}/\"",
-                    (bstr::BStr::new(strings::without_trailing_slash(&href)),),
+                    "Registry URL must be http:// or https://\nReceived: {}",
+                    (bun_core::fmt::quote(&href),),
                 );
                 Global::crash();
             }
         }
     }
+}
+
+/// `url.href` as it is shown in an error: any `user:password@` is cut out of the
+/// authority (also for a URL with no scheme, where `URL::parse` leaves the userinfo
+/// inside the host or path), and repeated trailing slashes collapse to one.
+fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
+    let href = url.href;
+    let authority_start = if !url.protocol.is_empty() {
+        url.protocol.len() + b"://".len()
+    } else if href.starts_with(b"//") {
+        2
+    } else {
+        0
+    };
+    let rest = &href[authority_start..];
+    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    let after_userinfo =
+        strings::last_index_of_char(authority, b'@').map_or(rest, |at| &rest[at + 1..]);
+    let trimmed = strings::without_trailing_slash(after_userinfo);
+
+    let mut out = Vec::with_capacity(authority_start + trimmed.len() + 1);
+    out.extend_from_slice(&href[..authority_start]);
+    out.extend_from_slice(trimmed);
+    if trimmed.len() < after_userinfo.len() {
+        out.push(b'/');
+    }
+    out.into_boxed_slice()
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

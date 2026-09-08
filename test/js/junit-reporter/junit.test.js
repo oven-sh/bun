@@ -630,7 +630,7 @@ describe("junit reporter", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // dots: no per-test "(pass)" lines
       expect(stderr).not.toContain("(pass)");
       expect(stderr).toContain("2 pass");
@@ -658,7 +658,7 @@ describe("junit reporter", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(
         "error: --reporter-outfile is the path of the JUnit report and requires --reporter=junit",
       );

@@ -1141,14 +1141,19 @@ mod border_handler_body {
                     side_diff!(block_end, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
                 }, true);
             } else {
+                // `border` always goes out on this path, so a `border` in the
+                // source keeps resetting `border-image` here too.
                 prop_diff!(block_start, {
-                    fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
                     fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
                     fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
                     fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
-                }, false);
+                }, true);
             }
-        } else if all_valid && !$is_logical && !(is_eq!(width) || is_eq!(style) || is_eq!(color)) {
+        } else if all_valid
+            && !$is_logical
+            && !(is_eq!(width) || is_eq!(style) || is_eq!(color))
+            && !(block_start.eql(block_end) && inline_start.eql(inline_end))
+        {
             // Without `border`, and with no component that repeats on all four
             // sides, the four sides as written beat three multi-value shorthands
             // (`border-top: 0; ...; border-bottom: 1px solid` stays as is).
@@ -1453,6 +1458,10 @@ mod border_handler_body {
                 Property::Unparsed(val) => {
                     if is_border_property(val.property_id.tag()) {
                         self.flush(dest, context);
+                        if val.property_id.tag() == PropertyIdTag::Border {
+                            // `border: var(..)` still resets the `border-image` buffered before it.
+                            self.border_image_handler.reset();
+                        }
                         self.flush_unparsed(val, dest, context);
                     } else {
                         if self.border_image_handler.will_flush(property) {

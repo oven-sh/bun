@@ -502,6 +502,72 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        border: 1px solid red;
+        border-top: 2px dashed blue;
+        border-right: 3px dotted green;
+        border-bottom: 4px double white;
+      }
+    `,
+      `
+      .foo {
+        border: 2px dashed #00f;
+        border-bottom: 4px double #fff;
+        border-left: 1px solid red;
+        border-right: 3px dotted green;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top: 1px solid red;
+        border-bottom: 1px solid red;
+        border-left: 2px dashed blue;
+        border-right: 2px dashed blue;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid dashed;
+        border-width: 1px 2px;
+        border-color: red #00f;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+        border: var(--b);
+      }
+    `,
+      `
+      .foo {
+        border: var(--b);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: var(--b);
+        border-image: linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border: var(--b);
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
         border-block: 2px solid red;
         border-inline: 2px solid red;
       }
@@ -6961,9 +7027,74 @@ describe("css tests", () => {
     `,
     );
     minify_test(".foo { transition-behavior: Allow-Discrete , NORMAL }", ".foo{transition-behavior:allow-discrete,normal}");
+    // `allow-discrete` / `normal` inside the shorthand are its behavior value,
+    // not property names; the typed shorthand does not model them, so these
+    // pass through as written.
     minify_test(
       ".foo { transition: display 2s allow-discrete, opacity 2s }",
       ".foo{transition:display 2s allow-discrete,opacity 2s}",
+    );
+    minify_test(
+      ".foo { transition: .3s allow-discrete; transition-behavior: normal }",
+      ".foo{transition:.3s allow-discrete;transition-behavior:normal}",
+    );
+    minify_test(".foo { transition: 1s Normal, opacity 2s }", ".foo{transition:1s Normal,opacity 2s}");
+    // Only the unprefixed shorthand resets `transition-behavior` everywhere. A
+    // prefixed one is an alias in some engines only, so it keeps its place
+    // relative to a non-default `transition-behavior` and never implies one.
+    minify_test(".foo { -webkit-transition: opacity 1s }", ".foo{-webkit-transition:opacity 1s}");
+    minify_test(
+      ".foo { transition-behavior: allow-discrete; -moz-transition: opacity 1s }",
+      ".foo{transition-behavior:allow-discrete;-moz-transition:opacity 1s}",
+    );
+    minify_test(
+      ".foo { -moz-transition: opacity 1s; transition-behavior: allow-discrete }",
+      ".foo{-moz-transition:opacity 1s;transition-behavior:allow-discrete}",
+    );
+    minify_test(
+      ".foo { -moz-transition: opacity 1s; transition-behavior: normal }",
+      ".foo{-moz-transition:opacity 1s;transition-behavior:normal}",
+    );
+    minify_test(
+      ".foo { transition: opacity 1s; transition-behavior: allow-discrete; -moz-transition: opacity 1s }",
+      ".foo{transition:opacity 1s;transition-behavior:allow-discrete;-moz-transition:opacity 1s}",
+    );
+    minify_test(
+      ".foo { -webkit-transition: opacity 1s; -moz-transition: opacity 1s; transition: opacity 1s; transition-behavior: allow-discrete }",
+      ".foo{-webkit-transition:opacity 1s;-moz-transition:opacity 1s;transition:opacity 1s;transition-behavior:allow-discrete}",
+    );
+    prefix_test(
+      `
+      .foo {
+        -moz-transition: opacity 1s;
+        transition-property: opacity;
+      }
+    `,
+      `
+      .foo {
+        transition-property: opacity;
+        -moz-transition-duration: 1s;
+        -moz-transition-delay: 0s;
+        -moz-transition-timing-function: ease;
+      }
+    `,
+      { chrome: 120 << 16 },
+    );
+    prefix_test(
+      `
+      .foo {
+        transition: opacity 1s;
+        transition-behavior: allow-discrete;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: opacity 1s;
+        transition: opacity 1s;
+        transition-behavior: allow-discrete;
+      }
+    `,
+      { safari: 6 << 16 },
     );
     cssTest(
       `

@@ -73,7 +73,16 @@ impl Transition {
             }
 
             if property.is_none() {
-                if let Ok(value) = parser.try_parse(PropertyId::parse) {
+                if let Ok(value) = parser.try_parse(|p: &mut Parser| -> CssResult<PropertyId> {
+                    let id = PropertyId::parse(p)?;
+                    // These are the `<transition-behavior-value>` of the shorthand, not
+                    // property names. This struct does not hold one, so such a value
+                    // stays unparsed.
+                    if TransitionBehavior::is_keyword(id.name()) {
+                        return Err(p.new_custom_error(crate::ParserError::invalid_value));
+                    }
+                    Ok(id)
+                }) {
                     property = Some(value);
                     continue;
                 }
@@ -122,6 +131,13 @@ pub enum TransitionBehavior {
     AllowDiscrete,
 }
 
+impl TransitionBehavior {
+    fn is_keyword(name: &[u8]) -> bool {
+        bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"normal")
+            || bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"allow-discrete")
+    }
+}
+
 /// A value for the [view-transition-name](https://drafts.csswg.org/css-view-transitions-1/#view-transition-name-prop) property.
 ///
 /// Under CSS modules the `<custom-ident>` is scoped with the same hash as the
@@ -158,9 +174,13 @@ pub struct TransitionHandler {
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
-    /// `transition-behavior` has no vendor prefixes. The `transition` shorthand
-    /// resets it, so the shorthand is only written when this is known too.
+    /// `transition-behavior` has no vendor prefixes. The unprefixed `transition`
+    /// shorthand resets it, so that shorthand is only synthesized from
+    /// longhands when this is known too.
     pub(crate) behaviors: Option<SmallList<TransitionBehavior, 1>>,
+    /// Prefixes a `transition` shorthand was seen with since the last flush.
+    /// Writing the shorthand back out with these is always faithful.
+    pub(crate) shorthand_prefixes: VendorPrefix,
     pub(crate) has_any: bool,
 }
 
@@ -265,6 +285,18 @@ mod transition_handler_body {
                     let val: &SmallList<Transition, 1> = &x.0;
                     let vp: VendorPrefix = x.1;
 
+                    // Only the unprefixed shorthand resets `transition-behavior` in every
+                    // engine. A prefixed one is an alias in some engines and ignored in
+                    // others, so it must keep its source order with a non-default value.
+                    let resets_behavior = vp.contains(VendorPrefix::NONE);
+                    if !resets_behavior
+                        && self.behaviors.as_ref().is_some_and(|b| {
+                            b.slice().iter().any(|b| *b != TransitionBehavior::Normal)
+                        })
+                    {
+                        self.flush(dest, context);
+                    }
+
                     let mut properties = SmallList::<PropertyId, 1>::init_capacity(val.len());
                     let mut durations = SmallList::<Time, 1>::init_capacity(val.len());
                     let mut delays = SmallList::<Time, 1>::init_capacity(val.len());
@@ -339,13 +371,15 @@ mod transition_handler_body {
                         vp
                     );
 
-                    // The shorthand resets `transition-behavior` to `normal` for each entry.
-                    let mut behaviors =
-                        SmallList::<TransitionBehavior, 1>::init_capacity(val.len());
-                    for _ in val.slice() {
-                        behaviors.append(TransitionBehavior::Normal);
+                    self.shorthand_prefixes.insert(vp);
+                    if resets_behavior {
+                        let mut behaviors =
+                            SmallList::<TransitionBehavior, 1>::init_capacity(val.len());
+                        for _ in val.slice() {
+                            behaviors.append(TransitionBehavior::Normal);
+                        }
+                        self.behaviors = Some(behaviors);
                     }
-                    self.behaviors = Some(behaviors);
                 }
                 Property::TransitionBehavior(x) => {
                     self.behaviors = Some(x.deep_clone(arena));
@@ -400,32 +434,37 @@ mod transition_handler_body {
                     None
                 };
             let mut shorthand_is_logical = false;
-            // `Some(true)` when every buffered `transition-behavior` is `normal`,
-            // which any `transition` shorthand already implies.
-            let behaviors_all_normal: Option<bool> = _behaviors
+            let behaviors_all_normal = _behaviors
                 .as_ref()
-                .map(|b| b.slice().iter().all(|b| *b == TransitionBehavior::Normal));
+                .is_some_and(|b| b.slice().iter().all(|b| *b == TransitionBehavior::Normal));
+            // The shorthand also resets `transition-behavior`, so synthesizing it
+            // from longhands is only equivalent when that is written too. With a
+            // prefix the source used for a shorthand it is always faithful.
+            let shorthand_allowed = if _behaviors.is_some() {
+                VendorPrefix::all()
+            } else {
+                self.shorthand_prefixes
+            };
 
-            // The shorthand resets every `transition-*` longhand, so it is only
-            // equivalent to the declarations seen when all of them were set.
             if let (
                 Some((properties, property_prefixes)),
                 Some((durations, duration_prefixes)),
                 Some((delays, delay_prefixes)),
                 Some((timing_functions, timing_prefixes)),
-                Some(behaviors_all_normal),
             ) = (
                 &mut _properties,
                 &mut _durations,
                 &mut _delays,
                 &mut _timing_functions,
-                behaviors_all_normal,
             ) {
                 // Find the intersection of prefixes with the same value.
                 // Remove that from the prefixes of each of the properties. The remaining
                 // prefixes will be handled by outputting individual properties below.
-                let intersection =
-                    *property_prefixes & *duration_prefixes & *delay_prefixes & *timing_prefixes;
+                let intersection = *property_prefixes
+                    & *duration_prefixes
+                    & *delay_prefixes
+                    & *timing_prefixes
+                    & shorthand_allowed;
                 if !intersection.is_empty() {
                     let transitions =
                         get_transitions(arena, properties, durations, delays, timing_functions);
@@ -455,7 +494,8 @@ mod transition_handler_body {
                     timing_prefixes.remove(intersection);
                     delay_prefixes.remove(intersection);
 
-                    if behaviors_all_normal {
+                    // The unprefixed shorthand already says `transition-behavior: normal`.
+                    if intersection.contains(VendorPrefix::NONE) && behaviors_all_normal {
                         _behaviors = None;
                     }
                 }
@@ -516,6 +556,7 @@ mod transition_handler_body {
             self.delays = None;
             self.timing_functions = None;
             self.behaviors = None;
+            self.shorthand_prefixes = VendorPrefix::empty();
             self.has_any = false;
         }
     }

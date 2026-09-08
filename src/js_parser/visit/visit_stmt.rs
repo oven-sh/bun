@@ -2271,8 +2271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_ast::ExprData::EString(mut str_) => {
                         has_string_value = true;
 
-                        // Inlined uses copy this node and string folding appends to rope
-                        // chains in place, so the stored value must not have a chain.
+                        // Inlined uses copy this node, so store it flat.
                         str_.resolve_rope_if_needed(p.arena);
 
                         exported_members.get_ptr_mut(name).unwrap().data =

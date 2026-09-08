@@ -2,8 +2,7 @@ use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-/// Concatenate two `E::String`s. Only the root nodes are copied; the rope
-/// chains behind them are linked into the result (see `EString::push`).
+/// Concatenate two `E::String`s into a rope (see `EString::push`).
 fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     let mut new = left.shallow_clone();
     let mut rhs = data::Store::append(right.shallow_clone());

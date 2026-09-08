@@ -161,7 +161,7 @@ math.test.ts:
  1 fail
 ```
 
-With this flag, failing todo tests do not cause an error, but Bun marks todo tests that pass as failing so you can remove the todo mark or fix the test.
+With this flag, failing todo tests do not cause an error, but Bun marks todo tests that pass as failing so you can remove the todo mark or fix the test. As with [`test.failing`](#test-failing), only the test function's own failure counts as the expected one. An uncaught error or unhandled promise rejection that happens while a todo test runs still fails it.
 
 ### test.only
 

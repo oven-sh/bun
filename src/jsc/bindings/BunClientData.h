@@ -380,8 +380,7 @@ inline constexpr SubspaceForInit subspaceForInit {
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
 };
 
-// `T::destroy` is still `JSC::JSCell::destroy`, which runs no destructor. An
-// inaccessible `destroy` was declared below JSCell, so it does not count.
+// True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.
 template<typename T>
 inline constexpr bool inheritsJSCellDestroy = [] {
     if constexpr (requires { static_cast<void (*)(JSC::JSCell*)>(&T::destroy); })

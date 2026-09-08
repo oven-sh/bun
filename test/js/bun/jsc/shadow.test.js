@@ -13,29 +13,25 @@ it("shadow realm works", () => {
 // so its prototype is the caller's Function.prototype. The engine uses a
 // separate call path for a target that is not a plain function, so check one
 // target of each kind.
-const targets = {
-  "a plain function": `() => () => 1`,
-  "a bound function": `(() => () => 1).bind(undefined)`,
-  "the realm's Function constructor": `Function`,
-  "a callable Proxy": `new Proxy(() => () => 1, {})`,
-  "a Proxy with an apply trap": `new Proxy(() => {}, { apply: () => () => 1 })`,
-};
-
-for (const [name, source] of Object.entries(targets)) {
-  it(`a callable returned through ${name} belongs to the caller's realm`, () => {
-    const wrapped = new ShadowRealm().evaluate(source);
-    const returned = wrapped();
-    expect(typeof returned).toBe("function");
-    expect(Object.getPrototypeOf(returned)).toBe(Function.prototype);
-  });
-}
+it.each([
+  ["a plain function", `() => () => 1`],
+  ["a bound function", `(() => () => 1).bind(undefined)`],
+  ["the realm's Function constructor", `Function`],
+  ["a callable Proxy", `new Proxy(() => () => 1, {})`],
+  ["a Proxy with an apply trap", `new Proxy(() => {}, { apply: () => () => 1 })`],
+])("a callable returned through %s belongs to the caller's realm", (name, source) => {
+  const wrapped = new ShadowRealm().evaluate(source);
+  const returned = wrapped();
+  expect(typeof returned).toBe("function");
+  expect(Object.getPrototypeOf(returned)).toBe(Function.prototype);
+});
 
 it("a returned wrapper does not expose the shadow realm's global object", () => {
   const realm = new ShadowRealm();
   const made = realm.evaluate(`Function`)("return 1");
 
-  // Before the fix this prototype was the realm's Function.prototype, so
-  // .constructor was the realm's real Function constructor.
+  // The wrapper's prototype is the caller's Function.prototype, so the
+  // constructor found on it compiles code in the caller's realm.
   const constructor = Object.getPrototypeOf(made).constructor;
   expect(constructor).toBe(Function);
   expect(constructor("return globalThis")()).toBe(globalThis);

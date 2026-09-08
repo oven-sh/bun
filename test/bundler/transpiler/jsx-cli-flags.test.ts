@@ -30,8 +30,7 @@ async function spawn(args: string[], cwd: string, env: Record<string, string | u
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-  return stdout;
+  return { stdout, exitCode };
 }
 
 // A --jsx-* CLI flag only overrides the field it names. It must not flip the
@@ -76,8 +75,9 @@ describe.concurrent("jsx: --jsx-* CLI flags preserve the development runtime", (
       using dir = tempDir("jsx-cli-dev", files);
       const env: Record<string, string | undefined> = { ...bunEnv, NODE_ENV: nodeEnv };
       if (nodeEnv === undefined) delete env.NODE_ENV;
-      const stdout = await spawn([...extraArgs, "a.jsx"], String(dir), env);
+      const { stdout, exitCode } = await spawn([...extraArgs, "a.jsx"], String(dir), env);
       expect(stdout.trim()).toBe(JSON.stringify({ rt: expected }));
+      expect(exitCode).toBe(0);
     });
   }
 });
@@ -129,8 +129,9 @@ describe.concurrent("jsx: tsconfig dev/prod selection agrees across run, --no-bu
     for (const mode of Object.keys(modes) as (keyof typeof modes)[]) {
       test(`${mode} ${flags.join(" ") || "(no flags)"} [${label}] -> ${expected}`, async () => {
         using dir = tempDir("jsx-cli-tsconfig", { ...shimFiles, ...files });
-        const stdout = await spawn(modes[mode](flags), String(dir));
+        const { stdout, exitCode } = await spawn(modes[mode](flags), String(dir));
         expect(runtimeOf(mode, stdout)).toBe(expected);
+        expect(exitCode).toBe(0);
       });
     }
   }

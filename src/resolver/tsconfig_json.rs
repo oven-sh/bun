@@ -230,7 +230,7 @@ impl TSConfigJSON {
     pub fn jsx_development(&self) -> Option<bool> {
         self.jsx_flags
             .contains(JsxField::Development)
-            .then(|| self.jsx.development)
+            .then_some(self.jsx.development)
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {

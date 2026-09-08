@@ -343,17 +343,24 @@ describe("transpiler cache", () => {
 
     expect(run([])).toBe("calls=0");
     expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+    const withoutFlag = readFileSync(entry);
     expect(run([])).toBe("calls=0");
     expect(newCacheCount()).toBe(0); // cache hit
+    expect(readFileSync(entry).equals(withoutFlag)).toBeTrue();
 
-    // features_hash differs -> old entry deleted, new entry written
+    // features_hash differs -> the entry for this source is rewritten in place
     expect(run(["--jsx-side-effects"])).toBe("calls=3");
     expect(newCacheCount()).toBe(0);
+    const withFlag = readFileSync(entry);
+    expect(withFlag.equals(withoutFlag)).toBeFalse();
     expect(run(["--jsx-side-effects"])).toBe("calls=3");
     expect(newCacheCount()).toBe(0); // cache hit
+    expect(readFileSync(entry).equals(withFlag)).toBeTrue();
 
     expect(run([])).toBe("calls=0");
     expect(newCacheCount()).toBe(0);
+    expect(readFileSync(entry).equals(withFlag)).toBeFalse();
   });
 
   // A define replaces an identifier at parse time, so the define table is part

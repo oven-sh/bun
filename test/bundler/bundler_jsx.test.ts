@@ -1128,17 +1128,18 @@ describe("bundler", () => {
             });
             const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
             expect(stderr).toBe("");
-            expect(exitCode).toBe(0);
-            return stdout;
+            return { stdout, exitCode };
           };
 
           const baseline = await build([]);
-          expect(baseline).toContain("/* @__PURE__ */");
-          expect(baseline).toContain(expectedRuntime);
+          expect(baseline.stdout).toContain("/* @__PURE__ */");
+          expect(baseline.stdout).toContain(expectedRuntime);
+          expect(baseline.exitCode).toBe(0);
 
           const withFlag = await build(["--jsx-side-effects"]);
-          expect(withFlag).not.toContain("@__PURE__");
-          expect(withFlag).toContain(expectedRuntime);
+          expect(withFlag.stdout).not.toContain("@__PURE__");
+          expect(withFlag.stdout).toContain(expectedRuntime);
+          expect(withFlag.exitCode).toBe(0);
         });
       }
     });
@@ -1175,13 +1176,12 @@ describe("bundler", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
-        return stdout.trim();
+        return { stdout: stdout.trim(), exitCode };
       };
 
       // JSX calls are pure by default, so the unused element is removed.
-      expect(await buildAndRun([], "a.js")).toBe("hit=0");
-      expect(await buildAndRun(["--jsx-side-effects"], "b.js")).toBe("hit=1");
+      expect(await buildAndRun([], "a.js")).toEqual({ stdout: "hit=0", exitCode: 0 });
+      expect(await buildAndRun(["--jsx-side-effects"], "b.js")).toEqual({ stdout: "hit=1", exitCode: 0 });
     });
   });
 

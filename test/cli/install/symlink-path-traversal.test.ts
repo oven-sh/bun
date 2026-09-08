@@ -1254,8 +1254,13 @@ describe("node_modules destination symlinks", () => {
 
     await expectVictimUntouched(victim, "greet");
     expect(await readdir(victim)).toEqual(["greet"]);
-    expect((await lstat(join(repo, "node_modules", ".bin"))).isSymbolicLink()).toBe(false);
-    expect((await lstat(join(repo, "node_modules", ".bin", "greet"))).isSymbolicLink()).toBe(true);
+    const binDir = join(repo, "node_modules", ".bin");
+    expect((await lstat(binDir)).isSymbolicLink()).toBe(false);
+    // The bin landed in the real `.bin`: a symlink on POSIX, a shim on Windows.
+    expect((await readdir(binDir)).filter(name => name.startsWith("greet"))).not.toBeEmpty();
+    if (!isWindows) {
+      expect((await lstat(join(binDir, "greet"))).isSymbolicLink()).toBe(true);
+    }
     expect(exitCode).toBe(0);
   });
 

@@ -1426,10 +1426,14 @@ it.concurrent.skipIf(isWindows)("runs a cached binary by the real path of a syml
   const { x_dir, env } = setup();
   const pkg = "bunx-temp-dir-symlink-fixture";
 
-  // A cache entry made by hand, the way an earlier `bunx` run leaves it.
-  const bin = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`, "node_modules", ".bin", pkg);
+  // A cache entry made by hand, the way an earlier `bunx` run leaves it
+  // (0755, since the cache-root check refuses group/other-writable dirs).
+  const cacheRoot = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`);
+  const bin = join(cacheRoot, "node_modules", ".bin", pkg);
   await mkdir(join(bin, ".."), { recursive: true });
+  for (const dir of [cacheRoot, join(cacheRoot, "node_modules"), join(bin, "..")]) chmodSync(dir, 0o755);
   await writeFile(bin, `#!/bin/sh\necho "ran $0"\n`, { mode: 0o755 });
+  chmodSync(bin, 0o755);
 
   const link = join(tmpdirSync(), "temp");
   symlinkSync(env.TMPDIR, link);

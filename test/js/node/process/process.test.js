@@ -688,6 +688,41 @@ it("delete process.env.BUN_CONFIG_VERBOSE_FETCH stops verbose logging and keeps 
   }).toEqual({ baseline: false, set1: true, afterDelete: false, reSet1: true, set0: false, exitCode: 0 });
 });
 
+// A hot `env.KEY = v; env.KEY` site must keep reaching JSEnvironmentVariableMap::put().
+// If the key were a plain data property, DFG would fold the write into a direct store
+// (its structure-based PutByStatus ignores OverridesPut) and the native side would go stale.
+it("native-backed process.env keys still reach fetch() and the time zone from an optimized write site", async () => {
+  const fixture = `
+    const env = process.env;
+    const zones = ["Asia/Tokyo", "America/New_York", "Europe/Paris", "Australia/Sydney"];
+    function setProxy(v) { env.HTTP_PROXY = v; return env.HTTP_PROXY === v; }
+    function setTZ(z) { env.TZ = z; return env.TZ === z; }
+    let readback = true;
+    for (let i = 0; i < 1500; i++) {
+      readback &&= setProxy("http://127.0.0.1:" + (10000 + i));
+      readback &&= setTZ(zones[i & 3]);
+    }
+    await using target = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+    await using proxy = Bun.serve({ port: 0, fetch: () => new Response("via-proxy") });
+    setProxy("http://127.0.0.1:" + proxy.port);
+    setTZ("Asia/Kolkata");
+    const via = await (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
+    console.log(JSON.stringify({ readback, via, zone: new Intl.DateTimeFormat().resolvedOptions().timeZone }));
+  `;
+  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+  for (const k of Object.keys(env)) {
+    if (/^(https?_proxy|no_proxy)$/i.test(k)) delete env[k];
+  }
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
+    readback: true,
+    via: "via-proxy",
+    zone: "Asia/Kolkata",
+    exitCode: 0,
+  });
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

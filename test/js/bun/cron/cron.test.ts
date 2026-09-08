@@ -1389,9 +1389,8 @@ function nextN(expr: string, from: number, n: number): number[] {
 
 describe("Bun.cron.parse", () => {
   // parse() walks the system's local time zone; pin it so the Date.UTC(...)
-  // fixtures below are host-independent. `delete process.env.TZ` would remove
-  // the accessor without clearing the WTF::setTimeZoneOverride, so restore via
-  // assignment (empty string reverts to the system zone).
+  // fixtures below are host-independent. Without a previous TZ, restore the test
+  // runner's default (UTC): an empty TZ selects UTC, `delete` would select the host zone.
   const oldTZ = process.env.TZ;
   beforeAll(() => void (process.env.TZ = "Etc/UTC"));
   afterAll(() => void (process.env.TZ = oldTZ ?? ""));

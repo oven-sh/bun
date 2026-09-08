@@ -107,6 +107,10 @@ static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static bool isNativeBackedEnvKey(const String& key);
 static bool applyEnvWriteSideEffects(JSGlobalObject*, const String& key, const String& value);
 static bool applyEnvDeleteSideEffects(JSGlobalObject*, const String& key);
+// JS-side storage for a native-backed key: the value slot its getter reads, behind a
+// CustomAccessor that stays installed (see storeNativeBackedEnvKey).
+static void storeNativeBackedEnvKey(VM&, JSGlobalObject*, JSObject*, PropertyName, const String& key, JSString*);
+static void clearNativeBackedEnvKey(VM&, JSGlobalObject*, JSObject*, const String& key);
 
 static bool applyEnvWriteSideEffects(JSGlobalObject* globalObject, const String& key, JSC::JSString* string)
 {
@@ -137,11 +141,11 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
 
-    // putDirect bypasses (and replaces) the CustomAccessor so the side effect fires once.
     if (uid && isNativeBackedEnvKey(String(uid))) [[unlikely]] {
         applyEnvWriteSideEffects(globalObject, String(uid), string);
         RETURN_IF_EXCEPTION(scope, false);
-        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        storeNativeBackedEnvKey(vm, globalObject, asObject(cell), propertyName, String(uid), string);
+        RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
@@ -231,39 +235,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+// Setter shared by every native-backed key. Store-only: the native side effect already ran
+// by name in put() (POSIX) or jsProcessEnvCoerceForWrite (the Windows Proxy's write path).
+JSC_DEFINE_CUSTOM_SETTER(jsNativeBackedEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
+    auto* uid = propertyName.publicName();
+    if (!object || !uid)
         return false;
-
-    auto* string = JSValue::decode(value).toString(globalObject);
+    JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!string) [[unlikely]]
-        return false;
-
-    auto view = string->view(globalObject);
+    storeNativeBackedEnvKey(vm, globalObject, object, propertyName, String(uid), string);
     RETURN_IF_EXCEPTION(scope, false);
-
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString val = Bun::toStringView(view);
-    Bun__setEnvValue(globalObject, &name, &val);
-
-    // Proxy-var accessors are installed DontEnum when absent from the OS env
-    // at startup; clear it on write so `{...process.env}` picks the var up.
-    unsigned attributes;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // Static JSObject::deleteProperty: an env map's delete hook would unset the value.
-        DeletePropertySlot deleteSlot;
-        if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
-            object->putDirectCustomAccessor(vm, propertyName, existing,
-                attributes & ~JSC::PropertyAttribute::DontEnum);
-        }
-        RETURN_IF_EXCEPTION(scope, false);
-    }
     return true;
 }
 
@@ -297,19 +282,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(out);
 }
 
-// Store-only: the TZ side effect fires from put() / jsProcessEnvCoerceForWrite on every
-// write. Firing here too would double-apply on Windows (writeEnvVar already ran it).
-JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-    auto* clientData = WebCore::clientData(vm);
-    object->putDirect(vm, clientData->builtinNames().dataPrivateName(), JSValue::decode(value), 0);
-    return true;
-}
-
 bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -317,10 +289,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
 
     // Base::deleteProperty alone drops the accessor and leaves the native state as is.
     auto* uid = propertyName.publicName();
-    if (uid && applyEnvDeleteSideEffects(globalObject, String(uid)) && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
-        auto* clientData = WebCore::clientData(vm);
-        DeletePropertySlot dataSlot;
-        Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
+    if (uid && applyEnvDeleteSideEffects(globalObject, String(uid))) [[unlikely]] {
+        clearNativeBackedEnvKey(vm, globalObject, asObject(cell), String(uid));
         RETURN_IF_EXCEPTION(scope, false);
     }
 
@@ -375,29 +345,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!object)
-        return false;
-
-    JSValue decodedValue = JSValue::decode(value);
-    WTF::String str = decodedValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    applyTLSRejectFromString(globalObject, str);
-
-    const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -423,27 +370,62 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+// TZ / TLS / verbose-fetch getters read a private slot first (then the launch env map);
+// the proxy-var getter reads the env map itself, which Bun__setEnvValue already updated.
+static std::optional<Identifier> nativeBackedEnvValueSlot(VM& vm, const String& key)
 {
-    VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!object)
-        return false;
+    if (key == "TZ"_s)
+        return WebCore::clientData(vm)->builtinNames().dataPrivateName();
+    if (key == "NODE_TLS_REJECT_UNAUTHORIZED"_s)
+        return NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
+    if (key == "BUN_CONFIG_VERBOSE_FETCH"_s)
+        return BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
+    return std::nullopt;
+}
 
-    JSValue decodedValue = JSValue::decode(value);
-    WTF::String str = decodedValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
+static CustomGetterSetter* createNativeBackedEnvAccessor(VM& vm, const String& key)
+{
+    auto getter = jsGetterProxyEnvironmentVariable;
+    if (key == "TZ"_s)
+        getter = jsTimeZoneEnvironmentVariableGetter;
+    else if (key == "NODE_TLS_REJECT_UNAUTHORIZED"_s)
+        getter = jsNodeTLSRejectUnauthorizedGetter;
+    else if (key == "BUN_CONFIG_VERBOSE_FETCH"_s)
+        getter = jsBunConfigVerboseFetchGetter;
+    return CustomGetterSetter::create(vm, getter, jsNativeBackedEnvironmentVariableSetter);
+}
 
-    applyVerboseFetchFromString(globalObject, str);
+// CustomValue, so the property reads back as a data descriptor like the rest of process.env.
+static constexpr unsigned nativeBackedEnvKeyAttributes = static_cast<unsigned>(PropertyAttribute::CustomValue);
 
-    const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+// A native-backed key keeps its custom getter/setter (re-installed after a delete, DontEnum
+// cleared on first write) rather than becoming a data property: DFG's structure-based
+// PutByStatus ignores OverridesPut and would fold a hot write into a direct store past put().
+static void storeNativeBackedEnvKey(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const String& key, JSString* value)
+{
+    if (auto slot = nativeBackedEnvValueSlot(vm, key))
+        object->putDirect(vm, *slot, value, 0);
 
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
-    return true;
+    unsigned attributes = 0;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    bool isAccessor = existing && existing.isCustomGetterSetter();
+    if (isAccessor && !(attributes & PropertyAttribute::DontEnum))
+        return;
+    JSValue accessor = isAccessor ? existing : JSValue(createNativeBackedEnvAccessor(vm, key));
+    if (existing) {
+        // putDirectCustomAccessor asserts NewProperty. Static call: not the env map's delete hook.
+        DeletePropertySlot slot;
+        JSObject::deleteProperty(object, globalObject, propertyName, slot);
+    }
+    object->putDirectCustomAccessor(vm, propertyName, accessor, nativeBackedEnvKeyAttributes);
+}
+
+static void clearNativeBackedEnvKey(VM& vm, JSGlobalObject* globalObject, JSObject* object, const String& key)
+{
+    if (auto slot = nativeBackedEnvValueSlot(vm, key)) {
+        DeletePropertySlot deleteSlot;
+        JSObject::deleteProperty(object, globalObject, *slot, deleteSlot);
+    }
 }
 
 #if OS(WINDOWS)
@@ -1036,7 +1018,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     };
 
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
-    auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
+    auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsNativeBackedEnvironmentVariableSetter);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
@@ -1093,32 +1075,26 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object->putDirectCustomAccessor(vm, identifier, cached_getter_setter, JSC::PropertyAttribute::CustomValue | 0);
     }
 
-    unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;
+    unsigned int TZAttrs = nativeBackedEnvKeyAttributes;
     if (!hasTZ) {
         TZAttrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, TZ), createNativeBackedEnvAccessor(vm, TZ), TZAttrs);
 
-    unsigned int NODE_TLS_REJECT_UNAUTHORIZED_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+    unsigned int NODE_TLS_REJECT_UNAUTHORIZED_Attrs = nativeBackedEnvKeyAttributes;
     if (!hasNodeTLSRejectUnauthorized) {
         NODE_TLS_REJECT_UNAUTHORIZED_Attrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, NODE_TLS_REJECT_UNAUTHORIZED), JSC::CustomGetterSetter::create(vm, jsNodeTLSRejectUnauthorizedGetter, jsNodeTLSRejectUnauthorizedSetter), NODE_TLS_REJECT_UNAUTHORIZED_Attrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, NODE_TLS_REJECT_UNAUTHORIZED), createNativeBackedEnvAccessor(vm, NODE_TLS_REJECT_UNAUTHORIZED), NODE_TLS_REJECT_UNAUTHORIZED_Attrs);
 
-    unsigned int BUN_CONFIG_VERBOSE_FETCH_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+    unsigned int BUN_CONFIG_VERBOSE_FETCH_Attrs = nativeBackedEnvKeyAttributes;
     if (!hasBunConfigVerboseFetch) {
         BUN_CONFIG_VERBOSE_FETCH_Attrs |= JSC::PropertyAttribute::DontEnum;
     }
-    object->putDirectCustomAccessor(
-        vm,
-        Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
+    object->putDirectCustomAccessor(vm, Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), createNativeBackedEnvAccessor(vm, BUN_CONFIG_VERBOSE_FETCH), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
     for (size_t j = 0; j < proxyVarCount; j++) {
-        unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+        unsigned attrs = nativeBackedEnvKeyAttributes;
         if (!hasProxyVar[j]) {
             attrs |= JSC::PropertyAttribute::DontEnum;
         }

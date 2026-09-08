@@ -173,4 +173,33 @@ test("cancel(reason) on an async generator body throws the reason into the gener
   const body = new Response(iterable).body!;
   expect(await body.cancel()).toBeUndefined();
   expect(events).toEqual(["return"]);
+
+  // Hand-written iterators whose throw() lets the reason out in other shapes than a
+  // rejected native promise: a synchronous rethrow and a rejecting thenable.
+  const handWritten = (throwImpl: (e: unknown) => unknown) => ({
+    [Symbol.asyncIterator]() {
+      return {
+        next: async () => ({ done: false, value: new Uint8Array(64 * 1024) }),
+        throw: throwImpl,
+      };
+    },
+  });
+  for (const throwImpl of [
+    (e: unknown) => {
+      throw e;
+    },
+    (e: unknown) => ({ then: (_: unknown, reject: (e: unknown) => void) => reject(e) }),
+  ]) {
+    const reader = new Response(handWritten(throwImpl)).body!.getReader();
+    await reader.read();
+    expect(await reader.cancel(reason)).toBeUndefined();
+  }
+  // A different error from throw() is still a failed cancel.
+  const reader = new Response(
+    handWritten(() => {
+      throw new Error("cleanup failed");
+    }),
+  ).body!.getReader();
+  await reader.read();
+  await expect(reader.cancel(reason)).rejects.toThrow("cleanup failed");
 });

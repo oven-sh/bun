@@ -417,7 +417,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceCancelRejected
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue rejection = callFrame->argument(0);
-    if (JSValue::strictEqual(globalObject, rejection, callFrame->argument(1)))
+    bool sameReason = JSValue::strictEqual(globalObject, rejection, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (sameReason)
         return JSValue::encode(jsUndefined());
     throwException(globalObject, scope, rejection);
     return {};
@@ -452,6 +454,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
 
 // cancel(reason): reason ? iterator.throw(reason) : iterator.return(); the result is
 // returned so the stream's cancel promise chains onto it, and a throw propagates to the caller.
+// The iterator letting the injected reason itself escape (a rejection or a synchronous rethrow
+// of that same value) is a normal cancel and resolves.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -472,16 +476,28 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     if (reason.toBoolean(globalObject)) {
         args.append(reason);
         result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (auto* thrownPromise = asPromise(result)) {
-            auto* settled = JSPromise::create(vm, globalObject->promiseStructure());
-            auto* runtime = JSStreamsRuntime::from(globalObject);
-            thrownPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onAsyncIterableSourceCancelRejected(), settled, reason);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(settled);
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+            // Identity, not strictEqual: nothing may re-enter the VM while the exception is pending.
+            if (!(exception->value() == reason))
+                return {};
+            TRY_CLEAR_EXCEPTION(scope, {});
+            return JSValue::encode(jsUndefined());
         }
-    } else
-        result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, args);
+        if (!result)
+            return JSValue::encode(jsUndefined());
+        // `await` semantics for the result: a foreign thenable is adopted, a plain value fulfills.
+        JSPromise* thrownPromise = asPromise(result);
+        if (!thrownPromise) {
+            thrownPromise = promiseResolvedWith(globalObject, result);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        auto* settled = JSPromise::create(vm, globalObject->promiseStructure());
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        thrownPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onAsyncIterableSourceCancelRejected(), settled, reason);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(settled);
+    }
+    result = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result ? result : jsUndefined());
 }

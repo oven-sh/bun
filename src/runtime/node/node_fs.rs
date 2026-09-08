@@ -412,6 +412,47 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. The syscall refuses an
+/// existing destination with `EEXIST`. Without `COPYFILE_EXCL` the copy must
+/// overwrite, so remove `dest` and clone again. Errors on `src` are reported
+/// before the unlink, so they leave `dest` intact. When `src` and `dest` are
+/// the same file the unlink would delete the source, so refuse with `EINVAL`
+/// like the read/write copy paths do.
+#[cfg(target_os = "macos")]
+fn clonefile_force(
+    src: &ZStr,
+    dest: &ZStr,
+    mode: constants::Copyfile,
+    syscall: sys::Tag,
+) -> Maybe<ret::CopyFile> {
+    // https://www.manpagez.com/man/2/clonefile/
+    let Some(result) =
+        Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), syscall, src)
+    else {
+        return Ok(());
+    };
+    if mode.shouldnt_overwrite() || result.get_errno() != E::EEXIST {
+        return result;
+    }
+    let src_stat = match Syscall::stat(src) {
+        Ok(stat_) => stat_,
+        Err(err) => return Err(err.with_path(src)),
+    };
+    if let Ok(dst_stat) = Syscall::stat(dest) {
+        if src_stat.st_ino == dst_stat.st_ino && src_stat.st_dev == dst_stat.st_dev {
+            return Err(sys::Error {
+                errno: SystemErrno::EINVAL as _,
+                syscall,
+                path: src.as_bytes().into(),
+                ..Default::default()
+            });
+        }
+    }
+    let _ = Syscall::unlink(dest);
+    Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), syscall, src)
+        .unwrap_or(Ok(()))
+}
+
 /// Path-length field width.
 type PathInt = u32;
 
@@ -4703,17 +4744,7 @@ impl NodeFS {
             let dest = args.dest.slice_z(&mut dest_buf);
 
             if args.mode.is_force_clone() {
-                // https://www.manpagez.com/man/2/clonefile/
-                if !args.mode.shouldnt_overwrite() {
-                    // clonefile() will fail if it already exists
-                    let _ = Syscall::unlink(dest);
-                }
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::copyfile,
-                    src,
-                )
-                .unwrap_or(Ok(()));
+                return clonefile_force(src, dest, args.mode, sys::Tag::copyfile);
             } else {
                 let stat_ = match Syscall::stat(src) {
                     Ok(result) => result,
@@ -8242,17 +8273,7 @@ impl NodeFS {
         #[cfg(target_os = "macos")]
         {
             if mode.is_force_clone() {
-                // https://www.manpagez.com/man/2/clonefile/
-                if !mode.shouldnt_overwrite() {
-                    // clonefile() will fail if it already exists
-                    let _ = Syscall::unlink(dest);
-                }
-                return Maybe::<ret::CopyFile>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, 0),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                )
-                .unwrap_or(Ok(()));
+                return clonefile_force(src, dest, mode, sys::Tag::clonefile);
             }
             let stat_ = match reuse_stat {
                 Some(s) => *s,

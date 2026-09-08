@@ -1001,6 +1001,20 @@ describe("copyFileSync", () => {
 
       await expect(copy(src, dest, force | excl)).rejects.toThrow(eexist);
       expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // A failure on the source must not remove the destination.
+      await expect(copy(join(tempdir, "missing.bin"), dest, force)).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // The same file as source and destination must not be deleted.
+      await expect(copy(dest, dest, force)).rejects.toThrow(expect.objectContaining({ code: "EINVAL" }));
+      expect(readFileSync(dest).equals(content)).toBe(true);
+      const link = join(tempdir, `${name}.link`);
+      symlinkSync(dest, link);
+      await expect(copy(link, dest, force)).rejects.toThrow(expect.objectContaining({ code: "EINVAL" }));
+      expect(readFileSync(dest).equals(content)).toBe(true);
     }
   });
 

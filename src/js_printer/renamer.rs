@@ -812,25 +812,27 @@ impl NameScopes for NumberRenamer {
 }
 
 impl NumberRenamer {
+    /// `symbols_in_chunk`: how many symbols the chunk's files declare, to size
+    /// the name table. `symbols` spans the whole bundle and every chunk's
+    /// renamer is alive at once, so sizing from it costs a bundle-sized table
+    /// per chunk.
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
+        symbols_in_chunk: usize,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
         let len = symbols.symbols_for_source.len();
         let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
             .take(len)
             .collect();
-        let symbol_count: usize = symbols.symbols_for_source.iter().map(|s| s.len()).sum();
+        let capacity = root_names.len() + symbols_in_chunk / 4;
 
         let mut r = Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
             names,
             arena: Bump::new(),
-            ids: NameIds::with_capacity_and_hasher(
-                root_names.len() + symbol_count / 4,
-                Default::default(),
-            ),
-            slots: Vec::with_capacity(root_names.len() + symbol_count / 4),
+            ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
+            slots: Vec::with_capacity(capacity),
         });
         // `root_names` owns its keys and is dropped by the caller; copy them.
         for (key, &count) in root_names.iter() {

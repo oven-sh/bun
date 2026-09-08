@@ -236,8 +236,7 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
-                // Before package.json's sections replace the loaded ones below. A migrated
-                // lockfile is rewritten even when frozen, so it is not compared.
+                // For the frozen-lockfile check; the loaded sections are replaced below.
                 if had_any_diffs
                     && manager.options.enable.frozen_lockfile()
                     && ok.format == lockfile::Format::Text

@@ -2801,23 +2801,20 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
-/// What bun.lock records from the manifests, as `bun_lock::Stringifier::save_from_binary` writes
-/// it: each workspace's dependency entries, and the `trustedDependencies` names and
-/// `patchedDependencies` entries that apply to the tree. Overrides, catalogs and workspace
-/// versions are deliberately not part of it.
+/// The manifest-derived sections of bun.lock, mirrored from `bun_lock::Stringifier::save_from_binary`.
+/// Overrides, catalogs and workspace versions are not part of it.
 pub(crate) struct ManifestSections {
     /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
     workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
-    /// Sorted names. `None` when the lockfile has no list.
+    /// Sorted names that apply to the tree. `None` when the lockfile has no list.
     trusted_dependencies: Option<Vec<Box<[u8]>>>,
-    /// Sorted (`name@version`, patch path). `None` when the lockfile has no entries.
+    /// Sorted (`name@version`, patch path) that apply to the tree. `None` when there are none.
     patched_dependencies: Option<Vec<(Box<[u8]>, Box<[u8]>)>>,
 }
 
 impl ManifestSections {
-    /// The changed section and the directory of its package.json, if `self` (about to be
-    /// installed) differs from `loaded`. Trusted and patched lists are only compared when
-    /// `loaded` recorded one, since older `turbo prune` output dropped both sections.
+    /// The first section where `self` differs from `loaded`, with its package.json's directory.
+    /// Trusted and patched lists are only compared when `loaded` recorded one.
     pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
         if self.workspaces.len() != loaded.workspaces.len() {
             return Some(("workspaces", b""));
@@ -2833,8 +2830,7 @@ impl ManifestSections {
             let added = declared
                 .iter()
                 .any(|name| recorded.binary_search(name).is_err());
-            // With workspaces the recorded list is their union, which a checkout missing one of
-            // them cannot reproduce, so only an added name counts there.
+            // With workspaces the recorded list is a union a partial checkout cannot reproduce.
             let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
             if added || removed {
                 return Some(("trustedDependencies", b""));

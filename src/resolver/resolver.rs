@@ -6738,10 +6738,7 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-/// True when every user can create a file in the open directory `dir` (mode
-/// `1777`, world-writable and sticky: `/tmp`, `/var/tmp`, `/dev/shm`), or when
-/// its mode cannot be read. Without the sticky bit any user could also rename
-/// the project below it, so that case gets no check of its own.
+/// Mode `1777` like `/tmp` (any user can create a file in it), or a mode that cannot be read.
 fn is_shared_scratch_dir(dir: FD) -> bool {
     #[cfg(unix)]
     {

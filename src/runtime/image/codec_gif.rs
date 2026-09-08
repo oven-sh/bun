@@ -129,8 +129,7 @@ impl Dict {
     }
 }
 
-/// Header-only: whether a Graphic Control Extension before the first image
-/// descriptor sets the transparent-colour flag. Same block walk as `decode`.
+/// Whether a GCE before the first image descriptor sets the transparent-colour flag.
 pub(crate) fn first_frame_transparent(bytes: &[u8]) -> bool {
     if bytes.len() < 13 {
         return false;

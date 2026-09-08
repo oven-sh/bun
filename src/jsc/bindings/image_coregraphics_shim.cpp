@@ -278,11 +278,7 @@ enum : int32_t { CG_OK = 0,
     CG_ENCODE_FAILED = 3,
     CG_TOO_MANY_PIXELS = 4 };
 
-// Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
-// Two-phase: pass `out=nullptr` to get dimensions (and, if `out_has_alpha` is
-// non-null, whether the source has an alpha channel); then call again with a
-// buffer of `w*h*4` to fill it. Avoids allocating in C++ so the caller owns
-// the buffer like every other decode path.
+// Two-phase: `out=nullptr` probes dimensions (+ `out_has_alpha` if non-null); then fill a `w*h*4` buffer.
 int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
     uint32_t* out_w, uint32_t* out_h, uint8_t* out, int32_t* out_has_alpha)
 {

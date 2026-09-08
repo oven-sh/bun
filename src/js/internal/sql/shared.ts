@@ -2118,8 +2118,7 @@ function parseOptions(
     if (checkServerIdentity !== undefined && !$isCallable(checkServerIdentity)) {
       throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", checkServerIdentity);
     }
-    // Options that only make sense with certificate verification request it,
-    // unless verification is explicitly turned off.
+    // These options imply certificate verification unless it is explicitly turned off.
     if (
       sslMode < SSLMode.verify_ca &&
       (rejectUnauthorized === true || (rejectUnauthorized !== false && (tls.ca || tls.caFile || checkServerIdentity)))

@@ -476,9 +476,7 @@ impl JSValkeyClient {
         Self::create(global_object, callframe.arguments(), js_this)
     }
 
-    /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
-    /// Also returns `tls.checkServerIdentity` (or `undefined`) for the caller
-    /// to store on the JS object.
+    /// Create a client with no JS object and no SubscriptionCtx; also returns `tls.checkServerIdentity` for the JS object.
     ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
@@ -1524,9 +1522,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    /// The name the server certificate must match: `tls.serverName`, else the
-    /// URL host (brackets stripped from IPv6 literals so IP SANs match).
-    /// Empty for unix sockets without a `serverName`.
+    /// `tls.serverName`, else the URL host without IPv6 brackets; empty for a unix socket with no `serverName`.
     fn tls_hostname(&self) -> &[u8] {
         let client = self.client.get();
         if let Some(server_name) = client.tls.server_name() {
@@ -1544,8 +1540,7 @@ impl JSValkeyClient {
         }
     }
 
-    /// Sends `tls_hostname()` as SNI. IP literals are skipped (RFC 6066).
-    /// Runs from `on_open`, before the ClientHello is written.
+    /// Sends `tls_hostname()` as SNI unless it is an IP literal (RFC 6066); runs before the ClientHello.
     fn set_sni(&self) {
         let hostname = self.tls_hostname();
         if hostname.is_empty() || bun_core::ip_address::is_ip_address(hostname) {
@@ -1557,9 +1552,7 @@ impl JSValkeyClient {
         }
     }
 
-    /// After the chain verified: `tls.checkServerIdentity` when the user set
-    /// one, else the built-in match of `tls_hostname()` against the
-    /// certificate (skipped for unix sockets with no `serverName`).
+    /// `tls.checkServerIdentity` if set, else the built-in match against `tls_hostname()` (none for a bare unix socket).
     fn verify_server_identity(&self) -> Result<(), JSValue> {
         let global: &JSGlobalObject = &self.global_object;
         // Owned: the user callback below may re-enter this client.
@@ -1782,8 +1775,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain validation failed.
                 return Self::fail_handshake_with_verify_error(this, vm, &ssl_error);
             }
-            // Certificate chain is valid; verify the server identity. May run
-            // user JS (`tls.checkServerIdentity`), which can close this client.
+            // Chain is valid; the identity check may run user JS, which can close this client.
             if let Err(err) = this.verify_server_identity() {
                 return Self::fail_handshake(this, vm, err);
             }
@@ -1972,8 +1964,7 @@ impl Options {
                     }
                     this.check_server_identity = callback;
                 }
-                // An object with no TLS option set still asks for TLS, with
-                // every option at its default (as `tls: true`).
+                // An object with no recognized option still enables TLS, with defaults (as `tls: true`).
                 this.tls = match SSLConfig::from_js(global_object.bun_vm(), global_object, tls)? {
                     Some(ssl_config) => valkey::TLS::Custom(Box::new(ssl_config)),
                     None => valkey::TLS::Enabled,

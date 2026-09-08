@@ -714,8 +714,7 @@ impl JSMySQLConnection {
         self.fail_with_js_value(instance);
     }
 
-    /// `tls.checkServerIdentity` when the user set one, else the built-in
-    /// hostname match when the ssl mode asks for it (verify-full).
+    /// `tls.checkServerIdentity` if set, else the built-in hostname match when `hostname_must_match` (verify-full).
     fn verify_server_identity(&self, hostname_must_match: bool) -> Result<(), JSValue> {
         let global: &JSGlobalObject = &self.global_object;
         // Owned: the user callback below may re-enter this connection.
@@ -935,8 +934,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             TlsHandshakeStep::VerifyIdentity {
                 hostname_must_match,
             } => {
-                // May run user JS (`tls.checkServerIdentity`), which can close
-                // this connection.
+                // May run user JS (`tls.checkServerIdentity`), which can close this connection.
                 let _guard = this.ref_guard();
                 if let Err(err) = this.verify_server_identity(hostname_must_match) {
                     this.connection_mut().fail_tls_handshake();

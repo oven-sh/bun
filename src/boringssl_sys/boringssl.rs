@@ -514,9 +514,7 @@ impl SSL {
         }
     }
 
-    /// Sets the SNI host name a client connection sends in its ClientHello.
-    /// Call before the handshake starts. `false` if BoringSSL rejects the name
-    /// (empty or longer than 255 bytes).
+    /// Client side: the SNI host name to send. Set it before the handshake; `false` if BoringSSL rejects it.
     pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
         // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }

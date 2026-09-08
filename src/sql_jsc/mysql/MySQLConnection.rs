@@ -56,8 +56,7 @@ bun_core::define_scoped_log!(debug, MySQLConnection, visible);
 pub(crate) enum TlsHandshakeStep {
     /// The handshake or the certificate chain failed: fail with the verify error.
     Failed,
-    /// Verify the server identity (`tls.checkServerIdentity` if set, else the
-    /// built-in hostname match when `hostname_must_match`), then finish.
+    /// Run `tls.checkServerIdentity`, or the built-in hostname match if `hostname_must_match`, then finish.
     VerifyIdentity { hostname_must_match: bool },
     /// Nothing to verify: finish.
     Proceed,
@@ -399,9 +398,7 @@ impl MySQLConnection {
         true
     }
 
-    /// Records the TLS handshake result. The caller then does what the
-    /// returned step says; the identity check is split out because
-    /// `tls.checkServerIdentity` runs user JS, which must not hold `&mut self`.
+    /// Records the TLS handshake result; the identity step is the caller's because it may run user JS outside `&mut self`.
     pub(crate) fn begin_tls_handshake(
         &mut self,
         success: i32,
@@ -416,8 +413,7 @@ impl MySQLConnection {
         );
         self.sequence_id = self.sequence_id.wrapping_add(1);
         if success != 1 {
-            // if we are here is because server rejected us, and the error_no is the cause of this
-            // no matter if reject_unauthorized is false because we are disconnected by the server
+            // The server rejected us: `error_no` is the cause whatever reject_unauthorized says.
             self.tls_status = TLSStatus::SslFailed;
             return TlsHandshakeStep::Failed;
         }
@@ -425,9 +421,7 @@ impl MySQLConnection {
         if self.tls_config.reject_unauthorized() == 0 {
             return TlsHandshakeStep::Proceed;
         }
-        // follow the same rules as postgres
-        // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-        // only reject the connection if reject_unauthorized == true
+        // Same rules as postgres (porsager/postgres src/connection.js): only the verify-* modes reject.
         match self.ssl_mode {
             SSLMode::VerifyCa | SSLMode::VerifyFull => {
                 if ssl_error.error_no != 0 {

@@ -136,8 +136,7 @@ impl TLS {
         }
     }
 
-    /// `tls.serverName`: the SNI to send and the name the certificate must
-    /// match, in place of the URL host.
+    /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
     pub(crate) fn server_name(&self) -> Option<&[u8]> {
         match self {
             TLS::Custom(ssl_config) => ssl_config

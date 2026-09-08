@@ -1,15 +1,10 @@
-//! Server-identity verification for TLS clients whose handshake callback runs
-//! on the JS thread (`Bun.SQL`, `RedisClient`). Either Node's built-in
-//! hostname match, or the user's `tls.checkServerIdentity(hostname, cert)`.
-//!
-//! `Err` carries the value the caller fails the connection with.
+//! `tls.checkServerIdentity` and the built-in hostname check for JS-thread TLS clients (`Bun.SQL`, `RedisClient`).
 
 use bun_boringssl as boringssl;
 
 use crate::{ErrorCode, JSGlobalObject, JSValue, JsResult};
 
-// Implemented in JSX509Certificate.cpp. `X509`/`JSGlobalObject` are opaque
-// `repr(C)` handles; `&mut`/`&` are ABI-identical to non-null pointers.
+// JSX509Certificate.cpp. Opaque `repr(C)` handles: `&mut`/`&` are ABI-identical to non-null pointers.
 unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(
         cert: &mut boringssl::c::X509,
@@ -17,8 +12,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// The legacy certificate object of `tls.getPeerCertificate()` (`subject`,
-/// `subjectaltname`, `fingerprint256`, `raw`, ...). Borrows `cert`.
+/// The `tls.getPeerCertificate()`-style object for `cert` (borrowed, not adopted).
 pub fn x509_to_legacy_object(
     cert: &mut boringssl::c::X509,
     global: &JSGlobalObject,
@@ -26,9 +20,7 @@ pub fn x509_to_legacy_object(
     crate::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))
 }
 
-/// Node's built-in check: `hostname` must match a name in the peer's leaf
-/// certificate. Fails with `ERR_TLS_CERT_ALTNAME_INVALID` and Node's reason
-/// text.
+/// Node's default check of `hostname` against the peer certificate; `ERR_TLS_CERT_ALTNAME_INVALID` on mismatch.
 pub fn check_builtin(
     global: &JSGlobalObject,
     ssl: &mut boringssl::c::SSL,
@@ -43,9 +35,7 @@ pub fn check_builtin(
     Err(altname_invalid(global, &reason))
 }
 
-/// Calls the user's `tls.checkServerIdentity(hostname, cert)` in place of the
-/// built-in check, as Node and `fetch` do. Fails with the `Error` it returns,
-/// or with whatever it throws.
+/// Runs the user's `tls.checkServerIdentity(hostname, cert)`; fails with the `Error` it returns or anything it throws.
 pub fn check_with_callback(
     global: &JSGlobalObject,
     callback: JSValue,

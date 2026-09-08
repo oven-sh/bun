@@ -896,9 +896,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// After the chain verified: `tls.checkServerIdentity` when the user set
-    /// one (verify-ca and verify-full), else the built-in hostname match
-    /// (verify-full only; verify-ca skips it by definition).
+    /// `tls.checkServerIdentity` if set (verify-ca and verify-full), else the built-in hostname match (verify-full only).
     fn verify_server_identity(&self) -> Result<(), JSValue> {
         let global = self.global();
         let hostname = self.tls_config.server_name_bytes();

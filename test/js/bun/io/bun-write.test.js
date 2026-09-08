@@ -1034,9 +1034,11 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         const { fileSinkInternals } = require("bun:internal-for-testing");
         const nextTask = () => new Promise(resolve => setImmediate(resolve));
         const baseline = fileSinkInternals.liveCount();
-        const stream = new ReadableStream({
+        let controller;
+        let stream = new ReadableStream({
           type: "direct",
           async pull(c) {
+            controller = c;
             c.write("hello");
             // The sink flushes "hello" to the file before this resolves.
             await nextTask();
@@ -1046,11 +1048,21 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         });
         const written = await Bun.write(process.env.DEST, new Response(stream));
         const onDisk = await Bun.file(process.env.DEST).text();
+        // The stream ended when pull() resolved: the controller is closed and detached.
+        const late = {};
+        for (const method of ["write", "flush", "end"]) {
+          try {
+            late[method] = String(controller[method]("late"));
+          } catch (e) {
+            late[method] = e.message.split(".")[0];
+          }
+        }
         // Collect the stream and its sink controller.
+        stream = controller = undefined;
         Bun.gc(true);
         await nextTask();
         Bun.gc(true);
-        console.log(JSON.stringify({ written, onDisk, leakedSinks: fileSinkInternals.liveCount() - baseline }));
+        console.log(JSON.stringify({ written, onDisk, late, leakedSinks: fileSinkInternals.liveCount() - baseline }));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
@@ -1060,7 +1072,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ written: 12, onDisk: "hello wörld", leakedSinks: 0 });
+      expect(JSON.parse(stdout)).toEqual({
+        written: 12,
+        onDisk: "hello wörld",
+        late: {
+          write: "This FileSink has already been closed",
+          flush: "This FileSink has already been closed",
+          end: "undefined",
+        },
+        leakedSinks: 0,
+      });
       expect(exitCode).toBe(0);
     });
 
@@ -1076,6 +1097,12 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         },
       });
       await expect(Bun.write(join(String(dir), "direct.txt"), new Response(direct))).rejects.toThrow("boom");
+      const generator = async function* () {
+        yield "hello";
+        await nextTask();
+        throw new Error("boom");
+      };
+      await expect(Bun.write(join(String(dir), "generator.txt"), new Response(generator()))).rejects.toThrow("boom");
       const midway = new ReadableStream({
         async pull(c) {
           c.enqueue("hello");
@@ -1090,6 +1117,61 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         },
       });
       await expect(Bun.write(join(String(dir), "upfront.txt"), upfront)).rejects.toThrow("boom");
+    });
+
+    // The sink is released when the pump rejects; a controller collected after that must
+    // already be detached. A subprocess, because that GC can be the one at process exit.
+    it("survives a GC after a direct stream or a generator body fails", async () => {
+      using dir = tempDir("bun-write-body-fails-gc", {});
+      const fixture = /* js */ `
+        const dir = process.env.DEST_DIR;
+        const lines = [];
+        try {
+          await Bun.write(dir + "/gen.txt", new Response((async function* () { yield "a"; throw new Error("boom"); })()));
+        } catch (e) {
+          lines.push("gen:" + e.message);
+        }
+        let controller;
+        try {
+          await Bun.write(
+            dir + "/direct.txt",
+            new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(c) {
+                  controller = c;
+                  c.write("a");
+                  await c.flush();
+                  throw new Error("boom");
+                },
+              }),
+            ),
+          );
+        } catch (e) {
+          lines.push("direct:" + e.message);
+        }
+        try {
+          controller.write("late");
+          lines.push("late:wrote");
+        } catch {
+          lines.push("late:threw");
+        }
+        controller = undefined;
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        console.log(lines.join(","));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, DEST_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("gen:boom,direct:boom,late:threw");
+      expect(exitCode).toBe(0);
     });
 
     // /dev/full: every write fails with ENOSPC.

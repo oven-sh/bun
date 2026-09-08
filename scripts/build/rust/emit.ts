@@ -34,6 +34,7 @@ import {
 
 const runScript = resolve(import.meta.dirname, "run.ts");
 const planScript = resolve(import.meta.dirname, "plan.ts");
+const planScriptDeps = [planScript, resolve(import.meta.dirname, "toml.ts")]; // what the planner runs
 
 export function registerRustUnitRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
@@ -96,7 +97,7 @@ export function emitRustPlan(n: Ninja, cfg: Config, p: RustPlanEdgeInputs): stri
     outputs: [out],
     rule: "rust_plan",
     inputs: [],
-    implicitInputs: [...p.inputs, planScript],
+    implicitInputs: [...p.inputs, ...planScriptDeps],
     orderOnlyInputs: p.orderOnly,
     vars: {
       cwd: quote(cfg.cwd, hostWin),

@@ -166,7 +166,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Smoke test** — `<exe> --revision` catches load-time failures.
 
-Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step is a plain `full` build (`ci-build` profile) on one agent that then packages and uploads the zips; the split modes remain for running the halves on separate machines.
+Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
 ### Phase 3 — Execute
 

@@ -15,6 +15,10 @@
 //    int32, NaN, 2000-01-01). bytea is the exception: its text input accepts
 //    any string, so a non-BufferSource value rejects instead
 //    (postgres-bytea-bind.test.ts).
+//  - A Date sent as text is ISO 8601 (`toISOString()`), so a `date` or `text`
+//    slot, and every slot under `prepare: false`, receives a literal the server
+//    parses. Previously it was `Date.prototype.toString()` output, which
+//    PostgreSQL rejects (#29010).
 
 import { SQL } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -68,6 +72,16 @@ const classMismatch: Case[] = [
   ["ISO instant object -> timestamp", "timestamp", instant, "2026-09-07 10:11:12.345"],
 ];
 
+// A Date in a text-format slot is `toISOString()`. An Invalid Date has no ISO
+// form, so it stays `String(date)` and a typed slot rejects it.
+const dateAsText: Case[] = [
+  ["Date -> date", "date", date, "2026-09-07"],
+  ["Date -> text", "text", date, "2026-09-07T10:11:12.345Z"],
+  ["Date -> timetz", "timetz", date, "22007"],
+  ["Invalid Date -> date", "date", invalidDate, "22007"],
+  ["Invalid Date -> text (unchanged)", "text", invalidDate, "Invalid Date"],
+];
+
 // These were already exact and must stay on the binary encoders.
 const exactClass: Case[] = [
   ["true -> bool", "bool", true, "true"],
@@ -114,17 +128,18 @@ const columns: Record<string, string> = {
   "jsonb": "c_jsonb",
   "json": "c_json",
   "int8": "c_int8",
+  "date": "c_date",
+  "text": "c_text",
+  "timetz": "c_timetz",
 };
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   let sql: SQL;
+  const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
   beforeAll(async () => {
     await container.ready;
-    sql = new SQL({
-      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
-      max: 1,
-    });
+    sql = new SQL({ url: url(), max: 1 });
     await sql`set time zone 'UTC'`;
     await sql.unsafe(
       `create temp table bind_format (${Object.entries(columns)
@@ -160,5 +175,19 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
   test("values of the matching class keep their binary encoding", async () => {
     expect(await run(exactClass)).toEqual(exactClass);
+  });
+
+  test("a Date bound as text is ISO 8601 (#29010)", async () => {
+    expect(await run(dateAsText)).toEqual(dateAsText);
+  });
+
+  test("prepare: false sends a Date as ISO 8601 before the server has typed the parameter (#29010)", async () => {
+    // Bind is written together with Parse here, so every parameter is still
+    // untyped (text) when it is encoded.
+    await using unnamed = new SQL({ url: url(), max: 1, prepare: false });
+    await unnamed`set time zone 'UTC'`;
+    const [row] =
+      await unnamed`select ${date}::timestamptz::text as a, ${date}::date::text as b, ${invalidDate}::text as c`;
+    expect(row).toEqual({ a: "2026-09-07 10:11:12.345+00", b: "2026-09-07", c: "Invalid Date" });
   });
 });

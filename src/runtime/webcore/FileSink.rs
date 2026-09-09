@@ -545,7 +545,7 @@ impl FileSink {
         };
         let error = match self.stream_error.replace(None) {
             Some(err) => Some(err.to_js(global)),
-            None => self.pipe.get().take_error(),
+            None => self.pipe.get().error(),
         };
         self.stream_js_error.set(false);
         let result = match error {
@@ -561,6 +561,7 @@ impl FileSink {
     /// The pipe is over: detach the controller cell (its destructor must never see this sink) and drop the root on it.
     fn release_pipe(&self) {
         let pipe = self.pipe.replace(streams::PipeCell::default());
+        pipe.clear_slots();
         let (Some(cell), Some(global)) = (pipe.cell(), self.js_global()) else {
             return;
         };

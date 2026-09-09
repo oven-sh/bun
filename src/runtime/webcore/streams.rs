@@ -802,8 +802,8 @@ pub(crate) mod controller_abi {
         pub(crate) safe fn set_pipe_done(c: ::bun_jsc::JSValue, done: ::bun_jsc::JSValue);
         #[link_name = "JSSinkController__setPipeError"]
         pub(crate) safe fn set_pipe_error(c: ::bun_jsc::JSValue, error: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__takePipeError"]
-        pub(crate) safe fn take_pipe_error(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__pipeError"]
+        pub(crate) safe fn pipe_error(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
     }
 }
 
@@ -824,6 +824,13 @@ impl PipeCell {
 
     pub(crate) fn cell(&self) -> Option<JSValue> {
         self.0.get()
+    }
+
+    /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
+    pub(crate) fn clear_slots(&self) {
+        if let Some(cell) = self.0.get() {
+            controller_abi::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
+        }
     }
 
     pub(crate) fn has_stream(&self) -> bool {
@@ -877,8 +884,8 @@ impl PipeCell {
         }
     }
 
-    pub(crate) fn take_error(&self) -> Option<JSValue> {
-        let error = controller_abi::take_pipe_error(self.0.get()?);
+    pub(crate) fn error(&self) -> Option<JSValue> {
+        let error = controller_abi::pipe_error(self.0.get()?);
         (!error.is_empty()).then_some(error)
     }
 }

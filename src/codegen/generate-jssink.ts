@@ -214,11 +214,17 @@ public:
 
     void start(JSC::VM& vm, JSC::JSObject* readableStream, SinkSource kind, JSC::JSCell* source)
     {
-        m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream);
+        m_readableStream.set(vm, this, readableStream);
         m_sourceKind = kind;
         m_source.set(vm, this, source);
     }
-    JSC::JSObject* readableStream() const { return m_weakReadableStream.get(); }
+    JSC::JSObject* readableStream() const { return m_readableStream.get(); }
+    // Two users: this cell's close handler (until m_sourceKind is None) and a sink that set it through setPipe. The last one out drops it.
+    void clearReadableStream()
+    {
+        if (!m_pipeHoldsStream && m_sourceKind == SinkSource::None)
+            m_readableStream.clear();
+    }
     JSC::EncodedJSValue end(JSC::JSGlobalObject*); // the JS-visible end(): finish the native sink, then detach()
     JSC::EncodedJSValue close(JSC::JSGlobalObject*, JSC::JSValue reason); // the JS-visible close(reason): a truthy reason fails the sink without flushing
 
@@ -228,12 +234,12 @@ public:
     mutable WriteBarrier<JSC::JSCell> m_source;
     mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
     mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
-    mutable JSC::Weak<JSObject> m_weakReadableStream;
-    // While a native sink pipes a stream in, it roots only this cell; these hold the rest (streams.rs PipeCell).
-    mutable WriteBarrier<JSC::JSObject> m_pipeStream;
+    // Strong, and cleared as soon as the pipe is over, so a controller the user still holds does not keep the stream alive.
+    mutable WriteBarrier<JSC::JSObject> m_readableStream;
+    // While a native sink pipes a stream in, it roots only this cell; this and m_readableStream hold the rest (streams.rs PipeCell).
     mutable WriteBarrier<JSC::JSPromise> m_pipeDone;
-    mutable WriteBarrier<JSC::Unknown> m_pipeError;
     uintptr_t m_onDestroy { 0 };
+    bool m_pipeHoldsStream { false };
     bool m_destinationClosed { false }; // the sink closed underneath the source (peer abort, write error): write()/flush() report 0 instead of throwing
 
 protected:
@@ -714,7 +720,7 @@ void JS${controllerName}::detach(JSC::JSValue reason) {
     }
 
     if (m_sourceKind == SinkSource::None) {
-        m_weakReadableStream.clear();
+        clearReadableStream();
         return;
     }
     Bun::WebStreams::sinkControllerOnClose(this->globalObject(), this, reason ? reason : JSC::jsUndefined(), /* sinkClosed */ false);
@@ -842,9 +848,8 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_source);
     visitor.append(thisObject->m_closePromise);
     visitor.append(thisObject->m_failReason);
-    visitor.append(thisObject->m_pipeStream);
+    visitor.append(thisObject->m_readableStream);
     visitor.append(thisObject->m_pipeDone);
-    visitor.append(thisObject->m_pipeError);
 
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
@@ -1042,19 +1047,27 @@ extern "C" void JSSinkController__setPipe(JSC::EncodedJSValue cell, JSC::Encoded
 {
     auto* controller = pipeCell(cell);
     auto& vm = controller->vm();
-    controller->m_pipeStream.setMayBeNull(vm, controller, JSC::JSValue::decode(stream).getObject());
+    if (auto* streamObject = JSC::JSValue::decode(stream).getObject()) {
+        controller->m_readableStream.set(vm, controller, streamObject);
+        controller->m_pipeHoldsStream = true;
+    } else {
+        controller->m_pipeHoldsStream = false;
+        controller->clearReadableStream();
+    }
     controller->m_pipeDone.setMayBeNull(vm, controller, dynamicDowncast<JSC::JSPromise>(JSC::JSValue::decode(done)));
 }
 
 extern "C" JSC::EncodedJSValue JSSinkController__pipeStream(JSC::EncodedJSValue cell)
 {
-    auto* stream = pipeCell(cell)->m_pipeStream.get();
+    auto* stream = pipeCell(cell)->m_readableStream.get();
     return JSC::JSValue::encode(stream ? JSC::JSValue(stream) : JSC::JSValue());
 }
 
 extern "C" void JSSinkController__clearPipeStream(JSC::EncodedJSValue cell)
 {
-    pipeCell(cell)->m_pipeStream.clear();
+    auto* controller = pipeCell(cell);
+    controller->m_pipeHoldsStream = false;
+    controller->clearReadableStream();
 }
 
 extern "C" void JSSinkController__setPipeDone(JSC::EncodedJSValue cell, JSC::EncodedJSValue done)
@@ -1077,19 +1090,17 @@ extern "C" JSC::EncodedJSValue JSSinkController__takePipeDone(JSC::EncodedJSValu
     return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
 }
 
+// The pipe's failure value shares m_failReason: close(error) stores the same value there, and every other writer runs after pull() settled.
 extern "C" void JSSinkController__setPipeError(JSC::EncodedJSValue cell, JSC::EncodedJSValue error)
 {
     auto* controller = pipeCell(cell);
-    if (!controller->m_pipeError)
-        controller->m_pipeError.set(controller->vm(), controller, JSC::JSValue::decode(error));
+    if (!controller->m_failReason)
+        controller->m_failReason.set(controller->vm(), controller, JSC::JSValue::decode(error));
 }
 
-extern "C" JSC::EncodedJSValue JSSinkController__takePipeError(JSC::EncodedJSValue cell)
+extern "C" JSC::EncodedJSValue JSSinkController__pipeError(JSC::EncodedJSValue cell)
 {
-    auto* controller = pipeCell(cell);
-    JSC::JSValue error = controller->m_pipeError.get();
-    controller->m_pipeError.clear();
-    return JSC::JSValue::encode(error);
+    return JSC::JSValue::encode(pipeCell(cell)->m_failReason.get());
 }
 
 extern "C" void JSSinkController__detachPtr(JSC::EncodedJSValue controllerValue)

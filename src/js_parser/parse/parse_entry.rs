@@ -96,9 +96,12 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// When using react fast refresh or server components, the framework is
-    /// able to customize what import sources are used.
+    /// Lets a framework customize the server-components import sources.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
+
+    /// With `features.react_fast_refresh`: the module to import `$RefreshReg$` /
+    /// `$RefreshSig$` from. `None` leaves them as globals for the host to define.
+    pub react_fast_refresh_import_source: Option<&'a [u8]>,
 
     /// REPL mode: transforms code for interactive evaluation
     /// - Wraps lone object literals `{...}` in parentheses
@@ -143,6 +146,7 @@ impl<'a> Default for Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
+            react_fast_refresh_import_source: None,
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
@@ -229,6 +233,7 @@ impl<'a> Options<'a> {
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
+            react_fast_refresh_import_source: self.react_fast_refresh_import_source,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
@@ -302,6 +307,7 @@ impl<'a> Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
+            react_fast_refresh_import_source: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
@@ -2311,13 +2317,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if p.react_refresh.register_used || p.react_refresh.signature_used {
+        if let Some(import_source) = p.options.react_fast_refresh_import_source
+            && (p.react_refresh.register_used || p.react_refresh.signature_used)
+        {
             p.generate_react_refresh_import(
                 &mut before,
-                match p.options.framework {
-                    Some(fw) => &fw.react_fast_refresh.as_ref().unwrap().import_source[..],
-                    None => b"react-refresh/runtime",
-                },
+                import_source,
                 &[
                     crate::p::ReactRefreshImportClause {
                         name: b"register",

@@ -111,7 +111,7 @@ pub mod options {
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
     /// higher tier we cannot depend on here); the parser only consumes the
-    /// two nested option fields below (see `Parser._parse`),
+    /// fields below (see `Parser._parse`),
     /// so `file_system_router_types`/`built_in_modules`
     /// are intentionally elided.
     ///
@@ -125,7 +125,6 @@ pub mod options {
     pub struct Framework {
         pub is_built_in_react: bool,
         pub server_components: Option<FrameworkServerComponents>,
-        pub react_fast_refresh: Option<ReactFastRefresh>,
     }
     /// Mirror of `bake.Framework.ServerComponents` (bake/mod.rs:69). Named
     /// `FrameworkServerComponents` here because `options::ServerComponents`
@@ -140,11 +139,6 @@ pub mod options {
         pub server_register_client_reference: Cow<'static, [u8]>,
         pub server_register_server_reference: Cow<'static, [u8]>,
         pub client_register_server_reference: Cow<'static, [u8]>,
-    }
-    /// Port of `bake.Framework.ReactFastRefresh` (bake/mod.rs:101).
-    #[derive(Clone)]
-    pub struct ReactFastRefresh {
-        pub import_source: Cow<'static, [u8]>,
     }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};

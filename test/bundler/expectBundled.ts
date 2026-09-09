@@ -268,6 +268,8 @@ export interface BundlerTestInput {
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
+  /** `--react-fast-refresh`; `{ importSource }` maps to `--react-fast-refresh-import-source` */
+  reactFastRefresh?: boolean | { importSource?: string };
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -537,6 +539,7 @@ function expectBundled(
     serverComponents = false,
     reactCompiler = false,
     reactCompilerOutputMode,
+    reactFastRefresh = false,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -885,6 +888,10 @@ function expectBundled(
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              reactFastRefresh &&
+                (typeof reactFastRefresh === "object" && reactFastRefresh.importSource
+                  ? `--react-fast-refresh-import-source=${reactFastRefresh.importSource}`
+                  : "--react-fast-refresh"),
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1259,6 +1266,7 @@ function expectBundled(
           target,
           reactCompiler,
           reactCompilerOutputMode,
+          reactFastRefresh,
           bytecode,
           bytecodeDepth,
           publicPath,

@@ -3453,10 +3453,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if self.options.features.react_fast_refresh {
-            self.react_refresh.create_signature_ref =
-                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
-            self.react_refresh.register_ref =
-                self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$");
+            if self.options.react_fast_refresh_import_source.is_some() {
+                self.react_refresh.create_signature_ref =
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
+                self.react_refresh.register_ref =
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$");
+            } else {
+                // Host-defined globals: by-name ambient, like `require`.
+                self.react_refresh.create_signature_ref =
+                    self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"$RefreshSig$")?;
+                self.react_refresh.register_ref =
+                    self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"$RefreshReg$")?;
+            }
         }
 
         {
@@ -8521,9 +8529,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         ]));
         let label_expr = self.new_expr(E::String::init(label), loc);
+        let target = self.react_refresh_runtime_ident(self.react_refresh.register_ref, loc);
         let call = self.new_expr(
             E::Call {
-                target: Expr::init_identifier(self.react_refresh.register_ref, loc),
+                target,
                 args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
                 ..Default::default()
             },
@@ -8540,6 +8549,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage(r#ref);
         self.react_refresh.register_used = true;
         Ok(())
+    }
+
+    /// `$RefreshReg$` / `$RefreshSig$` as the target of a synthesized call.
+    fn react_refresh_runtime_ident(&mut self, ref_: Ref, loc: bun_ast::Loc) -> Expr {
+        if self.options.react_fast_refresh_import_source.is_some() {
+            return self.generated_import_ident(ref_, loc);
+        }
+        self.record_usage(ref_);
+        Expr::init_identifier(ref_, loc)
+    }
+
+    /// A name bound by `generate_react_refresh_import`, used after the visit
+    /// pass: count the use as the visitor would (unused import items get
+    /// trimmed) and, unless HMR binds it through `require()`, emit an
+    /// `EImportIdentifier` so the linker can bind it to a bundled CJS module.
+    fn generated_import_ident(&mut self, ref_: Ref, loc: bun_ast::Loc) -> Expr {
+        self.record_usage(ref_);
+        if self.options.features.hot_module_reloading {
+            return Expr::init_identifier(ref_, loc);
+        }
+        self.new_expr(E::ImportIdentifier::new(ref_, true), loc)
     }
 
     pub(crate) fn wrap_value_for_server_component_reference(
@@ -8571,9 +8601,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //   "Comp"
         // );
         let name_expr = self.new_expr(E::String::init(original_name), bun_ast::Loc::EMPTY);
+        let target =
+            self.generated_import_ident(self.server_components_wrap_ref, bun_ast::Loc::EMPTY);
         self.new_expr(
             E::Call {
-                target: Expr::init_identifier(self.server_components_wrap_ref, bun_ast::Loc::EMPTY),
+                target,
                 args: ExprNodeList::from_slice(&[val, module_path, name_expr]),
                 ..Default::default()
             },
@@ -8744,9 +8776,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        let target = self.react_refresh_runtime_ident(self.react_refresh.create_signature_ref, loc);
         let value = Some(self.new_expr(
             E::Call {
-                target: Expr::init_identifier(self.react_refresh.create_signature_ref, loc),
+                target,
                 ..Default::default()
             },
             loc,

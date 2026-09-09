@@ -171,7 +171,15 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--react-fast-refresh" type="boolean">
-  Enable React Fast Refresh transform (for development testing)
+  Enable the React Fast Refresh transform for `.jsx`/`.tsx` files. The output calls the globals `$RefreshReg$` and
+  `$RefreshSig$`, which the host that reloads modules must define. Bun does not emit hot-module-reloading code for this
+  flag.
+</ParamField>
+
+<ParamField path="--react-fast-refresh-import-source" type="string">
+  Import `$RefreshReg$` and `$RefreshSig$` as `register` and `createSignatureFunctionForTransform` from this module
+  instead of using globals, for example `react-refresh/runtime`. The specifier resolves like any other import. Implies
+  <code>--react-fast-refresh</code>.
 </ParamField>
 
 <ParamField path="--react-compiler" type="boolean">

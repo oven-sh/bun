@@ -108,6 +108,7 @@ pub mod js_bundler {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
+        pub(crate) react_fast_refresh_import_source: Option<Box<[u8]>>,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub(crate) react_compiler_parse_test_pragmas: bool,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
@@ -169,6 +170,7 @@ pub mod js_bundler {
                 target: Target::Browser,
                 entry_points: StringSet::default(),
                 react_fast_refresh: false,
+                react_fast_refresh_import_source: None,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
@@ -620,10 +622,22 @@ pub mod js_bundler {
                 )?;
             }
 
-            if let Some(react_fast_refresh) =
-                config.get_boolean_loose(global_this, "reactFastRefresh")?
-            {
-                this.react_fast_refresh = react_fast_refresh;
+            if let Some(react_fast_refresh) = config.get(global_this, "reactFastRefresh")? {
+                if react_fast_refresh.is_object() {
+                    this.react_fast_refresh = true;
+                    if let Some(import_source) =
+                        react_fast_refresh.get_optional_slice(global_this, b"importSource")?
+                    {
+                        if import_source.slice().is_empty() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "Expected reactFastRefresh.importSource to be a non-empty string"
+                            )));
+                        }
+                        this.react_fast_refresh_import_source = Some(import_source.slice().into());
+                    }
+                } else {
+                    this.react_fast_refresh = react_fast_refresh.to_boolean();
+                }
             }
 
             if let Some(react_compiler) = config.get_boolean_loose(global_this, "reactCompiler")? {

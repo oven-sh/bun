@@ -502,7 +502,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\""
         ),
         parse_param!(
-            "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
+            "--react-fast-refresh             Enable the React Fast Refresh transform. Output calls the globals $RefreshReg$ and $RefreshSig$, which the host must define (does not emit hot-module code)"
+        ),
+        parse_param!(
+            "--react-fast-refresh-import-source <STR>  Import $RefreshReg$ and $RefreshSig$ as \"register\" and \"createSignatureFunctionForTransform\" from this module instead of using globals, ex: react-refresh/runtime. Implies --react-fast-refresh"
         ),
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
@@ -2625,6 +2628,16 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-fast-refresh") {
         ctx.bundler_options.react_fast_refresh = true;
+    }
+    if let Some(import_source) = args.option(b"--react-fast-refresh-import-source") {
+        if import_source.is_empty() {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --react-fast-refresh-import-source requires a non-empty module specifier"
+            );
+            Global::exit(1);
+        }
+        ctx.bundler_options.react_fast_refresh = true;
+        ctx.bundler_options.react_fast_refresh_import_source = Some(import_source.into());
     }
 
     if args.flag(b"--react-compiler") {

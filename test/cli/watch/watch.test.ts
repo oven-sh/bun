@@ -1,82 +1,101 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-let watchee: Subprocess;
+// Every child this file starts. A concurrent test that times out never reaches
+// its `await using` disposal, and the runner's dangling-process killer does
+// not run for concurrent tests, so afterAll reaps whatever is still alive.
+const children = new Set<Subprocess>();
+function track<T extends Subprocess>(child: T): T {
+  children.add(child);
+  return child;
+}
+// SIGKILL, not SIGTERM: the wedge fixtures below install a SIGTERM handler and
+// never yield, so SIGTERM cannot stop them and a leaked pair spins at full CPU.
+async function reap(child: Subprocess) {
+  child.kill("SIGKILL");
+  await child.exited;
+  children.delete(child);
+}
+afterAll(() => Promise.all([...children].map(reap)));
 
-function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
+/** `bun --watch ...args` with stdout piped. Disposal SIGKILLs the child. */
+function watchChild<Stderr extends "inherit" | "pipe" = "inherit">(
+  args: string[],
+  options: { cwd: string; env?: NodeJS.Dict<string>; stderr?: Stderr; ipc?: (message: unknown) => void },
+) {
+  const proc = track(
+    spawn({
+      cmd: [bunExe(), "--watch", ...args],
+      cwd: options.cwd,
+      env: options.env ?? bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: options.stderr ?? "inherit",
+      ...(options.ipc ? { ipc: options.ipc } : {}),
+    }) as Subprocess<"ignore", "pipe", Stderr>,
+  );
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let output = "";
   return {
-    waitFor: async (needle: string) => {
-      while (!output.includes(needle)) {
+    proc,
+    /** Everything read from stdout so far. */
+    get output() {
+      return output;
+    },
+    /**
+     * Reads stdout until `needle` has appeared `occurrences` times in total.
+     * Output the child wrote before this is called waits in the pipe, so
+     * nothing is missed. stdout survives the reload exec, so end of stream
+     * means the child died instead of reloading.
+     */
+    async waitFor(needle: string, occurrences = 1) {
+      while (output.split(needle).length - 1 < occurrences) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+        if (done) {
+          throw new Error(
+            `watchee stdout ended before ${JSON.stringify(needle)} x${occurrences}: ${JSON.stringify(output)}`,
+          );
+        }
         output += decoder.decode(value, { stream: true });
       }
     },
-    release: () => reader.releaseLock(),
-    output: () => output,
+    [Symbol.asyncDispose]: () => reap(proc),
   };
 }
 
-for (const dir of ["dir", "©️"]) {
-  it.todoIf(isBroken && isWindows)(
-    `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
-    async () => {
-      const cwd = join(tmpdirSync(), dir);
-      const path = join(cwd, "watchee.js");
+describe.concurrent("bun --watch", () => {
+  for (const dir of ["dir", "©️"]) {
+    it.todoIf(isBroken && isWindows)(
+      `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
+      async () => {
+        using root = tempDir("watch-files", { [dir]: { "watchee.js": `console.log(0, __dirname);` } });
+        const cwd = join(String(root), dir);
+        await using child = watchChild(["watchee.js"], { cwd });
 
-      const updateFile = async (i: number) => {
-        await Bun.write(path, `console.log(${i}, __dirname);`);
-      };
-
-      let i = 0;
-      await updateFile(i);
-      await Bun.sleep(1000);
-      watchee = spawn({
-        cwd,
-        cmd: [bunExe(), "--watch", "watchee.js"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-
-      for await (const line of watchee.stdout) {
-        if (i == 10) break;
-        var str = new TextDecoder().decode(line);
-        expect(str).toContain(`${i} ${cwd}`);
-        i++;
-        await updateFile(i);
-      }
-      rmSync(path);
-    },
-    10000,
-  );
-}
-
-afterEach(async () => {
-  // SIGKILL, not the default SIGTERM: the wedge fixtures below register a
-  // SIGTERM handler and never yield, so SIGTERM can't kill them — a leaked
-  // pair spins at full CPU until someone notices. Await the exit so a test
-  // failure can't strand the child past the suite.
-  if (watchee) {
-    watchee.kill("SIGKILL");
-    await watchee.exited;
-    watchee = undefined;
+        // One line per process image: the first boot, then one reload per edit.
+        let expected = "";
+        for (let i = 0; ; i++) {
+          expected += `${i} ${cwd}\n`;
+          await child.waitFor("\n", i + 1);
+          expect(child.output).toBe(expected);
+          if (i === 10) break;
+          await Bun.write(join(cwd, "watchee.js"), `console.log(${i + 1}, __dirname);`);
+        }
+      },
+      30_000,
+    );
   }
-});
 
-it.skipIf(isWindows)(
-  "process.exit() in a watch kill-signal handler never returns to JS",
-  async () => {
-    using dir = tempDir("watch-exit-in-sigterm", {
-      "exiter.js": `process.on("SIGTERM", () => {
+  it.skipIf(isWindows)(
+    "process.exit() in a watch kill-signal handler never returns to JS",
+    async () => {
+      using dir = tempDir("watch-exit-in-sigterm", {
+        "exiter.js": `process.on("SIGTERM", () => {
   process.exit(0);
   require("fs").writeFileSync("should-not-write.txt", "hello");
 });
@@ -86,113 +105,72 @@ process.on("SIGTERM", () => {
 console.log("started");
 setInterval(() => {}, 1000);
 `,
-    });
-    const cwd = String(dir);
-    const path = join(cwd, "exiter.js");
-    watchee = spawn({
-      cwd,
-      cmd: [bunExe(), "--watch", "exiter.js"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    let starts = 0;
-    let touched = false;
-    const decoder = new TextDecoder();
-    await (async () => {
-      // Output written before this reader attaches waits in the kernel pipe
-      // buffer, so no start can be missed. Lines are reassembled across chunk
-      // boundaries before matching.
-      let buffered = "";
-      for await (const chunk of watchee.stdout) {
-        buffered += decoder.decode(chunk);
-        let newline;
-        while ((newline = buffered.indexOf("\n")) !== -1) {
-          const line = buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-          if (line.includes("started") && ++starts === 2) return;
-          if (starts === 1 && !touched) {
-            touched = true;
-            // First boot seen: touch the file to trigger the kill-signal reload.
-            await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
-          }
-        }
-      }
-      // The child exiting before the reload start is a failure of the watch
-      // path itself; without this the absent-file expects below pass vacuously.
-      throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
-    })();
-    expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
-    expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
-  },
-  10000,
-);
+      });
+      const cwd = String(dir);
+      const path = join(cwd, "exiter.js");
+      await using child = watchChild(["exiter.js"], { cwd });
 
-// While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in
-// the process with EAGAIN until the exec has killed the other threads
-// (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). The --watch reload
-// runs execve on the watcher thread, so a GC marker or worker thread that the
-// JS thread spawned at that moment failed, and WTF::Thread::create aborted the
-// process. The fixture keeps the JS thread inside pthread_create for the whole
-// run and records the first failure in a file that outlives each exec'd image.
-it.skipIf(!isLinux)(
-  "a --watch reload does not fail pthread_create on the other threads",
-  async () => {
-    using dir = tempDir("watch-reload-pthread-create", {
-      "spinner.js": `import { spawnThreadsForTesting } from "bun:internal-for-testing";
+      await child.waitFor("started\n");
+      // Touch the file to trigger the kill-signal reload.
+      await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+      // The second boot line proves the reload happened. Without it the
+      // absent-file expects below would pass vacuously.
+      await child.waitFor("started\n", 2);
+
+      expect(child.output).toBe("started\nstarted\n");
+      expect(existsSync(join(cwd, "should-not-write.txt"))).toBe(false);
+      expect(existsSync(join(cwd, "second-listener-ran.txt"))).toBe(false);
+    },
+    30_000,
+  );
+
+  // While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in
+  // the process with EAGAIN until the exec has killed the other threads
+  // (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). The --watch reload
+  // runs execve on the watcher thread, so a GC marker or worker thread that the
+  // JS thread spawned at that moment failed, and WTF::Thread::create aborted the
+  // process. The fixture keeps the JS thread inside pthread_create for the whole
+  // run and records the first failure in a file that outlives each exec'd image.
+  it.skipIf(!isLinux)(
+    "a --watch reload does not fail pthread_create on the other threads",
+    async () => {
+      using dir = tempDir("watch-reload-pthread-create", {
+        "spinner.js": `import { spawnThreadsForTesting } from "bun:internal-for-testing";
 import { openSync } from "node:fs";
 const fd = openSync("failures.txt", "a");
 console.log("started");
 for (;;) spawnThreadsForTesting(1000, fd, 2);
 `,
-    });
-    const cwd = String(dir);
-    const path = join(cwd, "spinner.js");
-    const proc = spawn({
-      cwd,
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "spinner.js"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    watchee = proc;
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    const waitForStarts = async (count: number) => {
-      while (output.split("started\n").length - 1 < count) {
-        const { value, done } = await reader.read();
-        // stdout survives the exec, so a closed pipe means the process died
-        // instead of reloading.
-        if (done) throw new Error(`watchee exited after ${count - 1} reload(s): ${JSON.stringify(output)}`);
-        output += decoder.decode(value, { stream: true });
+      });
+      const cwd = String(dir);
+      const path = join(cwd, "spinner.js");
+
+      // An unfixed ASAN build hits the window in roughly 1 of 5 reloads.
+      const reloads = 8;
+      {
+        await using child = watchChild(["--no-clear-screen", "spinner.js"], { cwd });
+        await child.waitFor("started\n");
+        for (let i = 1; i <= reloads; i++) {
+          await Bun.write(path, (await Bun.file(path).text()) + `// touch ${i}\n`);
+          await child.waitFor("started\n", i + 1);
+        }
+        expect(child.output).toBe("started\n".repeat(reloads + 1));
       }
-    };
 
-    const reloads = 8;
-    await waitForStarts(1);
-    for (let i = 1; i <= reloads; i++) {
-      await Bun.write(path, (await Bun.file(path).text()) + `// touch ${i}\n`);
-      await waitForStarts(i + 1);
-    }
-    reader.releaseLock();
-    proc.kill("SIGKILL");
-    await proc.exited;
+      expect(await Bun.file(join(cwd, "failures.txt")).text()).toBe("");
+    },
+    30_000,
+  );
 
-    expect(await Bun.file(join(cwd, "failures.txt")).text()).toBe("");
-  },
-  30000,
-);
-
-// Watcher::start() must propagate a failed thread spawn as an Err through its
-// Result return instead of aborting inside start() with `.expect()`. An
-// LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
-// immediately before start()) and fails the very next pthread_create.
-const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
-  const SHIM_C = /* c */ `
+  // Watcher::start() must propagate a failed thread spawn as an Err through its
+  // Result return instead of aborting inside start() with `.expect()`. An
+  // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
+  // immediately before start()) and fails the very next pthread_create.
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  it.skipIf(!isLinux || !cc)(
+    "propagates FileWatcher thread spawn failure instead of panicking in start()",
+    async () => {
+      const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
@@ -203,7 +181,7 @@ static int (*real_inotify_init1)(int);
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static volatile int armed = 0;
 
-/* The child is expected to abort; suppress the core file so CI's runner does
+/* If start() regresses to aborting, suppress the core file so CI's runner does
  * not flag it as a crash. RLIMIT_CORE survives execvp. */
 __attribute__((constructor)) static void no_core(void) {
   struct rlimit rl = {0, 0};
@@ -226,47 +204,51 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   return real_pthread_create(t, a, f, arg);
 }
 `;
-  using dir = tempDir("watch-spawn-fail", {
-    "shim.c": SHIM_C,
-    "watchee.js": "console.log('unreachable');\n",
-  });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+      using dir = tempDir("watch-spawn-fail", {
+        "shim.c": SHIM_C,
+        "watchee.js": "console.log('unreachable');\n",
+      });
+      const shimPath = join(String(dir), "shim.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
 
-  const existing = bunEnv.LD_PRELOAD;
-  await using proc = Bun.spawn({
-    // --debug-crash-handler-use-trace-string skips the debug build's slow
-    // backtrace symbolication so the child exits promptly.
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const existing = bunEnv.LD_PRELOAD;
+      await using proc = track(
+        Bun.spawn({
+          // --debug-crash-handler-use-trace-string skips the debug build's slow
+          // backtrace symbolication so the child exits promptly.
+          cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
+          cwd: String(dir),
+          env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
-  // the error now reaches the caller, which reports it by errno name.
-  expect(stderr).not.toContain("spawn FileWatcher thread");
-  expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
-  expect(stdout).not.toContain("unreachable");
-  expect(exitCode).not.toBe(0);
-});
+      // The error reaches enable_hot_module_reloading(), which names the errno
+      // and exits 1 before the entry point loads.
+      expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
 
-// A script that registers a SIGTERM handler and then spins in synchronous
-// code must still restart on file change: the watcher thread posts the reload
-// to the JS thread first (so listeners can run), but forces the reload itself
-// after a bounded grace window when the JS thread never drains the task.
-it("--watch forces a restart when the kill-signal listener thread is stuck in sync code", async () => {
-  using dir = tempDir("watch-busy-sigterm", {
-    "busy.js": `
+  // A script that registers a SIGTERM handler and then spins in synchronous
+  // code must still restart on file change: the watcher thread posts the reload
+  // to the JS thread first (so listeners can run), but forces the reload itself
+  // after a bounded grace window when the JS thread never drains the task.
+  it("--watch forces a restart when the kill-signal listener thread is stuck in sync code", async () => {
+    using dir = tempDir("watch-busy-sigterm", {
+      "busy.js": `
       process.on("SIGTERM", () => {});
       console.log("iter first");
       // The busy loop never yields to the event loop, so the posted
@@ -278,39 +260,28 @@ it("--watch forces a restart when the kill-signal listener thread is stuck in sy
       while (Date.now() < end) {}
       process.exit(1);
     `,
-  });
+    });
+    await using child = watchChild(["busy.js"], { cwd: String(dir) });
 
-  watchee = spawn({
-    cmd: [bunExe(), "--watch", "busy.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const { waitFor, release } = stdoutWaiter(watchee);
-
-  await waitFor("iter first");
-  await Bun.write(
-    join(String(dir), "busy.js"),
-    `process.on("SIGTERM", () => {});
+    await child.waitFor("iter first\n");
+    await Bun.write(
+      join(String(dir), "busy.js"),
+      `process.on("SIGTERM", () => {});
      console.log("iter second");
      process.exit(0);`,
-  );
-  await waitFor("iter second");
+    );
+    await child.waitFor("iter second\n");
 
-  release();
-  watchee.kill("SIGKILL");
-  await watchee.exited;
-}, 30000);
+    expect(child.output).toBe("iter first\niter second\n");
+  }, 30_000);
 
-// Same fallback, but the wedge is *inside* the handler rather than before
-// the posted task drains: the emit-flag stays true for the handler's full
-// synchronous duration, and the grace thread must still force the reload
-// when the handler never returns.
-it("--watch forces a restart when the kill-signal handler itself never returns", async () => {
-  using dir = tempDir("watch-sigterm-wedged-handler", {
-    "busy.js": `
+  // Same fallback, but the wedge is *inside* the handler rather than before
+  // the posted task drains: the emit-flag stays true for the handler's full
+  // synchronous duration, and the grace thread must still force the reload
+  // when the handler never returns.
+  it("--watch forces a restart when the kill-signal handler itself never returns", async () => {
+    using dir = tempDir("watch-sigterm-wedged-handler", {
+      "busy.js": `
       process.on("SIGTERM", () => {
         const end = Date.now() + 30_000;
         while (Date.now() < end) {}
@@ -319,149 +290,131 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
       console.log("iter first");
       setInterval(() => {}, 1000);
     `,
-  });
+    });
+    await using child = watchChild(["busy.js"], { cwd: String(dir) });
 
-  watchee = spawn({
-    cmd: [bunExe(), "--watch", "busy.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const { waitFor, release } = stdoutWaiter(watchee);
-
-  await waitFor("iter first");
-  await Bun.write(
-    join(String(dir), "busy.js"),
-    `console.log("iter second");
+    await child.waitFor("iter first\n");
+    await Bun.write(
+      join(String(dir), "busy.js"),
+      `console.log("iter second");
      process.exit(0);`,
-  );
-  await waitFor("iter second");
+    );
+    await child.waitFor("iter second\n");
 
-  release();
-  watchee.kill("SIGKILL");
-  await watchee.exited;
-}, 30000);
+    expect(child.output).toBe("iter first\niter second\n");
+  }, 30_000);
 
-// With colors enabled, a reload also clears the terminal. The forced reload
-// runs on the grace thread, which has its own thread-local Output state; the
-// clear used to write through that thread's never-initialized writers and
-// segfault instead of restarting.
-it("--watch forced restart clears the terminal when colors are enabled", async () => {
-  using dir = tempDir("watch-busy-sigterm-clear-screen", {
-    "busy.js": `
+  // With colors enabled, a reload also clears the terminal. The forced reload
+  // runs on the grace thread, which has its own thread-local Output state; the
+  // clear used to write through that thread's never-initialized writers and
+  // segfault instead of restarting.
+  it("--watch forced restart clears the terminal when colors are enabled", async () => {
+    using dir = tempDir("watch-busy-sigterm-clear-screen", {
+      "busy.js": `
       process.on("SIGTERM", () => {});
       console.log("iter first");
       const end = Date.now() + 30_000;
       while (Date.now() < end) {}
       process.exit(1);
     `,
-  });
+    });
+    const env: NodeJS.Dict<string> = { ...bunEnv, FORCE_COLOR: "1" };
+    delete env.NO_COLOR;
 
-  const env = { ...bunEnv, FORCE_COLOR: "1" };
-  delete env.NO_COLOR;
-  // stderr is piped, not inherited: the clear sequence below would otherwise
-  // wipe the terminal running the test suite.
-  const proc = spawn({
-    cmd: [bunExe(), "--watch", "busy.js"],
-    cwd: String(dir),
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  watchee = proc;
-  const stderr = proc.stderr.text();
+    let stdout: string;
+    let stderr: Promise<string>;
+    {
+      // stderr is piped, not inherited: the clear sequence would otherwise
+      // wipe the terminal running the test suite.
+      await using child = watchChild(["busy.js"], { cwd: String(dir), env, stderr: "pipe" });
+      stderr = child.proc.stderr.text();
 
-  const { waitFor, release, output } = stdoutWaiter(proc);
-
-  await waitFor("iter first");
-  await Bun.write(
-    join(String(dir), "busy.js"),
-    `process.on("SIGTERM", () => {});
+      await child.waitFor("iter first\n");
+      await Bun.write(
+        join(String(dir), "busy.js"),
+        `process.on("SIGTERM", () => {});
      console.log("iter second");
      process.exit(0);`,
+      );
+      await child.waitFor("iter second\n");
+      stdout = child.output;
+    }
+
+    // The old image writes the clear sequence to both streams right before
+    // execve; the new image then prints its line.
+    const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
+    expect(stdout).toBe(`iter first\n${clearScreen}iter second\n`);
+    expect(await stderr).toBe(clearScreen);
+  }, 30_000);
+
+  // execve replaces the process without reaching on_exit(), so the compile
+  // cache must be flushed explicitly on the reload path; otherwise
+  // NODE_COMPILE_CACHE never writes anything under --watch.
+  it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
+    using dir = tempDir("watch-compile-cache", {
+      "dep.js": `module.exports = 1;`,
+      "app.js": `require("./dep.js"); console.log("iter first");`,
+    });
+    const cacheDir = join(String(dir), ".cc");
+    // Layout: <cacheDir>/<version tag>/<one entry per module, 16 hex digits>.
+    const entries = () =>
+      readdirSync(cacheDir, { recursive: true, withFileTypes: true })
+        .map(e => (e.isDirectory() ? "tag dir" : e.isFile() && /^[0-9a-f]{16}$/.test(e.name) ? "entry" : e.name))
+        .sort();
+
+    {
+      await using child = watchChild(["app.js"], {
+        cwd: String(dir),
+        env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+      });
+
+      await child.waitFor("iter first\n");
+      // Startup creates the version-tag directory; entries are only written
+      // at exit or on reload.
+      expect(entries()).toEqual(["tag dir"]);
+
+      await Bun.write(join(String(dir), "app.js"), `require("./dep.js"); console.log("iter second");`);
+      await child.waitFor("iter second\n");
+      expect(child.output).toBe("iter first\niter second\n");
+    }
+
+    // The first image persisted app.js and dep.js before execve. The second
+    // image was SIGKILLed, so it wrote nothing.
+    expect(entries()).toEqual(["entry", "entry", "tag dir"]);
+  }, 30_000);
+
+  // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
+  // survive too, so the reloaded image re-attaches to a live socket instead
+  // of a closed one and the parent keeps receiving 'message' events.
+  it.skipIf(isWindows)(
+    "IPC to the parent survives a --watch reload",
+    async () => {
+      using dir = tempDir("watch-ipc-reload", {
+        "app.js": `process.send("iter first"); setInterval(() => {}, 1000);`,
+      });
+      const messages: string[] = [];
+      let notify = () => {};
+      await using child = watchChild(["app.js"], {
+        cwd: String(dir),
+        ipc: message => {
+          messages.push(String(message));
+          notify();
+        },
+      });
+      // Waits for the next message; gives up if the child exits first so a
+      // dead child fails the toEqual below instead of hanging.
+      const received = async (expected: string) => {
+        while (!messages.includes(expected)) {
+          const next = new Promise<boolean>(resolve => (notify = () => resolve(true)));
+          if (!(await Promise.race([next, child.proc.exited.then(() => false)]))) break;
+        }
+        return messages;
+      };
+
+      expect(await received("iter first")).toEqual(["iter first"]);
+      await Bun.write(join(String(dir), "app.js"), `process.send("iter second");`);
+      expect(await received("iter second")).toEqual(["iter first", "iter second"]);
+    },
+    30_000,
   );
-  await waitFor("iter second");
-
-  release();
-  proc.kill("SIGKILL");
-  await proc.exited;
-
-  const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
-  expect(output()).toContain(clearScreen);
-  const [beforeReload, afterReload] = output().split(clearScreen);
-  expect(beforeReload).toContain("iter first");
-  expect(afterReload).toContain("iter second");
-  expect(await stderr).toContain(clearScreen);
-}, 30000);
-
-// execve replaces the process without reaching on_exit(), so the compile
-// cache must be flushed explicitly on the reload path; otherwise
-// NODE_COMPILE_CACHE never writes anything under --watch.
-it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
-  using dir = tempDir("watch-compile-cache", {
-    "dep.js": `module.exports = 1;`,
-    "app.js": `require("./dep.js"); console.log("iter first");`,
-  });
-  const cacheDir = join(String(dir), ".cc");
-
-  watchee = spawn({
-    cmd: [bunExe(), "--watch", "app.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-
-  const { waitFor, release } = stdoutWaiter(watchee);
-
-  await waitFor("iter first");
-  await Bun.write(join(String(dir), "app.js"), `require("./dep.js"); console.log("iter second");`);
-  await waitFor("iter second");
-
-  release();
-  watchee.kill("SIGKILL");
-  await watchee.exited;
-
-  // The first iteration persisted before execve; the <version-tag>/<hash>
-  // files must now exist on disk.
-  const entries = readdirSync(cacheDir, { recursive: true, withFileTypes: true });
-  expect(entries.filter(e => e.isFile()).length).toBeGreaterThan(0);
-}, 30000);
-
-// NODE_CHANNEL_FD survives in environ across execve; the fd it names must
-// survive too, so the reloaded image re-attaches to a live socket instead
-// of a closed one and the parent keeps receiving 'message' events.
-it.skipIf(isWindows)(
-  "IPC to the parent survives a --watch reload",
-  async () => {
-    using dir = tempDir("watch-ipc-reload", {
-      "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
-    });
-
-    const messages: string[] = [];
-    watchee = spawn({
-      cmd: [bunExe(), "--watch", "app.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-      ipc(message) {
-        messages.push(String(message));
-      },
-    });
-
-    const deadline = Date.now() + 20000;
-    while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter first");
-
-    await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
-    while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter second");
-
-    watchee.kill("SIGKILL");
-    await watchee.exited;
-  },
-  30000,
-);
+});

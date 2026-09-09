@@ -1117,7 +1117,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
 }
 
 // The FIVE public own methods are JSBoundFunctions over these [bound-convention] targets.
-// Once m_closed is set they no-op: a late call from an in-flight pull() must not throw.
+// Once the source ended the stream they no-op: a late call from an in-flight pull() must not
+// throw, and a call that follows end()/close() inside the same pull() must not reach the sink
+// before the deferred close drains it.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -1125,7 +1127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectWrite, (JSGlobalObject *
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
     if (!controller) [[unlikely]]
         return JSValue::encode(jsUndefined());
-    if (controller->m_closed)
+    if (controller->sourceEnded())
         return JSValue::encode(jsNumber(0));
     JSDirectStreamController::StagedBytesScope stagedBytes(vm, controller);
     JSValue wrote = writeToDirectSink(globalObject, controller, callFrame->argument(1));
@@ -1151,7 +1153,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectClose, (JSGlobalObject *
 {
     auto& vm = getVM(globalObject);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     return enterStreams(globalObject, [&] { controller->onClose(globalObject, callFrame->argument(1)); }, [&](JSValue error) {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1165,7 +1167,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectFlush, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->onFlush(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1183,7 +1185,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundDirectError, (JSGlobalObject *
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = dynamicDowncast<JSDirectStreamController>(callFrame->argument(0));
-    if (!controller || controller->m_closed) [[unlikely]]
+    if (!controller || controller->sourceEnded()) [[unlikely]]
         return JSValue::encode(jsUndefined());
     controller->handleError(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});

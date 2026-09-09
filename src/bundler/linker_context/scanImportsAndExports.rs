@@ -674,7 +674,8 @@ pub(crate) fn scan_imports_and_exports(
 
     // An `import()` / `require()` of a wrapped ES module whose every read step
     // 4 bound to an export needs no value: nothing depends on the namespace
-    // object through it, so tree shaking can drop that object.
+    // object through it, so tree shaking can drop that object. A `require()`
+    // whose value is the `module.exports` export keeps it: `typeof` observes it.
     for source_index_ in &reachable {
         let id = source_index_.get() as usize;
         let uses = &col_ref!(dynamic_import_aliases)[id];
@@ -684,6 +685,7 @@ pub(crate) fn scan_imports_and_exports(
                 || !record.source_index.is_valid()
                 || col_ref!(flags)[record.source_index.get() as usize].wrap != WrapKind::Esm
                 || col_ref!(exports_kind)[record.source_index.get() as usize] != ExportsKind::Esm
+                || this.require_returns_module_exports_export(record)
             {
                 continue;
             }
@@ -1254,9 +1256,10 @@ pub(crate) fn scan_imports_and_exports(
                             // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
                                 let mut record_flags = ImportRecordFlags::WRAP_WITH_TO_COMMONJS;
-                                // Node's `require(esm)` interop export decides the result instead.
-                                if col_ref!(resolved_exports)[other_id].contains(b"module.exports")
-                                {
+                                if this.require_returns_module_exports_export(
+                                    &col_ref!(import_records_list)[id].as_slice()
+                                        [import_record_index as usize],
+                                ) {
                                     record_flags |=
                                         ImportRecordFlags::REQUIRE_MODULE_EXPORTS_EXPORT;
                                 }

@@ -1373,6 +1373,42 @@ describe("bundler", () => {
     },
   });
 
+  // A `require()` result that is only feature-tested (`typeof`, truthiness) or
+  // only has properties read off it is still that export: tree shaking must not
+  // replace the call with `{}` or bind the reads to the module's other exports.
+  itBundled("cjs/require_esm_module_exports_export_tree_shaken_uses", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const EventEmitter = require("./events.mjs");
+        console.log(typeof EventEmitter, typeof require("./events.mjs"));
+        const enabled = require("./disabled.mjs");
+        if (!enabled) console.log("disabled");
+        const lib = require("./lib.mjs");
+        console.log(lib.version, lib.named);
+      `,
+      "/events.mjs": /* js */ `
+        export default class EventEmitter {}
+        export function once() {}
+        export { EventEmitter as "module.exports" };
+      `,
+      "/disabled.mjs": /* js */ `
+        const enabled = false;
+        export const other = 1;
+        export { enabled as "module.exports" };
+      `,
+      "/lib.mjs": /* js */ `
+        function lib() {}
+        lib.version = 3;
+        export const named = "named";
+        export { lib as "module.exports" };
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: "function function\ndisabled\n3 undefined",
+    },
+  });
+
   // Inside a `require()` cycle the export is not assigned yet. The early
   // `require()` gets the namespace copy, as it did before, and a later one gets
   // the export. (Node throws ERR_REQUIRE_CYCLE_MODULE here; `bun run` hands out

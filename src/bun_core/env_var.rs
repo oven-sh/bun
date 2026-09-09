@@ -40,6 +40,8 @@ use crate::ZStr;
 
 new!(pub AGENT: string, "AGENT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
+// `bun build --compile`: `input` keeps the previous embedded-payload layout (`StandaloneModuleGraph::to_bytes`), for A/B.
+new!(pub BUN_COMPILE_PAYLOAD_ORDER: string, "BUN_COMPILE_PAYLOAD_ORDER", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });

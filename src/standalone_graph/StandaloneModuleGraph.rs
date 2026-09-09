@@ -1587,22 +1587,19 @@ pub(crate) fn to_bytes(
         return Ok(Vec::new());
     };
     // Every per-module region below is written in load order (entry point's
-    // static imports first, then dynamic imports breadth-first) so the modules
-    // a process actually loads share pages instead of each dragging in its own.
+    // static imports in evaluation order, then dynamic imports breadth-first)
+    // so the modules a process actually loads share pages instead of each
+    // dragging in its own.
     module_files.sort_by_key(|f| f.load_order);
+    let interleaved = bun_core::env_var::BUN_COMPILE_PAYLOAD_ORDER.get() == Some(b"input");
     let entry_point_id = module_files
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))
         .unwrap();
-
-    // The internal-module bytecode and the string table go right after the
-    // last startup module's bytecode, so everything a cold start decodes
-    // before the first `import()` is one run of pages (`prefetch_startup_pages`).
     let startup_module_count = module_files
         .iter()
         .take_while(|f| f.loads_at_startup)
         .count();
-    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
 
     // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
     // import closure by index without looking any path up. Empty (and the graph is not embedded) unless every graph
@@ -1633,69 +1630,109 @@ pub(crate) fn to_bytes(
     };
     let embed_prelinked_graph = !prelinked_module_to_file.is_empty();
 
+    let append_bytecode =
+        |string_builder: &mut bun_core::StringBuilder, output_file: &OutputFile| -> StringPointer {
+            if output_file.bytecode_index == u32::MAX {
+                return StringPointer::default();
+            }
+            // Bytecode alignment for JSC bytecode cache deserialization.
+            // Not aligning correctly causes a runtime assertion error or segfault.
+            //
+            // PLATFORM-SPECIFIC ALIGNMENT:
+            // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
+            //   a dedicated section with an 8-byte size header. At runtime, the section
+            //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
+            //   The data buffer starts 8 bytes after the section start.
+            //   For bytecode at offset O to be 128-byte aligned:
+            //     (section_va + 8 + O) % 128 == 0
+            //     => O % 128 == 120
+            //
+            // - ELF (Linux): the payload is mapped by the kernel as part of the
+            //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
+            //   preceded by the same 8-byte length header, so the same arithmetic
+            //   applies.
+            let bytecode = output_files[output_file.bytecode_index as usize]
+                .value
+                .as_slice();
+            append_bytecode_aligned(string_builder, bytecode)
+        };
+    // module_info for ESM bytecode (empty body for a module of the prelinked graph).
+    let append_module_info =
+        |string_builder: &mut bun_core::StringBuilder, output_file: &OutputFile| -> StringPointer {
+            if output_file.module_info_index == u32::MAX {
+                return StringPointer::default();
+            }
+            let mi_bytes = output_files[output_file.module_info_index as usize]
+                .value
+                .as_slice();
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "module_info {}: {} bytes (js {} bytes)",
+                bstr::BStr::new(&output_file.dest_path),
+                mi_bytes.len(),
+                output_file.value.as_slice().len()
+            );
+            string_builder.append_count(mi_bytes)
+        };
+
+    let mut bytecodes = vec![StringPointer::default(); module_files.len()];
+    let mut module_infos = vec![StringPointer::default(); module_files.len()];
+    let (
+        builtin_bytecode_table,
+        bytecode_string_table_ptr,
+        module_info_string_table_ptr,
+        prelinked_module_graph_ptr,
+    ) = if !interleaved {
+        // One run holding what a cold start reads before the first `import()`, roughly in read order;
+        // `startup_prefetch_span` covers exactly it.
+        let bytecode_string_table_ptr =
+            append_bytecode_string_table(&mut string_builder, output_files);
+        let prelinked_module_graph_ptr = if embed_prelinked_graph {
+            append_prelinked_module_graph(&mut string_builder, output_files)
+        } else {
+            StringPointer::default()
+        };
+        let module_info_string_table_ptr =
+            append_module_info_string_table(&mut string_builder, output_files);
+        for (i, &output_file) in module_files[..startup_module_count].iter().enumerate() {
+            module_infos[i] = append_module_info(&mut string_builder, output_file);
+        }
+        for (i, &output_file) in module_files[..startup_module_count].iter().enumerate() {
+            bytecodes[i] = append_bytecode(&mut string_builder, output_file);
+        }
+        let builtin_bytecode_table = append_builtin_bytecode(&mut string_builder, output_files);
+        for (i, &output_file) in module_files.iter().enumerate().skip(startup_module_count) {
+            module_infos[i] = append_module_info(&mut string_builder, output_file);
+            bytecodes[i] = append_bytecode(&mut string_builder, output_file);
+        }
+        (
+            builtin_bytecode_table,
+            bytecode_string_table_ptr,
+            module_info_string_table_ptr,
+            prelinked_module_graph_ptr,
+        )
+    } else {
+        let mut shared: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
+        for (i, &output_file) in module_files.iter().enumerate() {
+            if i == startup_module_count {
+                shared = Some(append_shared_bytecode(
+                    &mut string_builder,
+                    output_files,
+                    embed_prelinked_graph,
+                ));
+            }
+            bytecodes[i] = append_bytecode(&mut string_builder, output_file);
+            module_infos[i] = append_module_info(&mut string_builder, output_file);
+        }
+        shared.unwrap_or_else(|| {
+            append_shared_bytecode(&mut string_builder, output_files, embed_prelinked_graph)
+        })
+    };
+
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
     for (i, &output_file) in module_files.iter().enumerate() {
-        if i == startup_module_count {
-            shared_bytecode = Some(append_shared_bytecode(
-                &mut string_builder,
-                output_files,
-                embed_prelinked_graph,
-            ));
-        }
         let buf_bytes = output_file.value.as_slice();
-
-        let bytecode: StringPointer = 'brk: {
-            if output_file.bytecode_index != u32::MAX {
-                // Bytecode alignment for JSC bytecode cache deserialization.
-                // Not aligning correctly causes a runtime assertion error or segfault.
-                //
-                // PLATFORM-SPECIFIC ALIGNMENT:
-                // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
-                //   a dedicated section with an 8-byte size header. At runtime, the section
-                //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
-                //   The data buffer starts 8 bytes after the section start.
-                //   For bytecode at offset O to be 128-byte aligned:
-                //     (section_va + 8 + O) % 128 == 0
-                //     => O % 128 == 120
-                //
-                // - ELF (Linux): the payload is mapped by the kernel as part of the
-                //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
-                //   preceded by the same 8-byte length header, so the same arithmetic
-                //   applies.
-                let bytecode = output_files[output_file.bytecode_index as usize]
-                    .value
-                    .as_slice();
-                break 'brk append_bytecode_aligned(&mut string_builder, bytecode);
-            } else {
-                break 'brk StringPointer::default();
-            }
-        };
-
-        // Embed module_info for ESM bytecode
-        let module_info: StringPointer = 'brk: {
-            if output_file.module_info_index != u32::MAX {
-                let mi_bytes = output_files[output_file.module_info_index as usize]
-                    .value
-                    .as_slice();
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "module_info {}: {} bytes (js {} bytes, bytecode {} bytes)",
-                    bstr::BStr::new(&output_file.dest_path),
-                    mi_bytes.len(),
-                    output_file.value.as_slice().len(),
-                    bytecode.length
-                );
-                let offset = string_builder.len;
-                let writable = string_builder.writable();
-                writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
-                string_builder.len += mi_bytes.len();
-                break 'brk StringPointer {
-                    offset: offset as u32,
-                    length: mi_bytes.len() as u32,
-                };
-            }
-            break 'brk StringPointer::default();
-        };
+        let (bytecode, module_info) = (bytecodes[i], module_infos[i]);
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
@@ -1764,16 +1801,7 @@ pub(crate) fn to_bytes(
         });
     }
 
-    let (
-        builtin_bytecode_table,
-        bytecode_string_table_ptr,
-        module_info_string_table_ptr,
-        prelinked_module_graph_ptr,
-    ) = shared_bytecode.unwrap_or_else(|| {
-        append_shared_bytecode(&mut string_builder, output_files, embed_prelinked_graph)
-    });
-
-    // Region layout after the bytecode/module_info run above: source maps
+    // Region layout after the bytecode / module_info runs above: source maps
     // (unread until an error prints), then every file's source text as one run
     // (`Flags::SOURCE_TEXT_CONTIGUOUS`, so `hint_source_pages_dont_need` can
     // drop exactly it), then everything booting touches — names, origin paths,
@@ -3141,15 +3169,7 @@ impl StandaloneModuleGraph {
             if mode == 1
                 && let Some((_, startup_hi)) = self.startup_prefetch_span()
             {
-                // The shared block written right after the startup modules also holds the
-                // module-info string table and the prelinked graph, both read whole at boot.
-                let shared_hi = address_span(
-                    [self.module_info_string_table, self.prelinked_module_graph]
-                        .iter()
-                        .map(|t| (t.as_ptr(), t.len())),
-                )
-                .map_or(0, |(_, hi)| hi);
-                lo = lo.max(startup_hi).max(shared_hi);
+                lo = lo.max(startup_hi);
             }
             if lo < hi {
                 elf::disable_fault_around(lo, hi);
@@ -3158,9 +3178,10 @@ impl StandaloneModuleGraph {
     }
 
     /// Starts reading the payload pages the entry point's static import closure
-    /// needs — its modules' bytecode (or source text when there is none), the
-    /// internal-module bytecode and the string table, one run by construction
-    /// (`to_bytes`) — so on a cold start the disk reads overlap JSC
+    /// needs — the string tables, the prelinked graph, its modules' module info
+    /// and bytecode (or source text when there is none) and the internal-module
+    /// bytecode, one run by construction (`to_bytes`) — so on a cold start the
+    /// disk reads overlap JSC
     /// initialization instead of arriving one page fault at a time while the
     /// bytecode decodes. Pages already cached cost nothing; errors are ignored.
     /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` skips it.
@@ -3181,9 +3202,11 @@ impl StandaloneModuleGraph {
         let _ = (lo, hi);
     }
 
-    /// The run `prefetch_startup_pages` reads ahead: the startup modules'
-    /// bytecode + module info, the internal-module bytecode and the string
-    /// table (or the startup modules' source text when there is no bytecode).
+    /// The run `prefetch_startup_pages` reads ahead (`to_bytes` writes it as
+    /// one): the bytecode string table, the prelinked graph, the module-info
+    /// string table, the startup modules' module info and bytecode, the
+    /// internal-module bytecode (or the startup modules' source text when there
+    /// is no bytecode).
     fn startup_prefetch_span(&self) -> Option<(usize, usize)> {
         if self.startup_module_count == 0 {
             return None;
@@ -3196,10 +3219,14 @@ impl StandaloneModuleGraph {
                     .flat_map(|f| [f.bytecode, f.module_info])
                     .chain(self.builtin_bytecode.iter().map(|&(_, bytes)| bytes))
                     .map(|bytes| (bytes.cast::<u8>().cast_const(), bytes.len()))
-                    .chain([(
-                        self.bytecode_string_table.as_ptr(),
-                        self.bytecode_string_table.len(),
-                    )]),
+                    .chain(
+                        [
+                            self.prelinked_module_graph,
+                            self.module_info_string_table,
+                            self.bytecode_string_table,
+                        ]
+                        .map(|t| (t.as_ptr(), t.len())),
+                    ),
             )
         } else {
             address_span(
@@ -3299,15 +3326,39 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
     (lo < hi).then_some((lo, hi))
 }
 
-/// Writes the ahead-of-time bytecode of the internal modules, the shared
-/// bytecode string table and the module-info string table. Returns the builtin
+/// `BUN_COMPILE_PAYLOAD_ORDER=input` (the previous layout): the internal-module
+/// bytecode, the bytecode string table, the module-info string table and the
+/// prelinked graph as one block after the startup modules. Returns the builtin
 /// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`) and
-/// the two string tables' pointers.
+/// the three pointers.
 fn append_shared_bytecode(
     string_builder: &mut bun_core::StringBuilder,
     output_files: &[OutputFile],
     embed_prelinked_graph: bool,
 ) -> (Vec<u8>, StringPointer, StringPointer, StringPointer) {
+    let builtin_bytecode_table = append_builtin_bytecode(string_builder, output_files);
+    let bytecode_string_table_ptr = append_bytecode_string_table(string_builder, output_files);
+    let module_info_string_table_ptr =
+        append_module_info_string_table(string_builder, output_files);
+    let prelinked_module_graph_ptr = if embed_prelinked_graph {
+        append_prelinked_module_graph(string_builder, output_files)
+    } else {
+        StringPointer::default()
+    };
+    (
+        builtin_bytecode_table,
+        bytecode_string_table_ptr,
+        module_info_string_table_ptr,
+        prelinked_module_graph_ptr,
+    )
+}
+
+/// Writes the ahead-of-time bytecode of the internal modules; returns their
+/// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`).
+fn append_builtin_bytecode(
+    string_builder: &mut bun_core::StringBuilder,
+    output_files: &[OutputFile],
+) -> Vec<u8> {
     let mut builtin_bytecode_table: Vec<u8> = Vec::new();
     let mut count: u32 = 0;
     builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
@@ -3331,7 +3382,13 @@ fn append_shared_bytecode(
         count += 1;
     }
     builtin_bytecode_table[0..4].copy_from_slice(&count.to_le_bytes());
+    builtin_bytecode_table
+}
 
+fn append_bytecode_string_table(
+    string_builder: &mut bun_core::StringBuilder,
+    output_files: &[OutputFile],
+) -> StringPointer {
     let mut bytecode_string_table_ptr = StringPointer::default();
     for output_file in output_files {
         if output_file.output_kind != options::OutputKind::BytecodeStringTable {
@@ -3342,33 +3399,37 @@ fn append_shared_bytecode(
         };
         bytecode_string_table_ptr = append_bytecode_aligned(string_builder, bytes);
     }
-    let mut module_info_string_table_ptr = StringPointer::default();
-    if let Some(table) = output_files
+    bytecode_string_table_ptr
+}
+
+fn append_module_info_string_table(
+    string_builder: &mut bun_core::StringBuilder,
+    output_files: &[OutputFile],
+) -> StringPointer {
+    let Some(table) = output_files
         .iter()
         .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
+    else {
+        return StringPointer::default();
+    };
+    // 4-byte aligned at runtime (the section payload starts 8 bytes past a page boundary): JSC reads the slots in place.
+    let padding = (4 - string_builder.len % 4) % 4;
+    string_builder.writable()[0..padding].fill(0);
+    string_builder.len += padding;
+    string_builder.append_count(table.value.as_slice())
+}
+
+fn append_prelinked_module_graph(
+    string_builder: &mut bun_core::StringBuilder,
+    output_files: &[OutputFile],
+) -> StringPointer {
+    match output_files
+        .iter()
+        .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
     {
-        // 4-byte aligned at runtime (the section payload starts 8 bytes past a page boundary): JSC reads the slots in place.
-        let padding = (4 - string_builder.len % 4) % 4;
-        string_builder.writable()[0..padding].fill(0);
-        string_builder.len += padding;
-        module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
+        Some(graph) => append_bytecode_aligned(string_builder, graph.value.as_slice()),
+        None => StringPointer::default(),
     }
-    let mut prelinked_module_graph_ptr = StringPointer::default();
-    if embed_prelinked_graph {
-        if let Some(graph) = output_files
-            .iter()
-            .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
-        {
-            prelinked_module_graph_ptr =
-                append_bytecode_aligned(string_builder, graph.value.as_slice());
-        }
-    }
-    (
-        builtin_bytecode_table,
-        bytecode_string_table_ptr,
-        module_info_string_table_ptr,
-        prelinked_module_graph_ptr,
-    )
 }
 
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins

@@ -209,9 +209,9 @@ describe("bundler", () => {
     });
 
     // The payload records how many leading modules make up the entry point's
-    // static import closure, and writes the internal-module bytecode and string
-    // table right after them, so a cold start prefetches one run. Lazily
-    // imported chunks come after that run.
+    // static import closure, and writes the string table, their bytecode (in
+    // evaluation order) and the internal-module bytecode as one run, so a cold
+    // start prefetches it whole. Lazily imported chunks come after that run.
     itBundled("compile/splitting/StartupModulesPrecedeLazyChunks", {
       compile: true,
       splitting: true,
@@ -228,6 +228,8 @@ describe("bundler", () => {
           console.log("mark:lazy1");
         `,
         "/shared.ts": /* js */ `
+          import { platform } from "node:os";
+          platform();
           console.log("mark:shared");
         `,
       },
@@ -253,6 +255,12 @@ describe("bundler", () => {
         if (flags & (1 << 5)) at += count * 4; // source hashes
         expect(flags & (1 << 6), "Flags::HAS_BUILTIN_BYTECODE").not.toBe(0);
         const builtinCount = u32(at);
+        expect(builtinCount).toBeGreaterThan(0);
+        // `count` × { u32 id, StringPointer bytes }
+        const builtins: { offset: number; length: number }[] = [];
+        for (let i = 0; i < builtinCount; i++) {
+          builtins.push({ offset: u32(at + 4 + i * 12 + 4), length: u32(at + 4 + i * 12 + 8) });
+        }
         at += 4 + builtinCount * 12;
         expect(flags & (1 << 7), "Flags::HAS_BYTECODE_STRING_TABLE").not.toBe(0);
         const stringTable = { offset: u32(at), length: u32(at + 4) };
@@ -263,24 +271,31 @@ describe("bundler", () => {
         // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path
         // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
         const index: Record<string, number> = {};
+        const bytecodeStart: number[] = [];
         const bytecodeEnd: number[] = [];
         for (let i = 0; i < count; i++) {
           const record = base + modules.offset + i * 52;
           const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
           const bytecode = { offset: file.readUInt32LE(record + 24), length: file.readUInt32LE(record + 28) };
           expect(bytecode.length, `module ${i} has bytecode`).toBeGreaterThan(0);
+          bytecodeStart.push(bytecode.offset);
           bytecodeEnd.push(bytecode.offset + bytecode.length);
           const source = file.toString("latin1", base + contents.offset, base + contents.offset + contents.length);
           for (const name of ["entry", "lazy1", "shared"]) {
             if (source.includes(`mark:${name}"`)) index[name] = i;
           }
         }
+        // Table order is evaluation order: `shared` evaluates before `entry`, `lazy1` only after the `import()`.
         expect(startupCount).toBe(2);
-        expect([index.shared, index.entry].sort()).toEqual([0, 1]);
-        expect(index.lazy1).toBe(2);
-        // The string table sits between the startup modules' bytecode and the lazy chunk's.
-        expect(stringTable.offset).toBeGreaterThanOrEqual(Math.max(bytecodeEnd[0], bytecodeEnd[1]));
-        expect(stringTable.offset + stringTable.length).toBeLessThanOrEqual(bytecodeEnd[2]);
+        expect([index.shared, index.entry, index.lazy1]).toEqual([0, 1, 2]);
+        // Layout: string table, then the startup modules' bytecode in table order, then the internal-module
+        // bytecode, then the lazy chunk's bytecode.
+        expect(stringTable.offset + stringTable.length).toBeLessThanOrEqual(bytecodeStart[0]);
+        expect(bytecodeEnd[0]).toBeLessThanOrEqual(bytecodeStart[1]);
+        for (const builtin of builtins) {
+          expect(builtin.offset).toBeGreaterThanOrEqual(bytecodeEnd[1]);
+          expect(builtin.offset + builtin.length).toBeLessThanOrEqual(bytecodeStart[2]);
+        }
       },
     });
 

@@ -2120,8 +2120,7 @@ pub struct TemplatePart {
 }
 
 impl TemplatePart {
-    /// Field-wise copy. `TemplatePart` is not `Copy` only because `EString`
-    /// does not derive it; all fields are structurally `Copy`.
+    /// Field-wise copy (`EString` does not derive `Copy`).
     #[inline]
     pub fn shallow_clone(&self) -> TemplatePart {
         TemplatePart {

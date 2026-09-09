@@ -824,8 +824,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // existing memory without allocating anything.
         let stack_bottom = p.binary_expression_stack.len();
 
-        // Shared by every `+` fold along this chain so a run of template
-        // literals appends to one `parts` buffer instead of re-copying it.
+        // One per chain: a run of template literals appends to one `parts` buffer.
         let mut template_parts = TemplatePartsBuilder::default();
 
         // Assigned on every `break` arm of the loop below; the initial input

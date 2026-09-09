@@ -15,19 +15,15 @@ fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     new
 }
 
-/// The one template node a `TemplatePartsBuilder` may grow in place, and the
-/// buffer that backs its `parts`.
+/// The template node a `+` chain folds into, and the buffer behind its `parts`.
 struct Accumulator<'a> {
     node: StoreRef<E::Template>,
-    /// Never dropped, so a buffer the builder stops using is not freed and
-    /// every view of it stays valid.
+    /// Never freed: nodes keep their views into buffers the builder has stopped using.
     parts: ManuallyDrop<ArenaVec<'a, e::TemplatePart>>,
 }
 
 impl Accumulator<'_> {
-    /// Growing can move the buffer and free the old block. That is sound only
-    /// when `node` holds the one view of the whole buffer and `extra` lives
-    /// outside it.
+    /// Growth reallocs: `node` must hold the only view, and `extra` must live outside the buffer.
     fn can_grow_for(&self, node: StoreRef<E::Template>, extra: &[e::TemplatePart]) -> bool {
         let view = node.parts;
         let buffer = self.parts.as_ptr();
@@ -39,22 +35,14 @@ impl Accumulator<'_> {
     }
 }
 
-/// Growable backing buffer for the `parts` of the template that a
-/// left-associated `+` chain folds into. `E::Template.parts` is a bare
-/// `(ptr, len)` view with no spare capacity, so without this every
-/// `` `a${x}` + `b${y}` `` step would copy all parts accumulated so far into
-/// a fresh arena slice: quadratic memory in the chain length.
-///
-/// One instance lives for one run of the iterative binary-expression visitor,
-/// i.e. one left-nested operator chain.
+/// Spare capacity behind `E::Template.parts`, so each template fold in a `+` chain appends, not copies.
 #[derive(Default)]
 pub struct TemplatePartsBuilder<'a> {
     accumulator: Option<Accumulator<'a>>,
 }
 
 impl<'a> TemplatePartsBuilder<'a> {
-    /// Append `extra` to `template`'s parts: in place when `template` is this
-    /// builder's accumulator, with one copy into a new buffer otherwise.
+    /// In place for this builder's accumulator; any other template is copied once first.
     fn append(
         &mut self,
         bump: &'a Arena,

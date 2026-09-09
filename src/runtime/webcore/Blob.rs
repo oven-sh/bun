@@ -1919,8 +1919,11 @@ impl BlobExt for Blob {
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
         }
-        if let Some(store) = self.store.get() {
-            return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
+        // A set-but-empty type (a typed blob's `slice()`, an empty `Content-Type`) stays `""`.
+        if !self.content_type_was_set.get() {
+            if let Some(store) = self.store.get() {
+                return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
+            }
         }
         JSValue::js_empty_string(global_this)
     }
@@ -3948,8 +3951,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     if !content_type.is_empty() {
         blob.content_type
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
-        blob.content_type_was_set.set(content_type_was_set);
+    } else if content_type_was_set {
+        // A type set to empty: drop the one a file store's extension gave the fresh Blob.
+        blob.content_type.set(BlobContentType::default());
     }
+    blob.content_type_was_set.set(content_type_was_set);
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; to_js is infallible. Spelled
@@ -5718,6 +5724,23 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
         }
     }
     blob
+}
+
+/// C++ `readableStreamToBlob` types the Blob it built with the body owner's `Content-Type`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__setContentTypeFromHeader(value: JSValue, content_type: &BunString) {
+    let Some(blob) = Blob::from_js(value) else {
+        return;
+    };
+    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
+    let blob = unsafe { &*blob };
+    let content_type = content_type.to_utf8();
+    blob.content_type_was_set.set(true);
+    blob.content_type.set(if content_type.is_empty() {
+        BlobContentType::default()
+    } else {
+        BlobContentType::Owned(std::sync::Arc::from(&*content_type))
+    });
 }
 
 /// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;

@@ -530,10 +530,6 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code

@@ -265,3 +265,61 @@ describe("response Connection: close closes the socket", () => {
     }
   });
 });
+
+// `req.headers` of a served Request is built lazily from the uWS request. A
+// native read of a request header must see what JS sees through `req.headers`,
+// whether or not the handler read the headers first, awaited first, or changed
+// them. `blob()` does that as of this change; `formData()` takes its boundary
+// from the same value, so it reads through `req.headers` too.
+describe.concurrent("formData() takes Content-Type from req.headers", () => {
+  // What the handler does before the read. In "sync" and "touched" the uWS
+  // request is still live, and "touched" has already built `req.headers` from
+  // it. A microtask still runs inside the dispatch. After a macrotask the
+  // server has copied the headers and detached the uWS request.
+  const states = {
+    sync: (req: Request): Promise<void> | undefined => undefined,
+    touched: (req: Request): Promise<void> | undefined => void req.headers.has("x-touch"),
+    microtask: (req: Request): Promise<void> | undefined => Promise.resolve(),
+    macrotask: (req: Request): Promise<void> | undefined => new Promise<void>(resolve => setImmediate(resolve)),
+  };
+  const urlencoded = "application/x-www-form-urlencoded";
+
+  describe.each(Object.keys(states) as (keyof typeof states)[])("%s handler", state => {
+    async function read(op: "set" | "delete" | "clone", wireContentType: string) {
+      let result: unknown;
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const wait = states[state](req);
+          if (wait) await wait;
+          if (op === "set") req.headers.set("content-type", urlencoded);
+          if (op === "delete") req.headers.delete("content-type");
+          const subjects = op === "clone" ? [req.clone(), req] : [req];
+          try {
+            result = await Promise.all(subjects.map(async r => Object.fromEntries(await r.formData())));
+          } catch (e) {
+            result = (e as { code?: string }).code ?? String(e);
+          }
+          return new Response("done");
+        },
+      });
+      const res = await fetch(server.url, {
+        method: "POST",
+        body: "a=1",
+        headers: { "content-type": wireContentType },
+      });
+      expect(await res.text()).toBe("done");
+      return result;
+    }
+
+    test("follows headers.set()", async () => {
+      expect(await read("set", "text/plain")).toEqual([{ a: "1" }]);
+    });
+    test("follows headers.delete()", async () => {
+      expect(await read("delete", urlencoded)).toEqual("ERR_FORMDATA_PARSE_ERROR");
+    });
+    test("survives clone() on both copies", async () => {
+      expect(await read("clone", urlencoded)).toEqual([{ a: "1" }, { a: "1" }]);
+    });
+  });
+});

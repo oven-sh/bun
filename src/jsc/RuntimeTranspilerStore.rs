@@ -443,7 +443,8 @@ impl RuntimeTranspilerStore {
                 self.store.put(job);
             }
         }
-        self.order.held.clear();
+        // Held results root JS promises; a Worker's VM is deallocated without `Drop`.
+        self.order = ImportOrder::default();
     }
 
     /// Fulfil every completed job's module promise. This drain is a dispatcher:
@@ -451,19 +452,22 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    pub fn run_from_js_thread(
-        &mut self,
+    ///
+    /// # Safety
+    /// `this` is the VM's store, on the JS thread. Raw because the microtask
+    /// drains below re-enter it (`transpile`, `Bun__onModuleResolved`).
+    pub unsafe fn run_from_js_thread(
+        this: *mut Self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        // SAFETY: fn contract; `vm` is the live owning VM.
+        let (batch, jsc_vm) = unsafe { ((*this).queue.pop_batch(), (*vm.as_ptr()).jsc_vm()) };
         let mut iter = batch.iterator();
+        // SAFETY: `event_loop` is the VM's live event-loop self-pointer; no borrow of `*this` is live.
+        let drain =
+            || unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
         // Set while the last fulfilment's microtasks (where JSC makes the record and, for an ES
         // module, fetches its imports) have yet to run; nothing is decided or fulfilled until they have.
         let mut undrained = false;
@@ -473,43 +477,45 @@ impl RuntimeTranspilerStore {
                 break;
             }
             if undrained {
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
+                if drain().is_err() {
+                    // SAFETY: fn contract; statement-scoped.
+                    unsafe { (*this).requeue(job, &mut iter) };
                     return;
                 }
                 undrained = false;
             }
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            let completed = unsafe { (*job).take_completed() };
-            if completed.evaluates_when_fulfilled()
-                && self.order.has_unfulfilled_predecessor(completed.order_key)
-            {
-                self.order.hold(completed);
-                continue;
-            }
-            undrained = true;
-            if self.fulfill(global, completed).is_err() {
-                self.requeue(iter.next(), &mut iter);
+            // SAFETY: `job` is a live job popped from the intrusive queue; `this` per fn
+            // contract, each access statement-scoped.
+            let fulfilled = unsafe {
+                let completed = (*job).take_completed();
+                if completed.evaluates_when_fulfilled()
+                    && (*this)
+                        .order
+                        .has_unfulfilled_predecessor(completed.order_key)
+                {
+                    (*this).order.hold(completed);
+                    continue;
+                }
+                undrained = true;
+                Self::fulfill(this, global, completed)
+            };
+            if fulfilled.is_err() {
+                // SAFETY: fn contract; statement-scoped.
+                unsafe { (*this).requeue(iter.next(), &mut iter) };
                 return;
             }
         }
         // Held CommonJS results whose turn has come.
         loop {
-            if undrained {
-                // SAFETY: as above.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    return;
-                }
+            if undrained && drain().is_err() {
+                return;
             }
-            let Some(completed) = self.order.next_ready() else {
+            // SAFETY: fn contract; statement-scoped, after the drain.
+            let Some(completed) = (unsafe { (*this).order.next_ready() }) else {
                 break;
             };
-            if self.fulfill(global, completed).is_err() {
+            // SAFETY: fn contract.
+            if unsafe { Self::fulfill(this, global, completed) }.is_err() {
                 return;
             }
             undrained = true;
@@ -518,7 +524,14 @@ impl RuntimeTranspilerStore {
     }
 
     /// Settle the module promise with the result. `Err` when the VM is terminating.
-    fn fulfill(&mut self, global: &JSGlobalObject, completed: CompletedJob) -> Result<(), ()> {
+    ///
+    /// # Safety
+    /// As for [`run_from_js_thread`](Self::run_from_js_thread).
+    unsafe fn fulfill(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        completed: CompletedJob,
+    ) -> Result<(), ()> {
         let CompletedJob {
             order_key,
             global_this,
@@ -536,7 +549,8 @@ impl RuntimeTranspilerStore {
             &referrer,
             &mut log,
         );
-        self.order.fulfilled(order_key);
+        // SAFETY: fn contract.
+        unsafe { (*this).order.fulfilled(order_key) };
         if let Err(err) = fulfilled {
             if crate::task::report_error_or_terminate(global, err).is_err() {
                 return Err(());

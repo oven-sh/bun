@@ -7,6 +7,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/ParseInt.h>
 #include <atomic>
 #include <cassert>
 
@@ -227,6 +228,14 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);
+}
+
+// The digits of a binary, base-4, octal, hex or base-32 integer (no prefix, sign or separators) to the
+// nearest double. This is the function behind JSC's own numeric literals and parseInt, so a literal the
+// transpiler prints and the same literal given to eval() agree.
+extern "C" double JSC__parsePowerOfTwoRadixDigits(const Latin1Character* digits, size_t length, int radix)
+{
+    return JSC::parseIntOverflow(std::span<const Latin1Character> { digits, length }, radix);
 }
 
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,

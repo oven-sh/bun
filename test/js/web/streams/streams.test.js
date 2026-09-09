@@ -3830,7 +3830,11 @@ describe("direct stream edge cases", () => {
       },
       ...extra,
     });
-  const settle = p => p.then(v => ({ ok: v }), e => ({ err: e?.message ?? String(e) }));
+  const settle = p =>
+    p.then(
+      v => ({ ok: v }),
+      e => ({ err: e?.message ?? String(e) }),
+    );
 
   describe("re-entrancy", () => {
     test("cancel() hook that writes and closes the controller it was given is a no-op, not a crash", async () => {
@@ -3872,7 +3876,11 @@ describe("direct stream edge cases", () => {
         },
       });
       const result = await settle(Bun.readableStreamToText(rs));
-      expect({ pulls: t.pulls, closes: t.closes.length, result }).toEqual({ pulls: 1, closes: 1, result: { err: "close hook" } });
+      expect({ pulls: t.pulls, closes: t.closes.length, result }).toEqual({
+        pulls: 1,
+        closes: 1,
+        result: { err: "close hook" },
+      });
     });
 
     test("the source's close() hook calling controller.close() again does not recurse", async () => {
@@ -3892,7 +3900,11 @@ describe("direct stream edge cases", () => {
           controller.end();
         },
       });
-      expect({ text: await Bun.readableStreamToText(rs), pulls: t.pulls, closes: t.closes.length }).toEqual({ text: "a", pulls: 1, closes: 1 });
+      expect({ text: await Bun.readableStreamToText(rs), pulls: t.pulls, closes: t.closes.length }).toEqual({
+        text: "a",
+        pulls: 1,
+        closes: 1,
+      });
     });
 
     test("a pending flush() promise settles when close() runs before the reader drains", async () => {
@@ -3922,7 +3934,10 @@ describe("direct stream edge cases", () => {
       await later();
       expect(pendingWrite).toBeInstanceOf(Promise);
       await reader.cancel(new Error("gone"));
-      expect({ settled: await settle(pendingWrite), cancels: t.cancels.length }).toEqual({ settled: expect.anything(), cancels: 1 });
+      expect({ settled: await settle(pendingWrite), cancels: t.cancels.length }).toEqual({
+        settled: expect.anything(),
+        cancels: 1,
+      });
     });
 
     test("write()/flush()/end() after close() report 0 bytes on every path instead of throwing", async () => {
@@ -4089,7 +4104,9 @@ describe("direct stream edge cases", () => {
         c.close();
       });
       const chunks = [];
-      const result = await settle(rs.pipeTo(new WritableStream({ write: v => void chunks.push(txt(v)) }), { signal: ac.signal }));
+      const result = await settle(
+        rs.pipeTo(new WritableStream({ write: v => void chunks.push(txt(v)) }), { signal: ac.signal }),
+      );
       await later();
       expect({ result, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e), chunks }).toEqual({
         result: { err: "stop" },
@@ -4155,7 +4172,11 @@ describe("direct stream edge cases", () => {
       const [a, b] = rs.tee();
       // a.cancel() resolves once the source is done (both branches settled), so it must not be awaited before b is read.
       const cancelled = a.cancel("not interested");
-      expect({ b: await Bun.readableStreamToText(b), pulls: t.pulls, cancels: t.cancels.length }).toEqual({ b: "abc", pulls: 1, cancels: 0 });
+      expect({ b: await Bun.readableStreamToText(b), pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+        b: "abc",
+        pulls: 1,
+        cancels: 0,
+      });
       await cancelled;
     });
 
@@ -4187,7 +4208,10 @@ describe("direct stream edge cases", () => {
           events.push("finally");
         }
       }
-      expect({ result: await settle(new Response(gen()).text()), events }).toEqual({ result: { err: "gen failed" }, events: ["finally"] });
+      expect({ result: await settle(new Response(gen()).text()), events }).toEqual({
+        result: { err: "gen failed" },
+        events: ["finally"],
+      });
     });
 
     test("breaking out of for-await over a generator-backed Response body calls return() once", async () => {
@@ -4252,8 +4276,16 @@ describe("direct stream edge cases", () => {
         readable.on("end", () => (events.push("end"), resolve()));
         readable.on("error", reject);
       });
-      const data = events.filter(e => e.startsWith("data:")).map(e => e.slice(5)).join("");
-      expect({ data, last: events.at(-1), pulls: t.pulls, cancels: t.cancels.length }).toEqual({ data: "abc", last: "end", pulls: 1, cancels: 0 });
+      const data = events
+        .filter(e => e.startsWith("data:"))
+        .map(e => e.slice(5))
+        .join("");
+      expect({ data, last: events.at(-1), pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+        data: "abc",
+        last: "end",
+        pulls: 1,
+        cancels: 0,
+      });
     });
 
     test("Readable.fromWeb(direct): close(error) becomes 'error' with that error, no 'end'", async () => {
@@ -4268,7 +4300,11 @@ describe("direct stream edge cases", () => {
       readable.on("data", d => events.push("data:" + txt(d)));
       readable.on("end", () => events.push("end"));
       const err = await new Promise(resolve => readable.on("error", resolve));
-      expect({ events, err: err.message, pulls: t.pulls }).toEqual({ events: ["data:a"], err: "source failed", pulls: 1 });
+      expect({ events, err: err.message, pulls: t.pulls }).toEqual({
+        events: ["data:a"],
+        err: "source failed",
+        pulls: 1,
+      });
     });
 
     test("Readable.fromWeb(direct).destroy(err) cancels the source once", async () => {
@@ -4284,7 +4320,10 @@ describe("direct stream edge cases", () => {
       readable.destroy(new Error("torn down"));
       expect((await errored).message).toBe("torn down");
       await later();
-      expect({ pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({ pulls: 1, cancels: ["torn down"] });
+      expect({ pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        pulls: 1,
+        cancels: ["torn down"],
+      });
     });
 
     test("direct.pipeTo(Writable.toWeb(nodeWritable)) with highWaterMark 1 delivers everything in order", async () => {
@@ -4324,7 +4363,9 @@ describe("direct stream edge cases", () => {
       });
       const sink = new Writable({ write: (_c, _e, cb) => cb() });
       const errors = [];
-      await new Promise(resolve => pipeline(Readable.fromWeb(rs), transform, sink, err => (errors.push(err?.message), resolve())));
+      await new Promise(resolve =>
+        pipeline(Readable.fromWeb(rs), transform, sink, err => (errors.push(err?.message), resolve())),
+      );
       await later();
       expect({ errors, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
         errors: ["transform failed"],
@@ -4336,7 +4377,9 @@ describe("direct stream edge cases", () => {
     test("finished(Readable.fromWeb(direct)) resolves after close() and rejects after close(error)", async () => {
       const ok = Readable.fromWeb(direct(tally(), async c => (c.write("a"), await c.flush(), c.close())));
       ok.resume();
-      const bad = Readable.fromWeb(direct(tally(), async c => (c.write("a"), await c.flush(), c.close(new Error("source failed")))));
+      const bad = Readable.fromWeb(
+        direct(tally(), async c => (c.write("a"), await c.flush(), c.close(new Error("source failed")))),
+      );
       bad.resume();
       const results = await Promise.all([
         settle(new Promise((res, rej) => finished(ok, e => (e ? rej(e) : res("finished"))))),
@@ -4355,4 +4398,3 @@ describe("direct stream edge cases", () => {
     });
   });
 });
-

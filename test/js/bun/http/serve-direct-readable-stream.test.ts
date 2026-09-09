@@ -802,7 +802,11 @@ describe("sync pull() throw after status is written does not re-render error()",
     expect(wire).not.toContain("x-err");
     expect(wire).not.toContain("FROM-ERROR-HANDLER");
     expect(wire).not.toContain("Something went wrong");
-    expect({ errorHandlerCalls, errors, stderr: stderr.trim() }).toEqual({ errorHandlerCalls: 1, errors: ["boom"], stderr: "" });
+    expect({ errorHandlerCalls, errors, stderr: stderr.trim() }).toEqual({
+      errorHandlerCalls: 1,
+      errors: ["boom"],
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -821,7 +825,11 @@ describe("sync pull() throw after status is written does not re-render error()",
     // body that failed. The connection is closed instead, and since the status
     // never left the cork buffer the client sees an empty reply.
     expect(wire).toBe("");
-    expect({ errorHandlerCalls, errors, stderr: stderr.trim() }).toEqual({ errorHandlerCalls: 1, errors: ["boom"], stderr: "" });
+    expect({ errorHandlerCalls, errors, stderr: stderr.trim() }).toEqual({
+      errorHandlerCalls: 1,
+      errors: ["boom"],
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 });
@@ -1821,7 +1829,10 @@ test("a body error after headers are sent is delivered to error() and not printe
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ seen: JSON.parse(stdout.trim()), stderr: stderr.trim() }).toEqual({ seen: ["close:body failed", "reject:body failed"], stderr: "" });
+  expect({ seen: JSON.parse(stdout.trim()), stderr: stderr.trim() }).toEqual({
+    seen: ["close:body failed", "reject:body failed"],
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -1841,7 +1852,11 @@ describe("direct stream edge cases over Bun.serve", () => {
         t.cancels.push(reason?.code ?? reason?.message ?? reason);
       },
     } as any);
-  const settle = <T,>(p: Promise<T>) => p.then(v => ({ ok: v }), (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }));
+  const settle = <T>(p: Promise<T>) =>
+    p.then(
+      v => ({ ok: v }),
+      (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }),
+    );
   // Opens a raw connection, reads until `until` appears in the response, then destroys the socket.
   async function abortAfter(server: { port: number }, until: string) {
     const sock = net.connect(server.port, "127.0.0.1");
@@ -1912,7 +1927,9 @@ describe("direct stream edge cases over Bun.serve", () => {
       await aborted;
       await later();
       await later();
-      outcomes.add(t.cancels.length === 1 ? "cancelled" : t.cancels.length === 0 ? "ended" : `cancels=${t.cancels.length}`);
+      outcomes.add(
+        t.cancels.length === 1 ? "cancelled" : t.cancels.length === 0 ? "ended" : `cancels=${t.cancels.length}`,
+      );
       expect(t.pulls).toBe(1);
     }
     expect([...outcomes].every(o => o === "cancelled" || o === "ended")).toBe(true);
@@ -1939,7 +1956,11 @@ describe("direct stream edge cases over Bun.serve", () => {
     await aborted;
     while (t.cancels.length === 0) await later();
     // The source keeps using the controller after the peer left; none of this may throw or crash.
-    const results = [settle(Promise.resolve().then(() => controller.write("late"))), settle(Promise.resolve().then(() => controller.flush())), settle(Promise.resolve().then(() => controller.close()))];
+    const results = [
+      settle(Promise.resolve().then(() => controller.write("late"))),
+      settle(Promise.resolve().then(() => controller.flush())),
+      settle(Promise.resolve().then(() => controller.close())),
+    ];
     await Promise.all(results);
     expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
   });
@@ -1971,7 +1992,10 @@ describe("direct stream edge cases over Bun.serve", () => {
     await abortAfter(server, "first");
     await cancelled.promise;
     // write() after the peer left reports 0 bytes; the same server still serves the next request.
-    expect({ written, next: (await abortAfter(server, "first")).includes("first") }).toEqual({ written: 0, next: true });
+    expect({ written, next: (await abortAfter(server, "first")).includes("first") }).toEqual({
+      written: 0,
+      next: true,
+    });
   });
 
   test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {
@@ -2005,7 +2029,12 @@ describe("direct stream edge cases over Bun.serve", () => {
 
   test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
     const readable = new Readable({ read() {} });
-    using server = Bun.serve({ port: 0, development: false, error: () => new Response("error", { status: 500 }), fetch: () => new Response(Readable.toWeb(readable) as any) });
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      error: () => new Response("error", { status: 500 }),
+      fetch: () => new Response(Readable.toWeb(readable) as any),
+    });
     const resPromise = fetch(server.url);
     // Headers go out with the first body chunk, so push before awaiting the response.
     readable.push("first");
@@ -2013,7 +2042,14 @@ describe("direct stream edge cases over Bun.serve", () => {
     const reader = res.body!.getReader();
     expect(dec.decode((await reader.read()).value)).toBe("first");
     readable.destroy(new Error("node source failed"));
-    const rest = await settle((async () => { for (;;) { const r = await reader.read(); if (r.done) return "done"; } })());
+    const rest = await settle(
+      (async () => {
+        for (;;) {
+          const r = await reader.read();
+          if (r.done) return "done";
+        }
+      })(),
+    );
     expect("err" in rest || rest.ok === "done").toBe(true);
   });
 
@@ -2032,7 +2068,12 @@ describe("direct stream edge cases over Bun.serve", () => {
         ),
     });
     const body = await (await fetch(server.url)).text();
-    expect({ same: body === payload, length: body.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({ same: true, length: payload.length, pulls: 1, cancels: 0 });
+    expect({ same: body === payload, length: body.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+      same: true,
+      length: payload.length,
+      pulls: 1,
+      cancels: 0,
+    });
   });
 
   test("GC while pull() is parked on a backpressured write: the controller keeps the source alive and the body completes", async () => {
@@ -2060,7 +2101,11 @@ describe("direct stream edge cases over Bun.serve", () => {
     const res = await fetch(server.url);
     Bun.gc(true);
     const bytes = await res.bytes();
-    expect({ length: bytes.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({ length: total, pulls: 1, cancels: 0 });
+    expect({ length: bytes.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+      length: total,
+      pulls: 1,
+      cancels: 0,
+    });
   });
 
   test("request body (native source) echoed back while the client aborts mid-upload does not crash and releases the request", async () => {
@@ -2080,4 +2125,3 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
   });
 });
-

@@ -129,13 +129,11 @@ impl FallbackHandler {
                 return false;
             };
 
+            // Browsers drop a value they cannot parse, so it cannot stand in for the
+            // declaration before it. A later parsed value still replaces it.
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
-                dest[i] = Property::Unparsed(unparsed);
-            } else {
-                *index = Some(dest.len());
-                dest.push(Property::Unparsed(unparsed));
-            }
+            *index = Some(dest.len());
+            dest.push(Property::Unparsed(unparsed));
 
             return true;
         }

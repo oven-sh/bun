@@ -171,7 +171,7 @@ describe("css tests", () => {
   width: calc(infinity * -1px);
   height: infinity;
 }`,
-      indoc`.rounded-full{height:infinity;border-radius:3.40282e38px;width:-3.40282e38px}`,
+      indoc`.rounded-full{width:-3.40282e38px;height:infinity;border-radius:3.40282e38px}`,
     );
 
     // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
@@ -231,6 +231,37 @@ describe("css tests", () => {
       `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
+  describe("a value that does not parse keeps the declaration before it", () => {
+    // Browsers drop a declaration they cannot parse, so the one before it applies. The
+    // minifier must neither let such a value replace the earlier one nor move it ahead of it.
+    minify_test(`a { color: red; color: banana }`, `a{color:red;color:banana}`);
+    minify_test(`a { color: red; color: rgb(1 2) }`, `a{color:red;color:rgb(1 2)}`);
+    minify_test(`a { color: red; color: var(--c) }`, `a{color:red;color:var(--c)}`);
+    minify_test(`a { color: banana; color: red }`, `a{color:red}`);
+    minify_test(`a { color: red; color: banana; color: blue }`, `a{color:red;color:#00f}`);
+    minify_test(
+      `a { text-shadow: 0 0 1px red; text-shadow: 0 0 banana }`,
+      `a{text-shadow:0 0 1px red;text-shadow:0 0 banana}`,
+    );
+    // lightningcss#547: these were emitted after the unparsed value, in the wrong order.
+    minify_test(`a { width: 100px; width: var(--w) }`, `a{width:100px;width:var(--w)}`);
+    minify_test(`a { height: 100vh; height: 100dvb; height: var(--h) }`, `a{height:100dvb;height:var(--h)}`);
+    minify_test(`a { width: 100px; width: anchor-size(width) }`, `a{width:100px;width:anchor-size(width)}`);
+    minify_test(`a { max-height: 1px; max-height: banana }`, `a{max-height:1px;max-height:banana}`);
+    minify_test(`a { inline-size: 1px; inline-size: var(--w) }`, `a{inline-size:1px;inline-size:var(--w)}`);
+    minify_test(`a { min-width: 1px; height: 2px; width: env(foo) }`, `a{min-width:1px;height:2px;width:env(foo)}`);
+    minify_test(`a { width: var(--w); width: 100px }`, `a{width:var(--w);width:100px}`);
+    prefix_test(
+      `a { inline-size: 1px; inline-size: var(--w) }`,
+      indoc`
+        a {
+          width: 1px;
+          width: var(--w);
+        }
+      `,
+      { safari: 8 << 16 },
+    );
   });
   describe("border_spacing", () => {
     minify_test(

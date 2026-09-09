@@ -1075,7 +1075,11 @@ where
         // The status line is already committed (a direct stream's pull() threw
         // synchronously after the headers were written): report and close.
         if !has_responded && self.flags.has_written_status() {
-            self.run_error_handler_after_commit(value);
+            if !value.is_empty_or_undefined_or_null()
+                && let Some(server) = self.server.get()
+            {
+                server.vm().as_mut().run_error_handler(value, None);
+            }
             self.close_incomplete_stream();
             return;
         }
@@ -2268,8 +2272,11 @@ where
                         // Consuming the rejection here is what keeps it out of
                         // the unhandledRejection reporter, so surface it here.
                         // DEBUG_MODE already reports it in handle_reject_stream.
-                        if !DEBUG_MODE {
-                            this.run_error_handler_after_commit(err);
+                        if !DEBUG_MODE
+                            && let Some(server) = this.server.get()
+                            && !err.is_empty_or_undefined_or_null()
+                        {
+                            server.vm().as_mut().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
@@ -3036,7 +3043,8 @@ where
             self.render_metadata();
         }
 
-        if self.report_committed_body_error(err, !ended_response) {
+        // Production mode keeps this asynchronous JS path quiet.
+        if DEBUG_MODE && self.report_committed_body_error(err, !ended_response) {
             return;
         }
         // HTTP/1 only: the sink already fully ended the response, so `resp`
@@ -3059,7 +3067,7 @@ where
         }
         let server = self.server();
         if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
-            self.run_error_handler_after_commit(err);
+            server.vm().as_mut().run_error_handler(err, None);
             return false;
         }
 
@@ -3560,20 +3568,6 @@ where
         self.run_error_handler_with_status_code(value, 500);
     }
 
-    /// A body failed after the status line was committed: same dispatch as `run_error_handler`, but nothing it produces can be rendered.
-    pub(crate) fn run_error_handler_after_commit(&self, value: JSValue) {
-        if value.is_empty_or_undefined_or_null() {
-            return;
-        }
-        if let Some(server) = self.server.get()
-            && !server.vm().script_allowed()
-        {
-            return;
-        }
-        self.flags.set_has_written_status(true);
-        self.run_error_handler_with_status_code_dont_check_responded(value, 500);
-    }
-
     /// `false` when the Response can be written. A status outside `100..=999`
     /// has no HTTP status line, so the Response can never reach the client:
     /// report it like a thrown error rather than writing an unparseable one.
@@ -3618,11 +3612,6 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
-        // The status line is already out: nothing can be rendered and the request is not failing as a whole, so print it rather than treat it as unhandled.
-        if self.flags.has_written_status() {
-            vm.run_error_handler(value, None);
-            return;
-        }
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
@@ -3667,14 +3656,6 @@ where
                     )
                     .unwrap_or_else(|err| server.global_this().take_exception(err));
                 let _keep = jsc::EnsureStillAlive(result);
-                // The status line is already out: error() was told, but whatever it returned cannot be sent.
-                if self.flags.has_written_status() {
-                    if let Some(promise) = result.as_any_promise() {
-                        promise.set_handled(server.global_this().vm());
-                    }
-                    Self::discard_response_body(server.global_this(), result);
-                    return;
-                }
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
                 if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {

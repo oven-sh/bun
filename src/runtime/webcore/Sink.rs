@@ -269,18 +269,7 @@ impl<T: JsSinkAbi> JSSink<T> {
         if let Some(src) = ptr.source() {
             *src = streams::SourceHandle::JSController(controller);
         }
-        let result = streams::controller_abi::assign_to_stream(global, stream, controller);
-        // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
-        // end()/close() the controller, and its destructor would otherwise run
-        // `${name}__finalize` on the sink after the caller has freed it. Detach
-        // it while `ptr` is live; that reaches `js_controller_detached`, which
-        // drops it from `source()` (a no-op if it already detached in the call).
-        if result.to_error().is_some() {
-            let _ = ::bun_jsc::call_check_slow(global, || {
-                streams::controller_abi::detach_ptr(controller)
-            });
-        }
-        result
+        start_pump(global, stream, controller)
     }
 
     /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
@@ -304,6 +293,24 @@ impl<T: JsSinkAbi> JSSink<T> {
             _ => {}
         }
     }
+}
+
+/// Start the pump from `stream` into `controller`, whose sink is live and
+/// already holds it as its `source()`. Out of line so the `JSSink<T>`
+/// instantiations share one copy.
+#[inline(never)]
+fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> JSValue {
+    let result = streams::controller_abi::assign_to_stream(global, stream, controller);
+    // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
+    // end()/close() the controller, and its destructor would otherwise run
+    // `${name}__finalize` on the sink after its owner has freed it. Detach it
+    // while the sink is live; that reaches `js_controller_detached`, which
+    // drops it from `source()` (a no-op if it already detached in the call).
+    if result.to_error().is_some() {
+        let _ =
+            ::bun_jsc::call_check_slow(global, || streams::controller_abi::detach_ptr(controller));
+    }
+    result
 }
 
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.

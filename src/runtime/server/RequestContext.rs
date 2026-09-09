@@ -2910,13 +2910,8 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            if let Some(stream) = resp.get_body_readable_stream() {
-                stream.value.ensure_still_alive();
-                resp.detach_readable_stream(global_this);
-
-                stream.done();
-            }
-
+            release_body_stream(resp, global_this);
+            // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
         }
 

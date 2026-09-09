@@ -333,9 +333,9 @@ describe("Intl.DurationFormat", () => {
         new Intl.DurationFormat("en", { style, milliseconds: "numeric" }).format({ minutes: 2, microseconds: 300 }),
       ).toBe(list([unit(2, "minute", style), unit(0.0003, "second", style)], style));
     }
-    expect(new Intl.DurationFormat("en", { style: "digital", milliseconds: "numeric" }).format({ milliseconds: 250 })).toBe(
-      "0:00:00.25",
-    );
+    expect(
+      new Intl.DurationFormat("en", { style: "digital", milliseconds: "numeric" }).format({ milliseconds: 250 }),
+    ).toBe("0:00:00.25");
 
     const micro = new Intl.DurationFormat("en", { microseconds: "numeric" });
     expect(micro.format({ microseconds: 55 })).toBe(unit(0.055, "millisecond"));
@@ -363,9 +363,9 @@ describe("Intl.DurationFormat", () => {
     expect(new Intl.DurationFormat("en", { milliseconds: "numeric" }).format({ milliseconds: -250 })).toBe(
       unit(-0.25, "second"),
     );
-    expect(
-      new Intl.DurationFormat("en", { milliseconds: "numeric" }).format({ hours: -3, milliseconds: -250 }),
-    ).toBe(list([unit(-3, "hour"), unit(0.25, "second")]));
+    expect(new Intl.DurationFormat("en", { milliseconds: "numeric" }).format({ hours: -3, milliseconds: -250 })).toBe(
+      list([unit(-3, "hour"), unit(0.25, "second")]),
+    );
     expect(new Intl.DurationFormat("en", { microseconds: "numeric" }).format({ microseconds: -55 })).toBe(
       unit(-0.055, "millisecond"),
     );
@@ -402,11 +402,15 @@ describe("Intl.DurationFormat", () => {
       nanoseconds: "numeric",
       nanosecondsDisplay: "auto",
     });
-    expect(new Intl.DurationFormat("en", { microseconds: "numeric" }).resolvedOptions().microsecondsDisplay).toBe("auto");
+    expect(new Intl.DurationFormat("en", { microseconds: "numeric" }).resolvedOptions().microsecondsDisplay).toBe(
+      "auto",
+    );
     expect(new Intl.DurationFormat("en", { nanoseconds: "numeric" }).resolvedOptions().nanosecondsDisplay).toBe("auto");
     // Numeric seconds are not a fraction of anything and keep "always"; so does a sub-second unit in a text style.
     expect(new Intl.DurationFormat("en", { seconds: "numeric" }).resolvedOptions().secondsDisplay).toBe("always");
-    expect(new Intl.DurationFormat("en", { milliseconds: "short" }).resolvedOptions().millisecondsDisplay).toBe("always");
+    expect(new Intl.DurationFormat("en", { milliseconds: "short" }).resolvedOptions().millisecondsDisplay).toBe(
+      "always",
+    );
 
     for (const options of [
       { milliseconds: "numeric", millisecondsDisplay: "always" },

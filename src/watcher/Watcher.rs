@@ -227,14 +227,8 @@ impl Watcher {
         }
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
-        // kqueue: a directory entry is registered for NOTE_WRITE | NOTE_RENAME |
-        // NOTE_DELETE, and the latter two (`Op::RENAME` / `Op::DELETE`) are
-        // about the directory's own vnode: its path no longer names it.
-        // Remember that, so that once the path exists again
-        // `remove_replaced_descendants` treats the directory as replaced even
-        // if the same inode was moved back. (inotify reports a child's
-        // deletion on the directory watch with the same op, so this is
-        // kqueue-only; inotify names the entry that reappears instead.)
+        // kqueue: NOTE_RENAME / NOTE_DELETE on a directory entry are about its
+        // own vnode, so its path no longer names it (see `WatchItem::displaced`).
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         for event in events.iter() {
             let i = event.index as usize;
@@ -425,8 +419,6 @@ impl Watcher {
         let fds = slice.items_fd();
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
-        // Watch registrations of evicted directory entries, released after the
-        // second pass once it is known that no surviving entry shares them.
         #[cfg(not(windows))]
         let mut evicted_dir_watches: Vec<EvictedDirWatch> = Vec::new();
 
@@ -444,11 +436,9 @@ impl Watcher {
             {
                 let kind = slice.items_kind()[item as usize];
                 let mut fd = fds[item as usize];
-                // A file's watch dies with its descriptor: the inode is already
-                // unlinked or replaced when a file is evicted, and inotify/kqueue
-                // drop the registration once the last reference goes. A directory
-                // fd that is not the watcher's (see `WatchItem::owns_fd`) stays
-                // open, so its registration is dropped explicitly below.
+                // An evicted file is unlinked or replaced, so closing its fd ends
+                // the watch too. A directory fd that stays open (see
+                // `WatchItem::owns_fd`) has its registration dropped after pass 2.
                 if fd.is_valid()
                     && (kind == WatchItemKind::File || slice.items_owns_fd()[item as usize])
                 {
@@ -501,11 +491,9 @@ impl Watcher {
         }
     }
 
-    /// Drops the kernel registration of an evicted directory entry. Two
-    /// entries can share one (the same directory added with and without a
-    /// trailing slash hashes differently but is one inode, and kqueue keys
-    /// registrations by fd): when a surviving entry does, the registration is
-    /// kept, and on kqueue re-pointed at the survivor's index.
+    /// Drops the kernel registration of an evicted directory entry, unless a
+    /// surviving entry shares it (same inode under another path, e.g. with and
+    /// without a trailing slash); on kqueue that one is re-pointed instead.
     #[cfg(not(windows))]
     fn release_directory_watch(&mut self, evicted: &EvictedDirWatch) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -521,8 +509,7 @@ impl Watcher {
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            // Closed in `flush_evictions` (the watcher owned it): the vnode
-            // filter went with it.
+            // Closed by `flush_evictions`; the vnode filter went with it.
             if !evicted.fd.is_valid() {
                 return;
             }
@@ -589,9 +576,7 @@ impl Watcher {
         let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
     }
 
-    /// Undo `add_file_descriptor_to_kqueue_without_checks` for `fd` while
-    /// leaving the descriptor open. Does not propagate kevent errors (the
-    /// registration may already be gone if the vnode was revoked).
+    /// Undoes `add_file_descriptor_to_kqueue_without_checks`; leaves `fd` open.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn remove_file_descriptor_from_kqueue(&mut self, fd: Fd) {
         use libc::{EV_DELETE, EVFILT_VNODE, kevent as KEvent};
@@ -1034,8 +1019,7 @@ impl Watcher {
         }
     }
 
-    /// Returns `false` when `evict_list` is full; the entry then stays in the
-    /// watchlist until a later `flush_evictions` makes room.
+    /// `false` when `evict_list` is full; the entry stays until a later flush.
     fn queue_eviction(&mut self, index: WatchItemIndex) -> bool {
         let i = self.evict_list_i as usize;
         if i >= self.evict_list.len() {
@@ -1046,31 +1030,17 @@ impl Watcher {
         true
     }
 
-    /// Directory-event hook for `WatcherContext::on_file_update`: detects that a
-    /// directory *below* the one `event` is for was replaced, and queues the
-    /// eviction (see `flush_evictions`) of every watchlist entry at or below
-    /// the replaced path.
+    /// For a directory `event` inside `on_file_update`: when a directory below
+    /// it was replaced (renamed over, or removed and created again: a new inode
+    /// at a path whose watches still point at the old one), queues the
+    /// eviction of every entry at or below that path so the caller's reload
+    /// re-arms them. inotify: each created or moved-in `<dir>/<name>` that
+    /// prefixes watched paths. kqueue (no names): each watched directory below
+    /// whose inode no longer matches its path. Windows matches by path: no-op.
     ///
-    /// A directory that is renamed over (`mv lib lib.old && mv lib.new lib`),
-    /// or removed and created again, is a new inode at the same path. inotify
-    /// and kqueue watch inodes, so every registration at or below that path
-    /// keeps observing the old tree (or nothing), and `add_file` /
-    /// `add_directory` would keep matching the stale entries by path hash
-    /// instead of watching the new ones. With the entries evicted, the reload
-    /// the caller schedules re-arms fresh watches.
-    ///
-    /// inotify names the created or moved-in entries (`names`), so each
-    /// `<dir>/<name>` that is a prefix of watched paths is a replaced subtree.
-    /// kqueue has no names: on a write to the directory, every watched
-    /// directory below it is compared by inode instead (see
-    /// `remove_replaced_descendants`). Windows matches events by path and
-    /// needs none of this.
-    ///
-    /// `stale_dir` receives each directory path whose resolver caches are now
-    /// wrong (the replaced path itself and every evicted directory entry, no
-    /// trailing slash); `stale_file` each evicted file entry with its hash.
-    /// Same contract as `remove_at_index::<false>`: the caller holds
-    /// `self.mutex`. Returns the number of entries queued.
+    /// `stale_dir` gets each directory path to bust (replaced path and evicted
+    /// directory entries, no trailing slash), `stale_file` each evicted file.
+    /// Caller holds `self.mutex`. Returns the number of entries queued.
     pub fn remove_entries_under_replaced_dirs(
         &mut self,
         event: WatchEvent,
@@ -1105,8 +1075,7 @@ impl Watcher {
                 child[dir.len() + 1..len].copy_from_slice(name);
                 let evicted = self.remove_path_and_descendants(&child[..len], &mut each);
                 if evicted > 0 {
-                    // Reported even when the path itself is not an entry: the
-                    // resolver caches intermediate directories it never watches.
+                    // Not necessarily an entry itself; the resolver may cache it.
                     (each)(WatchItemKind::Directory, &child[..len], 0);
                     queued += evicted;
                 }
@@ -1152,10 +1121,9 @@ impl Watcher {
             if !self.queue_eviction(i as WatchItemIndex) {
                 break;
             }
-            // The old file usually still exists under the directory's new name,
-            // so closing its fd in `flush_evictions` does not end the inotify
-            // watch the way it does for an unlinked file. Drop it here, unless
-            // another entry (the same inode under a second path) still uses it.
+            // The old file usually still exists (under the directory's old
+            // name), so closing its fd will not end the watch; drop it unless
+            // another entry shares it.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if kinds[i] == WatchItemKind::File {
                 let wds = slice.items_eventlist_index();
@@ -1175,13 +1143,9 @@ impl Watcher {
         queued
     }
 
-    /// kqueue reports only that *something* in the directory at `parent`
-    /// changed. Finds every watched directory below it whose path now names a
-    /// different inode than the one its fd holds (or names anything again
-    /// once its vnode was `displaced`), and evicts that subtree through
-    /// `remove_path_and_descendants`. A directory whose path does not exist at
-    /// the moment is left alone: the parent receives another write event when
-    /// something reappears under that name.
+    /// Evicts the subtree of every watched directory below `parent` whose path
+    /// now names another inode than its fd (or anything, once `displaced`). A
+    /// path that does not exist yet is skipped; its return writes `parent` again.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn remove_replaced_descendants(
         &mut self,
@@ -1353,16 +1317,14 @@ pub struct WatchItem {
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,
-    /// Whether `flush_evictions` may close `fd`. Files: always (`add_file`
-    /// hands the descriptor over, see [`FdOwnership`]). Directories: only when
-    /// the watcher opened it itself; otherwise it is the resolver's cached
-    /// directory handle, or the dev server's, and theirs to close.
+    /// Whether `flush_evictions` may close `fd`: every file (see [`FdOwnership`]),
+    /// and a directory only when the watcher opened it itself rather than
+    /// borrowing the resolver's or the dev server's handle.
     pub owns_fd: bool,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// kqueue: this directory's vnode reported NOTE_RENAME or NOTE_DELETE, so
-    /// `file_path` no longer names it. See `dispatch_file_updates` and
-    /// `remove_replaced_descendants`.
+    /// kqueue: the directory's vnode was renamed or deleted, so `file_path` no
+    /// longer names it; it counts as replaced once the path exists again.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub displaced: bool,
 }
@@ -1373,8 +1335,7 @@ pub enum WatchItemKind {
     Directory,
 }
 
-/// What `flush_evictions` needs to drop the kernel registration of an evicted
-/// directory entry after the entry itself is gone from the watchlist.
+/// An evicted directory entry's registration, dropped after the swap-removes.
 #[cfg(not(windows))]
 struct EvictedDirWatch {
     /// `Fd::INVALID` when `flush_evictions` closed it.

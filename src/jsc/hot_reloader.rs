@@ -1070,12 +1070,8 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // A directory below this one may have been replaced: renamed over
-                        // (`mv lib lib.old && mv lib.new lib`), or removed and created
-                        // again. Every watch at or below it is on the old inode, so no
-                        // later save under it would fire, and each reload's `add_file`
-                        // would keep matching the stale entries by hash. The watcher
-                        // evicts that subtree; reload what was loaded from it.
+                        // A replaced directory below this one (`mv lib lib.old && mv
+                        // lib.new lib`): the watcher evicts the stale subtree, reload it.
                         {
                             let mut stale_dirs: Vec<Box<[u8]>> = Vec::new();
                             let mut stale_files: usize = 0;
@@ -1106,8 +1102,7 @@ where
                                 }
                             }
                             if !stale_dirs.is_empty() && stale_files == 0 {
-                                // The modules under it were evicted when they disappeared;
-                                // reload so that they resolve under the new directory.
+                                // Its files were evicted when they vanished; still reload.
                                 current_task.append(current_hash);
                             }
                         }

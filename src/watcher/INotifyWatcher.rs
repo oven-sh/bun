@@ -182,9 +182,7 @@ impl INotifyWatcher {
         result
     }
 
-    /// Removes a watch added by `watch_path` / `watch_dir`. Errors are ignored:
-    /// the kernel already drops a watch on its own when the inode is deleted
-    /// (`EINVAL` then), and the caller has nothing to undo either way.
+    /// Removes a watch; `EINVAL` (already gone with its inode) is expected.
     pub(crate) fn unwatch(&mut self, wd: EventListIndex) {
         debug_assert!(self.loaded);
         let rc = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);

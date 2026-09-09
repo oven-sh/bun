@@ -1212,6 +1212,36 @@ describe("HMAC key length that is not a multiple of 8", () => {
       hex(await crypto.subtle.deriveBits(alg, privateKey, 255)),
     );
   });
+
+  // ML-KEM's 32-byte shared secret becomes the HMAC key, so exactly the lengths that end in
+  // byte 32 work, and SubtleCrypto.supports() must predict the same set.
+  it("encapsulateKey accepts the lengths a 32-byte key can have and supports() agrees", async () => {
+    const { publicKey, privateKey } = (await crypto.subtle.generateKey("ML-KEM-768", false, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const results: Record<number, unknown> = {};
+    for (const length of [256, 252, 249, 248, 264]) {
+      const hmac = { name: "HMAC", hash: "SHA-256", length };
+      results[length] = {
+        supports: SubtleCrypto.supports("encapsulateKey", "ML-KEM-768", hmac),
+        encapsulate: await crypto.subtle.encapsulateKey("ML-KEM-768", publicKey, hmac, true, ["sign"]).then(
+          async ({ sharedKey, ciphertext }) => {
+            const back = await crypto.subtle.decapsulateKey("ML-KEM-768", privateKey, ciphertext, hmac, true, ["sign"]);
+            return `${(sharedKey.algorithm as HmacKeyAlgorithm).length} ${(back.algorithm as HmacKeyAlgorithm).length}`;
+          },
+          e => e.name,
+        ),
+      };
+    }
+    expect(results).toEqual({
+      256: { supports: true, encapsulate: "256 256" },
+      252: { supports: true, encapsulate: "252 252" },
+      249: { supports: true, encapsulate: "249 249" },
+      248: { supports: false, encapsulate: "DataError" },
+      264: { supports: false, encapsulate: "DataError" },
+    });
+  });
 });
 
 describe("X25519 JWK import", () => {

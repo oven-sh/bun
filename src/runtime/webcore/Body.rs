@@ -1369,7 +1369,8 @@ impl Value {
                 if let Some(bytes) = readable.ptr.bytes() {
                     bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
-                    readable.abort(global)?;
+                    // e.g. a `clone()` tee branch; a cancel would end its reads with `{ done: true }`.
+                    readable.error(global, err_ref.to_js(global))?;
                 }
             }
 

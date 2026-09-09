@@ -1412,8 +1412,7 @@ pub(crate) fn to_bytes(
     string_builder.cap +=
         (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
-    string_builder.cap += 16 + 2 * size_of::<u32>();
-    string_builder.cap += 2 * size_of::<u32>();
+    string_builder.cap += 16 + 4 * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1738,7 +1737,7 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
-    {
+    if runtime_options.jit_policy > 1.0 {
         let mut record = [0u8; 8];
         record[0..4].copy_from_slice(&RuntimeOptions::HAS_JIT_POLICY.to_le_bytes());
         record[4..8].copy_from_slice(&runtime_options.jit_policy.to_bits().to_le_bytes());

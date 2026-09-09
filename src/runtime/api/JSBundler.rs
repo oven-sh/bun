@@ -452,10 +452,10 @@ pub mod js_bundler {
                             jit_policy,
                         ));
                     }
-                    let scale = jit_policy.as_number();
-                    if !((scale as f32).is_finite() && scale >= 1.0) {
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
                         return Err(global_this.throw_range_error(
-                            scale,
+                            jit_policy.as_number(),
                             bun_jsc::RangeErrorOptions {
                                 field_name: b"compile.jitPolicy",
                                 msg: b"a finite number >= 1",
@@ -463,7 +463,7 @@ pub mod js_bundler {
                             },
                         ));
                     }
-                    this.jit_policy = scale as f32;
+                    this.jit_policy = scale;
                 }
             }
 
@@ -649,13 +649,10 @@ pub mod js_bundler {
                 )?;
             }
 
-            if let Some(optimize) = config
-                .get_truthy(global_this, "optimize")?
-                .filter(|v| !v.is_boolean())
-            {
+            if let Some(optimize) = config.get_truthy(global_this, "optimize")? {
                 if !optimize.is_object() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Expected optimize to be a boolean or an object"
+                        "Expected optimize to be an object"
                     )));
                 }
                 if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {

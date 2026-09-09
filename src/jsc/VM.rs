@@ -106,8 +106,7 @@ impl VM {
         JSC__VM__collectAsyncIdle(self)
     }
 
-    /// `Bun.unsafe.setJITPolicy`: multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale`
-    /// (1 = normal). Mutator thread of this VM only.
+    /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
     pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
         JSC__VM__setStartupJITDeferralScale(self, scale)
     }

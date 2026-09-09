@@ -1122,7 +1122,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
-        let jit_policy = graph.runtime_options.jit_policy;
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1169,9 +1168,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
-        if jit_policy > 1.0 {
+        if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
-                .set_startup_jit_deferral_scale(f64::from(jit_policy));
+                .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
         }
 
         vm.preload = std::mem::take(&mut ctx.preloads);

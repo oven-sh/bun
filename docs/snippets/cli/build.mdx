@@ -194,8 +194,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--compile-jit-policy" type="number" default="1">
-  Multiply JavaScriptCore's JIT tier-up thresholds by this in the executable until it calls
-  <code>Bun.unsafe.setJITPolicy(1)</code>; <code>1</code> is the normal JIT policy
+  JIT tier-up threshold scale the executable starts with; <code>1</code> is the normal JIT policy. See
+  <code>Bun.unsafe.setJITPolicy</code>
 </ParamField>
 
 <ParamField path="--compile-autoload-dotenv" type="boolean" default="true">

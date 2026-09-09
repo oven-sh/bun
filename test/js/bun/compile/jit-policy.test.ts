@@ -22,6 +22,7 @@ describe("compile jitPolicy", () => {
       Bun.unsafe.setJITPolicy(1);
       Bun.unsafe.setJITPolicy(1); // already 1: no-op
       process.stdout.write("interactive\\n");
+      Bun.unsafe.setJITPolicy(2); // positive signal that verboseOSR logging works in this process
     `,
   };
 
@@ -63,7 +64,7 @@ describe("compile jitPolicy", () => {
     using dir = tempDir("jit-policy-default", sources);
     const { stdout, lines, exitCode } = await run(await buildCli(String(dir), [], "default"));
     expect(stdout).toBe("started\ninteractive\n");
-    expect(lines).toEqual([]);
+    expect(lines).toEqual(["Startup JIT deferral scale set to 2"]);
     expect(exitCode).toBe(0);
   });
 
@@ -74,6 +75,7 @@ describe("compile jitPolicy", () => {
     expect(lines).toEqual([
       "Startup JIT deferral scale set to 8",
       "Ending startup JIT deferral window: embedder (scale was 8)",
+      "Startup JIT deferral scale set to 2",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -85,6 +87,7 @@ describe("compile jitPolicy", () => {
     expect(lines).toEqual([
       "Startup JIT deferral scale set to 8",
       "Ending startup JIT deferral window: embedder (scale was 8)",
+      "Startup JIT deferral scale set to 2",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -101,6 +104,29 @@ describe("compile jitPolicy", () => {
     const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(stderr).toContain("--compile-jit-policy");
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("Bun.unsafe.setJITPolicy works outside a compiled executable; workers start at 1", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Bun.unsafe.setJITPolicy(8);
+         const w = new Worker("data:text/javascript,Bun.unsafe.setJITPolicy(1); postMessage('ok')");
+         await new Promise(r => (w.onmessage = r));
+         await w.terminate();
+         Bun.unsafe.setJITPolicy(1);`,
+      ],
+      env: { ...bunEnv, BUN_JSC_verboseOSR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(policyLines(stderr)).toEqual([
+      "Startup JIT deferral scale set to 8",
+      "Ending startup JIT deferral window: embedder (scale was 8)",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   test("Bun.unsafe.setJITPolicy validates its argument", () => {

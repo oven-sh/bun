@@ -1466,7 +1466,9 @@ describe("clone() of a body that fails mid-stream", () => {
     const client = net.connect(server.port, "127.0.0.1");
     try {
       client.on("error", () => {});
-      client.write(`POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`);
+      client.write(
+        `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`,
+      );
       client.write(opts.firstPart);
       await partial.promise;
       opts.fail(client);

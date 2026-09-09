@@ -409,8 +409,13 @@ test.skipIf(!isASAN)(
     // The stream errors after "EB" is on the wire, so the body is force-closed
     // without the terminating 0\r\n\r\n chunk (RFC 9112 section 7).
     const expected = Array(6).fill({ status: "HTTP/1.1 597 HM", terminated: false });
-    expect({ stderr, results: stdout.trim() ? JSON.parse(stdout) : stdout, exitCode }).toEqual({
-      stderr: "",
+    // error() already ran for this request, so its own body's failure is printed (once per request) rather than swallowed.
+    expect({
+      nestedReports: stderr.match(/^error: nested$/gm)?.length ?? 0,
+      results: stdout.trim() ? JSON.parse(stdout) : stdout,
+      exitCode,
+    }).toEqual({
+      nestedReports: 6,
       results: expected,
       exitCode: 0,
     });

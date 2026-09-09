@@ -1038,9 +1038,7 @@ unsafe extern "C" {
 pub fn parse_power_of_two_radix_digits(digits: &[u8], radix: u32) -> f64 {
     debug_assert!(matches!(radix, 2 | 4 | 8 | 16 | 32));
     debug_assert!(
-        digits
-            .iter()
-            .all(|&c| (c as char).to_digit(radix).is_some()),
+        digits.iter().all(|&c| (c as char).is_digit(radix)),
         "not base-{radix} digits: {:?}",
         bstr::BStr::new(digits)
     );

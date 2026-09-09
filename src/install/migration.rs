@@ -485,8 +485,11 @@ fn copy_trusted_and_patched_dependencies(
     dir: Fd,
 ) -> Result<(), Error> {
     let arena = bun_alloc::Arena::new();
-    let Ok(contents) = File::read_from(dir, b"package.json") else {
-        return Ok(());
+    let contents = match File::read_from(dir, b"package.json") {
+        Ok(contents) => contents,
+        // A lockfile without a package.json next to it has nothing to copy.
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(()),
+        Err(err) => return Err(err.into()),
     };
     let root_source = bun_ast::Source::init_path_string(b"package.json", contents.as_slice());
     let Some(root) = parse_package_json(&root_source, log, &arena) else {

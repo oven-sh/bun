@@ -1241,9 +1241,9 @@ describe("bundler", () => {
   //
   // Node.js (nodejs/node#54563) and `bun run` return that export from
   // `require()` instead of the namespace object. The bundle does the same:
-  // the call evaluates to `exports_foo["module.exports"]` rather than
-  // `__toCommonJS(exports_foo)`. `import()` and `import` statements still see
-  // the namespace.
+  // the call is printed as `__toCommonJS(exports_foo, 1)`, which returns
+  // `exports_foo["module.exports"]` once it is set. `import()` and `import`
+  // statements still see the namespace.
   // ============================================================================
 
   const moduleExportsExportFiles = {
@@ -1311,6 +1311,47 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: moduleExportsExportStdout,
+    },
+  });
+
+  // The program from #29985: the export is a primitive.
+  itBundled("cjs/require_esm_module_exports_export_primitive", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const m = require("./m.mjs");
+        console.log(m);
+      `,
+      "/m.mjs": /* js */ `
+        const a = 1;
+        const b = 2;
+        export const c = 3;
+        export default a;
+        export { b as "module.exports" };
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: "2",
+    },
+  });
+
+  // An export whose value is `null` or `undefined` gives the namespace copy, as
+  // in `bun run` (Node returns the value itself).
+  itBundled("cjs/require_esm_module_exports_export_null", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const m = require("./m.mjs");
+        console.log(m.a, m["module.exports"], m.__esModule, require("./m.mjs") === m);
+      `,
+      "/m.mjs": /* js */ `
+        const n = null;
+        export const a = 1;
+        export { n as "module.exports" };
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    run: {
+      stdout: "1 null true true",
     },
   });
 

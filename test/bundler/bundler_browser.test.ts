@@ -264,29 +264,36 @@ describe("bundler", () => {
       ].join("\n"),
     },
   });
-  // The shapes above in use: `require("events")` and `require("assert")` are
-  // callable, and browserify-zlib's own `require("assert")` calls work.
+  // The shapes above in use (#19808): `require("assert")` and `require("events")`
+  // are callable, the named exports are members of that same value, and
+  // browserify-zlib's own `require("assert")` calls work.
   itBundled("browser/NodePolyfillRequireCallable", {
     files: {
       "/entry.js": /* js */ `
-        import assert from "node:assert";
+        import assert, { strictEqual } from "node:assert";
+        import EventEmitter, { once } from "node:events";
         import zlib from "node:zlib";
-        import "./events.cjs";
+        import { Assert, Events } from "./required.cjs";
         assert(true);
         assert.strictEqual(typeof assert, "function");
+        console.log(Assert === assert, strictEqual === assert.strictEqual, Events === EventEmitter, once === EventEmitter.once);
         console.log(zlib.gunzipSync(zlib.gzipSync("hello")).toString());
       `,
-      "/events.cjs": /* js */ `
+      "/required.cjs": /* js */ `
+        const Assert = require("node:assert");
+        Assert.equal(1, 1);
+        Assert(true, "assert is callable");
         const EventEmitter = require("events");
         class Bus extends EventEmitter {}
         new Bus().on("x", v => console.log("got", v)).emit("x", 1);
         console.log(new (require("node:events"))() instanceof EventEmitter, EventEmitter.EventEmitter === EventEmitter);
-        require("assert")(true, "assert is callable");
+        exports.Assert = Assert;
+        exports.Events = EventEmitter;
       `,
     },
     target: "browser",
     run: {
-      stdout: "got 1\ntrue true\nhello",
+      stdout: "got 1\ntrue true\ntrue true true true\nhello",
     },
   });
   // TODO: use nodePolyfillList to generate the code in here.

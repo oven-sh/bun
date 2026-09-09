@@ -98,6 +98,20 @@ pub(crate) enum UpgradeState {
     Upgraded,
 }
 
+/// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
+#[derive(Default)]
+pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
+
+impl ResponseRoot {
+    pub(crate) fn set_rooted(&self, value: JSValue, global: &JSGlobalObject) {
+        self.0.set(bun_jsc::strong::Optional::create(value, global));
+    }
+
+    pub(crate) fn clear(&self) {
+        self.0.set(bun_jsc::strong::Optional::empty());
+    }
+}
+
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
 #[repr(align(16))]
@@ -132,12 +146,7 @@ pub struct RequestContext<
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
-    // Deliberately a bare JSValue with manual protect()/unprotect() gated by
-    // the `response_protected` flag: plain Blob/InternalBlob
-    // bodies intentionally leave the value unprotected on the hot path and
-    // fall back to `response_weakref` (see its doc below), so a `Strong`
-    // here would root the Response unconditionally and change GC behavior.
-    pub(crate) response_jsvalue: Cell<JSValue>,
+    pub(crate) response_root: ResponseRoot,
     root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
     pub(crate) pin_count: Cell<u8>,
@@ -147,7 +156,7 @@ pub struct RequestContext<
     /// on tryEnd() backpressure. onAbort / handleResolveStream /
     /// handleRejectStream only use this for best-effort readable-stream
     /// cleanup and safely observe null instead of UAF. File/.Locked
-    /// bodies still protect() response_jsvalue, so the pointer stays
+    /// bodies still root it through `response_root`, so the pointer stays
     /// valid for renderMetadata() on those paths.
     pub(crate) response_weakref: JsCell<response::WeakRef>,
     pub(crate) blob: JsCell<AnyBlob>,
@@ -837,15 +846,7 @@ where
         if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
             return;
         }
-        // An async error() Response may replace a still-protected streaming
-        // Response; release the original before overwriting.
-        if self.flags.response_protected() {
-            self.response_jsvalue.get().unprotect();
-            self.flags.set_response_protected(false);
-        }
-        self.response_jsvalue.set(value);
-        self.flags.set_response_protected(true);
-        value.protect();
+        self.response_root.set_rooted(value, global_this);
 
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
@@ -1431,7 +1432,7 @@ where
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: Cell::new(UpgradeState::None),
-                response_jsvalue: Cell::new(JSValue::ZERO),
+                response_root: ResponseRoot::default(),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
@@ -1591,15 +1592,7 @@ where
             release_body_stream(resp, global_this);
         }
 
-        let response_jsvalue = self.response_jsvalue.get();
-        if !response_jsvalue.is_empty() {
-            ctx_log!("finalizeWithoutDeinit: response_jsvalue != .zero");
-            if self.flags.response_protected() {
-                response_jsvalue.unprotect();
-                self.flags.set_response_protected(false);
-            }
-            self.response_jsvalue.set(JSValue::ZERO);
-        }
+        self.response_root.clear();
         self.response_weakref.set(response::WeakRef::EMPTY);
 
         // The stream ref itself is errored and released by `end_request_streaming()` below.
@@ -2761,9 +2754,8 @@ where
             if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
                 return;
             }
-            ctx.response_jsvalue.set(response_value);
+            ctx.response_root.clear();
             response_value.ensure_still_alive();
-            ctx.flags.set_response_protected(false);
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp.get() {
                     let mut pair = HeaderResponsePair {
@@ -2820,9 +2812,8 @@ where
                         return;
                     }
 
-                    ctx.response_jsvalue.set(fulfilled_value);
+                    ctx.response_root.clear();
                     fulfilled_value.ensure_still_alive();
-                    ctx.flags.set_response_protected(false);
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp.get() {
                             let mut pair = HeaderResponsePair {
@@ -3679,11 +3670,7 @@ where
                             // so root the Response the way the async error
                             // path does or the deferred flush can read a
                             // collected weakref.
-                            if self.flags.response_protected() {
-                                self.response_jsvalue.get().unprotect();
-                            }
-                            self.response_jsvalue.set(result);
-                            self.flags.set_response_protected(false);
+                            self.response_root.clear();
                             // SAFETY: as above.
                             unsafe { self.protect_for_body_and_render(result, response) };
                             return;
@@ -3733,13 +3720,8 @@ where
                     return;
                 }
 
-                // Same as handle_resolve: release a still-protected original.
-                if ctx.flags.response_protected() {
-                    ctx.response_jsvalue.get().unprotect();
-                }
-                ctx.response_jsvalue.set(fulfilled_value);
+                ctx.response_root.clear();
                 fulfilled_value.ensure_still_alive();
-                ctx.flags.set_response_protected(false);
 
                 // SAFETY: `response` is the live, rooted cell pointer.
                 unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
@@ -4011,11 +3993,10 @@ where
         self.do_render();
     }
 
-    /// [`Self::render`] for the Response a handler just returned, whose JS
-    /// wrapper `response_value` is already stored in `response_jsvalue`. A
-    /// file or streaming body is still being sent after this frame returns,
-    /// so for those the wrapper is protected first; in-memory bodies leave it
-    /// unprotected (see `response_jsvalue`).
+    /// [`Self::render`] for the Response a handler just returned. A file or
+    /// streaming body is still being sent after this frame returns, so for
+    /// those `response_root` roots the wrapper first; in-memory bodies leave
+    /// it unrooted.
     ///
     /// # Safety
     /// Same contract as [`Self::render`].
@@ -4030,8 +4011,8 @@ where
             _ => false,
         };
         if sent_after_return {
-            response_value.protect();
-            self.flags.set_response_protected(true);
+            self.response_root
+                .set_rooted(response_value, self.server().global_this());
         }
         // SAFETY: caller contract.
         unsafe { self.render(response) };
@@ -4658,7 +4639,6 @@ bitflags::bitflags! {
         /// Used to avoid looking at the uws.Request struct after it's been freed
         const IS_WEB_BROWSER_NAVIGATION   = 1 << 10;
         const HAS_WRITTEN_STATUS          = 1 << 11;
-        const RESPONSE_PROTECTED          = 1 << 12;
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
@@ -4730,11 +4710,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         has_written_status,
         set_has_written_status,
         HAS_WRITTEN_STATUS
-    );
-    flag_accessor!(
-        response_protected,
-        set_response_protected,
-        RESPONSE_PROTECTED
     );
     flag_accessor!(aborted, set_aborted, ABORTED);
     flag_accessor!(

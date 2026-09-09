@@ -443,6 +443,22 @@ describe("When CJS and ESM are mixed", () => {
     expect(await bunRun(fixturePath)).toSpawn();
   });
 
+  // Runs entry.mjs from a directory with `files` and returns its stdout parsed as JSON.
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("esm-imports-cjs", { "package.json": `{"name": "fixture"}`, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
   // A CommonJS file imported from an ES module runs when its transpile
   // finishes. The thread pool finishes a small file before a big one, so
   // without ordering the imports below would run in reverse.
@@ -452,22 +468,11 @@ describe("When CJS and ESM are mixed", () => {
       { length: 4000 },
       (_, i) => `module.exports.f${i} = function (a, b) { return a + b + ${i}; };`,
     ).join("\n");
+    const bigEsm = Array.from({ length: 4000 }, (_, i) => `export function f${i}(a, b) { return a + b + ${i}; }`).join(
+      "\n",
+    );
+    // Imported first; prints the order on exit.
     const trace = `globalThis.order ??= []; process.on("exit", () => console.log(JSON.stringify(globalThis.order))); module.exports = {};`;
-
-    async function run(files: Record<string, string>) {
-      using dir = tempDir("esm-imports-cjs-order", { "package.json": `{"name": "order"}`, ...files });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "entry.mjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      return JSON.parse(stdout);
-    }
 
     it("between siblings", async () => {
       const order = await run({
@@ -505,6 +510,124 @@ describe("When CJS and ESM are mixed", () => {
         "dep.cjs": `globalThis.order.push("dep"); module.exports = {};`,
       });
       expect(order).toEqual(["polyfill", "dep", "entry"]);
+    });
+
+    it("ahead of a named import that reads what an earlier one set", async () => {
+      // The `import "dotenv/config"` shape: both files are CommonJS, and the
+      // second one's export is only right if the first one already ran.
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "dotenv/config";\nimport { url } from "./db.cjs";\nglobalThis.order.push(String(url));`,
+        "trace.cjs": trace,
+        "node_modules/dotenv/package.json": `{"name": "dotenv", "version": "0.0.0"}`,
+        "node_modules/dotenv/config.js": `globalThis.order.push("dotenv/config");\nprocess.env.DB_URL = "postgres://from-dotenv";\n${big}`,
+        "db.cjs": `globalThis.order.push("db"); exports.url = process.env.DB_URL;`,
+      });
+      expect(order).toEqual(["dotenv/config", "db", "postgres://from-dotenv"]);
+    });
+
+    // Not yet: a CommonJS file still runs while the graph is being fetched,
+    // before any ES module in it evaluates. Node runs it at its depth-first
+    // slot among the ES modules too. These three cases come from #35971.
+    it.todo("after an ES module sibling that is imported first", async () => {
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./setup.mjs";\nimport "./dep.cjs";\nglobalThis.order.push("entry");`,
+        "trace.cjs": trace,
+        "setup.mjs": `globalThis.order.push("setup");\n${bigEsm}`,
+        "dep.cjs": `globalThis.order.push("dep"); module.exports = {};`,
+      });
+      expect(order).toEqual(["setup", "dep", "entry"]);
+    });
+
+    it.todo("between two ES module siblings", async () => {
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./a.mjs";\nimport "./b.cjs";\nimport "./c.mjs";\nglobalThis.order.push("entry");`,
+        "trace.cjs": trace,
+        "a.mjs": `globalThis.order.push("a");\n${bigEsm}`,
+        "b.cjs": `globalThis.order.push("b"); module.exports = {};`,
+        "c.mjs": `globalThis.order.push("c");\nexport {};`,
+      });
+      expect(order).toEqual(["a", "b", "c", "entry"]);
+    });
+
+    it.todo("ahead of a named import that reads what an ES module sibling set", async () => {
+      // Same as the dotenv/config case above, but the file that sets the
+      // variable is an ES module.
+      const order = await run({
+        "entry.mjs": `import "./trace.cjs";\nimport "./load-env.mjs";\nimport { url } from "./db.cjs";\nglobalThis.order.push(String(url));`,
+        "trace.cjs": trace,
+        "load-env.mjs": `globalThis.order.push("load-env");\nprocess.env.DB_URL = "postgres://from-load-env";\nexport {};`,
+        "db.cjs": `globalThis.order.push("db"); exports.url = process.env.DB_URL;`,
+      });
+      expect(order).toEqual(["load-env", "db", "postgres://from-load-env"]);
+    });
+  });
+
+  // Which names an ES module can import from a CommonJS file. These come
+  // from `module.exports` after the file has run.
+  describe.concurrent("named imports from CommonJS", () => {
+    it("exports.x, module.exports.x and module.exports = { ... } keys", async () => {
+      const result = await run({
+        "entry.mjs": `import def, { foo, bar, baz } from "./lib.cjs";\nimport { value, other } from "./literal.cjs";\nconsole.log(JSON.stringify({ def, foo, bar, baz, value, other }));`,
+        "lib.cjs": `exports.foo = 42;\nexports.bar = "bar";\nmodule.exports.baz = "baz";`,
+        "literal.cjs": `const value = 7;\nmodule.exports = { value, other: "x" };`,
+      });
+      expect(result).toEqual({
+        def: { foo: 42, bar: "bar", baz: "baz" },
+        foo: 42,
+        bar: "bar",
+        baz: "baz",
+        value: 7,
+        other: "x",
+      });
+    });
+
+    it("a getter-backed export is read once", async () => {
+      const result = await run({
+        "entry.mjs": `import def, { foo } from "./lib.cjs";\nconsole.log(JSON.stringify({ foo, hits: def.getHits() }));`,
+        "lib.cjs": `Object.defineProperty(exports, "__esModule", { value: true });
+let hits = 0;
+Object.defineProperty(exports, "foo", { enumerable: true, get() { hits++; return 1; } });
+exports.getHits = () => hits;`,
+      });
+      expect(result).toEqual({ foo: 1, hits: 1 });
+    });
+
+    it("__exportStar re-exports are importable by name", async () => {
+      const result = await run({
+        "entry.mjs": `import { inner, own } from "./pkg.cjs";\nconsole.log(JSON.stringify({ inner, own }));`,
+        "pkg.cjs": `var tslib = { __exportStar(m, e) { for (var k in m) if (k !== "default") Object.defineProperty(e, k, { enumerable: true, get: () => m[k] }); } };
+tslib.__exportStar(require("./inner.cjs"), exports);
+exports.own = "own";`,
+        "inner.cjs": `exports.inner = 7;`,
+      });
+      expect(result).toEqual({ inner: 7, own: "own" });
+    });
+
+    it("module.exports = require(...) chosen at runtime (prod/dev shims)", async () => {
+      const result = await run({
+        "entry.mjs": `import { tag } from "./shim.cjs";\nconsole.log(JSON.stringify({ tag }));`,
+        "shim.cjs": `if (process.env.NODE_ENV === "production") {
+  module.exports = require("./a.cjs");
+} else {
+  module.exports = require("./b.cjs");
+}`,
+        "a.cjs": `exports.tag = "a";`,
+        "b.cjs": `exports.tag = "b";`,
+      });
+      expect(result).toEqual({ tag: "b" });
+    });
+
+    it("a throw in the CommonJS body rejects the import() promise", async () => {
+      const result = await run({
+        "entry.mjs": `try {
+  await import("./throws.cjs");
+  console.log(JSON.stringify({ caught: null }));
+} catch (e) {
+  console.log(JSON.stringify({ caught: e.message }));
+}`,
+        "throws.cjs": `exports.x = 1;\nthrow new Error("boom from cjs");`,
+      });
+      expect(result).toEqual({ caught: "boom from cjs" });
     });
   });
 });

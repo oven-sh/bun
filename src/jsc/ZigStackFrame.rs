@@ -23,9 +23,7 @@ pub struct ZigStackFrame {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
-    /// The frame runs code JSC compiled as a builtin: JSC's own JS builtins and bun's bundled
-    /// `src/js` modules. Only known for frames taken from a JSC stack trace, not for frames
-    /// parsed back out of an `error.stack` string.
+    /// A JSC builtin or one of bun's bundled modules; false for frames parsed out of `error.stack`.
     pub is_builtin: bool,
 
     /// -1 means not set.
@@ -70,9 +68,7 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
-    /// Whether the frame runs a JSC builtin or one of bun's bundled modules: `is_builtin` for
-    /// a frame taken from JSC's stack, the module URL (see `bundle-modules.ts`) for a frame
-    /// parsed back out of `error.stack`, which carries nothing else.
+    /// `is_builtin`, or a bundled module's URL for a frame parsed out of `error.stack`.
     pub(crate) fn is_builtin_code(&self) -> bool {
         let url = &self.source_url;
         self.is_builtin
@@ -87,10 +83,7 @@ impl ZigStackFrame {
         url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
     }
 
-    /// Whether `source_url` names a source the user can open: not builtin code, and not one of
-    /// the placeholders of a frame without a source (`native` / `unknown` are how a formatted
-    /// `error.stack` spells those). The code frame, its caret and the GitHub Actions
-    /// annotation all use the first frame for which this is true.
+    /// Names a source the user can open; the code frame, caret and GitHub annotation use the first such frame.
     pub(crate) fn has_user_source(&self) -> bool {
         let url = &self.source_url;
         !(self.is_builtin_code()

@@ -11,9 +11,7 @@ use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, 
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
-// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place;
-// `frame_index` is a by-value scalar that C++ bounds-checks against
-// `stack.frames_len`.
+// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
     pub(crate) safe fn ZigException__collectSourceLines(
         js_value: JSValue,
@@ -52,10 +50,7 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    /// Fills `stack.source_lines_*` with the source around `stack.frames()[frame_index]`,
-    /// read from that frame's JSC source provider. For sources bun transpiled,
-    /// `remap_zig_exception` reads the original file instead; this is the path for
-    /// everything else (`node:vm` scripts, `eval`, `new Function`).
+    /// Fills `stack.source_lines_*` from the JSC source provider of `stack.frames()[frame_index]`.
     pub(crate) fn collect_source_lines(
         &mut self,
         value: JSValue,

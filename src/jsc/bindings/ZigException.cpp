@@ -88,8 +88,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     frame.source_url = Bun::toStringRef(sourceURL);
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
-        // Bun's bundled modules are builtin executables too (createBuiltinExecutable), and
-        // functions nested in a builtin inherit the flag.
+        // Also true inside bun's bundled modules (createBuiltinExecutable); nested functions inherit it.
         frame.is_builtin = m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
@@ -424,10 +423,7 @@ public:
     }
 };
 
-// OnlyPosition fills `trace.frames_ptr` from `frames`. OnlySourceLines runs
-// later, after Rust has filtered the frames and picked the one whose source
-// to excerpt (`remap_zig_exception`), and collects the source lines of
-// `trace.frames_ptr[source_lines_frame_index]` only.
+// OnlySourceLines runs after Rust picked `trace.frames_ptr[source_lines_frame_index]` (remap_zig_exception).
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer, uint8_t source_lines_frame_index = 0)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

@@ -5820,8 +5820,7 @@ impl VirtualMachine {
             enable_source_code_preview.set(false);
         }
 
-        // `collect_source_lines` excerpts `frames[top]`'s JSC source: for a builtin, its own or a
-        // bundled module's text. `top` is only a builtin when no frame is the user's.
+        // True only when no frame is the user's; `frames[top]`'s JSC source is then builtin or bundled text.
         let top_frame_is_builtin_code = self.hide_bun_stackframes && frames[top].is_builtin_code();
 
         let already_remapped = frames[top].remapped;
@@ -5956,8 +5955,7 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() && !top_frame_is_builtin_code {
-            // Nothing to remap through (node:vm script, eval, new Function):
-            // excerpt the picked frame straight from its JSC source.
+            // No source map (node:vm script, eval, new Function): excerpt `frames[top]`'s JSC source.
             exception.collect_source_lines(error_instance, global, top as u8);
         }
 

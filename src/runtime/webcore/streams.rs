@@ -784,6 +784,85 @@ pub(crate) mod controller_abi {
             stream: ::bun_jsc::JSValue,
             c: ::bun_jsc::JSValue,
         ) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__setPipe"]
+        pub(crate) safe fn set_pipe(
+            c: ::bun_jsc::JSValue,
+            stream: ::bun_jsc::JSValue,
+            done: ::bun_jsc::JSValue,
+        );
+        #[link_name = "JSSinkController__pipeStream"]
+        pub(crate) safe fn pipe_stream(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__clearPipeStream"]
+        pub(crate) safe fn clear_pipe_stream(c: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__takePipeDone"]
+        pub(crate) safe fn take_pipe_done(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__hasPipeDone"]
+        pub(crate) safe fn has_pipe_done(c: ::bun_jsc::JSValue) -> bool;
+        #[link_name = "JSSinkController__setPipeError"]
+        pub(crate) safe fn set_pipe_error(c: ::bun_jsc::JSValue, error: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__takePipeError"]
+        pub(crate) safe fn take_pipe_error(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+    }
+}
+
+/// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
+#[derive(Default)]
+pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
+
+impl PipeCell {
+    pub(crate) fn create(
+        cell: JSValue,
+        stream: JSValue,
+        done: JSValue,
+        global: &JSGlobalObject,
+    ) -> PipeCell {
+        controller_abi::set_pipe(cell, stream, done);
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    }
+
+    pub(crate) fn cell(&self) -> Option<JSValue> {
+        self.0.get()
+    }
+
+    pub(crate) fn has_stream(&self) -> bool {
+        self.stream().is_some()
+    }
+
+    pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = controller_abi::pipe_stream(self.0.get()?);
+        if stream.is_empty() {
+            return None;
+        }
+        crate::webcore::ReadableStream::from_js_direct(stream)
+    }
+
+    pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = self.stream();
+        if let Some(cell) = self.0.get() {
+            controller_abi::clear_pipe_stream(cell);
+        }
+        stream
+    }
+
+    pub(crate) fn has_done(&self) -> bool {
+        self.0
+            .get()
+            .is_some_and(|cell| controller_abi::has_pipe_done(cell))
+    }
+
+    pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
+        controller_abi::take_pipe_done(self.0.get()?).as_promise()
+    }
+
+    pub(crate) fn set_error(&self, error: JSValue) {
+        if let Some(cell) = self.0.get() {
+            controller_abi::set_pipe_error(cell, error);
+        }
+    }
+
+    pub(crate) fn take_error(&self) -> Option<JSValue> {
+        let error = controller_abi::take_pipe_error(self.0.get()?);
+        (!error.is_empty()).then_some(error)
     }
 }
 

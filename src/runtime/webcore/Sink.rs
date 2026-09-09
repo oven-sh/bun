@@ -232,6 +232,31 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
+        ptr: NonNull<T>,
+    ) -> crate::webcore::jsc::JSValue
+    where
+        T: JsSinkType,
+    {
+        let controller = Self::create_controller(global, ptr);
+        Self::assign_controller_to_stream(global, stream, controller, ptr)
+    }
+
+    /// A new `JSReadable*SinkController` attached to the sink at `ptr`; it must be detached before the sink is freed.
+    pub fn create_controller(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        ptr: NonNull<T>,
+    ) -> crate::webcore::jsc::JSValue
+    where
+        T: JsSinkType,
+    {
+        T::create_controller_extern(global, ptr.as_ptr().cast::<c_void>())
+    }
+
+    /// [`assign_to_stream`](Self::assign_to_stream) through a `controller` from [`create_controller`](Self::create_controller).
+    pub fn assign_controller_to_stream(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        stream: crate::webcore::jsc::JSValue,
+        controller: crate::webcore::jsc::JSValue,
         mut ptr: NonNull<T>,
     ) -> crate::webcore::jsc::JSValue
     where
@@ -240,8 +265,6 @@ impl<T: JsSinkAbi> JSSink<T> {
         // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
         // call; the pointer is only stashed in C++ `m_sinkPtr`.
         let ptr = unsafe { ptr.as_mut() };
-        let controller =
-            T::create_controller_extern(global, std::ptr::from_mut::<T>(ptr).cast::<c_void>());
         if let Some(src) = ptr.source() {
             *src = streams::SourceHandle::JSController(controller);
         }

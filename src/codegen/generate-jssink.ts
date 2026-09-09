@@ -229,6 +229,10 @@ public:
     mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
     mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
     mutable JSC::Weak<JSObject> m_weakReadableStream;
+    // While a native sink pipes a stream in, it roots only this cell; these hold the rest (streams.rs PipeCell).
+    mutable WriteBarrier<JSC::JSObject> m_pipeStream;
+    mutable WriteBarrier<JSC::JSPromise> m_pipeDone;
+    mutable WriteBarrier<JSC::Unknown> m_pipeError;
     uintptr_t m_onDestroy { 0 };
     bool m_destinationClosed { false }; // the sink closed underneath the source (peer abort, write error): write()/flush() report 0 instead of throwing
 
@@ -838,6 +842,9 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_source);
     visitor.append(thisObject->m_closePromise);
     visitor.append(thisObject->m_failReason);
+    visitor.append(thisObject->m_pipeStream);
+    visitor.append(thisObject->m_pipeDone);
+    visitor.append(thisObject->m_pipeError);
 
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
@@ -1024,6 +1031,58 @@ extern "C" JSC::EncodedJSValue JSSinkController__assignToStream(JSC::JSGlobalObj
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     return globalObject->assignToStream(JSC::JSValue::decode(stream), JSC::JSValue::decode(controllerValue));
+}
+
+static WebCore::JSReadableSinkControllerBase* pipeCell(JSC::EncodedJSValue value)
+{
+    return static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(value).getObject());
+}
+
+extern "C" void JSSinkController__setPipe(JSC::EncodedJSValue cell, JSC::EncodedJSValue stream, JSC::EncodedJSValue done)
+{
+    auto* controller = pipeCell(cell);
+    auto& vm = controller->vm();
+    controller->m_pipeStream.setMayBeNull(vm, controller, JSC::JSValue::decode(stream).getObject());
+    controller->m_pipeDone.setMayBeNull(vm, controller, dynamicDowncast<JSC::JSPromise>(JSC::JSValue::decode(done)));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__pipeStream(JSC::EncodedJSValue cell)
+{
+    auto* stream = pipeCell(cell)->m_pipeStream.get();
+    return JSC::JSValue::encode(stream ? JSC::JSValue(stream) : JSC::JSValue());
+}
+
+extern "C" void JSSinkController__clearPipeStream(JSC::EncodedJSValue cell)
+{
+    pipeCell(cell)->m_pipeStream.clear();
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__takePipeDone(JSC::EncodedJSValue cell)
+{
+    auto* controller = pipeCell(cell);
+    auto* done = controller->m_pipeDone.get();
+    controller->m_pipeDone.clear();
+    return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
+}
+
+extern "C" bool JSSinkController__hasPipeDone(JSC::EncodedJSValue cell)
+{
+    return !!pipeCell(cell)->m_pipeDone;
+}
+
+extern "C" void JSSinkController__setPipeError(JSC::EncodedJSValue cell, JSC::EncodedJSValue error)
+{
+    auto* controller = pipeCell(cell);
+    if (!controller->m_pipeError)
+        controller->m_pipeError.set(controller->vm(), controller, JSC::JSValue::decode(error));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__takePipeError(JSC::EncodedJSValue cell)
+{
+    auto* controller = pipeCell(cell);
+    JSC::JSValue error = controller->m_pipeError.get();
+    controller->m_pipeError.clear();
+    return JSC::JSValue::encode(error);
 }
 
 extern "C" void JSSinkController__detachPtr(JSC::EncodedJSValue controllerValue)

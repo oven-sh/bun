@@ -754,7 +754,7 @@ describe("bytecode cache portability", () => {
   // Byte 12 is the entry header's callee-save register count (GenericCacheEntry { cacheVersion; bootSessionUUID; tag; reservedCalleeLocals }).
   const recordsBuild = corpusBuilds.find(({ entry, args }) => entry === "./records.js" && args.length === 0)!;
   for (const [variant, spoil] of [
-    ["a different build's header", (jsc: Buffer) => ((jsc[12] ^= 0xff), jsc)],
+    ["a different build's header", (jsc: Buffer) => ((jsc[1] ^= 0xff), jsc)], // inside the u32 cache version
     ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
     ["empty", (jsc: Buffer) => jsc.subarray(0, 0)],
   ] as const) {

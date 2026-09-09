@@ -4320,10 +4320,7 @@ impl<'a> LinkerContext<'a> {
             && !self.require_returns_module_exports_export(record)
     }
 
-    /// `require()` of an ES module that exports the name `module.exports`
-    /// returns that export (Node's `require(esm)` interop), not the namespace:
-    /// names read off the result are properties of that value, and `typeof`
-    /// or a truthiness test observes it.
+    /// `require()` of an ES module that exports `module.exports` returns that export, not the namespace.
     pub(crate) fn require_returns_module_exports_export(&self, record: &ImportRecord) -> bool {
         record.kind == ImportKind::Require
             && record.source_index.is_valid()

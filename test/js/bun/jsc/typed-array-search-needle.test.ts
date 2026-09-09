@@ -95,13 +95,32 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
   });
 
   test("Float32Array: an integer a float cannot hold matches nothing", () => {
-    const array = new Float32Array([16777216, 2 ** 31, -0, Infinity, 0.1, 3.4028234663852886e38]);
-    // 2^24 + 1 was rounded to 2^24 and INT32_MAX to 2^31, and both were "found".
+    const array = new Float32Array([
+      16777216,
+      2 ** 31,
+      -0,
+      Infinity,
+      0.1,
+      3.4028234663852886e38,
+      -16777216,
+      -(2 ** 31),
+    ]);
+    // 2^24 + 1 was rounded to 2^24 and INT32_MAX to 2^31, and both were "found". The integer literals
+    // are int32-encoded, which is the path that skipped the check. asDouble() takes the other path.
     expect(search(array, 16777217)).toEqual([-1, -1, false]);
     expect(search(array, asDouble(16777217))).toEqual([-1, -1, false]);
+    expect(search(array, -16777217)).toEqual([-1, -1, false]);
     expect(search(array, 2147483647)).toEqual([-1, -1, false]);
     expect(search(array, asDouble(2147483647))).toEqual([-1, -1, false]);
+    expect(search(array, -2147483647)).toEqual([-1, -1, false]);
+    expect(search(array, 16777216.5)).toEqual([-1, -1, false]);
+    // The same integer out of arithmetic or parseInt behaves like the literal.
+    expect(search(array, 16777216.5 + 0.5)).toEqual([-1, -1, false]);
+    expect(search(array, parseInt("16777217"))).toEqual([-1, -1, false]);
+    expect(search(array, 16777216 | 1)).toEqual([-1, -1, false]);
+    expect(search(array, 2 ** 24 + 1)).toEqual([-1, -1, false]);
     expect(search(array, 16777216)).toEqual([0, 0, true]);
+    expect(search(array, asDouble(16777216))).toEqual([0, 0, true]);
     expect(search(array, asDouble(2 ** 31))).toEqual([1, 1, true]);
     expect(search(array, 0)).toEqual([2, 2, true]);
     expect(search(array, -0)).toEqual([2, 2, true]);
@@ -112,50 +131,70 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
     expect(search(array, 3.4028234663852886e38)).toEqual([5, 5, true]);
     expect(search(array, 1e300)).toEqual([-1, -1, false]);
     expect(search(array, Number.MAX_VALUE)).toEqual([-1, -1, false]);
+    expect(search(array, -16777216)).toEqual([6, 6, true]);
+    expect(search(array, -2147483648)).toEqual([7, 7, true]);
     expect(search(new Float32Array([1, NaN]), NaN)).toEqual([-1, -1, true]);
   });
 
   test("Float16Array: an integer a half float cannot hold matches nothing", () => {
-    const array = new Float16Array([2048, 65504, -0, Infinity, -Infinity, -65504]);
-    // 2049 was rounded to 2048, and 65536 / INT32_MAX / INT32_MIN became +/-Infinity.
+    const array = new Float16Array([2048, 65504, -0, Infinity, -Infinity, -65504, -2048]);
+    // 2049 was rounded to 2048 and 65505..65519 to 65504, and 65520 and above / INT32_MAX / INT32_MIN
+    // became +/-Infinity. Each was "found".
     expect(search(array, 2049)).toEqual([-1, -1, false]);
     expect(search(array, asDouble(2049))).toEqual([-1, -1, false]);
-    expect(search(array, 65536)).toEqual([-1, -1, false]);
+    expect(search(array, -2049)).toEqual([-1, -1, false]);
+    expect(search(array, 65505)).toEqual([-1, -1, false]);
+    expect(search(array, asDouble(65505))).toEqual([-1, -1, false]);
+    expect(search(array, 65519)).toEqual([-1, -1, false]);
     expect(search(array, 65520)).toEqual([-1, -1, false]);
+    expect(search(array, asDouble(65520))).toEqual([-1, -1, false]);
+    expect(search(array, 65535)).toEqual([-1, -1, false]);
+    expect(search(array, 65536)).toEqual([-1, -1, false]);
+    expect(search(array, -65520)).toEqual([-1, -1, false]);
+    expect(search(array, -65536)).toEqual([-1, -1, false]);
     expect(search(array, 2147483647)).toEqual([-1, -1, false]);
     expect(search(array, -2147483648)).toEqual([-1, -1, false]);
-    expect(search(array, -65536)).toEqual([-1, -1, false]);
     expect(search(array, 1e300)).toEqual([-1, -1, false]);
     expect(search(array, 2048)).toEqual([0, 0, true]);
+    expect(search(array, asDouble(2048))).toEqual([0, 0, true]);
     expect(search(array, 65504)).toEqual([1, 1, true]);
+    expect(search(array, asDouble(65504))).toEqual([1, 1, true]);
     expect(search(array, 0)).toEqual([2, 2, true]);
     expect(search(array, Infinity)).toEqual([3, 3, true]);
     expect(search(array, -Infinity)).toEqual([4, 4, true]);
     expect(search(array, -65504)).toEqual([5, 5, true]);
+    expect(search(array, -2048)).toEqual([6, 6, true]);
     expect(search(new Float16Array([1, NaN]), NaN)).toEqual([-1, -1, true]);
   });
 
   test("Float64Array: int32 search values are exact", () => {
-    const array = new Float64Array([16777217, 2147483647, -0, 2 ** 53]);
+    const array = new Float64Array([16777217, 2147483647, -0, 2 ** 53, -2147483648]);
     expect(search(array, 16777217)).toEqual([0, 0, true]);
     expect(search(array, 2147483647)).toEqual([1, 1, true]);
     expect(search(array, 0)).toEqual([2, 2, true]);
     expect(search(array, 2 ** 53)).toEqual([3, 3, true]);
+    expect(search(array, -2147483648)).toEqual([4, 4, true]);
+    expect(search(array, 16777216)).toEqual([-1, -1, false]);
     expect(search(array, 2 ** 53 + 2)).toEqual([-1, -1, false]);
+    // A BigInt is never strictly equal to a Number element.
+    expect(search(array, 2n ** 53n)).toEqual([-1, -1, false]);
   });
 
   test("BigInt64Array: a BigInt outside [-2^63, 2^63) matches nothing", () => {
-    const array = new BigInt64Array([1n, 0n, -1n, -(2n ** 63n), 2n ** 63n - 1n]);
+    const array = new BigInt64Array([1n, 0n, -1n, -(2n ** 63n), 2n ** 63n - 1n, 2n ** 32n, -(2n ** 32n)]);
     // Each of these was reduced modulo 2^64 onto one of the elements.
     for (const needle of [
       2n ** 64n + 1n,
       2n ** 64n,
       -(2n ** 64n),
+      -(2n ** 64n) + 1n,
       2n ** 64n - 1n,
       2n ** 63n,
       -(2n ** 63n) - 1n,
       2n ** 128n + 1n,
       (1n << 200n) - 1n,
+      -(1n << 200n) - 1n,
+      -(1n << 200n) + 1n,
     ]) {
       expect(search(array, needle), `needle ${needle}`).toEqual([-1, -1, false]);
     }
@@ -164,21 +203,29 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
     expect(search(array, -1n)).toEqual([2, 2, true]);
     expect(search(array, -(2n ** 63n))).toEqual([3, 3, true]);
     expect(search(array, 2n ** 63n - 1n)).toEqual([4, 4, true]);
+    expect(search(array, 2n ** 32n)).toEqual([5, 5, true]);
+    expect(search(array, -(2n ** 32n))).toEqual([6, 6, true]);
+    expect(search(array, 2n)).toEqual([-1, -1, false]);
+    // A Number or a string is never strictly equal to a BigInt element.
     expect(search(array, 1)).toEqual([-1, -1, false]);
+    expect(search(array, "1")).toEqual([-1, -1, false]);
   });
 
   test("BigUint64Array: a BigInt outside [0, 2^64) matches nothing", () => {
-    const array = new BigUint64Array([1n, 0n, 2n ** 64n - 1n, 2n ** 63n]);
+    const array = new BigUint64Array([1n, 0n, 2n ** 64n - 1n, 2n ** 63n, 2n ** 63n - 1n, 2n ** 32n]);
     // Each of these was reduced modulo 2^64 onto one of the elements.
     for (const needle of [
       -1n,
       -(2n ** 63n),
+      -(2n ** 63n) - 1n,
       2n ** 64n,
       2n ** 64n + 1n,
       -(2n ** 64n),
       -(2n ** 64n) + 1n,
+      -(2n ** 64n) - 1n,
       2n ** 128n,
       (1n << 200n) + 1n,
+      -(1n << 200n) + 1n,
     ]) {
       expect(search(array, needle), `needle ${needle}`).toEqual([-1, -1, false]);
     }
@@ -186,6 +233,52 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
     expect(search(array, 0n)).toEqual([1, 1, true]);
     expect(search(array, 2n ** 64n - 1n)).toEqual([2, 2, true]);
     expect(search(array, 2n ** 63n)).toEqual([3, 3, true]);
+    expect(search(array, 2n ** 63n - 1n)).toEqual([4, 4, true]);
+    expect(search(array, 2n ** 32n)).toEqual([5, 5, true]);
+    expect(search(array, 2n)).toEqual([-1, -1, false]);
+    // A Number is never strictly equal to a BigInt element, even one with the same mathematical value.
     expect(search(array, 0)).toEqual([-1, -1, false]);
+    expect(search(array, 2 ** 63)).toEqual([-1, -1, false]);
+  });
+
+  test("BigInt64Array / BigUint64Array: the same through a subarray, a resizable or shared buffer, and with a fromIndex", () => {
+    for (const constructor of [BigInt64Array, BigUint64Array]) {
+      const elements = [7n, 3n, 7n, 7n, 3n];
+      const byteLength = elements.length * 8;
+      const padded = new constructor(elements.length + 2);
+      padded.set(elements, 1);
+      const resizable = new ArrayBuffer(byteLength, { maxByteLength: byteLength + 64 });
+      const views = {
+        plain: new constructor(elements),
+        subarray: padded.subarray(1, elements.length + 1),
+        lengthTracking: new constructor(resizable),
+        fixedLength: new constructor(resizable, 0, elements.length),
+        shared: new constructor(new SharedArrayBuffer(byteLength)),
+      };
+      views.lengthTracking.set(elements);
+      views.shared.set(elements);
+      // Both reduce to an element modulo 2^64.
+      const seven = 7n + 2n ** 64n;
+      const three = 3n - 2n ** 64n;
+      for (const [kind, view] of Object.entries(views)) {
+        const name = `${constructor.name} ${kind}`;
+        expect(
+          [
+            view.indexOf(7n),
+            view.lastIndexOf(7n),
+            view.indexOf(7n, 1),
+            view.lastIndexOf(7n, -3),
+            view.includes(3n, -1),
+          ],
+          name,
+        ).toEqual([0, 3, 2, 2, true]);
+        expect([...search(view, seven), ...search(view, three)], name).toEqual([-1, -1, false, -1, -1, false]);
+        expect([view.indexOf(seven, 1), view.lastIndexOf(seven, -3), view.includes(three, -1)], name).toEqual([
+          -1,
+          -1,
+          false,
+        ]);
+      }
+    }
   });
 });

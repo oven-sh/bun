@@ -19,8 +19,7 @@ pub(crate) fn peek_number_literal(input: &mut Parser) -> Option<CSSNumber> {
     value
 }
 
-/// A value parsed with a `[0,∞]` range: a negative literal is invalid, a math
-/// result clamps to 0 (https://drafts.csswg.org/css-values-4/#calc-range).
+/// A `[0,∞]` range: a negative literal is invalid, a math result clamps (css-values-4 #calc-range).
 pub(crate) trait ClampNegative: Sized {
     /// Clamps a resolved negative value to zero; unresolved math is left alone.
     fn clamp_negative(self) -> Self;

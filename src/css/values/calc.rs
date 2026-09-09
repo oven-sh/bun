@@ -114,8 +114,7 @@ pub enum Calc<V> {
 }
 
 impl<V> Calc<V> {
-    /// Whether this resolves to a `<number>` rather than a `V` (sum operands and
-    /// `min()`/`max()`/`hypot()` arguments share one type, so the first decides).
+    /// Whether this resolves to a `<number>`, not a `V`; the first operand or argument decides.
     pub(crate) fn resolves_to_number(&self) -> bool {
         match self {
             Calc::Value(_) => false,

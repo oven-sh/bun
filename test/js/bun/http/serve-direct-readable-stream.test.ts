@@ -1747,15 +1747,15 @@ describe("direct stream contract", () => {
   const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {
     "Bun.serve response body (http)": async s => {
       using server = Bun.serve({ port: 0, fetch: () => new Response(s) });
-      return okText(await fetch(server.url));
+      return await okText(await fetch(server.url));
     },
     "Bun.serve response body (https)": async s => {
       using server = Bun.serve({ port: 0, tls, fetch: () => new Response(s) });
-      return okText(await fetch(server.url, { tls: { rejectUnauthorized: false } }));
+      return await okText(await fetch(server.url, { tls: { rejectUnauthorized: false } }));
     },
     "fetch request body": async s => {
       using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
-      return okText(await fetch(server.url, { method: "POST", body: s, duplex: "half" } as RequestInit));
+      return await okText(await fetch(server.url, { method: "POST", body: s, duplex: "half" } as RequestInit));
     },
   };
   describe.each(Object.keys(directShapes))("%s", shapeName => {

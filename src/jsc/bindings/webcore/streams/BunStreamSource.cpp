@@ -679,7 +679,10 @@ static void directStreamOnClose(JSC::VM& vm, JSGlobalObject* globalObject, WebCo
         }
     }
     if (closePromise) {
-        resolvePromise(globalObject, closePromise, jsUndefined());
+        if (reason.toBoolean(globalObject))
+            rejectPromise(globalObject, closePromise, reason);
+        else
+            resolvePromise(globalObject, closePromise, jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -1343,7 +1346,13 @@ extern "C" void Bun__NativeStreamSourceAdapter__onClose(JSGlobalObject* globalOb
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectStreamPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1))->end(globalObject);
+    auto* sinkController = uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1));
+    // pull() called close(error) before resolving: the owner's promise rejects with that error.
+    if (JSValue failed = sinkController->m_failReason.get()) {
+        throwException(globalObject, scope, failed);
+        return {};
+    }
+    sinkController->end(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

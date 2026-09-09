@@ -227,6 +227,7 @@ public:
     SinkSource m_sourceKind { SinkSource::None };
     mutable WriteBarrier<JSC::JSCell> m_source;
     mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
+    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
     mutable JSC::Weak<JSObject> m_weakReadableStream;
     uintptr_t m_onDestroy { 0 };
 
@@ -694,6 +695,8 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
 }
 
 void JS${controllerName}::detach(JSC::JSValue reason) {
+    if (reason && !m_failReason)
+        m_failReason.set(this->vm(), this, reason);
     auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
     auto destroy = std::exchange(m_onDestroy, 0);
 
@@ -833,6 +836,7 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     
     visitor.append(thisObject->m_source);
     visitor.append(thisObject->m_closePromise);
+    visitor.append(thisObject->m_failReason);
 
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)

@@ -3784,7 +3784,8 @@ describe("direct stream contract", () => {
       using dir = tempDir("direct-contract", {});
       const file = join(String(dir), "out.txt");
       await Bun.write(file, new Response(s));
-      return Bun.file(file).text();
+      // Read before `dir` is disposed at the end of this scope.
+      return await Bun.file(file).text();
     },
     "Bun.spawn({ stdin: s })": async s => {
       await using proc = Bun.spawn({

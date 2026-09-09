@@ -2347,6 +2347,31 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       server.close();
     }
   });
+
+  // https.Server runs the same tls.Server normalization, so `requestCert: 1`
+  // must not ask for a certificate there either (Bun used to coerce it with `!!`).
+  it("https.Server treats a truthy-but-not-true requestCert like false as well", async () => {
+    const server = https.createServer({ ...COMMON_CERT, requestCert: 1 as unknown as boolean }, (req, res) => {
+      // The client below holds a certificate, so the server sees one iff it sent a CertificateRequest.
+      const peer = (req.socket as TLSSocket).getPeerCertificate?.();
+      res.end(peer?.subject ? "asked" : "anonymous");
+    });
+    let client: TLSSocket | undefined;
+    try {
+      const port = await listen(server as unknown as Server);
+      const outcome = Promise.withResolvers<string>();
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, key: COMMON_CERT.key, cert: COMMON_CERT.cert });
+      client.on("secureConnect", () => client!.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      client.on("error", err => outcome.resolve((err as Error & { code?: string }).code ?? err.message));
+      client.on("close", () => outcome.resolve(response.split("\r\n").at(-1) || "closed without a response"));
+      expect(await outcome.promise).toBe("anonymous");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
 });
 
 describe("throwing 'secureConnection' listener", () => {

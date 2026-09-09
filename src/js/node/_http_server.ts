@@ -234,9 +234,10 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
-// Node's https.Server never reads $NODE_TLS_REJECT_UNAUTHORIZED, unlike the native default.
+// Node's tls.Server normalization (lib/internal/tls/wrap.js): only `requestCert === true`
+// asks for a certificate, and $NODE_TLS_REJECT_UNAUTHORIZED is never read for a server.
 function normalizeServerTls(tls) {
-  tls.requestCert = !!tls.requestCert;
+  tls.requestCert = tls.requestCert === true;
   tls.rejectUnauthorized = tls.rejectUnauthorized !== false;
   return tls;
 }

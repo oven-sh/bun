@@ -1397,13 +1397,15 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   /* Node's tls_wrap.cc SetVerifyMode: only requestCert makes a server send
    * CertificateRequest; a `ca` on its own only scopes verification. Clients
-   * get SSL_VERIFY_PEER per-SSL in us_internal_ssl_client_verify_defaults. */
-  if (options.request_cert) {
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+   * get SSL_VERIFY_PEER per-SSL in us_internal_ssl_client_verify_defaults.
+   * The callback is installed even at SSL_VERIFY_NONE: lsquic's SNI switch
+   * raises the per-SSL mode with SSL_set_verify(ssl, mode, NULL), which keeps
+   * whatever callback the SSL inherited from this context. */
+  SSL_CTX_set_verify(ssl_context,
+      !options.request_cert        ? SSL_VERIFY_NONE
+      : options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
-        us_verify_callback);
-  }
+      us_verify_callback);
 
   if (options.dh_params_file_name) {
     DH *dh_2048 = NULL;

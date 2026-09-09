@@ -1468,6 +1468,43 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
   });
+
+  test("a `ca` without requestCert serves cert-less QUIC clients, and a per-serverName rejectUnauthorized: false tolerates an unverifiable certificate", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    const credentials = { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem"), ca: pem("ca1-cert.pem") };
+    await using server = Bun.serve({
+      port: 0,
+      tls: [
+        // No requestCert: the `ca` must not make the server ask for a certificate.
+        credentials,
+        // Asks, but accepts whatever comes back. agent2 is self-signed, so ca1 cannot verify it.
+        { ...credentials, serverName: "lenient.example.com", requestCert: true, rejectUnauthorized: false },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+
+    const agent2 = {
+      keys: [createPrivateKey(pem("agent2-key.pem"))],
+      certs: [readFileSync(join(keysDir, "agent2-cert.pem"))],
+    };
+    const lenient = { servername: "lenient.example.com" };
+    const results = {
+      defaultNoCert: await h3Exchange(server.port, requestHeaders("/")),
+      lenientNoCert: await h3Exchange(server.port, requestHeaders("/", { ":authority": lenient.servername }), lenient),
+      lenientUnverifiable: await h3Exchange(server.port, requestHeaders("/", { ":authority": lenient.servername }), {
+        ...lenient,
+        ...agent2,
+      }),
+    };
+
+    expect(results).toEqual({
+      defaultNoCert: "200 served",
+      lenientNoCert: "200 served",
+      lenientUnverifiable: "200 served",
+    });
+  });
 });
 
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()

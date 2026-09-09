@@ -623,10 +623,11 @@ it.each([
 describe("streaming", () => {
   describe("error handler", () => {
     // The body source fails before any byte is written. The Response's status
-    // and headers are already committed to uWS, so error() cannot replace them
-    // and is not called; the connection is closed without a complete response
-    // so the client cannot mistake the failed body for an empty one.
-    it("throw on pull closes the connection, does not call error handler", async () => {
+    // and headers are already committed to uWS, so error() cannot replace them:
+    // it is told (so the failure can be logged) but its Response is discarded,
+    // and the connection is closed without a complete response so the client
+    // cannot mistake the failed body for an empty one.
+    it("throw on pull closes the connection; error() is told but cannot answer", async () => {
       let outcome: string | undefined;
       const onMessage = mock(async url => {
         outcome = await fetch(url).then(
@@ -648,15 +649,15 @@ describe("streaming", () => {
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
       expect(outcome).toBe("rejected ECONNRESET");
-      expect(stderr).toContain("error: Oops");
-      expect(stderr).not.toContain("error handler called");
+      // error() got the failure (and logged); its 555 Response never reached the client, and nothing else was printed.
+      expect({ handlerCalled: stderr.includes("error handler called"), printed: stderr.includes("error: Oops") }).toEqual({ handlerCalled: true, printed: false });
       expect(onMessage).toHaveBeenCalled();
     });
 
     // pull() queues two chunks, requests close, then throws: per the streams
     // spec the error wins and the queued chunks are discarded, so this is the
     // same "failed before any byte" case as above.
-    it("throw on pull after writing closes the connection, does not call the error handler", async () => {
+    it("throw on pull after writing closes the connection; error() is told but cannot answer", async () => {
       let outcome: string | undefined;
       const onMessage = mock(async href => {
         const url = new URL("write", href);
@@ -679,8 +680,8 @@ describe("streaming", () => {
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
       expect(outcome).toBe("rejected ECONNRESET");
-      expect(stderr).toContain("error: Oops");
-      expect(stderr).not.toContain("error handler called");
+      // error() got the failure (and logged); its 555 Response never reached the client, and nothing else was printed.
+      expect({ handlerCalled: stderr.includes("error handler called"), printed: stderr.includes("error: Oops") }).toEqual({ handlerCalled: true, printed: false });
       expect(onMessage).toHaveBeenCalled();
     });
 

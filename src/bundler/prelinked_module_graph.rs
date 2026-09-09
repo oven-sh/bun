@@ -12,7 +12,7 @@ use bun_js_printer::analyze_transpiled_module::{
 use crate::analyze_transpiled_module::ModuleInfoSlotTableBuilder;
 
 pub const MAGIC: u32 = 0x474d_4c50; // "PLMG"
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 2;
 pub const NO_MODULE: u32 = u32::MAX;
 /// Hash column value of an entry whose name is a sentinel (never looked up by name); sorts last.
 const SENTINEL_HASH: u32 = u32::MAX;
@@ -33,7 +33,7 @@ mod module_flags {
 const PHASE_DEFER_BIT: u32 = 1 << 3;
 
 const HEADER_WORDS: usize = 16;
-const MODULE_WORDS: usize = 11;
+const MODULE_WORDS: usize = 10;
 const REQUEST_WORDS: usize = 4;
 const IMPORT_WORDS: usize = 6;
 const EXPORT_WORDS: usize = 6;
@@ -533,15 +533,6 @@ impl Resolver<'_> {
     }
 }
 
-/// `PrelinkedModuleGraph::importIndexSlotCount`: the power of two >= 2 * imports, 0 without imports.
-fn import_index_slot_count(import_count: usize) -> usize {
-    if import_count == 0 {
-        0
-    } else {
-        (2 * import_count).next_power_of_two()
-    }
-}
-
 fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec<u8> {
     let hash = |sid: u32| name_hash(hashes, sid);
     let request_count: usize = graph.iter().map(|m| m.requests.len()).sum();
@@ -554,13 +545,7 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
     let imports_offset = requests_offset + request_count * REQUEST_WORDS * 4;
     let exports_offset = imports_offset + import_count * IMPORT_WORDS * 4;
     let stars_offset = exports_offset + export_count * EXPORT_WORDS * 4;
-    let import_index_offset = stars_offset + star_count * 4;
-    let import_index_slots: usize = graph
-        .iter()
-        .map(|m| import_index_slot_count(m.imports.len()))
-        .sum();
-    let import_index_bytes = (import_index_slots * 2 + 3) & !3; // u16 slots, padded to 4
-    let total = import_index_offset + import_index_bytes;
+    let total = stars_offset + star_count * 4;
 
     let mut out: Vec<u8> = Vec::with_capacity(total);
     let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
@@ -585,15 +570,15 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
         to_u32(imports_offset),
         to_u32(exports_offset),
         to_u32(stars_offset),
-        to_u32(import_index_offset),
-        to_u32(import_index_bytes),
+        0,
+        0,
         0,
     ] {
         put(v);
     }
 
-    let (mut first_request, mut first_import, mut first_export, mut first_star, mut index_offset) =
-        (0usize, 0usize, 0usize, 0usize, 0usize);
+    let (mut first_request, mut first_import, mut first_export, mut first_star) =
+        (0usize, 0usize, 0usize, 0usize);
     for m in graph {
         for v in [
             m.key,
@@ -606,7 +591,6 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
             to_u32(m.exports.len()),
             to_u32(first_star),
             to_u32(m.star_exports.len()),
-            to_u32(index_offset),
         ] {
             put(v);
         }
@@ -614,7 +598,6 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
         first_import += m.imports.len();
         first_export += m.exports.len();
         first_star += m.star_exports.len();
-        index_offset += import_index_slot_count(m.imports.len()) * 2;
     }
     for m in graph {
         for r in &m.requests {
@@ -658,27 +641,6 @@ fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec
             put(s);
         }
     }
-    // Per-module open-addressed index over its imports (`PrelinkedModuleGraph::findImport`): slot = hash & mask,
-    // linear probing, value = position within the module's imports + 1, 0 = empty; load <= 1/2.
-    for m in graph {
-        let slot_count = import_index_slot_count(m.imports.len());
-        let mut slots = vec![0u16; slot_count];
-        for (position, import) in m.imports.iter().enumerate() {
-            let h = hash(import.local);
-            if h == SENTINEL_HASH {
-                continue;
-            }
-            let mut i = h as usize & (slot_count - 1);
-            while slots[i] != 0 {
-                i = (i + 1) & (slot_count - 1);
-            }
-            slots[i] = u16::try_from(position + 1).expect("imports per module fit the u16 index");
-        }
-        for slot in slots {
-            out.extend_from_slice(&slot.to_le_bytes());
-        }
-    }
-    out.resize(total, 0);
     debug_assert_eq!(out.len(), total);
     out
 }

@@ -474,11 +474,12 @@ impl FileSink {
         }
     }
 
-    /// Serves both POSIX `on_ready` and the Windows `on_writable` slot.
+    /// Windows `on_writable` slot. POSIX resumes a pending pull in `on_write`.
     ///
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
+    #[cfg(windows)]
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.

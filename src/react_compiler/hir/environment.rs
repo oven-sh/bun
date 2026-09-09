@@ -123,10 +123,6 @@ pub struct OutlinedFunctionEntry {
 }
 
 impl Environment {
-    pub fn new() -> Self {
-        Self::with_config(EnvironmentConfig::default())
-    }
-
     /// Create a new Environment with the given configuration.
     ///
     /// Initializes the shape and global registries, registers custom hooks,
@@ -557,45 +553,6 @@ impl Environment {
         None
     }
 
-    /// Get the type of a named property on a receiver type.
-    /// Ported from TS `getPropertyType`.
-    pub fn get_property_type(
-        &mut self,
-        receiver: &Type,
-        property: &[u8],
-    ) -> Result<Option<Type>, CompilerDiagnostic> {
-        let shape_id = match receiver {
-            Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
-            _ => None,
-        };
-        if let Some(shape_id) = shape_id {
-            let shape = self
-                .shapes
-                .get(shape_id)
-                .ok_or_else(|| shape_not_found(shape_id))?;
-            if let Some(ty) = core::str::from_utf8(property)
-                .ok()
-                .and_then(|k| shape.properties.get(k))
-            {
-                return Ok(Some(ty.clone()));
-            }
-            // Fall through to wildcard
-            if let Some(ty) = shape.properties.get("*") {
-                return Ok(Some(ty.clone()));
-            }
-            // If property name looks like a hook, return custom hook type
-            if is_hook_name(property) {
-                return Ok(Some(self.get_custom_hook_type()));
-            }
-            return Ok(None);
-        }
-        // No shape ID — if property looks like a hook, return custom hook type
-        if is_hook_name(property) {
-            return Ok(Some(self.get_custom_hook_type()));
-        }
-        Ok(None)
-    }
-
     /// Get the function signature for a function type.
     /// Ported from TS `getFunctionSignature`.
     pub fn get_function_signature(
@@ -911,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_environment_has_globals() {
-        let env = Environment::new();
+        let env = Environment::with_config(EnvironmentConfig::default());
         assert!(env.globals().contains_key("useState"));
         assert!(env.globals().contains_key("useEffect"));
         assert!(env.globals().contains_key("useRef"));
@@ -923,23 +880,26 @@ mod tests {
 
     #[test]
     fn test_get_property_type_array() {
-        let mut env = Environment::new();
+        let env = Environment::with_config(EnvironmentConfig::default());
         let array_type = Type::Object {
             shape_id: Some("BuiltInArray"),
         };
-        let map_type = env.get_property_type(&array_type, b"map").unwrap();
+        let map_type = Environment::get_property_type_from_shapes(&env.shapes, &array_type, b"map");
         assert!(map_type.is_some());
-        let push_type = env.get_property_type(&array_type, b"push").unwrap();
+        let push_type =
+            Environment::get_property_type_from_shapes(&env.shapes, &array_type, b"push");
         assert!(push_type.is_some());
-        let nonexistent = env
-            .get_property_type(&array_type, b"nonExistentMethod")
-            .unwrap();
+        let nonexistent = Environment::get_property_type_from_shapes(
+            &env.shapes,
+            &array_type,
+            b"nonExistentMethod",
+        );
         assert!(nonexistent.is_none());
     }
 
     #[test]
     fn test_get_function_signature() {
-        let env = Environment::new();
+        let env = Environment::with_config(EnvironmentConfig::default());
         let use_state_type = env.globals().get("useState").unwrap();
         let sig = env.get_function_signature(use_state_type).unwrap();
         assert!(sig.is_some());
@@ -950,7 +910,7 @@ mod tests {
 
     #[test]
     fn test_get_global_declaration() {
-        let mut env = Environment::new();
+        let mut env = Environment::with_config(EnvironmentConfig::default());
         // Global binding
         let binding = NonLocalBinding {
             ref_: bun_ast::Ref::NONE,

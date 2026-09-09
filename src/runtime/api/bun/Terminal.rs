@@ -1768,7 +1768,7 @@ impl Terminal {
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = amount;
-        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
+        // POSIX: `PosixStreamingWriter` has no writable callback; detect the
         // buffered→drained transition here instead. Windows fires the drain
         // callback from `on_writable`, so only record the drained state (a
         // stale flag would block `maybe_downgrade_after_eof` forever).
@@ -2008,9 +2008,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();

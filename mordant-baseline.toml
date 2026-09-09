@@ -130,7 +130,6 @@
 "unused_pub:src/bun_core/string/immutable.rs" = 6
 "unused_pub:src/bun_core/string/mod.rs" = 2
 "unused_pub:src/bun_core/util.rs" = 10
-"unused_pub:src/collections/StaticHashMap.rs" = 4
 "unused_pub:src/collections/vec_ext.rs" = 2
 "unused_pub:src/dotenv/env_loader.rs" = 1
 "unused_pub:src/errno/lib.rs" = 1
@@ -138,7 +137,7 @@
 "unused_pub:src/event_loop/SpawnSyncEventLoop.rs" = 1
 "unused_pub:src/glob/GlobWalker.rs" = 1
 "unused_pub:src/io/ParentDeathWatchdog.rs" = 1
-"unused_pub:src/io/PipeWriter.rs" = 2
+"unused_pub:src/io/PipeWriter.rs" = 1
 "unused_pub:src/jsc/bindgen.rs" = 6
 "unused_pub:src/jsc/host_fn.rs" = 2
 "unused_pub:src/jsc/lib.rs" = 1
@@ -154,7 +153,6 @@
 "unused_pub:src/paths/string_paths.rs" = 7
 "unused_pub:src/ptr/CowSlice.rs" = 1
 "unused_pub:src/ptr/ref_count.rs" = 2
-"unused_pub:src/react_compiler/hir/environment.rs" = 2
 "unused_pub:src/runtime/api/bun/h2/connection.rs" = 5
 "unused_pub:src/runtime/api/bun/h2/wire.rs" = 1
 "unused_pub:src/runtime/ipc.rs" = 3

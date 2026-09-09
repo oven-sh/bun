@@ -15,6 +15,15 @@ declare module "bun" {
      */
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
     /**
+     * Write multiple chunks of data to the file in order.
+     *
+     * If the file descriptor is not writable yet, the data is buffered.
+     *
+     * @param chunks The data to write
+     * @returns Number of bytes written or, if the write is pending, a Promise resolving to the number of bytes
+     */
+    writev(chunks: (ArrayBufferView | ArrayBuffer | SharedArrayBuffer)[]): number | Promise<number>;
+    /**
      * Flush the internal buffer, committing the data to disk or the pipe.
      *
      * @returns Number of bytes flushed or a Promise resolving to the number of bytes

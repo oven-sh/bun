@@ -600,6 +600,47 @@ describe("HTMLRewriter", () => {
       expect(afterFlush).toBe(1);
     });
 
+    // `controller.writev()` hands the sink borrowed views of every chunk. A
+    // handler that runs while the first chunk is fed can detach a later
+    // chunk's ArrayBuffer, so the sink must copy the chunks before feeding.
+    // `Malloc=1` puts JSC on the system allocator so an ASAN build sees the
+    // dangling read as a use-after-free instead of stale bytes.
+    it("a direct pull() writev() survives a handler that detaches a later chunk", async () => {
+      const fixture = `
+        const encoder = new TextEncoder();
+        const tailText = "<span>tail</span>";
+        const tail = new Uint8Array(new ArrayBuffer(1 << 16));
+        tail.set(encoder.encode(tailText));
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            await controller.writev([encoder.encode("<div>head</div>"), tail.subarray(0, tailText.length)]);
+            await controller.end();
+          },
+        });
+        const res = new HTMLRewriter()
+          .on("div", {
+            element(el) {
+              el.setAttribute("seen", "");
+              tail.buffer.transfer();
+              Bun.gc(true);
+            },
+          })
+          .transform(new Response(stream));
+        console.log(await res.text());
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, Malloc: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('<div seen="">head</div><span>tail</span>\n');
+      expect(exitCode).toBe(0);
+    });
+
     // Two rewriters chained, both suspending: `init()`'s own comment names
     // "another transform()" as a supported consumer of a pending body.
     it("chained suspending transforms", async () => {

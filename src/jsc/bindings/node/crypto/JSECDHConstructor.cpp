@@ -24,7 +24,7 @@ static const JSC::HashTableValue JSECDHConstructorTableValues[] = {
 void JSECDHConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
 {
     Base::finishCreation(vm, 2, "ECDH"_s);
-    reifyStaticProperties(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSECDHConstructor::info(), JSECDHConstructorTableValues, *this);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -90,14 +90,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     auto* keyView = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, inEncValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto buffer = keyView->span();
-
     JSValue formatValue = callFrame->argument(4);
     point_conversion_form_t form = JSECDH::getFormat(lexicalGlobalObject, scope, formatValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto curveName = curveValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    auto buffer = keyView->span();
 
     int nid = OBJ_sn2nid(curveName.utf8().data());
     if (nid == NID_undef)

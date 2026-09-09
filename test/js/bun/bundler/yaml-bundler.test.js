@@ -1,8 +1,8 @@
 import { expect, it } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 
 it("can bundle yaml files", async () => {
-  const dir = tempDirWithFiles("yaml-bundle", {
+  await using dir = tempDir("yaml-bundle", {
     "index.js": `
       import yamlData from "./config.yaml";
       import ymlData from "./config.yml";
@@ -35,7 +35,7 @@ it("can bundle yaml files", async () => {
 });
 
 it("yaml files work with Bun.build API", async () => {
-  const dir = tempDirWithFiles("yaml-build-api", {
+  await using dir = tempDir("yaml-build-api", {
     "input.js": `
       import config from "./config.yaml";
       export default config;

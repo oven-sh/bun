@@ -28,11 +28,12 @@ function spawnMinify(css: string) {
       bunExe(),
       "-e",
       `const c = require("bun:internal-for-testing").cssInternals;
+       const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
        const css = ${JSON.stringify(css)};
-       const rssBefore = process.memoryUsage.rss();
+       const rssBefore = rss();
        let threw = false;
        try { c.minifyTest(css, ""); } catch { threw = true; }
-       const deltaMB = (process.memoryUsage.rss() - rssBefore) / 1024 / 1024;
+       const deltaMB = (rss() - rssBefore) / 1024 / 1024;
        if (deltaMB > 256) throw new Error("memory grew by " + deltaMB.toFixed(0) + "MB");
        console.log("done threw=" + threw);`,
     ],
@@ -86,6 +87,12 @@ test.concurrent("deeply nested rgb() with an invalid var() in the alpha parses i
 test("original fuzzer input parses in bounded time and memory", () => {
   // Minimized fuzzer testcase: thousands of unclosed `{` blocks, unterminated
   // strings, and a trailing run of `}`.
+  //
+  // The input's very first byte is `{`, so its whole depth is a chain of
+  // empty-prelude rules. Now that empty selectors are rejected, parsing stops
+  // on the first byte instead of reading to EOF; the bounded-time property
+  // this test guards still holds, the targeted deep-nesting tests above keep
+  // covering the backtracking path, and the error just arrives sooner.
   const input = Buffer.from(
     Bun.gunzipSync(
       Buffer.from(
@@ -94,9 +101,9 @@ test("original fuzzer input parses in bounded time and memory", () => {
       ),
     ),
   ).toString("latin1");
-  expect(() => minifyTest(input, "")).toThrow("Unexpected end of input");
-  expect(() => _test(input, "", { chrome: 80 << 16 })).toThrow("Unexpected end of input");
-  expect(() => prefixTest(input, "", { chrome: 80 << 16 })).toThrow("Unexpected end of input");
+  expect(() => minifyTest(input, "")).toThrow("Empty selector is not allowed");
+  expect(() => _test(input, "", { chrome: 80 << 16 })).toThrow("Empty selector is not allowed");
+  expect(() => prefixTest(input, "", { chrome: 80 << 16 })).toThrow("Empty selector is not allowed");
 });
 
 test("valid and recovered color function values are unchanged", () => {

@@ -100,6 +100,186 @@ describe("css", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/18921
+  // The `animation` shorthand and `animation-name` longhand must scope their
+  // referenced `@keyframes` name to the SAME hashed name the keyframes rule
+  // receives, otherwise the animation is broken.
+  itBundled("css-module/AnimationNameScopedToKeyframes", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.playAnim, styles.spin);
+      `,
+      "/styles.module.css": `
+        .playAnim { animation: anim forwards ease-out 0.25s; }
+        .spin { animation-name: rotate; }
+        .quoted { animation-name: "anim"; }
+        @keyframes anim { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes rotate { to { transform: rotate(360deg) } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+
+      // Each @keyframes name is scoped (e.g. `anim_<hash>`), not left bare.
+      const animKeyframes = css.match(/@keyframes\s+(anim_[A-Za-z0-9_-]+)\s*\{/);
+      const rotateKeyframes = css.match(/@keyframes\s+(rotate_[A-Za-z0-9_-]+)\s*\{/);
+      expect(animKeyframes, "@keyframes anim should be scoped").not.toBeNull();
+      expect(rotateKeyframes, "@keyframes rotate should be scoped").not.toBeNull();
+
+      // The `animation` shorthand references the SAME scoped keyframes name.
+      const animShorthand = css.match(/animation:\s*([^;]+);/);
+      expect(animShorthand, "animation shorthand should be present").not.toBeNull();
+      expect(animShorthand![1]).toContain(animKeyframes![1]);
+
+      // The `animation-name` longhand references the SAME scoped keyframes name.
+      expect(css).toContain(`animation-name: ${rotateKeyframes![1]}`);
+
+      // The quoted-string form scopes to the same hash as the ident form.
+      expect(css).toContain(`animation-name: ${animKeyframes![1]}`);
+
+      // The bare (unscoped) names must not survive as animation references.
+      expect(css).not.toMatch(/animation:[^;]*\banim\b/);
+      expect(css).not.toMatch(/animation-name:\s*rotate\b/);
+    },
+  });
+
+  // The parser dedupes repeated class/id names through a borrowed lookup
+  // (`add_symbol_for_name`); many references to the same names must all map
+  // to a single hashed symbol each.
+  itBundled("css-module/RepeatedClassAndIdReferences", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(JSON.stringify(styles));
+      `,
+      "/styles.module.css":
+        Array.from({ length: 64 }, (_, i) => `.btn { z-index: ${i} }`).join("\n") +
+        "\n#hero { color: red }\n" +
+        Array.from({ length: 32 }, () => `#hero .btn { color: blue }`).join("\n"),
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      const css = api.readFile("/out/entry.css");
+
+      const btn = js.match(/btn:\s*"(btn_[A-Za-z0-9_-]+)"/);
+      const hero = js.match(/hero:\s*"(hero_[A-Za-z0-9_-]+)"/);
+      expect(btn).not.toBeNull();
+      expect(hero).not.toBeNull();
+
+      // Every `.btn` / `#hero` occurrence shares the same hashed name.
+      const btnHashes = new Set([...css.matchAll(/\.btn_[A-Za-z0-9_-]+/g)].map(m => m[0]));
+      const heroHashes = new Set([...css.matchAll(/#hero_[A-Za-z0-9_-]+/g)].map(m => m[0]));
+      expect([...btnHashes]).toEqual([`.${btn![1]}`]);
+      expect([...heroHashes]).toEqual([`#${hero![1]}`]);
+      expect(css).not.toMatch(/\.btn\b[^_]/);
+      expect(css).not.toMatch(/#hero\b[^_]/);
+    },
+  });
+
+  // The name inside `::view-transition-group(name)` (and `-old`, `-new`,
+  // `-image-pair`) is a custom ident. It must get the same module hash as the
+  // `view-transition-name` / `view-transition-class` / `view-transition-group`
+  // declarations, otherwise the selectors never match the elements.
+  itBundled("css-module/ViewTransitionNamesScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.card);
+      `,
+      "/styles.module.css": `
+        .card {
+          view-transition-name: hero;
+          view-transition-class: slide;
+          view-transition-group: hero;
+        }
+        .page {
+          view-transition-name: none;
+          view-transition-class: none;
+          view-transition-group: nearest;
+        }
+        ::view-transition-group(hero) { animation-duration: 1s }
+        ::view-transition-image-pair(hero) { isolation: auto }
+        ::view-transition-old(.slide) { opacity: 0 }
+        ::view-transition-new(.slide) { opacity: 1 }
+        ::view-transition-group(*) { animation-timing-function: linear }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const card = css.match(/\.card_([A-Za-z0-9_-]+)\s*\{/);
+      expect(card, ".card should be scoped").not.toBeNull();
+      const hash = card![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .card_${hash} {
+          view-transition-name: hero_${hash};
+          view-transition-class: slide_${hash};
+          view-transition-group: hero_${hash};
+        }
+
+        .page_${hash} {
+          view-transition-name: none;
+          view-transition-class: none;
+          view-transition-group: nearest;
+        }
+
+        ::view-transition-group(hero_${hash}) {
+          animation-duration: 1s;
+        }
+
+        ::view-transition-image-pair(hero_${hash}) {
+          isolation: auto;
+        }
+
+        ::view-transition-old(.slide_${hash}) {
+          opacity: 0;
+        }
+
+        ::view-transition-new(.slide_${hash}) {
+          opacity: 1;
+        }
+
+        ::view-transition-group(*) {
+          animation-timing-function: linear;
+        }
+      `);
+    },
+  });
+
+  // Values the grammar rejects stay untouched, so a future keyword or a
+  // var() reference is not hashed as if it were a name.
+  itBundled("css-module/ViewTransitionUnparsedValuesNotScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.card);
+      `,
+      "/styles.module.css": `
+        .card {
+          view-transition-name: var(--name);
+          view-transition-class: slide none;
+          view-transition-group: 1px;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain("view-transition-name: var(--name);");
+      expect(css).toContain("view-transition-class: slide none;");
+      expect(css).toContain("view-transition-group: 1px;");
+    },
+  });
+
   itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
     files: {
       "/entry.js": `

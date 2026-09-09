@@ -9,7 +9,6 @@
 // `bun_options_types → bun_ast → bun_options_types` cycle.
 
 use bun_collections::StringArrayHashMap;
-use bun_wyhash::Wyhash11;
 
 use crate::{Expr, Ref};
 
@@ -20,11 +19,6 @@ pub struct Runtime;
 impl Runtime {
     pub fn source_code() -> &'static [u8] {
         bun_core::runtime_embed_file!(Codegen, "runtime.out.js").as_bytes()
-    }
-
-    pub fn version_hash() -> u32 {
-        let hash = Wyhash11::hash(0, Self::source_code());
-        hash as u32 // @truncate
     }
 }
 
@@ -82,10 +76,6 @@ impl ReplaceableExportMap {
     #[inline]
     pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
         self.entries.get(key)
-    }
-    #[inline]
-    pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
-        self.entries.get_ptr_mut(key)
     }
     #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
@@ -147,11 +137,6 @@ impl ServerComponentsMode {
             Self::WrapExportsForClientReference | Self::WrapExportsForServerReference
         )
     }
-
-    #[inline]
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, Self::None)
-    }
 }
 
 // ─────────────────────────── Runtime.Imports ───────────────────────────
@@ -160,38 +145,38 @@ impl ServerComponentsMode {
 #[allow(non_snake_case)]
 #[derive(Default, Clone)]
 pub struct Imports {
-    pub __name: Ref,
+    pub(crate) __name: Ref,
     pub __require: Ref,
-    pub __export: Ref,
-    pub __reExport: Ref,
-    pub __exportValue: Ref,
-    pub __exportDefault: Ref,
-    // __refreshRuntime: ?GeneratedSymbol = null,
-    // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-    pub __merge: Ref,
-    pub __legacyDecorateClassTS: Ref,
-    pub __legacyDecorateParamTS: Ref,
-    pub __legacyMetadataTS: Ref,
-    pub __publicField: Ref,
-    pub __privateIn: Ref,
-    pub __privateGet: Ref,
-    pub __privateAdd: Ref,
-    pub __privateSet: Ref,
-    pub __privateMethod: Ref,
-    pub __decoratorStart: Ref,
-    pub __decoratorMetadata: Ref,
-    pub __runInitializers: Ref,
-    pub __decorateElement: Ref,
+    pub(crate) __export: Ref,
+    pub(crate) __reExport: Ref,
+    pub(crate) __exportValue: Ref,
+    pub(crate) __exportDefault: Ref,
+    pub(crate) __merge: Ref,
+    pub(crate) __legacyDecorateClassTS: Ref,
+    pub(crate) __legacyDecorateParamTS: Ref,
+    pub(crate) __legacyMetadataTS: Ref,
+    pub(crate) __publicField: Ref,
+    pub(crate) __privateIn: Ref,
+    pub(crate) __privateGet: Ref,
+    pub(crate) __privateAdd: Ref,
+    pub(crate) __privateSet: Ref,
+    pub(crate) __privateMethod: Ref,
+    pub(crate) __decoratorStart: Ref,
+    pub(crate) __decoratorMetadata: Ref,
+    pub(crate) __runInitializers: Ref,
+    pub(crate) __decorateElement: Ref,
     /// The `$$typeof` runtime import (`$$typeof` is not a valid Rust identifier).
-    pub dollar_dollar_typeof: Ref,
-    pub __using: Ref,
-    pub __callDispose: Ref,
-    pub __jsonParse: Ref,
-    pub __promiseAll: Ref,
+    pub(crate) dollar_dollar_typeof: Ref,
+    pub(crate) __using: Ref,
+    pub(crate) __callDispose: Ref,
+    pub(crate) __jsonParse: Ref,
+    pub(crate) __promiseAll: Ref,
+    pub(crate) __MEMO_CACHE_SENTINEL: Ref,
+    pub(crate) __EARLY_RETURN_SENTINEL: Ref,
 }
 
 impl Imports {
-    pub const ALL: [&'static [u8]; 25] = [
+    pub const ALL: [&'static [u8]; 27] = [
         b"__name",
         b"__require",
         b"__export",
@@ -217,13 +202,17 @@ impl Imports {
         b"__callDispose",
         b"__jsonParse",
         b"__promiseAll",
+        b"__MEMO_CACHE_SENTINEL",
+        b"__EARLY_RETURN_SENTINEL",
     ];
 
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
     #[cfg_attr(not(test), allow(dead_code))]
-    const ALL_SORTED: [&'static [u8]; 25] = [
+    const ALL_SORTED: [&'static [u8]; 27] = [
         b"$$typeof",
+        b"__EARLY_RETURN_SENTINEL",
+        b"__MEMO_CACHE_SENTINEL",
         b"__callDispose",
         b"__decorateElement",
         b"__decoratorMetadata",
@@ -252,32 +241,34 @@ impl Imports {
 
     /// When generating the list of runtime imports, we sort it for determinism.
     /// This is a lookup table so we don't need to resort the strings each time
-    pub const ALL_SORTED_INDEX: [usize; 25] = [
-        13, // __name
-        22, // __require
-        5,  // __export
-        21, // __reExport
-        7,  // __exportValue
-        6,  // __exportDefault
-        12, // __merge
-        9,  // __legacyDecorateClassTS
-        10, // __legacyDecorateParamTS
-        11, // __legacyMetadataTS
-        20, // __publicField
-        16, // __privateIn
-        15, // __privateGet
-        14, // __privateAdd
-        18, // __privateSet
-        17, // __privateMethod
-        4,  // __decoratorStart
-        3,  // __decoratorMetadata
-        23, // __runInitializers
-        2,  // __decorateElement
+    pub const ALL_SORTED_INDEX: [usize; 27] = [
+        15, // __name
+        24, // __require
+        7,  // __export
+        23, // __reExport
+        9,  // __exportValue
+        8,  // __exportDefault
+        14, // __merge
+        11, // __legacyDecorateClassTS
+        12, // __legacyDecorateParamTS
+        13, // __legacyMetadataTS
+        22, // __publicField
+        18, // __privateIn
+        17, // __privateGet
+        16, // __privateAdd
+        20, // __privateSet
+        19, // __privateMethod
+        6,  // __decoratorStart
+        5,  // __decoratorMetadata
+        25, // __runInitializers
+        4,  // __decorateElement
         0,  // $$typeof
-        24, // __using
-        1,  // __callDispose
-        8,  // __jsonParse
-        19, // __promiseAll
+        26, // __using
+        3,  // __callDispose
+        10, // __jsonParse
+        21, // __promiseAll
+        2,  // __MEMO_CACHE_SENTINEL
+        1,  // __EARLY_RETURN_SENTINEL
     ];
 
     pub const NAME: &'static [u8] = b"bun:wrap";
@@ -311,6 +302,8 @@ impl Imports {
             22 => self.__callDispose,
             23 => self.__jsonParse,
             24 => self.__promiseAll,
+            25 => self.__MEMO_CACHE_SENTINEL,
+            26 => self.__EARLY_RETURN_SENTINEL,
             _ => return None,
         };
         r.to_nullable()
@@ -344,6 +337,8 @@ impl Imports {
             22 => Some(&mut self.__callDispose),
             23 => Some(&mut self.__jsonParse),
             24 => Some(&mut self.__promiseAll),
+            25 => Some(&mut self.__MEMO_CACHE_SENTINEL),
+            26 => Some(&mut self.__EARLY_RETURN_SENTINEL),
             _ => None,
         }
     }
@@ -363,15 +358,6 @@ impl Imports {
             .position(|&k| k == key)
             .and_then(|i| self.field(i))
             .is_some()
-    }
-
-    pub fn has_any(&self) -> bool {
-        for i in 0..Self::ALL.len() {
-            if self.field(i).is_some() {
-                return true;
-            }
-        }
-        false
     }
 
     /// Callers that know the key statically can assign the field directly;
@@ -401,27 +387,16 @@ impl Imports {
             None
         }
     }
-
-    pub fn count(&self) -> usize {
-        let mut n: usize = 0;
-        for i in 0..Self::ALL.len() {
-            if self.field(i).is_some() {
-                n += 1;
-            }
-        }
-        n
-    }
 }
 
 pub struct ImportsIterator<'a> {
     pub i: usize,
-    pub runtime_imports: &'a Imports,
+    pub(crate) runtime_imports: &'a Imports,
 }
 
 #[derive(Clone, Copy)]
 pub struct ImportsIteratorEntry {
     pub key: u16,
-    pub value: Ref,
 }
 
 impl ImportsIterator<'_> {
@@ -429,10 +404,9 @@ impl ImportsIterator<'_> {
         while self.i < Imports::ALL.len() {
             let t = self.i;
             self.i += 1;
-            if let Some(val) = self.runtime_imports.field(t) {
+            if self.runtime_imports.field(t).is_some() {
                 return Some(ImportsIteratorEntry {
                     key: u16::try_from(t).expect("int cast"),
-                    value: val,
                 });
             }
         }

@@ -21,6 +21,7 @@ SEL Ref::s_init;
 SEL Ref::s_release;
 SEL Ref::s_retain;
 SEL Ref::s_description;
+SEL Ref::s_isKindOfClass;
 
 Class NSString::cls;
 SEL NSString::s_stringWithUTF8String;
@@ -43,6 +44,7 @@ SEL NSData::s_length;
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
 
+Class NSArray::cls;
 SEL NSArray::s_count;
 SEL NSArray::s_objectAtIndex;
 
@@ -115,9 +117,24 @@ SEL WKWebView::s_callAsyncJavaScript;
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
+SEL WKWebViewConfiguration::s_setProcessPool;
+
+// One pool shared by every view, retained for process lifetime. A private
+// pool per view spends one CVDisplayLink each (CoreVideo allows 64 per
+// process), so the 65th lifetime view wedged (oven-sh/bun#40951).
+id WKWebViewConfiguration::sharedProcessPool()
+{
+    static id pool;
+    if (!pool) {
+        Ref p(msgCls<id>(cls_WKProcessPool, s_alloc));
+        pool = p.msg<id>(s_init);
+    }
+    return pool;
+}
 
 // Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
 // runs its own NetworkProcess session, so two instances at the same path don't
@@ -209,9 +226,13 @@ static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id 
     ObjCRuntime::ARPool pool;
     auto* host = objc::NavigationDelegate(self).host();
     if (!host) return;
-    objc::NSDictionary body(objc::WKScriptMessage(message).body());
+    id rawBody = objc::WKScriptMessage(message).body();
+    if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
+    objc::NSDictionary body(rawBody);
     id type = body.objectForKey(objc::NSString::fromWTF("type"_s).m_id);
     id args = body.objectForKey(objc::NSString::fromWTF("args"_s).m_id);
+    if (!objc::Ref(type).isKindOf(objc::NSString::cls)) return;
+    if (args && !objc::Ref(args).isKindOf(objc::NSArray::cls)) return;
     host->onConsoleMessage(type, args);
 }
 
@@ -342,6 +363,7 @@ bool ObjCRuntime::load()
     Ref::s_release = sel("release");
     Ref::s_retain = sel("retain");
     Ref::s_description = sel("description");
+    Ref::s_isKindOfClass = sel("isKindOfClass:");
 
     // --- populate wrapper classes -----------------------------------------
     // A missing class at load time beats a nil-message (silent no-op) at
@@ -376,6 +398,7 @@ bool ObjCRuntime::load()
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
 
+    CLS(NSArray::cls, "NSArray");
     NSArray::s_count = sel("count");
     NSArray::s_objectAtIndex = sel("objectAtIndex:");
 
@@ -440,6 +463,8 @@ bool ObjCRuntime::load()
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
     // initWithDirectory: is 15.2+.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
+    WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");

@@ -3,9 +3,13 @@
 #include "V8Data.h"
 #include "V8Maybe.h"
 #include "V8Local.h"
+#include "V8MaybeLocal.h"
 #include "V8Context.h"
 
 namespace v8 {
+
+class String;
+class Integer;
 
 class Value : public Data {
 public:
@@ -18,7 +22,11 @@ public:
     BUN_EXPORT bool IsArray() const;
     BUN_EXPORT bool IsInt32() const;
     BUN_EXPORT bool IsBigInt() const;
+    BUN_EXPORT bool IsUint8Array() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
+
+    BUN_EXPORT MaybeLocal<String> ToString(Local<Context> context) const;
+    BUN_EXPORT MaybeLocal<Integer> ToInteger(Local<Context> context) const;
 
     // Comparison methods
     BUN_EXPORT bool StrictEquals(Local<Value> that) const;

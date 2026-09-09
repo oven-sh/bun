@@ -339,19 +339,18 @@ function writeManyFlightScriptData(
   if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
 
   let i = 0;
+  let decoded = "";
   try {
     // Combine all chunks into a single string if possible.
     for (; i < chunks.length; i++) {
       // `decode()` will throw on invalid UTF-8 sequences.
-      const str = toSingleQuote(decoder.decode(chunks[i], { stream: true }));
-      if (i === 0) controller.write("'");
-      controller.write(str);
+      decoded += decoder.decode(chunks[i], { stream: true });
     }
-    controller.write("')</script>");
+    controller.write("'" + toSingleQuote(decoded) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
-    if (i > 0) controller.write("');__bun_f.push(");
+    if (i > 0) controller.write("'" + toSingleQuote(decoded) + "');__bun_f.push(");
     controller.write('Uint8Array.from(atob("');
     for (; i < chunks.length; i++) {
       const chunk = chunks[i];

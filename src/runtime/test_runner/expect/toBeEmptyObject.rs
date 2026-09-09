@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::throw;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -25,18 +26,20 @@ pub(crate) fn to_be_empty_object(
 
     if not {
         let signature = Expect::get_signature("toBeEmptyObject", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nReceived: <red>{}<r>\n", received),
+            "\n\nReceived: <red>{}<r>\n", received,
         );
     }
 
     let signature = Expect::get_signature("toBeEmptyObject", "", false);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!("\n\nReceived: <red>{}<r>\n", received),
+        "\n\nReceived: <red>{}<r>\n", received,
     )
 }
 

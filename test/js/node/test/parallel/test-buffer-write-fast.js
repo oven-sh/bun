@@ -1,9 +1,15 @@
-// Flags: --no-warnings --allow-natives-syntax
+// Flags: --expose-internals --no-warnings --allow-natives-syntax
 'use strict';
 
 const common = require('../common');
 if ('Bun' in globalThis) common.skip('uses internals');
 const assert = require('assert');
+
+const { internalBinding } = require('internal/test/binding');
+
+// eslint-disable-next-line no-unused-vars
+const { utf8Write } = require('internal/buffer');
+
 
 function testFastUtf8Write() {
   {
@@ -33,8 +39,12 @@ function testFastUtf8Write() {
   }
 }
 
-// node --expose-internals --allow-natives-syntax -p "eval('%PrepareFunctionForOptimization(Buffer.prototype.utf8Write)')"
-eval('%PrepareFunctionForOptimization(Buffer.prototype.utf8Write)');
+eval('%PrepareFunctionForOptimization(utf8Write)');
 testFastUtf8Write();
-eval('%OptimizeFunctionOnNextCall(Buffer.prototype.utf8Write)');
+eval('%OptimizeFunctionOnNextCall(utf8Write)');
 testFastUtf8Write();
+
+if (common.isDebug) {
+  const { getV8FastApiCallCount } = internalBinding('debug');
+  assert.strictEqual(getV8FastApiCallCount('buffer.writeString'), 4);
+}

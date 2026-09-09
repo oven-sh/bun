@@ -201,3 +201,43 @@ describe("opendirSync string encoding shorthand", () => {
     }
   });
 });
+
+// Node's Dir implements Symbol.dispose / Symbol.asyncDispose so it composes
+// with `using` / `await using`. Disposing an already-closed Dir is a no-op.
+describe("Dir explicit resource management", () => {
+  let dirname: string;
+  beforeEach(() => {
+    dirname = path.join(os.tmpdir(), "opendir-dispose-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    fs.writeFileSync(path.join(dirname, "entry.txt"), "x");
+  });
+  afterEach(() => {
+    fs.rmSync(dirname, { recursive: true, force: true });
+  });
+
+  it("`using` closes the directory at scope exit", () => {
+    let dir!: fs.Dir;
+    {
+      using d = fs.opendirSync(dirname);
+      dir = d;
+      expect(d.readSync()?.name).toBe("entry.txt");
+    }
+    expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+  });
+
+  it("`await using` closes the directory at scope exit", async () => {
+    let dir!: fs.Dir;
+    {
+      await using d = await fs.promises.opendir(dirname);
+      dir = d;
+    }
+    expect(() => dir.readSync()).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+  });
+
+  it("disposing an already-closed Dir does not throw", async () => {
+    const dir = fs.opendirSync(dirname);
+    dir.closeSync();
+    expect(() => dir[Symbol.dispose]()).not.toThrow();
+    await expect(dir[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});

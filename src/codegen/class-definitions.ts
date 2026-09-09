@@ -15,17 +15,18 @@ interface PropertyAttribute {
  * Specifies what happens when a method is called with `this` set to a value that is not an instance
  * of the class.
  */
-export enum InvalidThisBehavior {
+export const InvalidThisBehavior = {
   /**
    * Default. Throws a `TypeError`.
    */
-  Throw,
+  Throw: 0,
   /**
    * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
    * work like this.
    */
-  NoOp,
-}
+  NoOp: 1,
+} as const;
+export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
 
 export type Field =
   | ({
@@ -39,11 +40,6 @@ export type Field =
     } & PropertyAttribute)
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
-  | ({
-      accessor: { getter: string; setter: string };
-      cache?: true | string;
-      this?: boolean;
-    } & PropertyAttribute)
   | ({
       fn: string;
 
@@ -92,15 +88,12 @@ export class ClassDefinition {
    */
   name: string;
   /**
-   * Which language implements the native side of this class.
+   * Legacy. All classes emit implementer thunks into `generated_classes.rs`;
+   * this field is accepted for backward compatibility but has no effect.
    *
-   * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
-   * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
-   *
-   * @default "zig"
+   * @default "rust"
    */
-  lang?: "zig" | "rust";
+  lang?: "rust";
   /**
    * Fully-qualified Rust path of the native struct backing this class, e.g.
    * `crate::webcore::request::Request`. The codegen emits
@@ -156,51 +149,26 @@ export class ClassDefinition {
    */
   forBind?: boolean;
   /**
-   * ## IMPORTANT
-   * You _must_ free the pointer to your native class!
-   *
-   * Example for pointers only owned by JavaScript classes:
-   * ```zig
-   * pub const NativeClass = struct {
-   *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn finalize(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   * };
-   * ```
-   * Example with ref counting:
-   * ```
-   * pub const RefCountedNativeClass = struct {
-   *   const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
-   *   pub const ref = RefCount.ref;
-   *   pub const deref = RefCount.deref;
-   *
-   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
-   *     // do stuff
-   *     return bun.new(NativeClass, .{
-   *       // ...
-   *     });
-   *   }
-   *
-   *   fn deinit(this: *NativeClass) void {
-   *     // free allocations owned by this class, then free the struct itself.
-   *     bun.destroy(this);
-   *   }
-   *
-   *   pub const finalize = deref; // GC will deref, which can free if no references are left.
-   * };
-   * ```
+   * Parent of the generated prototype object. "Error" puts Error.prototype in
+   * the chain so instances satisfy `instanceof Error`. Default: Object.prototype.
+   */
+  prototypeBase?: "Error";
+  /**
+   * The JS wrapper owns the payload: when it is collected the payload is
+   * handed to `fn finalize(self: Box<Self>)` (an inherent method if the type
+   * has one, else `bun_jsc::JsFinalize`'s default, which drops the Box).
+   * For a payload the wrapper only holds one ref on, set `refCounted` instead.
    * @todo remove this and require all classes to implement `finalize`.
    */
   finalize?: boolean;
+  /**
+   * The payload is intrusively refcounted (`CellRefCounted` /
+   * `ThreadSafeRefCounted` / `RefCounted`) and the JS wrapper holds one ref.
+   * Collection runs `fn finalize(&self)` (inherent if present — e.g. to clear
+   * a `this_value` — else `bun_jsc::JsFinalizeRefCounted`'s no-op) and then drops
+   * the wrapper's ref; the payload's `Drop` runs when the last ref goes.
+   */
+  refCounted?: boolean;
   overridesToJS?: boolean;
   /**
    * Static properties and methods.
@@ -210,10 +178,6 @@ export class ClassDefinition {
    * properties and methods on the prototype.
    */
   proto: Record<string, Field>;
-  /**
-   * Properties and methods attached to the instance itself.
-   */
-  own: Record<string, string>;
   values?: string[];
   /**
    * When true, the class will accept a MarkedArgumentBuffer* to create a
@@ -229,15 +193,15 @@ export class ClassDefinition {
   final?: boolean;
 
   /**
-   * Class has an `estimatedSize` function that reports external allocations to GC.
+   * Class has an `estimated_size` function that reports external allocations to GC.
    * Called from any thread.
    *
    * When `true`, classes should have a method with this signature:
-   * ```zig
-   * pub fn estimatedSize(this: *@This()) usize;
+   * ```rust
+   * pub fn estimated_size(&self) -> usize;
    * ```
    *
-   * Report `@sizeOf(@this())` as well as any external allocations.
+   * Report `size_of::<Self>()` as well as any external allocations.
    */
   estimatedSize?: boolean;
   /**
@@ -252,42 +216,19 @@ export class ClassDefinition {
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
-  supportsObjectCreate?: boolean;
-
-  getInternalProperties?: boolean;
-
-  custom?: Record<string, CustomField>;
 
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
-  callbacks?: Record<string, string>;
-
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
     this.klass = options.klass ?? {};
     this.proto = options.proto ?? {};
-    this.own = options.own ?? {};
 
     Object.assign(this, options);
   }
-
-  hasOwnProperties() {
-    for (const key in this.own) {
-      return true;
-    }
-
-    return false;
-  }
-}
-
-export interface CustomField {
-  header?: string;
-  extraHeaderIncludes?: string[];
-  impl?: string;
-  type?: string;
 }
 
 /**
@@ -298,7 +239,6 @@ export function define(
   {
     klass = {},
     proto = {},
-    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -319,13 +259,14 @@ export function define(
   }
   return new ClassDefinition({
     ...rest,
+    // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.
+    finalize: rest.finalize || rest.refCounted,
     call,
     overridesToJS,
     construct,
     estimatedSize,
     structuredClone,
     values,
-    own: own || {},
     klass: Object.fromEntries(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))

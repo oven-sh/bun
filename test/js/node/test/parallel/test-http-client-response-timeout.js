@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const http = require('http');
 
 const server = http.createServer((req, res) => res.flushHeaders());

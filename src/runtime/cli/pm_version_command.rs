@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bstr::{BStr, ByteSlice};
+use bstr::BStr;
 
 use crate::api::bun::process::Status as ProcStatus;
 use crate::api::bun::process::sync::{
@@ -16,7 +16,7 @@ use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
+use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
@@ -37,7 +37,7 @@ enum VersionType {
 }
 
 impl VersionType {
-    pub(crate) fn from_string(str: &[u8]) -> Option<VersionType> {
+    fn from_string(str: &[u8]) -> Option<VersionType> {
         if str == b"patch" {
             return Some(VersionType::Patch);
         }
@@ -72,7 +72,7 @@ impl PmVersionCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
@@ -84,7 +84,7 @@ impl PmVersionCommand {
 
         Self::verify_git(&package_json_dir, pm)?;
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             &package_json_dir,
             &mut path_buf.0,
@@ -106,16 +106,12 @@ impl PmVersionCommand {
         );
         // Hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
-        let json_result = match JSON::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(
+        let json_result = match JSON::parse_package_json_utf8_with_opts(
+            JSON::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..JSON::PACKAGE_JSON_OPTS
+            },
             &package_json_source,
             // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
             // passed straight into this parse call and no other borrow of the
@@ -279,7 +275,7 @@ impl PmVersionCommand {
     }
 
     fn find_package_dir(start_dir: &[u8]) -> Result<Vec<u8>, AllocError> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = start_dir;
 
         loop {
@@ -307,7 +303,7 @@ impl PmVersionCommand {
             return Ok(());
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_dir_path =
             path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
         if !matches!(
@@ -344,7 +340,7 @@ impl PmVersionCommand {
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
         // Returns an owned Vec<u8> (no borrow of the package.json bytes).
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
             &mut path_buf.0,
@@ -684,7 +680,7 @@ impl PmVersionCommand {
     }
 
     fn is_git_clean(cwd: &[u8]) -> Result<bool, AllocError> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some(git_path) = which(
             &mut path_buf,
             env_var::PATH.get().unwrap_or(b""),
@@ -726,7 +722,7 @@ impl PmVersionCommand {
     }
 
     fn get_version_from_git(cwd: &[u8]) -> Result<Vec<u8>, AllocError> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some(git_path) = which(
             &mut path_buf,
             env_var::PATH.get().unwrap_or(b""),
@@ -788,7 +784,7 @@ impl PmVersionCommand {
         custom_message: Option<&[u8]>,
         cwd: &[u8],
     ) -> Result<(), AllocError> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some(git_path) = which(
             &mut path_buf,
             env_var::PATH.get().unwrap_or(b""),
@@ -838,7 +834,7 @@ impl PmVersionCommand {
         }
 
         let commit_message: Vec<u8> = if let Some(msg) = custom_message {
-            msg.replace(b"%s", version)
+            strings::replace_owned(msg, b"%s", version)
         } else {
             fmt_bytes(format_args!("v{}", BStr::new(version)))
         };

@@ -7,7 +7,7 @@ import { join } from "path";
 // The crash occurred because bytecode offsets were not properly aligned
 // when embedded in PE sections, causing deserialization failures.
 
-describe("issue #26298: bytecode cache in standalone executables", () => {
+describe.concurrent("issue #26298: bytecode cache in standalone executables", () => {
   const ext = isWindows ? ".exe" : "";
 
   test("standalone executable with --bytecode runs correctly", async () => {

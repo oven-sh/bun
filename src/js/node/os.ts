@@ -152,7 +152,7 @@ function bound(binding) {
   };
 }
 
-const out = bound($zig("node_os.zig", "createNodeOsBinding"));
+const out = bound($rust("node_os.rs", "createNodeOsBinding"));
 
 symbolToStringify(out, "arch");
 symbolToStringify(out, "availableParallelism");

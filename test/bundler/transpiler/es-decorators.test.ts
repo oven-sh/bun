@@ -244,6 +244,87 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("non-ASCII string-literal keys", () => {
+    // Supra-BMP code points are stored as UTF-16 in the AST; the lowering must
+    // not reinterpret those bytes as UTF-8 when it builds `this[key]`.
+    const key = "\u{20BB7}\u{91BB6}";
+
+    test("Bun.Transpiler output preserves the key", () => {
+      const t = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
+      const out = t.transformSync(`class A{@(() => {})\n"\\u{20BB7}\\u{91BB6}"\n}`);
+      // The key appears twice in the lowered output (constructor assignment and
+      // __decorateElement call) and must be the same string both times, either
+      // as literal UTF-8 or as \uXXXX escapes of the correct surrogate pair.
+      const normalized = out.replace(/\\uD842\\uDFB7\\uDA06\\uDFB6/gi, key);
+      expect(normalized.split(key).length - 1).toBe(2);
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(out)).not.toThrow();
+    });
+
+    test("decorated instance field with supra-BMP key is assigned correctly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) {
+          console.log(ctx.kind, JSON.stringify(ctx.name));
+          return (init) => init * 2;
+        }
+        class Foo {
+          @dec "\\u{20BB7}\\u{91BB6}" = 21;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+        console.log(Object.getOwnPropertyNames(f).map(n => JSON.stringify(n)).join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`field ${JSON.stringify(key)}\n42\n${JSON.stringify(key)}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated static field with supra-BMP key is assigned correctly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return (init) => init + 1; }
+        class Foo {
+          @dec static "\\u{20BB7}\\u{91BB6}" = 9;
+        }
+        console.log(Foo[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated accessor with supra-BMP key works", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(target, ctx) {
+          console.log(ctx.kind, JSON.stringify(ctx.name));
+          return target;
+        }
+        class Foo {
+          @dec accessor "\\u{20BB7}\\u{91BB6}" = 7;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+        f[${JSON.stringify(key)}] = 99;
+        console.log(f[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`accessor ${JSON.stringify(key)}\n7\n99\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated accessor with supra-BMP key in a decorated class works", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(cls, ctx) { return cls; }
+        @dec class Foo {
+          accessor "\\u{20BB7}\\u{91BB6}" = 3;
+        }
+        const f = new Foo();
+        console.log(f[${JSON.stringify(key)}]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("decorator ordering", () => {
     test("decorators on different elements evaluate in source order", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
@@ -308,6 +389,154 @@ describe("ES Decorators", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
+    });
+
+    async function runDecoratorTS(code: string) {
+      using dir = tempDir("es-dec-ts", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": code,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: filterStderr(rawStderr), exitCode };
+    }
+
+    test("non-null assertion in decorator member expression", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        const ns = {
+          dec(cls: any, ctx: any) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          },
+        };
+        @ns!.dec
+        class Foo {}
+        @ns!.dec!
+        class Bar {}
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class Foo\nclass Bar\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("type arguments in decorator member expression are stripped", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        function dec<T>(cls: any, ctx: any) {
+          console.log(ctx.kind, ctx.name);
+          return cls;
+        }
+        const ns = {
+          dec: function<T>(tag: string) {
+            return function(cls: any, ctx: any) {
+              console.log(tag, ctx.name);
+              return cls;
+            };
+          },
+        };
+        @dec<string>
+        class A {}
+        @ns.dec<string>("hello")
+        class B {}
+        @ns<string>.dec<number>("bye")
+        class C {}
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class A\nhello B\nbye C\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["ts", "js"])("private name in decorator member expression (.%s)", async ext => {
+      const run = ext === "ts" ? runDecoratorTS : runDecorator;
+      const { stdout, stderr, exitCode } = await run(`
+        class Outer {
+          static #dec(cls, ctx) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          }
+          static Inner = @Outer.#dec class Inner {};
+        }
+        new Outer.Inner();
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class Inner\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["ts", "js"])("export before decorator (.%s)", async ext => {
+      using dir = tempDir("es-dec-export", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        [`dep.${ext}`]: `
+          function dec(cls, ctx) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          }
+          export @dec class Foo {}
+        `,
+        [`test.${ext}`]: `
+          import { Foo } from "./dep";
+          console.log(typeof Foo);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `test.${ext}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("class Foo\nfunction\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("non-null assertion in decorator is rejected in JavaScript", async () => {
+      const { stderr, exitCode } = await runDecorator(`
+        const ns = { dec(cls, ctx) { return cls; } };
+        @ns!.dec class Foo {}
+      `);
+      expect(stderr).toContain("error: Unexpected !");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("optional chaining in decorator is rejected with a hint", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x?.y class Foo {}
+      `);
+      expect(stderr).toContain("Optional chaining is not allowed in decorator expressions");
+      expect(stderr).toContain("wrap the expression in parentheses");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("property access after call in decorator is rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x().y class Foo {}
+      `);
+      expect(stderr).toContain("wrap the expression in parentheses");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("decorators on both sides of export are rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x export @y class Foo {}
+      `);
+      expect(stderr).toContain('Expected "class" but found "@"');
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("repeated export around a decorator is rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        export @dec export class Foo {}
+      `);
+      expect(stderr).toContain('Expected "class" but found "export"');
+      expect(exitCode).not.toBe(0);
     });
   });
 

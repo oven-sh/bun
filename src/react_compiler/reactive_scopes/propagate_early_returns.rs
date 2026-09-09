@@ -11,21 +11,16 @@
 //! Corresponds to `src/ReactiveScopes/PropagateEarlyReturns.ts`.
 
 use crate::hir::{
-    BlockId, Effect, EvaluationOrder, IdentifierId, IdentifierName, InstructionKind,
-    InstructionValue, LValue, NonLocalBinding, NonLocalKind, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ReactiveFunction, ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock,
-    ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal,
-    ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, StoreStr,
-    environment::Environment,
+    BlockId, Effect, EvaluationOrder, IdentifierId, InstructionKind, InstructionValue, LValue,
+    NonLocalBinding, NonLocalKind, Place, ReactiveFunction, ReactiveInstruction, ReactiveLabel,
+    ReactiveScopeBlock, ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement,
+    ReactiveTerminal, ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue,
+    StoreStr, environment::Environment,
 };
 
 use crate::reactive_scopes::visitors::{
     ReactiveFunctionTransform, Transformed, transform_reactive_function,
 };
-
-/// The sentinel string used to detect early returns.
-/// TS: `EARLY_RETURN_SENTINEL` from CodegenReactiveFunction.
-const EARLY_RETURN_SENTINEL: &str = "react.early_return_sentinel";
 
 // =============================================================================
 // Public entry point
@@ -33,7 +28,7 @@ const EARLY_RETURN_SENTINEL: &str = "react.early_return_sentinel";
 
 /// Propagate early return semantics through reactive scopes.
 /// TS: `propagateEarlyReturns`
-pub fn propagate_early_returns(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn propagate_early_returns(func: &mut ReactiveFunction, env: &mut Environment) {
     let mut transform = Transform { env };
     let mut state = State {
         within_reactive_scope: false,
@@ -125,7 +120,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                 } else {
                     // Create a new early return identifier
                     let identifier_id = create_temporary_place_id(self.env, loc);
-                    promote_temporary(self.env, identifier_id);
+                    self.env.promote_temporary(identifier_id);
                     let label = self.env.next_block_id();
                     EarlyReturnInfo {
                         value: identifier_id,
@@ -208,75 +203,11 @@ fn apply_early_return_to_scope(
         },
     ));
 
-    // Create temporary places for the sentinel initialization
     let sentinel_temp = create_temporary_place_id(env, loc);
-    let symbol_temp = create_temporary_place_id(env, loc);
-    let for_temp = create_temporary_place_id(env, loc);
-    let arg_temp = create_temporary_place_id(env, loc);
 
     let original_instructions = std::mem::take(&mut scope_block.instructions);
 
     scope_block.instructions = vec![
-        // LoadGlobal Symbol
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: symbol_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
-                binding: NonLocalBinding {
-                    ref_: bun_ast::Ref::NONE,
-                    kind: NonLocalKind::Global {
-                        name: StoreStr::new(b"Symbol"),
-                    },
-                },
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // PropertyLoad Symbol.for
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: for_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::PropertyLoad {
-                object: Place {
-                    identifier: symbol_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                },
-                property: PropertyLiteral::String(StoreStr::new(b"for")),
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // Primitive: the sentinel string
-        ReactiveStatement::Instruction(ReactiveInstruction {
-            id: EvaluationOrder(0),
-            lvalue: Some(Place {
-                identifier: arg_temp,
-                effect: Effect::Unknown,
-                reactive: false,
-                loc: None, // GeneratedSource
-            }),
-            value: ReactiveValue::Instruction(InstructionValue::Primitive {
-                value: PrimitiveValue::String(EARLY_RETURN_SENTINEL.into()),
-                loc,
-            }),
-            effects: None,
-            loc,
-        }),
-        // MethodCall: Symbol.for("react.early_return_sentinel")
         ReactiveStatement::Instruction(ReactiveInstruction {
             id: EvaluationOrder(0),
             lvalue: Some(Place {
@@ -285,25 +216,13 @@ fn apply_early_return_to_scope(
                 reactive: false,
                 loc: None, // GeneratedSource
             }),
-            value: ReactiveValue::Instruction(InstructionValue::MethodCall {
-                receiver: Place {
-                    identifier: symbol_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
+            value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
+                binding: NonLocalBinding {
+                    ref_: bun_ast::Ref::NONE,
+                    kind: NonLocalKind::ModuleLocal {
+                        name: StoreStr::new(b"$rc_early"),
+                    },
                 },
-                property: Place {
-                    identifier: for_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                },
-                args: crate::hir_vec![PlaceOrSpread::Place(Place {
-                    identifier: arg_temp,
-                    effect: Effect::Unknown,
-                    reactive: false,
-                    loc: None, // GeneratedSource
-                })],
                 loc,
             }),
             effects: None,
@@ -361,21 +280,4 @@ fn create_temporary_place_id(
     let id = env.next_identifier_id();
     env.identifiers[id.0 as usize].loc = loc;
     id
-}
-
-fn promote_temporary(env: &mut Environment, identifier_id: IdentifierId) {
-    let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
-    env.identifiers[identifier_id.0 as usize].name = Some(promoted_name(b't', decl_id.0));
-}
-
-fn promoted_name(kind: u8, n: u32) -> IdentifierName {
-    let mut itoa = bun_core::fmt::ItoaBuf::new();
-    let digits = itoa.format(n).as_bytes();
-    let mut buf = [0u8; 16];
-    buf[0] = b'#';
-    buf[1] = kind;
-    buf[2..2 + digits.len()].copy_from_slice(digits);
-    IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
-        &buf[..2 + digits.len()],
-    )))
 }

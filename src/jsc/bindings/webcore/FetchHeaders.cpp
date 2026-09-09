@@ -71,7 +71,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { TypeError, makeString("Header '"_s, httpHeaderNameString(name), "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -318,22 +318,6 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         removePrivilegedNoCORSRequestHeaders(m_headers);
 
     return {};
-}
-
-void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
-{
-    for (auto& header : headers) {
-        String normalizedValue = trimHTTPSpaceIfNeeded(header.value);
-        auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
-        if (canWriteResult.hasException())
-            continue;
-        if (!canWriteResult.releaseReturnValue())
-            continue;
-        if (header.keyAsHTTPHeaderName)
-            m_headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-        else
-            m_headers.add(header.key, header.value);
-    }
 }
 
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()

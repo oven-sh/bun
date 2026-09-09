@@ -31,7 +31,6 @@
 #include "MoveOnlyFunction.h"
 #include "PerMessageDeflate.h"
 // clang-format off
-struct us_timer_t;
 
 namespace uWS {
 
@@ -194,11 +193,8 @@ public:
 
     char date[32];
 
-    /* Be silent */
-    bool noMark = false;
-
     /* Good 16k for SSL perf. */
-    static const unsigned int CORK_BUFFER_SIZE = 16 * 1024;
+    static constexpr unsigned int CORK_BUFFER_SIZE = 16 * 1024;
 
     /* Per message deflate data */
     ZlibContext *zlibContext = nullptr;

@@ -7,7 +7,6 @@ use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyCon
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::prefixes::is_flex_2009;
 use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -26,7 +25,7 @@ pub enum FlexDirection {
 }
 
 impl FlexDirection {
-    pub(crate) fn to_2009(self) -> (BoxOrient, BoxDirection) {
+    fn to_2009(self) -> (BoxOrient, BoxDirection) {
         match self {
             FlexDirection::Row => (BoxOrient::Horizontal, BoxDirection::Normal),
             FlexDirection::Column => (BoxOrient::Vertical, BoxDirection::Normal),
@@ -53,9 +52,9 @@ pub enum FlexWrap {
 #[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {
     /// The direction that flex items flow.
-    pub direction: FlexDirection,
+    pub(crate) direction: FlexDirection,
     /// How the flex items wrap.
-    pub wrap: FlexWrap,
+    pub(crate) wrap: FlexWrap,
 }
 
 // Shorthand metadata recorded here for a future shorthand derive:
@@ -112,11 +111,11 @@ impl FlexFlow {
 #[derive(Clone, PartialEq)]
 pub struct Flex {
     /// The flex grow factor.
-    pub grow: CSSNumber,
+    pub(crate) grow: CSSNumber,
     /// The flex shrink factor.
-    pub shrink: CSSNumber,
+    pub(crate) shrink: CSSNumber,
     /// The flex basis.
-    pub basis: LengthPercentageOrAuto,
+    pub(crate) basis: LengthPercentageOrAuto,
 }
 
 // Shorthand metadata recorded here for a future shorthand derive (see FlexFlow note):
@@ -343,7 +342,7 @@ pub enum BoxLines {
 }
 
 impl BoxLines {
-    pub(crate) fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
+    fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
         match wrap {
             FlexWrap::Nowrap => Some(BoxLines::Single),
             FlexWrap::Wrap => Some(BoxLines::Multiple),
@@ -495,37 +494,37 @@ pub(crate) type BoxOrdinalGroup = CSSInteger;
 #[derive(Default)]
 pub struct FlexHandler {
     /// The flex-direction property value and vendor prefix
-    pub direction: Option<(FlexDirection, VendorPrefix)>,
+    pub(crate) direction: Option<(FlexDirection, VendorPrefix)>,
     /// The box-orient property value and vendor prefix (legacy)
-    pub box_orient: Option<(BoxOrient, VendorPrefix)>,
+    pub(crate) box_orient: Option<(BoxOrient, VendorPrefix)>,
     /// The box-direction property value and vendor prefix (legacy)
-    pub box_direction: Option<(BoxDirection, VendorPrefix)>,
+    pub(crate) box_direction: Option<(BoxDirection, VendorPrefix)>,
     /// The flex-wrap property value and vendor prefix
-    pub wrap: Option<(FlexWrap, VendorPrefix)>,
+    pub(crate) wrap: Option<(FlexWrap, VendorPrefix)>,
     /// The box-lines property value and vendor prefix (legacy)
-    pub box_lines: Option<(BoxLines, VendorPrefix)>,
+    pub(crate) box_lines: Option<(BoxLines, VendorPrefix)>,
     /// The flex-grow property value and vendor prefix
-    pub grow: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) grow: Option<(CSSNumber, VendorPrefix)>,
     /// The box-flex property value and vendor prefix (legacy)
-    pub box_flex: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) box_flex: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-positive property value and vendor prefix (legacy)
-    pub flex_positive: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) flex_positive: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-shrink property value and vendor prefix
-    pub shrink: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) shrink: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-negative property value and vendor prefix (legacy)
-    pub flex_negative: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) flex_negative: Option<(CSSNumber, VendorPrefix)>,
     /// The flex-basis property value and vendor prefix
-    pub basis: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub(crate) basis: Option<(LengthPercentageOrAuto, VendorPrefix)>,
     /// The preferred-size property value and vendor prefix (legacy)
-    pub preferred_size: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub(crate) preferred_size: Option<(LengthPercentageOrAuto, VendorPrefix)>,
     /// The order property value and vendor prefix
-    pub order: Option<(CSSInteger, VendorPrefix)>,
+    pub(crate) order: Option<(CSSInteger, VendorPrefix)>,
     /// The box-ordinal-group property value and vendor prefix (legacy)
-    pub box_ordinal_group: Option<(BoxOrdinalGroup, VendorPrefix)>,
+    pub(crate) box_ordinal_group: Option<(BoxOrdinalGroup, VendorPrefix)>,
     /// The flex-order property value and vendor prefix (legacy)
-    pub flex_order: Option<(CSSInteger, VendorPrefix)>,
+    pub(crate) flex_order: Option<(CSSInteger, VendorPrefix)>,
     /// Whether any flex-related properties have been set
-    pub has_any: bool,
+    pub(crate) has_any: bool,
 }
 
 impl FlexHandler {
@@ -718,7 +717,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexDirection);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(targets) {
+                if PrefixFeature::is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {
@@ -815,7 +814,7 @@ impl FlexHandler {
                                 // 2009 spec, implemented by webkit and firefox
                                 if let Some(targets) = &context.targets.browsers {
                                     let mut prefixes_2009 = VendorPrefix::empty();
-                                    if is_flex_2009(targets) {
+                                    if PrefixFeature::is_flex_2009(targets) {
                                         prefixes_2009.insert(VendorPrefix::WEBKIT);
                                     }
                                     if prefix.contains(VendorPrefix::MOZ) {
@@ -864,7 +863,7 @@ impl FlexHandler {
                     .targets
                     .prefixes(VendorPrefix::NONE, PrefixFeature::FlexGrow);
                 let mut prefixes_2009 = VendorPrefix::empty();
-                if is_flex_2009(targets) {
+                if PrefixFeature::is_flex_2009(targets) {
                     prefixes_2009.insert(VendorPrefix::WEBKIT);
                 }
                 if prefixes.contains(VendorPrefix::MOZ) {

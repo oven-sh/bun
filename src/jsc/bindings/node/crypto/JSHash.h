@@ -25,13 +25,14 @@ public:
     static JSHash* create(JSC::VM& vm, JSC::Structure* structure);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static void destroy(JSC::JSCell* cell);
@@ -49,9 +50,8 @@ public:
     ByteSource m_digest;
     bool m_finalized { false };
 
-    Vector<uint8_t, EVP_MAX_MD_SIZE> m_digestBuffer;
-
     ExternZigHash::Hasher* m_zigHasher { nullptr };
+    size_t m_sizeForGC { 0 };
 };
 
 class JSHashPrototype final : public JSC::JSNonFinalObject {
@@ -76,7 +76,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }

@@ -6,11 +6,11 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
-    PropertyLiteral, SourceLocation, StoreStr,
+    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
+    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
-use bun_ast::{E, Expr, G, Loc};
+use bun_ast::{E, Expr, G, Loc, Ref};
 
 use super::expr::lower_expression;
 use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
@@ -24,10 +24,7 @@ fn estring_to_store_str(s: &E::EString) -> StoreStr {
     }
 }
 
-pub(super) fn lower_jsx_element_name(
-    builder: &mut HirBuilder,
-    tag: &Expr,
-) -> Result<JsxTag, CompilerError> {
+fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag, CompilerError> {
     let loc = convert_loc(tag.loc);
     match tag.data {
         ExprData::EIdentifier(id) => {
@@ -36,13 +33,7 @@ pub(super) fn lower_jsx_element_name(
             // as identifiers. Replicate upstream's Builtin classification for non-uppercase.
             let name = builder.host().ref_name(id.ref_);
             if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let place = lower_identifier(builder, id.ref_, loc)?;
-                let load_value = if builder.is_context_identifier(id.ref_) {
-                    InstructionValue::LoadContext { place, loc }
-                } else {
-                    InstructionValue::LoadLocal { place, loc }
-                };
-                let temp = lower_value_to_temporary(builder, load_value)?;
+                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
                 Ok(JsxTag::Place(temp))
             } else {
                 Ok(JsxTag::Builtin(BuiltinTag {
@@ -54,13 +45,7 @@ pub(super) fn lower_jsx_element_name(
         ExprData::EImportIdentifier(id) => {
             let name = builder.host().ref_name(id.ref_);
             if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let place = lower_identifier(builder, id.ref_, loc)?;
-                let load_value = if builder.is_context_identifier(id.ref_) {
-                    InstructionValue::LoadContext { place, loc }
-                } else {
-                    InstructionValue::LoadLocal { place, loc }
-                };
-                let temp = lower_value_to_temporary(builder, load_value)?;
+                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
                 Ok(JsxTag::Place(temp))
             } else {
                 Ok(JsxTag::Builtin(BuiltinTag {
@@ -72,10 +57,10 @@ pub(super) fn lower_jsx_element_name(
         ExprData::EString(s) => {
             let name = estring_to_store_str(&s);
             let bytes = name.slice();
-            if let Some(idx) = bytes.iter().position(|&b| b == b':') {
+            if let Some(idx) = bun_core::strings::index_of_char_usize(bytes, b':') {
                 let namespace = &bytes[..idx];
                 let local = &bytes[idx + 1..];
-                if local.contains(&b':') {
+                if bun_core::strings::contains_char(local, b':') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Syntax,
                         reason:
@@ -119,7 +104,7 @@ pub(super) fn lower_jsx_element_name(
     }
 }
 
-pub(super) fn lower_jsx_member_expression(
+fn lower_jsx_member_expression(
     builder: &mut HirBuilder,
     expr: &E::Dot,
     expr_loc: Loc,
@@ -130,35 +115,11 @@ pub(super) fn lower_jsx_member_expression(
         ExprData::EIdentifier(id) => {
             let id_loc = convert_loc(expr.target.loc);
             // Use identifier's own loc for the place, but member expression's loc for the instruction
-            let place = lower_identifier(builder, id.ref_, id_loc)?;
-            let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext {
-                    place,
-                    loc: expr_loc,
-                }
-            } else {
-                InstructionValue::LoadLocal {
-                    place,
-                    loc: expr_loc,
-                }
-            };
-            lower_value_to_temporary(builder, load_value)?
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EImportIdentifier(id) => {
             let id_loc = convert_loc(expr.target.loc);
-            let place = lower_identifier(builder, id.ref_, id_loc)?;
-            let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext {
-                    place,
-                    loc: expr_loc,
-                }
-            } else {
-                InstructionValue::LoadLocal {
-                    place,
-                    loc: expr_loc,
-                }
-            };
-            lower_value_to_temporary(builder, load_value)?
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
         }
         ExprData::EDot(inner) => lower_jsx_member_expression(builder, &inner, expr.target.loc)?,
         _ => {
@@ -187,6 +148,39 @@ pub(super) fn lower_jsx_member_expression(
         loc: expr_loc,
     };
     lower_value_to_temporary(builder, value)
+}
+
+/// For non-locals `lower_identifier` already emits `LoadGlobal` and returns its temp;
+/// re-wrapping that in `LoadLocal` would lose the `NonLocalBinding` type.
+fn lower_tag_identifier(
+    builder: &mut HirBuilder,
+    ref_: Ref,
+    id_loc: Option<SourceLocation>,
+    instr_loc: Option<SourceLocation>,
+) -> Result<Place, CompilerError> {
+    match builder.resolve_identifier(ref_, id_loc)? {
+        VariableBinding::Identifier { identifier, .. } => {
+            let place = Place {
+                identifier,
+                effect: Effect::Unknown,
+                reactive: false,
+                loc: id_loc,
+            };
+            let load_value = if builder.is_context_identifier(ref_) {
+                InstructionValue::LoadContext {
+                    place,
+                    loc: instr_loc,
+                }
+            } else {
+                InstructionValue::LoadLocal {
+                    place,
+                    loc: instr_loc,
+                }
+            };
+            lower_value_to_temporary(builder, load_value)
+        }
+        _ => lower_identifier(builder, ref_, id_loc),
+    }
 }
 
 /// Decode an `E::Call{was_jsx_element: true}` produced by Bun's JSX visit pass

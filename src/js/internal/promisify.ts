@@ -1,7 +1,6 @@
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
 const { validateFunction } = require("internal/validators");
+const { kCustomPromisifyArgsSymbol } = require("internal/shared");
 
 function defineCustomPromisify(target, callback) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
@@ -41,12 +40,6 @@ var promisify = function promisify(original) {
           }
 
           if (callbackArgs !== undefined) {
-            // if (!Array.isArray(callbackArgs)) {
-            //   throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            // }
-            // if (callbackArgs.length !== values.length) {
-            //   throw new Error("Mismatched length in promisify callback args");
-            // }
             const result = {};
             for (let i = 0; i < callbackArgs.length; i++) {
               result[callbackArgs[i]] = values[i];
@@ -77,30 +70,7 @@ var promisify = function promisify(original) {
 };
 promisify.custom = kCustomPromisifiedSymbol;
 
-// Load node:timers/promises promisified functions onto the global timers.
-{
-  const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
-  const {
-    setTimeout: timeoutPromise,
-    setImmediate: immediatePromise,
-    setInterval: intervalPromise,
-  } = require("node:timers/promises");
-
-  if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, timeoutPromise);
-  }
-
-  if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, immediatePromise);
-  }
-
-  if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, intervalPromise);
-  }
-}
-
 export default {
-  defineCustomPromisify,
   defineCustomPromisifyArgs,
   promisify,
 };

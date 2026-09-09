@@ -27,6 +27,7 @@ const PromisePrototypeThen = $Promise.prototype.$then;
 
 let addAbortListener;
 let AsyncResource;
+let enabledHooksExist;
 
 function isRequest(stream) {
   return stream.setHeader && typeof stream.abort === "function";
@@ -42,11 +43,13 @@ function bindAsyncResource(fn, type) {
   };
 }
 
-// Returns true when an AsyncLocalStorage context is currently active, in
-// which case eos() must snapshot it so the callback observes the context
-// from registration time (matching Node's AsyncContextFrame.current()).
+// True when an AsyncLocalStorage context is active (node's
+// AsyncContextFrame.current()) or createHook() hooks are enabled: eos() then
+// binds an AsyncResource so hooks see STREAM_END_OF_STREAM events.
 function hasAsyncContext() {
-  return $getInternalField($asyncContext, 0) !== undefined;
+  if ($getInternalField($asyncContext, 0) !== undefined) return true;
+  enabledHooksExist ??= require("internal/async_hooks").enabledHooksExist;
+  return enabledHooksExist();
 }
 
 /**
@@ -346,7 +349,10 @@ function eosWeb(stream, options, callback) {
       process.nextTick(() => callback.$apply(stream, args));
     }
   };
-  PromisePrototypeThen.$call(stream[kIsClosedPromise].promise, resolverFn, resolverFn);
+  // Bun's web streams carry the closed promise natively rather than on Node's symbol, which a
+  // userland or polyfilled stream may still define.
+  const closedPromise = stream[kIsClosedPromise]?.promise ?? $webStreamClosedPromise(stream);
+  PromisePrototypeThen.$call(closedPromise, resolverFn, resolverFn);
   return nop;
 }
 

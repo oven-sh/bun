@@ -7,19 +7,19 @@ use bun_jsc::JsResult;
 use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
-pub struct Order {
-    pub groups: Vec<ConcurrentGroup>,
-    pub sequences: Vec<ExecutionSequence>,
+pub(crate) struct Order {
+    pub(crate) groups: Vec<ConcurrentGroup>,
+    pub(crate) sequences: Vec<ExecutionSequence>,
     // The ExecutionEntry clones below are allocated via `heap::into_raw(Box::new(...))`;
     // `BunTest` collects them into
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
-    pub previous_group_was_concurrent: bool,
-    pub cfg: Config,
+    pub(crate) previous_group_was_concurrent: bool,
+    pub(crate) cfg: Config,
 }
 
 impl Order {
-    pub fn init(cfg: Config) -> Order {
+    pub(crate) fn init(cfg: Config) -> Order {
         Order {
             groups: Vec::new(),
             sequences: Vec::new(),
@@ -29,7 +29,7 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
+    pub(crate) fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
@@ -39,7 +39,7 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
@@ -78,7 +78,7 @@ impl Order {
         Ok(AllOrderResult { start, end })
     }
 
-    pub fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
+    pub(crate) fn generate_order_describe(&mut self, current: &mut DescribeScope) -> JsResult<()> {
         if current.failed {
             return Ok(()); // do not schedule any tests in a failed describe scope
         }
@@ -126,7 +126,7 @@ impl Order {
     /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
     /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
     /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
+    pub(crate) fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
         // dereferences the pointer locally.
@@ -216,7 +216,7 @@ impl Order {
         Ok(())
     }
 
-    pub fn append_or_extend_concurrent_group(
+    pub(crate) fn append_or_extend_concurrent_group(
         &mut self,
         concurrent: bool,
         sequences_start: usize,
@@ -242,9 +242,9 @@ impl Order {
     }
 }
 
-pub struct AllOrderResult {
-    pub start: usize,
-    pub end: usize,
+pub(crate) struct AllOrderResult {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl AllOrderResult {
@@ -261,11 +261,11 @@ impl AllOrderResult {
     }
 }
 
-pub struct Config {
-    pub always_use_hooks: bool,
+pub(crate) struct Config {
+    pub(crate) always_use_hooks: bool,
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
-    pub randomize: Option<bun_core::rand::DefaultPrng>,
+    pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
@@ -331,7 +331,7 @@ struct EntryList {
 }
 
 impl EntryList {
-    pub(crate) fn prepend(&mut self, current: *mut ExecutionEntry) {
+    fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         unsafe { (*current).next = self.first };
         self.first = Some(current);
@@ -340,7 +340,7 @@ impl EntryList {
         }
     }
 
-    pub(crate) fn append(&mut self, current: *mut ExecutionEntry) {
+    fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         let cur = unsafe { &mut *current };
         if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {

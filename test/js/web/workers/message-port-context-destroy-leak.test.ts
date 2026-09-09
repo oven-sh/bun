@@ -20,6 +20,7 @@ test.skipIf(isWindows)(
         bunExe(),
         "-e",
         `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const workerBody = ${JSON.stringify(`
           const keep = [];
           for (let i = 0; i < 8000; i++) {
@@ -47,11 +48,11 @@ test.skipIf(isWindows)(
         Bun.gc(true);
         Bun.gc(true);
 
-        const rssBefore = process.memoryUsage().rss;
+        const rssBefore = rss();
         for (let i = 0; i < 8; i++) await runWorker();
         Bun.gc(true);
         Bun.gc(true);
-        const rssAfter = process.memoryUsage().rss;
+        const rssAfter = rss();
 
         const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
         // 8 workers × 8000 ports: when leaking, each MessagePort plus its

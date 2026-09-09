@@ -1,5 +1,9 @@
+import { createRequire } from "node:module";
 import util from "node:util";
-import type { NullableType, OptionalType } from "./optional";
+import type { NullableType, OptionalType } from "./optional.ts";
+
+// optional.ts imports this module, so the getters below load it when they run.
+const require = createRequire(import.meta.url);
 
 /** Default is "compact". */
 export type CodeStyle = "compact" | "pretty";
@@ -7,12 +11,12 @@ export type CodeStyle = "compact" | "pretty";
 export abstract class Type {
   /** Treats `undefined` as a not-provided value. */
   get optional(): OptionalType {
-    return require("./optional").optional(this);
+    return require("./optional.ts").optional(this);
   }
 
   /** Treats `null` or `undefined` as a not-provided value. */
   get nullable(): NullableType {
-    return require("./optional").nullable(this);
+    return require("./optional.ts").nullable(this);
   }
 
   abstract readonly idlType: string;
@@ -56,17 +60,11 @@ export abstract class NamedType extends Type {
   get cppSource(): string | null {
     return null;
   }
-  get zigSource(): string | null {
-    return null;
-  }
   // These getters are faster than `.cppHeader != null` etc.
   get hasCppHeader(): boolean {
     return false;
   }
   get hasCppSource(): boolean {
-    return false;
-  }
-  get hasZigSource(): boolean {
     return false;
   }
   getHeaders(result: Set<string>): void {

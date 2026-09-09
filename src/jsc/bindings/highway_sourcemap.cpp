@@ -39,6 +39,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -137,6 +138,34 @@ enum : size_t {
     kStFastBlocks = 8,
     kStSlowBlocks = 9,
 };
+
+// Layout mirror of bun_highway::ParseMappingsState (#[repr(C)]). The kernel
+// indexes `state` as int32_t[10] via the kSt* constants above; the Rust side
+// reads named fields. These asserts pin the field order so a reorder on either
+// side fails the build instead of silently mis-seeding the scalar resume.
+struct ParseMappingsState {
+    int32_t gen_line;
+    int32_t gen_col;
+    int32_t orig_line;
+    int32_t orig_col;
+    int32_t src_idx;
+    int32_t name_idx;
+    int32_t needs_sort;
+    int32_t has_names;
+    int32_t fast_blocks;
+    int32_t slow_blocks;
+};
+static_assert(sizeof(ParseMappingsState) == 10 * sizeof(int32_t), "ParseMappingsState size changed; update kSt* and the Rust mirror in bun_highway");
+static_assert(offsetof(ParseMappingsState, gen_line) == kStGenLine * sizeof(int32_t), "kStGenLine out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, gen_col) == kStGenCol * sizeof(int32_t), "kStGenCol out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, orig_line) == kStOrigLine * sizeof(int32_t), "kStOrigLine out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, orig_col) == kStOrigCol * sizeof(int32_t), "kStOrigCol out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, src_idx) == kStSrcIdx * sizeof(int32_t), "kStSrcIdx out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, name_idx) == kStNameIdx * sizeof(int32_t), "kStNameIdx out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, needs_sort) == kStNeedsSort * sizeof(int32_t), "kStNeedsSort out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, has_names) == kStHasNames * sizeof(int32_t), "kStHasNames out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, fast_blocks) == kStFastBlocks * sizeof(int32_t), "kStFastBlocks out of sync with bun_highway::ParseMappingsState");
+static_assert(offsetof(ParseMappingsState, slow_blocks) == kStSlowBlocks * sizeof(int32_t), "kStSlowBlocks out of sync with bun_highway::ParseMappingsState");
 
 // VLQ sign recovery. Source-map VLQ is sign-magnitude (NOT zigzag): bit 0 is
 // the sign flag, bits 1.. are the magnitude. Written branch-free as
@@ -237,7 +266,7 @@ static constexpr ShufTable BuildShufTable()
 alignas(16) static constexpr ShufTable kShufTable = BuildShufTable();
 
 // Wrapping i32 add/sub. Signed overflow is UB in C++; the Rust scalar path
-// (`Ordinal::add_scalar`, release build) wraps, and the subsequent `< 0`
+// (`i32::wrapping_add` in Mapping.rs) wraps, and the subsequent `< 0`
 // range check catches the wrapped result. Doing the arithmetic in the
 // unsigned domain gives the same defined-wrap behaviour here. With the
 // accumulator in [0, i32::MAX] (range-checked on the previous segment) and
@@ -887,7 +916,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
 
             // Accumulate and range-check. On any out-of-range value, bail at
             // this segment's start WITHOUT committing: scalar re-decodes it
-            // and reports the exact same ParseResult::Fail as before.
+            // and reports the exact same ParseFail as before.
             const int32_t n_gen_col = WrapAdd(gen_col, d_gen);
             if (HWY_UNLIKELY(n_gen_col < 0))
                 goto bail;
@@ -988,7 +1017,7 @@ extern "C" {
 
 size_t highway_count_mapping_delims(const uint8_t* bytes, size_t len)
 {
-    return HWY_DYNAMIC_DISPATCH(CountDelimsImpl)(bytes, len);
+    return BUN_HWY_DISPATCH(CountDelimsImpl)(bytes, len);
 }
 
 size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
@@ -997,7 +1026,7 @@ size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
     size_t cap, int32_t sources_count,
     int32_t* state, size_t* err_at)
 {
-    return HWY_DYNAMIC_DISPATCH(ParseMappingsImpl)(bytes, len,
+    return BUN_HWY_DISPATCH(ParseMappingsImpl)(bytes, len,
         out_generated, out_original, out_src_idx, out_name_idx,
         cap, sources_count, state, err_at);
 }

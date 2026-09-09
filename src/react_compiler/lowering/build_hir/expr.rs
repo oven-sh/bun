@@ -24,6 +24,7 @@ pub(crate) fn lower_expression(
 ) -> Result<InstructionValue, CompilerError> {
     let loc = convert_loc(expr.loc);
     match &expr.data {
+        Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
         Data::EIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
         Data::EImportIdentifier(ident) => lower_identifier_reference(builder, ident.ref_, loc),
         Data::ENull(_) => Ok(InstructionValue::Primitive {
@@ -249,15 +250,27 @@ pub(crate) fn lower_expression(
             })?;
             Ok(unsupported_node("Super", loc))
         }
-        Data::EImport(_) => {
-            builder.record_error(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "(BuildHIR::lowerExpression) Handle Import expressions".to_string(),
-                description: None,
-                loc,
-                suggestions: None,
-            })?;
-            Ok(unsupported_node("Import", loc))
+        Data::EImport(i) => {
+            let callee = lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::BunOpaque(*expr),
+                    },
+                    loc,
+                },
+            )?;
+            let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
+            args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                builder, &i.expr,
+            )?));
+            if !matches!(i.options.data, Data::EMissing(_)) {
+                args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
+                    builder, &i.options,
+                )?));
+            }
+            Ok(InstructionValue::CallExpression { callee, args, loc })
         }
         Data::EThis(_) => {
             builder.record_error(CompilerErrorDetail {
@@ -571,7 +584,7 @@ fn lower_conditional(
         test_block,
     );
 
-    let test_place = lower_expression_to_temporary(builder, &cond.test_)?;
+    let test_place = lower_expression_to_temporary(builder, &cond.test)?;
     builder.terminate_with_continuation(
         Terminal::Branch {
             test: test_place,
@@ -971,7 +984,13 @@ fn lower_unary(
     let loc = convert_loc(bun_loc);
     match unary.op {
         UnDelete => match &unary.value.data {
-            Data::EDot(d) if d.optional_chain.is_none() => {
+            // A flagless EDot here is a visitor-folded no-op `delete`; bail like upstream.
+            Data::EDot(d)
+                if d.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &d.target)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
@@ -979,7 +998,12 @@ fn lower_unary(
                     loc,
                 })
             }
-            Data::EIndex(i) if i.optional_chain.is_none() => {
+            Data::EIndex(i)
+                if i.optional_chain.is_none()
+                    && unary.flags.contains(
+                        E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+                    ) =>
+            {
                 let object = lower_expression_to_temporary(builder, &i.target)?;
                 let property = lower_expression_to_temporary(builder, &i.index)?;
                 Ok(InstructionValue::ComputedDelete {
@@ -1008,6 +1032,7 @@ fn lower_unary(
             Ok(InstructionValue::UnaryExpression {
                 operator,
                 value,
+                bun_flags: unary.flags,
                 loc,
             })
         }
@@ -1195,7 +1220,7 @@ fn lower_template(
         let value = match &tmpl.head {
             E::TemplateContents::Raw(r) => {
                 let raw_bytes = r.slice();
-                if raw_bytes.contains(&b'\\') {
+                if bun_core::strings::contains_char(raw_bytes, b'\\') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Todo,
                         reason: "(BuildHIR::lowerExpression) Handle tagged template where cooked value is different from raw value".to_string(),
@@ -1333,7 +1358,7 @@ fn is_reorderable_expression(
             _ => false,
         },
         Data::EIf(cond) => {
-            is_reorderable_expression(builder, &cond.test_, allow_local_identifiers)
+            is_reorderable_expression(builder, &cond.test, allow_local_identifiers)
                 && is_reorderable_expression(builder, &cond.yes, allow_local_identifiers)
                 && is_reorderable_expression(builder, &cond.no, allow_local_identifiers)
         }
@@ -1358,34 +1383,10 @@ fn is_reorderable_expression(
             }
         }),
         Data::EDot(d) if d.optional_chain.is_none() => {
-            let mut inner = &d.target;
-            loop {
-                match &inner.data {
-                    Data::EDot(d2) if d2.optional_chain.is_none() => inner = &d2.target,
-                    Data::EIndex(i2) if i2.optional_chain.is_none() => inner = &i2.target,
-                    _ => break,
-                }
-            }
-            match &inner.data {
-                Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
-                Data::EImportIdentifier(_) => true,
-                _ => false,
-            }
+            is_member_chain_of_module_level_or_global(builder, &d.target)
         }
         Data::EIndex(i) if i.optional_chain.is_none() => {
-            let mut inner = &i.target;
-            loop {
-                match &inner.data {
-                    Data::EDot(d2) if d2.optional_chain.is_none() => inner = &d2.target,
-                    Data::EIndex(i2) if i2.optional_chain.is_none() => inner = &i2.target,
-                    _ => break,
-                }
-            }
-            match &inner.data {
-                Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
-                Data::EImportIdentifier(_) => true,
-                _ => false,
-            }
+            is_member_chain_of_module_level_or_global(builder, &i.target)
         }
         Data::EArrow(arrow) => {
             let stmts = arrow.body.stmts.slice();
@@ -1415,6 +1416,23 @@ fn is_reorderable_expression(
         Data::EInlinedEnum(e) => {
             is_reorderable_expression(builder, &e.value, allow_local_identifiers)
         }
+        _ => false,
+    }
+}
+
+/// `a.b[c].d` rooted at a module-level or global binding (no optional chaining).
+fn is_member_chain_of_module_level_or_global(builder: &HirBuilder, target: &Expr) -> bool {
+    let mut inner = target;
+    loop {
+        match &inner.data {
+            Data::EDot(d) if d.optional_chain.is_none() => inner = &d.target,
+            Data::EIndex(i) if i.optional_chain.is_none() => inner = &i.target,
+            _ => break,
+        }
+    }
+    match &inner.data {
+        Data::EIdentifier(ident) => is_module_level_or_global(builder, ident.ref_),
+        Data::EImportIdentifier(_) => true,
         _ => false,
     }
 }

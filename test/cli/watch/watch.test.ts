@@ -14,7 +14,7 @@ function track<T extends Subprocess>(child: T): T {
   return child;
 }
 // SIGKILL, not SIGTERM: the wedge fixtures below install a SIGTERM handler and
-// never yield, so SIGTERM cannot stop them and a leaked pair spins at full CPU.
+// never yield, so a SIGTERM is queued for JS and never acted on.
 async function reap(child: Subprocess) {
   child.kill("SIGKILL");
   await child.exited;
@@ -68,7 +68,14 @@ function watchChild<Stderr extends "inherit" | "pipe" = "inherit">(
   };
 }
 
-describe.concurrent("bun --watch", () => {
+// Serial on Windows: there the directory watch is armed by the watcher thread's
+// first ReadDirectoryChangesW rather than by the module loader (inotify and
+// kqueue register before the script runs). An edit made right after a freshly
+// started child prints is lost if that thread has not run yet, and several
+// children booting at once on a small machine make that likely.
+const describeWatch = isWindows ? describe : describe.concurrent;
+
+describeWatch("bun --watch", () => {
   for (const dir of ["dir", "©️"]) {
     it.todoIf(isBroken && isWindows)(
       `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
@@ -242,22 +249,23 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     30_000,
   );
 
-  // A script that registers a SIGTERM handler and then spins in synchronous
+  // A script that registers a SIGTERM handler and then blocks in synchronous
   // code must still restart on file change: the watcher thread posts the reload
   // to the JS thread first (so listeners can run), but forces the reload itself
   // after a bounded grace window when the JS thread never drains the task.
+  // The wedge fixtures block in Bun.sleepSync() rather than a busy loop: both
+  // keep the JS thread out of the event loop, but a spinning core per test
+  // would starve the other concurrent tests on a small machine.
   it("--watch forces a restart when the kill-signal listener thread is stuck in sync code", async () => {
     using dir = tempDir("watch-busy-sigterm", {
       "busy.js": `
       process.on("SIGTERM", () => {});
       console.log("iter first");
-      // The busy loop never yields to the event loop, so the posted
-      // WatchReloadTask cannot run and the watcher-thread fallback must
-      // fire. Self-limiting: it spins far past the 500ms fallback window
-      // but exits on its own, so a leaked watch pair cannot burn CPU
-      // forever if the test dies before killing it.
-      const end = Date.now() + 30_000;
-      while (Date.now() < end) {}
+      // Never yields to the event loop, so the posted WatchReloadTask cannot
+      // run and the watcher-thread fallback must fire. Self-limiting: it
+      // blocks far past the 500ms fallback window but exits on its own, so
+      // a leaked watch pair goes away even if the test dies before killing it.
+      Bun.sleepSync(30_000);
       process.exit(1);
     `,
     });
@@ -283,8 +291,7 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     using dir = tempDir("watch-sigterm-wedged-handler", {
       "busy.js": `
       process.on("SIGTERM", () => {
-        const end = Date.now() + 30_000;
-        while (Date.now() < end) {}
+        Bun.sleepSync(30_000);
         process.exit(1);
       });
       console.log("iter first");
@@ -313,8 +320,7 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
       "busy.js": `
       process.on("SIGTERM", () => {});
       console.log("iter first");
-      const end = Date.now() + 30_000;
-      while (Date.now() < end) {}
+      Bun.sleepSync(30_000);
       process.exit(1);
     `,
     });

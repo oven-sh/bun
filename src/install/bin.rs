@@ -1257,6 +1257,13 @@ impl<'a> Linker<'a> {
     }
 
     /// `node_modules/.bin` opened without following a planted symlink, or the global bin dir.
+    ///
+    /// The caller creates this `node_modules` first, one no-follow component at
+    /// a time (`NodeModulesFolder::make_and_open_dir`,
+    /// `isolated_install::make_store_path`), so the directory exists and no
+    /// component of it is a symlink. The `<pkg>` component before a nested
+    /// `node_modules` can be one by design, which is why this does not walk
+    /// the path itself.
     #[cfg(not(windows))]
     fn open_bin_dir(
         node_modules_path: &AbsPath,
@@ -1264,19 +1271,12 @@ impl<'a> Linker<'a> {
         global: bool,
     ) -> sys::Maybe<sys::Dir> {
         if global {
+            // The global bin directory is the user's own, opened as configured.
             return sys::Dir::open(strings::without_trailing_slash(global_bin_path.as_bytes()));
         }
 
-        let node_modules = strings::without_trailing_slash(node_modules_path.slice());
-        let node_modules = match sys::Dir::open(node_modules) {
-            Ok(dir) => dir,
-            Err(err) if err.get_errno() == sys::Errno::ENOENT => {
-                sys::Dir::cwd().make_path(node_modules)?;
-                sys::Dir::open(node_modules)?
-            }
-            Err(err) => return Err(err),
-        };
-        node_modules.make_open_real_dir(b".bin")
+        sys::Dir::open(strings::without_trailing_slash(node_modules_path.slice()))?
+            .make_open_real_dir(b".bin")
     }
 
     /// `symlinkat` with the `EBUSY`/`ETXTBSY` retry of `sys::symlink_running_executable`.

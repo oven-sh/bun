@@ -1285,6 +1285,35 @@ describe("node_modules destination symlinks", () => {
     expect(exitCode).toBe(0);
   });
 
+  // With `hoist = false` the isolated linker first removes the hoisted
+  // fallback an earlier install left at `node_modules/.bun/node_modules`. That
+  // delete named a three-component path, so a link at `.bun` made it recursive
+  // in the link target's own `node_modules`, before any no-follow open of the
+  // store could replace the link. A repository can commit both the bunfig and
+  // the link.
+  it("does not delete through a symlinked node_modules/.bun when hoist is disabled", async () => {
+    using root = tempDir("nm-store-hoist", {});
+    const victim = await plantVictim(String(root), "node_modules");
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "lodash", "1.0.0", "module.exports = 1");
+    await writeFile(join(repo, "bunfig.toml"), `[install]\nlinker = "isolated"\nhoist = false\n`);
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
+    );
+    await linkDir("../../victim", join(repo, "node_modules", ".bun"));
+
+    const { stderr, exitCode } = await install(repo);
+
+    // `<link target>/node_modules` used to be deleted with everything in it.
+    expect(stderr).not.toContain("error:");
+    await expectVictimUntouched(victim, "node_modules");
+    expect((await lstat(join(repo, "node_modules", ".bun"))).isSymbolicLink()).toBe(false);
+    expect(await Bun.file(join(repo, "node_modules", "lodash", "index.js")).text()).toBe("module.exports = 1");
+    expect(exitCode).toBe(0);
+  });
+
   it("does not install through a symlinked store entry node_modules with the isolated linker", async () => {
     using root = tempDir("nm-entry", {});
     const victim = await plantVictim(String(root));

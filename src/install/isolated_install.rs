@@ -2004,11 +2004,20 @@ pub(crate) fn install_isolated_packages(
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
+    //
+    // This delete is recursive and `.bun` is the installer's directory, so open
+    // it without following a symlink: by path, a link at `.bun` empties the
+    // link target's own `node_modules` instead. A link there is replaced, and a
+    // project without `node_modules` has no fallback to remove.
     if !manager.options.hoist && !is_new_bun_modules {
-        use bun_sys::FdExt as _;
-        if let Err(err) =
-            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
-        {
+        let cleanup = match sys::Dir::cwd().open_real_dir(b"node_modules") {
+            Ok(node_modules) => node_modules
+                .make_open_real_dir(b".bun")
+                .and_then(|bun_modules| bun_modules.delete_tree(b"node_modules")),
+            Err(err) if err.get_errno() == sys::E::ENOENT => Ok(()),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = cleanup {
             Output::err(
                 err,
                 "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",

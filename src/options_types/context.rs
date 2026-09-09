@@ -236,8 +236,8 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
-    /// `startupJITDeferralMaxMs` baked into the executable; `None` = the default window, `Some(0)` = off.
-    pub compile_startup_jit_deferral_ms: Option<u32>,
+    /// `--compile-jit-policy`: tier-up threshold scale baked into the executable; `None` = the default (8).
+    pub compile_jit_policy: Option<f32>,
     pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
@@ -296,7 +296,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
-            compile_startup_jit_deferral_ms: None,
+            compile_jit_policy: None,
             compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,

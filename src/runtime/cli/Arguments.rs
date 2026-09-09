@@ -402,6 +402,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--compile-jit-policy <NUMBER>    Scale JIT tier-up thresholds by this until the executable's first output, input or idle (default 8; 1 = normal JIT policy)"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -440,12 +443,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--no-prelink-modules             With --compile --bytecode --format=esm: don't embed the pre-resolved module graph"
-        ),
-        parse_param!(
-            "--startup-jit-deferral <NUMBER>   With --compile: keep the JIT reluctant until the program becomes interactive, for at most this many ms (default 1500; 0 = off)"
-        ),
-        parse_param!(
-            "--no-startup-jit-deferral        With --compile: let the JIT tier up from the first instruction"
         ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -2257,34 +2254,25 @@ fn parse_build_command_options(
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
 
-    {
-        let positive = args.option(b"--startup-jit-deferral");
-        let negative = args.flag(b"--no-startup-jit-deferral");
-        if positive.is_some() || negative {
-            if !ctx.bundler_options.compile {
-                Output::err_generic("--startup-jit-deferral requires --compile", ());
-                Global::crash();
+    if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-jit-policy requires --compile", ());
+            Global::crash();
+        }
+        match core::str::from_utf8(jit_policy)
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+        {
+            Some(scale) if scale.is_finite() && scale >= 1.0 => {
+                ctx.bundler_options.compile_jit_policy = Some(scale);
             }
-            if positive.is_some() && negative {
+            _ => {
                 Output::err_generic(
-                    "Cannot use both --startup-jit-deferral and --no-startup-jit-deferral",
-                    (),
+                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number >= 1",
+                    format_args!("{}", BStr::new(jit_policy)),
                 );
-                Global::crash();
+                Global::exit(1);
             }
-            ctx.bundler_options.compile_startup_jit_deferral_ms = match positive {
-                None => Some(0),
-                Some(ms) => match strings::parse_int::<u32>(ms, 10) {
-                    Ok(ms) => Some(ms),
-                    Err(_) => {
-                        Output::err_generic(
-                            "Invalid value for --startup-jit-deferral: \"{}\". Must be a non-negative integer\n",
-                            format_args!("{}", BStr::new(ms)),
-                        );
-                        Global::exit(1);
-                    }
-                },
-            };
         }
     }
 

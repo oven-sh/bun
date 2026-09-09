@@ -3205,6 +3205,11 @@ void JSC__VM__endStartupJITDeferral(JSC::VM* vm, const char* reason)
     vm->endStartupJITDeferral(reason);
 }
 
+void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
+{
+    vm->setStartupJITDeferralScale(scale);
+}
+
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();

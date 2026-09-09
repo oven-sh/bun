@@ -1121,24 +1121,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, RuntimeOptions};
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
-        let baked_deferral_ms = graph.runtime_options.startup_jit_deferral_ms;
-        let env_deferral_ms = bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL_MS
-            .get()
-            .map(|ms| u32::try_from(ms).unwrap_or(u32::MAX));
-        bun_jsc::initialize(bun_jsc::InitializeOptions {
-            startup_jit_deferral_max_ms: match (
-                bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL.get(),
-                env_deferral_ms,
-            ) {
-                (Some(false), _) => None,
-                (_, Some(ms)) => Some(ms),
-                (Some(true), None) if baked_deferral_ms == 0 => {
-                    Some(RuntimeOptions::DEFAULT_STARTUP_JIT_DEFERRAL_MS)
-                }
-                (_, None) => (baked_deferral_ms != 0).then_some(baked_deferral_ms),
-            },
-            ..Default::default()
-        });
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        let jit_policy = match bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL.get() {
+            Some(false) => 1.0,
+            Some(true) if graph.runtime_options.jit_policy <= 1.0 => {
+                RuntimeOptions::DEFAULT_JIT_POLICY
+            }
+            _ => graph.runtime_options.jit_policy,
+        };
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1185,6 +1175,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if jit_policy > 1.0 {
+            vm.jsc_vm()
+                .set_startup_jit_deferral_scale(f64::from(jit_policy), c"boot");
+        }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);

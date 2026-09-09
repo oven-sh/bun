@@ -489,10 +489,6 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
-    /// `bun build --compile` executables: scale LLInt->Baseline->DFG tier-up thresholds during the startup window
-    /// (JSC `startupJITDeferralScale`) for at most this many ms (`startupJITDeferralMaxMs`); the window ends earlier
-    /// when the program becomes interactive (`VM::end_startup_jit_deferral_because`). `None`/`Some(0)` = off.
-    pub startup_jit_deferral_max_ms: Option<u32>,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -500,9 +496,7 @@ pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
-    if options.startup_jit_deferral_max_ms.is_some_and(|ms| ms > 0)
-        || bun_core::getenv_z(bun_core::zstr!("BUN_JSC_startupJITDeferralScale")).is_some()
-    {
+    if bun_core::getenv_z(bun_core::zstr!("BUN_JSC_startupJITDeferralScale")).is_some() {
         crate::vm::STARTUP_JIT_DEFERRAL_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
     }
     let env = bun_sys::environ();
@@ -517,9 +511,6 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
-            options
-                .startup_jit_deferral_max_ms
-                .map_or(0, |ms| i32::try_from(ms).unwrap_or(i32::MAX)),
         )
     };
 }
@@ -1576,7 +1567,6 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
-        startup_jit_deferral_max_ms: i32,
     );
 }
 

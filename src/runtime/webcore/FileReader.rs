@@ -66,7 +66,7 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
-    /// Reads the process's stdin: its first data marks the program interactive (`note_first_stdin_data`).
+    /// Reads the process's stdin: data marks the program interactive (`note_stdin_data`).
     pub(crate) ends_startup_jit_deferral: Cell<bool>,
 }
 
@@ -642,7 +642,7 @@ impl FileReader {
             return false;
         }
         if !chunk.is_empty() {
-            self.note_first_stdin_data();
+            self.note_stdin_data();
         }
         let has_more = state != ReadState::Eof;
 
@@ -771,9 +771,8 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
-    fn note_first_stdin_data(&self) {
+    fn note_stdin_data(&self) {
         if self.ends_startup_jit_deferral.get() {
-            self.ends_startup_jit_deferral.set(false);
             self.parent_global()
                 .vm()
                 .end_startup_jit_deferral_because(c"first stdin data");
@@ -834,7 +833,7 @@ impl FileReader {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
-                self.note_first_stdin_data();
+                self.note_stdin_data();
                 let into = streams::IntoArray {
                     value: array,
                     len: amount_read as u64,

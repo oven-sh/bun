@@ -3440,17 +3440,6 @@ declare module "bun" {
        * @default true
        */
       prelinkModules?: boolean;
-      /**
-       * Keep the JIT reluctant to compile while the executable starts up; the
-       * window ends when the program becomes interactive (first stdin data, first
-       * write to a terminal or stdout/stderr, event loop idle for 100ms,
-       * {@link Bun.unsafe.endStartupJITDeferral}) or after `maxMs`. `false` or
-       * `{ maxMs: 0 }` turns it off. Baked into the executable;
-       * `BUN_STARTUP_JIT_DEFERRAL=0|1` and `BUN_STARTUP_JIT_DEFERRAL_MS` override it
-       * at run time. Requires `compile`.
-       * @default { maxMs: 1500 }
-       */
-      startupJITDeferral?: boolean | { maxMs?: number };
     };
 
     /**
@@ -3750,6 +3739,17 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * The JIT policy the executable starts with ({@link Bun.unsafe.setJITPolicy}):
+     * tier-up thresholds are multiplied by this until the program's first output,
+     * first stdin data or first idle event loop, then return to 1. `1` starts in
+     * the normal JIT policy. `BUN_STARTUP_JIT_DEFERRAL=0` overrides it at run time.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 8
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -5430,20 +5430,18 @@ declare module "bun" {
     function mimallocDump(): void;
 
     /**
-     * End the startup JIT deferral window of a `bun build --compile` executable.
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *
-     * While the window is open the JIT is reluctant to compile, so code that only
-     * runs during startup stays in the interpreter. Bun ends it on its own when the
-     * program becomes interactive (first stdin data, first write to a terminal or
-     * stdout/stderr, event loop idle for 100ms) or after `optimize.startupJITDeferral.maxMs`.
-     * An app that knows better when it became interactive — e.g. right after its
-     * first render — can call this instead.
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once code. The policy returns
+     * to `1` on the next write to stdout/stderr or a terminal, the next stdin data,
+     * the next idle event loop, or `setJITPolicy(1)`, whichever comes first.
+     * `bun build --compile` executables start at `8` (see `compile.jitPolicy`); an app
+     * that knows better when startup is over can call `setJITPolicy(1)` itself.
      *
-     * Main thread only: the window belongs to the main thread's VM, so calling this
-     * from a `Worker` does nothing. No-op if the window already ended or was never
-     * enabled.
+     * @param scale a finite number `>= 1`
      */
-    function endStartupJITDeferral(): void;
+    function setJITPolicy(scale: number): void;
 
     /**
      * Accurate per-process memory footprint in bytes.

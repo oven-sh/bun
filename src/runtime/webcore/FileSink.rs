@@ -69,7 +69,7 @@ pub struct FileSink {
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
 
-    /// A stdout/stderr sink (`Blob::writer`): its first write marks the program interactive (`note_first_stdio_write`).
+    /// A stdout/stderr sink (`Blob::writer`): a write marks the program interactive (`note_stdio_write`).
     pub(crate) ends_startup_jit_deferral: Cell<bool>,
 }
 
@@ -1054,9 +1054,8 @@ impl FileSink {
         )
     }
 
-    fn note_first_stdio_write(&self) {
+    fn note_stdio_write(&self) {
         if self.ends_startup_jit_deferral.get() {
-            self.ends_startup_jit_deferral.set(false);
             if let Some(vm) = self.js_vm() {
                 vm.jsc_vm()
                     .end_startup_jit_deferral_because(c"first write to stdout/stderr");
@@ -1068,7 +1067,7 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        self.note_first_stdio_write();
+        self.note_stdio_write();
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
@@ -1105,7 +1104,7 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        self.note_first_stdio_write();
+        self.note_stdio_write();
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
@@ -1123,7 +1122,7 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        self.note_first_stdio_write();
+        self.note_stdio_write();
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));

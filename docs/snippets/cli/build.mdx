@@ -26,12 +26,6 @@ bun build <entry points>
   With <code>--compile --bytecode --format=esm</code>: don't embed the pre-resolved module graph
 </ParamField>
 
-<ParamField path="--startup-jit-deferral" type="number" default="1500">
-  With <code>--compile</code>: keep the JIT reluctant to compile until the program becomes interactive, for at most this
-  many milliseconds (<code>--startup-jit-deferral=&lt;ms&gt;</code>). <code>--no-startup-jit-deferral</code> or{" "}
-  <code>0</code> turns it off
-</ParamField>
-
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -201,6 +195,11 @@ bun build <entry points>
 
 <ParamField path="--compile-exec-argv" type="string">
   Prepend arguments to the standalone executable’s <code>execArgv</code>
+</ParamField>
+
+<ParamField path="--compile-jit-policy" type="number" default="8">
+  Scale JIT tier-up thresholds by this until the executable's first output, input or idle; <code>1</code> starts in the
+  normal JIT policy
 </ParamField>
 
 <ParamField path="--compile-autoload-dotenv" type="boolean" default="true">

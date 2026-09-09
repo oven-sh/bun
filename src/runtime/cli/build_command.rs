@@ -937,10 +937,10 @@ impl BuildCommand {
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions;
                         RuntimeOptions {
-                            startup_jit_deferral_ms: ctx
+                            jit_policy: ctx
                                 .bundler_options
-                                .compile_startup_jit_deferral_ms
-                                .unwrap_or(RuntimeOptions::DEFAULT_STARTUP_JIT_DEFERRAL_MS),
+                                .compile_jit_policy
+                                .unwrap_or(RuntimeOptions::DEFAULT_JIT_POLICY),
                         }
                     },
                 ) {

@@ -13,11 +13,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
-            (
-                "endStartupJITDeferral",
-                __jsc_host_end_startup_jit_deferral,
-                0,
-            ),
+            ("setJITPolicy", __jsc_host_set_jit_policy, 1),
         ],
     )
 }
@@ -81,13 +77,28 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::js_number(bytes as f64))
 }
 
-/// The program says it is now interactive: end the `bun build --compile` startup JIT deferral window
-/// (docs/bundler/executables.mdx "Startup optimizations"). No-op if it already ended or was never enabled.
+/// `Bun.unsafe.setJITPolicy(scale)`: multiply JSC's tier-up thresholds by `scale`; 1 = the normal JIT policy (ends a
+/// `bun build --compile` executable's startup deferral, docs/bundler/executables.mdx "Startup optimizations").
 #[bun_jsc::host_fn]
-fn end_startup_jit_deferral(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [value] = frame.arguments_as_array::<1>();
+    if !value.is_number() {
+        return Err(global.throw_invalid_argument_type_value("scale", "number", value));
+    }
+    let scale = value.as_number();
+    if !(scale.is_finite() && scale >= 1.0) {
+        return Err(global.throw_range_error(
+            scale,
+            jsc::RangeErrorOptions {
+                field_name: b"scale",
+                msg: b"a finite number >= 1",
+                ..Default::default()
+            },
+        ));
+    }
     global
         .vm()
-        .end_startup_jit_deferral_because(c"Bun.unsafe.endStartupJITDeferral");
+        .set_startup_jit_deferral_scale(scale, c"Bun.unsafe.setJITPolicy");
     Ok(JSValue::UNDEFINED)
 }
 

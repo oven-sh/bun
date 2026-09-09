@@ -429,10 +429,7 @@ impl JSBundleCompletionTask {
             },
             flags,
             RuntimeOptions {
-                startup_jit_deferral_ms: self
-                    .config
-                    .startup_jit_deferral_ms
-                    .unwrap_or(RuntimeOptions::DEFAULT_STARTUP_JIT_DEFERRAL_MS),
+                jit_policy: compile_options.jit_policy,
             },
         ) {
             Ok(r) => r,

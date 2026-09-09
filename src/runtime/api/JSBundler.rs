@@ -138,8 +138,6 @@ pub mod js_bundler {
         pub(crate) bytecode_depth: u32,
         pub(crate) optimize_bytecode: bool,
         pub(crate) prelink_modules: bool,
-        /// `optimize.startupJITDeferral`: `None` = default window, `Some(0)` = off.
-        pub(crate) startup_jit_deferral_ms: Option<u32>,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -210,7 +208,6 @@ pub mod js_bundler {
                 bytecode_depth: u32::MAX,
                 optimize_bytecode: true,
                 prelink_modules: true,
-                startup_jit_deferral_ms: None,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -248,6 +245,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
+        pub(crate) jit_policy: f32,
     }
 
     impl Default for CompileOptions {
@@ -269,6 +268,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                jit_policy: StandaloneModuleGraph::RuntimeOptions::DEFAULT_JIT_POLICY,
             }
         }
     }
@@ -443,6 +443,30 @@ pub mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number();
+                    if !((scale as f32).is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            scale,
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale as f32;
+                }
             }
 
             Ok(Some(this))
@@ -641,29 +665,6 @@ pub mod js_bundler {
                 }
                 if let Some(prelink) = optimize.get_boolean_loose(global_this, "prelinkModules")? {
                     this.prelink_modules = prelink;
-                }
-                if let Some(deferral) = optimize.get(global_this, "startupJITDeferral")? {
-                    if deferral.is_boolean() {
-                        this.startup_jit_deferral_ms = (deferral == JSValue::FALSE).then_some(0);
-                    } else if deferral.is_object() {
-                        if let Some(max_ms) = deferral.get(global_this, "maxMs")? {
-                            this.startup_jit_deferral_ms =
-                                Some(global_this.validate_integer_range::<u32>(
-                                    max_ms,
-                                    0,
-                                    bun_jsc::IntegerRange {
-                                        min: 0,
-                                        max: i128::from(u32::MAX),
-                                        field_name: b"optimize.startupJITDeferral.maxMs",
-                                        always_allow_zero: true,
-                                    },
-                                )?);
-                        }
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected optimize.startupJITDeferral to be a boolean or an object"
-                        )));
-                    }
                 }
             }
 
@@ -1343,12 +1344,6 @@ pub mod js_bundler {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if this.bytecode && this.format == options::Format::Esm && this.compile.is_none() {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
-            }
-
-            if this.startup_jit_deferral_ms.is_some() && this.compile.is_none() {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "optimize.startupJITDeferral requires compile: true"
-                )));
             }
 
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints

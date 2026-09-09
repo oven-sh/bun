@@ -63,19 +63,23 @@ pub struct StandaloneModuleGraph {
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record).
 #[derive(Clone, Copy)]
 pub struct RuntimeOptions {
-    /// The main VM's startup JIT deferral window in ms (`optimize.startupJITDeferral`); 0 = none.
-    pub startup_jit_deferral_ms: u32,
+    /// `compile.jitPolicy`: JSC tier-up threshold scale the main VM starts with (`VM::setStartupJITDeferralScale`);
+    /// 1 = normal JIT policy from the first instruction.
+    pub jit_policy: f32,
 }
 
 impl RuntimeOptions {
+    /// Old writers: value = deadline in ms; the window was on (scale 8) iff this bit was set.
     const STARTUP_JIT_DEFERRAL: u32 = 1 << 0;
-    pub const DEFAULT_STARTUP_JIT_DEFERRAL_MS: u32 = 1500;
+    /// value = `jit_policy` as `f32` bits.
+    const JIT_POLICY: u32 = 1 << 1;
+    pub const DEFAULT_JIT_POLICY: f32 = 8.0;
 }
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
-            startup_jit_deferral_ms: Self::DEFAULT_STARTUP_JIT_DEFERRAL_MS,
+            jit_policy: Self::DEFAULT_JIT_POLICY,
         }
     }
 }
@@ -1033,9 +1037,10 @@ bitflags::bitflags! {
         /// After the module-info string table pointer: `StringPointer` to the pre-resolved module graph blob
         /// (`JSC::PrelinkedModuleGraph` layout), then `u32 count` and `count` × `u32` file-table index per graph module.
         const HAS_PRELINKED_MODULE_GRAPH    = 1 << 11;
-        /// After the prelinked-graph record: `u32 flags` (`RuntimeOptions::STARTUP_JIT_DEFERRAL`), `u32
-        /// startup_jit_deferral_ms`. Flag clear or ms == 0 = window off (not JSC's "0 = no deadline"); other flag
-        /// bits reserved. Absent = `RuntimeOptions::default()`.
+        /// After the prelinked-graph record: `u32 flags`, `u32 value`. With `RuntimeOptions::JIT_POLICY` set, value is
+        /// the `f32` bit pattern of `jit_policy` (a float, so fractional scales round-trip). Records from before that
+        /// bit existed carry a ms deadline in value and mean scale 8 if `STARTUP_JIT_DEFERRAL` is set, else 1. Other
+        /// flag bits reserved. Absent = `RuntimeOptions::default()`.
         const HAS_RUNTIME_OPTIONS           = 1 << 12;
         // _padding: u19
     }
@@ -1226,14 +1231,20 @@ impl StandaloneModuleGraph {
             && record_at + 2 * size_of::<u32>() <= raw_len
         {
             let flags = read_u32(record_at);
-            let max_ms = read_u32(record_at + 4);
+            let value = read_u32(record_at + 4);
             record_at += 2 * size_of::<u32>();
-            runtime_options.startup_jit_deferral_ms =
-                if flags & RuntimeOptions::STARTUP_JIT_DEFERRAL != 0 {
-                    max_ms
+            runtime_options.jit_policy = if flags & RuntimeOptions::JIT_POLICY != 0 {
+                let scale = f32::from_bits(value);
+                if scale.is_finite() && scale >= 1.0 {
+                    scale
                 } else {
-                    0
-                };
+                    RuntimeOptions::DEFAULT_JIT_POLICY
+                }
+            } else if flags & RuntimeOptions::STARTUP_JIT_DEFERRAL != 0 {
+                RuntimeOptions::DEFAULT_JIT_POLICY
+            } else {
+                1.0
+            };
         }
         let _ = record_at;
         let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
@@ -1877,15 +1888,9 @@ pub(crate) fn to_bytes(
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
     {
-        let deferral_ms = runtime_options.startup_jit_deferral_ms;
-        let runtime_flags = if deferral_ms != 0 {
-            RuntimeOptions::STARTUP_JIT_DEFERRAL
-        } else {
-            0
-        };
         let mut record = [0u8; 8];
-        record[0..4].copy_from_slice(&runtime_flags.to_le_bytes());
-        record[4..8].copy_from_slice(&deferral_ms.to_le_bytes());
+        record[0..4].copy_from_slice(&RuntimeOptions::JIT_POLICY.to_le_bytes());
+        record[4..8].copy_from_slice(&runtime_options.jit_policy.to_bits().to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_RUNTIME_OPTIONS;
     }

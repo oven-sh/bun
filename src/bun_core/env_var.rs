@@ -120,11 +120,10 @@ new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_
 // userfaultfd WP registration) and without transparent huge pages. 0 = kernel defaults; 1 = fault-around off past the
 // startup prefetch run; 2 = off for the whole bytecode..source run (A/B arm, pick one after measuring).
 new!(pub BUN_STANDALONE_NO_FAULTAROUND: unsigned, "BUN_STANDALONE_NO_FAULTAROUND", { default: 1 });
-// `bun build --compile` executables: defer JIT tier-up until the program becomes interactive or BUN_STARTUP_JIT_DEFERRAL_MS
-// pass (docs/bundler/executables.mdx "Startup optimizations"). Unset = what the build baked in (`optimize.startupJITDeferral`,
-// StandaloneModuleGraph `RuntimeOptions`); BUN_STARTUP_JIT_DEFERRAL=0 or _MS=0 turns it off, =1 or _MS=<ms> turns it on.
+// `bun build --compile` executables: scale JIT tier-up thresholds until the program becomes interactive
+// (docs/bundler/executables.mdx "Startup optimizations"). Unset = what the build baked in (`compile.jitPolicy`,
+// StandaloneModuleGraph `RuntimeOptions`); =0 starts in the normal JIT policy, =1 uses the default scale even if the build chose 1.
 new!(pub BUN_STARTUP_JIT_DEFERRAL: boolean, "BUN_STARTUP_JIT_DEFERRAL", {});
-new!(pub BUN_STARTUP_JIT_DEFERRAL_MS: unsigned, "BUN_STARTUP_JIT_DEFERRAL_MS", {});
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.

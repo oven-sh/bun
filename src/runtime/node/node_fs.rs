@@ -3551,7 +3551,7 @@ pub mod args {
             }
             Some(bun_core::Stdio::StdIn) => {}
             None => {
-                // One isatty() per distinct fd while the window is open (<= BUN_STARTUP_JIT_DEFERRAL_MS), none after.
+                // One isatty() per distinct fd while the window is open, none after.
                 #[cfg(unix)]
                 {
                     static LAST_NON_TTY_FD: core::sync::atomic::AtomicI32 =

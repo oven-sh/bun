@@ -503,4 +503,37 @@ describe("bundler", () => {
     // The class keeps its temporal dead zone; bundled top-level const/let are emitted as var.
     stdout: "ReferenceError,undefined,undefined K,42,L",
   });
+  // Deleting a graph module's registry entry must not break (or free) what its importers already link against: a
+  // function linked after the delete still resolves its imports to the original record, and a fresh import() of the
+  // same key makes a new record.
+  graphCase("RegistryDelete", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { self, counter, bump } from "./b";
+        console.log(counter());
+        const wasCached = self in import.meta.require.cache;
+        delete import.meta.require.cache[self];
+        Bun.gc(true);
+        function linkedAfterDelete() { bump(); return counter(); }
+        console.log(wasCached, linkedAfterDelete());
+        Bun.gc(true);
+        if (self !== Bun.main) {
+          // With splitting, b's code lives in a chunk of its own: importing that key again makes a fresh record.
+          const again = await import(self);
+          console.log(Object.values(again).includes(counter) ? "same" : "fresh", counter());
+        } else {
+          console.log("single", counter());
+        }
+      `,
+      "/b.ts": /* js */ `
+        let n = 0;
+        export const self = import.meta.path;
+        export function bump() { n++; }
+        export function counter() { return n; }
+      `,
+    },
+    entries: ["/entry.ts", "/b.ts"],
+    // Without splitting everything is the entry module itself, which require.cache does not list.
+    stdout: splitting => (splitting ? "0\ntrue 1\nfresh 1" : "0\nfalse 1\nsingle 1"),
+  });
 });

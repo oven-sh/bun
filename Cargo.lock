@@ -1432,7 +1432,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
- "bun_ast",
  "bun_collections",
  "bun_core",
  "bun_io",

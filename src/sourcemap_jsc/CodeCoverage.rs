@@ -3,7 +3,6 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
@@ -15,6 +14,8 @@ use bun_sourcemap::{
 
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
+
+bun_core::declare_scope!(coverage, hidden);
 
 /// Our code coverage currently only deals with lines of code, not statements or branches.
 /// JSC doesn't expose function names in their coverage data, so we don't include that either :(.
@@ -253,12 +254,10 @@ pub mod wire {
 /// `bun test --parallel` where each worker that loaded the file reports it.
 ///
 /// Hits and executed lines/functions/blocks union across reports. Executable
-/// lines do not: a process that never ran a function marks the function's
-/// whole line span (blank lines included) executable, while one that ran it
-/// knows the real lines. So a line counts as executable only if it executed
-/// somewhere or every report agrees it is executable; otherwise the coarse
-/// span from an import-only worker would show a fully executed function as
-/// partially covered (#39930).
+/// lines do not: a line counts as executable only if it executed somewhere or
+/// every report agrees it is executable, so a worker that saw a coarser view
+/// of a function cannot show a fully executed function as partially covered
+/// (#39930).
 #[derive(Default)]
 pub struct MergedReport {
     source_url: Vec<u8>,
@@ -594,10 +593,7 @@ impl Generator<'_, '_> {
         // provided by JSC for the duration of this synchronous callback.
         let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-        let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-        if function_blocks.len() > 1 {
-            function_blocks = &function_blocks[1..];
-        }
+        let function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
 
         if blocks.is_empty() {
             return;
@@ -621,6 +617,9 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
+    /// One bit per source byte: not whitespace, not `}`, not a leading
+    /// `export`/`default`. Only these bytes can make a line executable.
+    significant_bytes: Bitset,
     pub(crate) source_id: i32,
     pub source_url: Utf8Bytes<'static>,
 }
@@ -687,309 +686,190 @@ impl ByteRangeMapping {
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
+        let byte_count = self.significant_bytes.bit_length();
 
-        let mut executable_lines: Bitset;
-        let mut lines_which_have_executed: Bitset;
+        if bun_core::env::IS_DEBUG && coverage.is_visible() {
+            bun_core::scoped_log!(coverage, "{}", bstr::BStr::new(source_url));
+            for block in blocks {
+                bun_core::scoped_log!(
+                    coverage,
+                    "  block [{}, {}] executed={} count={}",
+                    block.start_offset,
+                    block.end_offset,
+                    block.has_executed,
+                    block.execution_count
+                );
+            }
+            for function in function_blocks {
+                bun_core::scoped_log!(
+                    coverage,
+                    "  function [{}, {}] executed={}",
+                    function.start_offset,
+                    function.end_offset,
+                    function.has_executed
+                );
+            }
+        }
+
         // `SavedSourceMap::get` returns an `Option<Arc<ParsedSourceMap>>`, so the
         // +1 ref is released automatically when `parsed_mappings_` drops at scope
         // exit — no explicit guard is required.
-        let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
+        let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
+            None
+        } else {
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
-            bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
+            bun_jsc::VirtualMachine::VirtualMachine::get()
+                .as_mut()
                 .source_mappings()
-                .get(source_url);
-        let mut line_hits: LinesHits;
+                .get(source_url)
+        };
 
+        // The program's own range starts at 0 and reaches farthest. It is not
+        // a function in the report.
+        let module_range = function_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, function)| function.start_offset == 0)
+            .max_by_key(|(_, function)| function.end_offset)
+            .map(|(i, _)| i);
+
+        // Function ranges first: a block with the same span is painted later.
+        let mut ranges: Vec<OwnedRange> = Vec::new();
+        ranges.reserve_exact(function_blocks.len() + blocks.len());
         let mut functions: Vec<ByteRange> = Vec::new();
         functions.reserve_exact(function_blocks.len());
         let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len())?;
-        let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
+        let mut function_range_index: Vec<usize> = Vec::new();
+        function_range_index.reserve_exact(function_blocks.len());
+        for (i, function) in function_blocks.iter().enumerate() {
+            let Some(range) = OwnedRange::from_jsc(function, byte_count) else {
+                continue;
+            };
+            if module_range != Some(i) {
+                function_range_index.push(ranges.len());
+            }
+            ranges.push(range);
+        }
 
         let mut stmts: Vec<ByteRange> = Vec::new();
         stmts.reserve_exact(blocks.len());
+        let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
+        for block in blocks {
+            let Some(range) = OwnedRange::from_jsc(block, byte_count) else {
+                continue;
+            };
+            if range.executed {
+                stmts_which_have_executed.set(stmts.len());
+            }
+            stmts.push(ByteRange::of(range.start, range.end));
+            ranges.push(range);
+        }
+
+        // Widest first, so the innermost range that contains a byte owns it
+        // (JSC's `ControlFlowProfiler::findBasicBlockAtTextOffset` rule).
+        let mut order: Vec<u32> = (0..ranges.len()).map(|i| i as u32).collect();
+        order.sort_by_key(|&i| {
+            core::cmp::Reverse(ranges[i as usize].end - ranges[i as usize].start)
+        });
+        let mut owner: Vec<u32> = vec![u32::MAX; byte_count];
+        for i in order {
+            let range = &ranges[i as usize];
+            owner[range.start as usize..=range.end as usize].fill(i);
+        }
 
         let line_count: u32;
+        let mut executable_lines: Bitset;
+        let mut lines_which_have_executed: Bitset;
+        let mut line_hits: LinesHits;
+        // With a source map, a function none of whose bytes map is not reported.
+        let mut mapped_bytes: Bitset = Bitset::init_empty(0)?;
 
-        if ignore_sourcemap || parsed_mappings_.is_none() {
-            line_count = line_starts.len() as u32;
-            executable_lines = Bitset::init_empty(line_count as usize)?;
-            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
-            line_hits = vec![0u32; line_count as usize];
-            let line_hits_slice = line_hits.as_mut_slice();
+        let line_end = |line: usize| -> usize {
+            line_starts
+                .get(line + 1)
+                .map_or(byte_count, |&next| (next as usize).min(byte_count))
+        };
 
-            for block in blocks {
-                if block.end_offset < 0 || block.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize =
-                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize =
-                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                let has_executed = block.has_executed || block.execution_count > 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
-                    let line: u32 = u32::try_from(new_line_index).expect("int cast");
-                    min_line = min_line.min(line);
-                    max_line = max_line.max(line);
-
-                    executable_lines.set(line as usize);
-                    if has_executed {
-                        lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
-                    }
-                }
-
-                if min_line != u32::MAX {
-                    if has_executed {
-                        stmts_which_have_executed.set(stmts.len());
-                    }
-
-                    stmts.push(ByteRange::of(min, max));
-                }
-            }
-
-            for function in function_blocks {
-                if function.end_offset < 0 || function.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
-                    .expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
-                    .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
-                    let line: u32 = u32::try_from(new_line_index).expect("int cast");
-                    min_line = min_line.min(line);
-                    max_line = max_line.max(line);
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
-                    for line in min_line..end {
-                        executable_lines.set(line as usize);
-                        lines_which_have_executed.unset(line as usize);
-                    }
-                }
-
-                if did_fn_execute {
-                    functions_which_have_executed.set(functions.len());
-                }
-                functions.push(ByteRange::of(min, max));
-            }
-        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
+        if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
             line_hits = vec![0u32; line_count as usize];
-            let line_hits_slice = line_hits.as_mut_slice();
+            mapped_bytes = Bitset::init_empty(byte_count)?;
 
             let mut cur_: Option<internal_source_map::Cursor> = parsed_mapping.internal_cursor();
 
-            for block in blocks {
-                if block.end_offset < 0 || block.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize =
-                    usize::try_from(block.start_offset.min(block.end_offset)).expect("int cast");
-                let max: usize =
-                    usize::try_from(block.start_offset.max(block.end_offset)).expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-                let has_executed = block.has_executed || block.execution_count > 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
-                        continue;
-                    };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
+            for (generated_line, &line_start) in line_starts.iter().enumerate() {
+                let line_start = line_start as usize;
+                for byte_offset in line_start..line_end(generated_line) {
+                    let owner_index = owner[byte_offset];
+                    if owner_index == u32::MAX || !self.significant_bytes.is_set(byte_offset) {
                         continue;
                     }
-                    let column_position =
-                        byte_offset.saturating_sub(line_start_byte_offset as usize);
-
+                    let generated =
+                        Ordinal::from_zero_based(i32::try_from(generated_line).expect("int cast"));
+                    let column = Ordinal::from_zero_based(
+                        i32::try_from(byte_offset - line_start).expect("int cast"),
+                    );
                     let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        c.move_to(generated, column)
                     } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        parsed_mapping.find_mapping(generated, column)
                     };
-                    if let Some(point) = found.as_ref() {
-                        if point.original.lines.zero_based() < 0 {
-                            continue;
-                        }
-
-                        let line: u32 =
-                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
-                        if line >= line_count {
-                            continue;
-                        }
-
-                        executable_lines.set(line as usize);
-                        if has_executed {
-                            lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
-                        }
-
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
-                    }
-                }
-
-                if min_line != u32::MAX {
-                    if has_executed {
-                        stmts_which_have_executed.set(stmts.len());
-                    }
-                    stmts.push(ByteRange::of(min, max));
-                }
-            }
-
-            for function in function_blocks {
-                if function.end_offset < 0 || function.start_offset < 0 {
-                    continue; // does not map to anything
-                }
-
-                let min: usize = usize::try_from(function.start_offset.min(function.end_offset))
-                    .expect("int cast");
-                let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
-                    .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
-
-                for byte_offset in min..max {
-                    let Some(new_line_index) = LineOffsetTable::find_index(
-                        line_starts,
-                        Loc {
-                            start: i32::try_from(byte_offset).expect("int cast"),
-                        },
-                    ) else {
+                    let Some(point) = found else {
                         continue;
                     };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
+                    let original_line = point.original.lines.zero_based();
+                    if original_line < 0 || original_line as u32 >= line_count {
                         continue;
                     }
-
-                    let column_position =
-                        byte_offset.saturating_sub(line_start_byte_offset as usize);
-
-                    let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
-                    };
-                    if let Some(point) = found {
-                        if point.original.lines.zero_based() < 0 {
-                            continue;
-                        }
-
-                        let line: u32 =
-                            u32::try_from(point.original.lines.zero_based()).expect("int cast");
-                        if line >= line_count {
-                            continue;
-                        }
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
+                    mapped_bytes.set(byte_offset);
+                    let line = original_line as usize;
+                    if !executable_lines.is_set(line) {
+                        ranges[owner_index as usize].decide_line(
+                            line,
+                            &mut executable_lines,
+                            &mut lines_which_have_executed,
+                            &mut line_hits,
+                        );
                     }
                 }
-
-                // no sourcemaps? ignore it
-                if min_line == u32::MAX && max_line == 0 {
-                    continue;
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    for line in min_line..end {
-                        executable_lines.set(line as usize);
-                        lines_which_have_executed.unset(line as usize);
-                        line_hits_slice[line as usize] = 0;
-                    }
-                }
-
-                if did_fn_execute {
-                    functions_which_have_executed.set(functions.len());
-                }
-                functions.push(ByteRange::of(min, max));
             }
         } else {
-            unreachable!();
+            line_count = line_starts.len() as u32;
+            executable_lines = Bitset::init_empty(line_count as usize)?;
+            lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
+            line_hits = vec![0u32; line_count as usize];
+
+            for (line, &line_start) in line_starts.iter().enumerate() {
+                for byte_offset in line_start as usize..line_end(line) {
+                    let owner_index = owner[byte_offset];
+                    if owner_index == u32::MAX || !self.significant_bytes.is_set(byte_offset) {
+                        continue;
+                    }
+                    ranges[owner_index as usize].decide_line(
+                        line,
+                        &mut executable_lines,
+                        &mut lines_which_have_executed,
+                        &mut line_hits,
+                    );
+                    break;
+                }
+            }
+        }
+
+        for &index in &function_range_index {
+            let range = &ranges[index];
+            if parsed_mappings_.is_some()
+                && !(range.start as usize..=range.end as usize).any(|b| mapped_bytes.is_set(b))
+            {
+                continue;
+            }
+            if range.executed {
+                functions_which_have_executed.set(functions.len());
+            }
+            functions.push(ByteRange::of(range.start, range.end));
         }
 
         functions_which_have_executed.resize(functions.len(), false)?;
@@ -1012,11 +892,99 @@ impl ByteRangeMapping {
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
+        let mut significant_bytes = Bitset::init_empty(source_contents.len())
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let mut i = 0;
+        let mut at_line_start = true;
+        while i < source_contents.len() {
+            let byte = source_contents[i];
+            if byte == b'\n' {
+                at_line_start = true;
+                i += 1;
+                continue;
+            }
+            if matches!(byte, b' ' | b'\t' | b'\r' | b'}') {
+                i += 1;
+                continue;
+            }
+            if at_line_start {
+                // JSC's function range starts at `function`, not at `export`.
+                if let Some(len) = leading_export_keyword(&source_contents[i..]) {
+                    i += len;
+                    continue;
+                }
+                at_line_start = false;
+            }
+            significant_bytes.set(i);
+            i += 1;
+        }
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            significant_bytes,
             source_id,
             source_url,
+        }
+    }
+}
+
+/// Length of an `export` or `default` keyword followed by whitespace at the
+/// start of `rest`.
+fn leading_export_keyword(rest: &[u8]) -> Option<usize> {
+    for keyword in [&b"export"[..], &b"default"[..]] {
+        if rest.starts_with(keyword)
+            && rest
+                .get(keyword.len())
+                .is_some_and(|&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        {
+            return Some(keyword.len());
+        }
+    }
+    None
+}
+
+/// One range JSC reported for a file: a basic block piece or a function body.
+/// `end` is inclusive, as JSC reports it.
+struct OwnedRange {
+    start: u32,
+    end: u32,
+    executed: bool,
+    hits: u32,
+}
+
+impl OwnedRange {
+    fn from_jsc(range: &BasicBlockRange, byte_count: usize) -> Option<OwnedRange> {
+        // `end < start` is an empty piece (a nested function starts where the
+        // block does). A negative offset maps to nothing.
+        if range.start_offset < 0 || range.end_offset < range.start_offset {
+            return None;
+        }
+        let start = range.start_offset as usize;
+        if start >= byte_count {
+            return None;
+        }
+        let end = (range.end_offset as usize).min(byte_count - 1);
+        Some(OwnedRange {
+            start: u32::try_from(start).expect("int cast"),
+            end: u32::try_from(end).expect("int cast"),
+            executed: range.has_executed || range.execution_count > 0,
+            hits: u32::try_from(range.execution_count).unwrap_or(u32::MAX),
+        })
+    }
+
+    /// The first significant byte on a line decides the line: that is the
+    /// statement which starts there.
+    fn decide_line(
+        &self,
+        line: usize,
+        executable_lines: &mut Bitset,
+        lines_which_have_executed: &mut Bitset,
+        line_hits: &mut [u32],
+    ) {
+        executable_lines.set(line);
+        if self.executed {
+            lines_which_have_executed.set(line);
+            line_hits[line] = self.hits;
         }
     }
 }
@@ -1075,10 +1043,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
     let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-    let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
-        function_blocks = &function_blocks[1..];
-    }
+    let function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
     let report = match this.generate_report_from_blocks(blocks, function_blocks, ignore_sourcemap) {
         Ok(r) => r,
         Err(_) => return global_this.throw_out_of_memory_value(),
@@ -1116,9 +1081,9 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
 // writers and the test runner share one definition.
 pub use bun_options_types::code_coverage_options::Fraction;
 
-/// A basic block or function body as `[start, end)` byte offsets into the
-/// generated source. Offsets are what JSC reports, so they identify the same
-/// block across processes that loaded the same file.
+/// A basic block or function body as `[start, end]` byte offsets (end
+/// inclusive) into the generated source. Offsets are what JSC reports, so they
+/// identify the same block across processes that loaded the same file.
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ByteRange {
     pub start: u32,
@@ -1126,10 +1091,7 @@ pub struct ByteRange {
 }
 
 impl ByteRange {
-    fn of(min: usize, max: usize) -> ByteRange {
-        ByteRange {
-            start: u32::try_from(min).expect("int cast"),
-            end: u32::try_from(max).expect("int cast"),
-        }
+    fn of(start: u32, end: u32) -> ByteRange {
+        ByteRange { start, end }
     }
 }

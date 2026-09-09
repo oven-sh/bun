@@ -18,27 +18,6 @@ function freeSocketErrorListener(err) {
   socket.emit("agentRemove");
 }
 
-// A socket in the freeSockets pool has no parser and no reader attached. Data
-// that arrives while it is idle is unsolicited, and the next request that
-// reuses the socket would parse it as the start of its own response (response
-// queue poisoning). Destroy such a socket instead.
-// See: https://hackerone.com/reports/3582376
-function installFreeSocketDataGuard(socket) {
-  if (socket.readableLength > 0) {
-    $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
-    socket.destroy();
-    return;
-  }
-
-  // The read path reads the flag when bytes arrive, so a socket that is still
-  // connecting needs no deferral until it has a handle.
-  socket[kDestroyOnRead] = true;
-}
-
-function removeFreeSocketDataGuard(socket) {
-  socket[kDestroyOnRead] = false;
-}
-
 type Agent = import("node:http").Agent;
 function Agent(options): void {
   if (!(this instanceof Agent)) return new Agent(options);
@@ -138,12 +117,24 @@ function Agent(options): void {
       return;
     }
 
+    // A pooled socket has no parser and no reader. Bytes it holds or receives
+    // are unsolicited, and the next request that reuses it would parse them as
+    // the start of its own response (response queue poisoning,
+    // https://hackerone.com/reports/3582376). Such a socket is destroyed: here
+    // when the bytes are already buffered, by node:net's read path
+    // (kDestroyOnRead) when they arrive while it is pooled.
+    if (socket.readableLength > 0) {
+      $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
+      socket.destroy();
+      return;
+    }
+
     this.freeSockets[name] = freeSockets;
     socket._httpMessage = null;
     this.removeSocket(socket, options);
 
     socket.once("error", freeSocketErrorListener);
-    installFreeSocketDataGuard(socket);
+    socket[kDestroyOnRead] = true;
     freeSockets.push(socket);
   });
 
@@ -508,7 +499,7 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
 Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
   $debug("have free socket");
   socket.removeListener("error", freeSocketErrorListener);
-  removeFreeSocketDataGuard(socket);
+  socket[kDestroyOnRead] = false;
   req.reusedSocket = true;
   socket.ref();
 };

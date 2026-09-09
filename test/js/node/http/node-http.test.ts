@@ -3810,7 +3810,12 @@ describe("http.Agent free keep-alive socket", () => {
     agent: Agent;
     name: string;
     serverSockets: NetSocket[];
-    request: (path: string) => Promise<{ body: string; poisoned?: string; reusedSocket: boolean }>;
+    // `beforeFree` runs in the response's 'end' handler: the parser is already
+    // detached and the agent frees the socket on the next tick.
+    request: (
+      path: string,
+      beforeFree?: (socket: NetSocket) => void,
+    ) => Promise<{ body: string; poisoned?: string; reusedSocket: boolean }>;
   };
 
   async function withAgent(transport: Transport, body: (context: Context) => Promise<void>) {
@@ -3828,19 +3833,20 @@ describe("http.Agent free keep-alive socket", () => {
         agent,
         name: agent.getName(options),
         serverSockets,
-        request: path =>
+        request: (path, beforeFree) =>
           new Promise((resolve, reject) => {
             const req = transport.get({ ...options, path }, res => {
               let body = "";
               res.setEncoding("utf8");
               res.on("data", chunk => (body += chunk));
-              res.on("end", () =>
+              res.on("end", () => {
+                beforeFree?.(req.socket!);
                 resolve({
                   body,
                   poisoned: res.headers["x-poisoned"] as string | undefined,
                   reusedSocket: req.reusedSocket,
-                }),
-              );
+                });
+              });
             });
             req.on("error", reject);
           }),
@@ -3852,8 +3858,8 @@ describe("http.Agent free keep-alive socket", () => {
     }
   }
 
-  for (const [protocol, transport] of Object.entries(transports)) {
-    it(`${protocol}: destroys a free socket that receives unsolicited data`, async () => {
+  describe.each(Object.entries(transports))("over %s", (_protocol, transport) => {
+    it("destroys a free socket that receives unsolicited data", async () => {
       await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
         expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
 
@@ -3875,7 +3881,28 @@ describe("http.Agent free keep-alive socket", () => {
       });
     });
 
-    it(`${protocol}: reuses a free socket that received nothing`, async () => {
+    it("does not pool a socket that holds unsolicited data when it is freed", async () => {
+      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
+        let firstSocket: NetSocket | undefined;
+        // push() stands in for bytes the transport delivered after the parser
+        // detached: they sit in the socket's read buffer when the agent frees it.
+        const first = await request("/first", socket => {
+          firstSocket = socket;
+          socket.push(Buffer.from(poisonedResponse));
+        });
+        expect(first).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
+
+        const pooled = () => agent.freeSockets[name]?.includes(firstSocket!) === true;
+        await pollUntil(() => pooled() || (firstSocket!.destroyed && agent.freeSockets[name] === undefined));
+        expect(firstSocket!.destroyed).toBe(true);
+        expect(agent.freeSockets[name]).toBeUndefined();
+
+        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
+        expect(serverSockets.length).toBe(2);
+      });
+    });
+
+    it("reuses a free socket that received nothing", async () => {
       await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
         expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
 
@@ -3886,7 +3913,7 @@ describe("http.Agent free keep-alive socket", () => {
         expect(serverSockets.length).toBe(1);
       });
     });
-  }
+  });
 });
 
 it("statusCode = 204 with an empty first write still discards the body", async () => {

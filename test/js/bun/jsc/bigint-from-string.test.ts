@@ -78,7 +78,22 @@ describe("a sign or radix prefix with no digits", () => {
   });
 
   test("other malformed signs and prefixes still throw", () => {
-    for (const string of ["+ 1", "- 1", "0x 1", "+-", "-+", "++1", "--1", "+-1", "+0x1", "-0b1", "0x+1", "0b-1", "1+", "1-"]) {
+    for (const string of [
+      "+ 1",
+      "- 1",
+      "0x 1",
+      "+-",
+      "-+",
+      "++1",
+      "--1",
+      "+-1",
+      "+0x1",
+      "-0b1",
+      "0x+1",
+      "0b-1",
+      "1+",
+      "1-",
+    ]) {
       expect(() => BigInt(string), JSON.stringify(string)).toThrow(SyntaxError);
     }
   });

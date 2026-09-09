@@ -591,12 +591,12 @@ describe("bytecode cache portability", () => {
           "sha256": "953551a49ed6db7b5fce11b21382f11f3a0d0d4945507f5e38bf6a14ca724e8a",
         },
         "vm.SourceTextModule acorn.mjs": {
-          "bytes": 264176,
-          "sha256": "b39984469ff175c7b37e0255c217c8464fe9d564aa8f8da429e02ef0f05d7781",
+          "bytes": 264200,
+          "sha256": "f7cd66bcb69335fa15b378b394cc82701536d0a137aa8a3e3164ff47f7cf9226",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 9712,
-          "sha256": "b864ddcfde36d03c8ddba5728ae2f3dde05e08e640dea1599b8915a515429517",
+          "bytes": 9736,
+          "sha256": "30d1a1eb04b246f8c91767afa7516cb16ce532b3d8200f9435f8e31881cb6278",
         },
       }
     `);

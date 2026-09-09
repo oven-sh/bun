@@ -284,6 +284,33 @@ devTest("require() of an ES module returns its `module.exports` export", {
     await c.expectMessage("PASS 5");
   },
 });
+devTest("require() cycle through an ES module with a `module.exports` export", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const api = require('./api');
+      const { early } = require('./plugin');
+      if (api.name !== 'api') throw new Error('the later require() should return the module.exports export, got ' + JSON.stringify(api));
+      if (early.type !== 'object' || early.esModule !== true) throw new Error('the require() inside the cycle should return the namespace copy, got ' + JSON.stringify(early));
+      console.log('PASS ' + api.early);
+    `,
+    "api.ts": `
+      import { early } from './plugin';
+      const api = { name: 'api', early: typeof early };
+      export { api as "module.exports" };
+    `,
+    "plugin.ts": `
+      const api = require('./api');
+      exports.early = { type: typeof api, esModule: api.__esModule };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS object");
+  },
+});
 devTest("ESM <-> CJS (async)", {
   files: {
     "index.html": emptyHtmlFile({

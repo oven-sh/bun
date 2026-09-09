@@ -2110,9 +2110,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
     }
 
-    /// Settle a parked `write()` and the pending `flush(true)`/`end()` promise.
-    /// Terminal like the settle primitives (`Pending::run`): both resolve with
-    /// values built here.
     /// The unsettled `flush(true)` / `end()` promise, held by the controller cell.
     pub(crate) fn pending_flush(&self) -> Option<*mut JSPromise> {
         self.pipe.done()
@@ -2133,6 +2130,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         promise
     }
 
+    /// Settle a parked `write()` and the pending `flush(true)`/`end()` promise.
+    /// Terminal like the settle primitives (`Pending::run`): both resolve with
+    /// values built here.
     pub(crate) fn flush_promise(&mut self) {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.

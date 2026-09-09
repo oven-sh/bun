@@ -9,6 +9,12 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
+    // c-bindings.cpp
+    safe fn Bun__availableParallelism() -> i32;
+}
+
+pub(crate) fn available_parallelism() -> i32 {
+    Bun__availableParallelism()
 }
 
 #[derive(Default, Clone, Copy)]
@@ -91,6 +97,7 @@ mod _impl {
         // the System V ABI on Windows-x64 and the C ABI everywhere else, matching
         // `bun_jsc::host_fn::JsHostFn`.
         bun_jsc::jsc_abi_extern! {
+            fn bindgen_Node_os_jsAvailableParallelism(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
             fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
             fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
             fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
@@ -124,6 +131,7 @@ mod _impl {
         )*};
     }
         create_callback! {
+            create_available_parallelism_callback, "availableParallelism", 0, bindgen_Node_os_jsAvailableParallelism;
             create_cpus_callback,               "cpus",              1, bindgen_Node_os_jsCpus;
             create_freemem_callback,            "freemem",           0, bindgen_Node_os_jsFreemem;
             create_get_priority_callback,       "getPriority",       2, bindgen_Node_os_jsGetPriority;
@@ -150,12 +158,17 @@ mod _impl {
     }
 
     pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 14);
+        let obj = JSValue::create_empty_object(global, 15);
         // SAFETY: pure FFI getter
         obj.put(
             global,
             b"hostCpuCount",
             JSValue::js_number(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN()) as f64),
+        );
+        obj.put(
+            global,
+            b"availableParallelism",
+            gen_::create_available_parallelism_callback(global),
         );
         obj.put(global, b"cpus", gen_::create_cpus_callback(global));
         obj.put(global, b"freemem", gen_::create_freemem_callback(global));

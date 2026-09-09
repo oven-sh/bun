@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -231,7 +231,46 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+  expect(os.availableParallelism()).toBe(navigator.hardwareConcurrency);
 });
+
+// Node reads the affinity mask and the cgroup cpu quota on every call, so a
+// `taskset` change made after startup is observed. Bun used to return the
+// value cached at startup forever.
+it.skipIf(!isLinux || !Bun.which("taskset") || os.availableParallelism() <= 2)(
+  "availableParallelism follows an affinity change made after startup",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const os = require("os");
+        const { execFileSync } = require("child_process");
+        const before = os.availableParallelism();
+        // "pid 123's current affinity list: 0-3,8-11"
+        const list = execFileSync("taskset", ["-pc", String(process.pid)], { encoding: "utf8" })
+          .split(":").pop().trim();
+        const cpus = [];
+        for (const part of list.split(",")) {
+          const [lo, hi = lo] = part.split("-").map(Number);
+          for (let i = lo; i <= hi; i++) cpus.push(i);
+        }
+        execFileSync("taskset", ["-pc", cpus.slice(0, 2).join(","), String(process.pid)], { stdio: "ignore" });
+        console.log(JSON.stringify({ before, after: os.availableParallelism() }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { before, after } = JSON.parse(stdout);
+    expect(before).toBeGreaterThan(2);
+    expect(after).toBe(2);
+  },
+);
 
 it("loadavg", () => {
   const loadavg = os.loadavg();

@@ -1,6 +1,8 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <algorithm>
 #include <cstdio>
+#include <wtf/NumberOfCores.h>
 
 #if !OS(WINDOWS)
 #include <wtf/WTFConfig.h>
@@ -107,6 +109,14 @@ extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
 #else
     return sysconf(_SC_NPROCESSORS_ONLN);
 #endif
+}
+
+// os.availableParallelism(): the same count as WTF::numberOfProcessorCores() but read fresh on
+// every call, as libuv's uv_available_parallelism() does, so an affinity change (taskset) or a
+// cgroup cpu.max change made after startup is observed. Thread pools keep the cached startup value.
+extern "C" int32_t Bun__availableParallelism()
+{
+    return std::max(1, WTF::numberOfProcessorCoresUncached());
 }
 
 #if OS(DARWIN) && BUN_DEBUG

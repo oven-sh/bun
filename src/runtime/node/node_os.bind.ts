@@ -2,6 +2,10 @@
 // The entrypoint for node:os is `src/js/node/os.ts`
 import { fn, t } from "bindgen";
 
+export const availableParallelism = fn({
+  args: {},
+  ret: t.i32,
+});
 export const cpus = fn({
   args: {
     global: t.globalObject,

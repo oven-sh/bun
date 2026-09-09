@@ -2660,8 +2660,7 @@ fn parse_build_command_options(
 
     if ctx.bundler_options.transform_only {
         check_no_bundle_flags(args);
-        // Reported as ignored or without effect above; keep it that way
-        // further down (`--splitting` would otherwise demand --outdir).
+        // Warned about above; cleared so nothing downstream acts on them.
         ctx.bundler_options.code_splitting = false;
         ctx.bundler_options.react_fast_refresh = false;
         ctx.bundler_options.banner = Box::default();
@@ -2669,10 +2668,8 @@ fn parse_build_command_options(
     }
 }
 
-/// `--no-bundle` transpiles each entry point on its own and never resolves or
-/// links its imports. A flag that asks for output this mode cannot produce
-/// fails the build; a per-file transform it does not run yet, or a flag that
-/// only tunes resolving, chunking or linking, is reported and ignored.
+/// `--no-bundle` never runs the linker: reject flags that need its output,
+/// warn about flags it would merely have consulted.
 #[cold]
 #[inline(never)]
 fn check_no_bundle_flags(args: &clap::Args<clap::Help>) {

@@ -1028,13 +1028,9 @@ unsafe extern "C" {
     fn JSC__parsePowerOfTwoRadixDigits(digits: *const u8, length: usize, radix: i32) -> f64;
 }
 
-/// The nearest `f64` (ties to even) to the integer spelled by `digits` in
-/// `radix` 2, 4, 8, 16 or 32: what `parseInt(digits, radix)` and a `0b` / `0o`
-/// / `0x` literal evaluate to in JSC. `digits` is only digits of that radix —
-/// no prefix, sign or `_` separators. `f64::INFINITY` past `f64::MAX`.
-///
-/// Accumulating `value * radix + digit` in an `f64` rounds at every step past
-/// 2^53 and can end up one ulp off; use this once a value reaches 2^53.
+/// The nearest `f64` to the integer that `digits` (digits only: no prefix, sign
+/// or `_`) spell in radix 2, 4, 8, 16 or 32, as JSC's `parseInt` computes it.
+/// Summing `value * radix + digit` in an `f64` instead is inexact past 2^53.
 pub fn parse_power_of_two_radix_digits(digits: &[u8], radix: u32) -> f64 {
     debug_assert!(matches!(radix, 2 | 4 | 8 | 16 | 32));
     debug_assert!(

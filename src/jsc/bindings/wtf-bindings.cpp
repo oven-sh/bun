@@ -230,9 +230,7 @@ extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length,
     return WTF::parseDouble({ string, length }, *position);
 }
 
-// The digits of a binary, base-4, octal, hex or base-32 integer (no prefix, sign or separators) to the
-// nearest double. This is the function behind JSC's own numeric literals and parseInt, so a literal the
-// transpiler prints and the same literal given to eval() agree.
+// bun_core::fmt::parse_power_of_two_radix_digits. The same function JSC's lexer and parseInt use.
 extern "C" double JSC__parsePowerOfTwoRadixDigits(const Latin1Character* digits, size_t length, int radix)
 {
     return JSC::parseIntOverflow(std::span<const Latin1Character> { digits, length }, radix);

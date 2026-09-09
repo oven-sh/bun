@@ -3183,15 +3183,11 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 } else {
-                    // A legacy octal literal's digits start right after its leading 0; the others have a
-                    // two-byte prefix.
-                    let digits = if self.is_legacy_octal_literal {
-                        text
-                    } else {
-                        &text[2..]
-                    };
-                    self.number =
-                        bun_core::fmt::parse_power_of_two_radix_digits(digits, base as u32);
+                    let prefix_len = if self.is_legacy_octal_literal { 1 } else { 2 }; // "0" or "0x"
+                    self.number = bun_core::fmt::parse_power_of_two_radix_digits(
+                        &text[prefix_len..],
+                        base as u32,
+                    );
                 }
             }
         } else {

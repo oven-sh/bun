@@ -603,3 +603,102 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+test("remote objects a frontend created are released when it disconnects", async () => {
+  using dir = tempDir("inspect-release-on-disconnect", {
+    "entry.mjs": `
+      import { heapStats } from "bun:jsc";
+      globalThis.countUint8Arrays = () => {
+        Bun.gc(true);
+        return heapStats().objectTypeCounts.Uint8Array | 0;
+      };
+      setInterval(() => {}, 60_000);
+    `,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const { promise: inspectorUrl, resolve: foundUrl, reject: noUrl } = Promise.withResolvers<string>();
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const line = stderr
+        .split("\n")
+        .slice(0, -1)
+        .find(line => line.trim().startsWith("ws://"));
+      if (line) foundUrl(line.trim());
+    }
+    noUrl(new Error(`No inspector URL in stderr:\n${stderr}`));
+  })();
+  const url = await inspectorUrl;
+
+  async function session(run: (evaluate: (expression: string, params?: object) => Promise<any>) => Promise<void>) {
+    const ws = new WebSocket(url);
+    const { promise: open, resolve: opened, reject: failed } = Promise.withResolvers<void>();
+    ws.on("open", opened);
+    ws.on("error", failed);
+    await open;
+    // Any pending evaluate rejects when the socket drops or the debuggee exits.
+    const { promise: lost, reject: lose } = Promise.withResolvers<never>();
+    lost.catch(() => {});
+    let closing = false;
+    ws.on("close", event => {
+      if (!closing) lose(new Error(`WebSocket closed (${event})\ninspectee stderr:\n${stderr}`));
+    });
+    ws.on("error", error => lose(error));
+    proc.exited.then(code => lose(new Error(`inspectee exited with ${code}\ninspectee stderr:\n${stderr}`)));
+    const waiters = new Map<number, (message: any) => void>();
+    ws.on("message", data => {
+      const message = JSON.parse(String(data));
+      if (typeof message.id === "number") waiters.get(message.id)?.(message);
+    });
+    let nextId = 1;
+    const evaluate = async (expression: string, params: object = {}) => {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<any>();
+      waiters.set(id, resolve);
+      ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, ...params } }));
+      const { result, error } = await Promise.race([promise, lost]);
+      if (error) throw new Error(`Runtime.evaluate failed: ${error.message}`);
+      return result;
+    };
+    try {
+      await run(evaluate);
+    } finally {
+      closing = true;
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      ws.on("close", () => onClose());
+      ws.close();
+      await closed;
+    }
+  }
+
+  const count = 20;
+  let before = 0;
+  let whileConnected = 0;
+  await session(async evaluate => {
+    before = (await evaluate("countUint8Arrays()", { returnByValue: true })).result.value;
+    // Each result is returned as a RemoteObject, so the inspector binds the array for the frontend.
+    for (let i = 0; i < count; i++) {
+      const { result } = await evaluate("new Uint8Array(64 * 1024)");
+      expect(result.objectId).toBeString();
+    }
+    whileConnected = (await evaluate("countUint8Arrays()", { returnByValue: true })).result.value;
+  });
+  expect(whileConnected).toBeGreaterThanOrEqual(before + count);
+
+  // The second frontend's own evaluate runs after the first one's disconnect is processed.
+  let afterDisconnect = 0;
+  await session(async evaluate => {
+    afterDisconnect = (await evaluate("countUint8Arrays()", { returnByValue: true })).result.value;
+  });
+  expect(afterDisconnect).toBeLessThan(before + count);
+});

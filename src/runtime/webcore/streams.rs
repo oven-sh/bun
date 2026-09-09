@@ -1961,6 +1961,19 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
         }
+        // A sink torn down without finalize() (assignToStream failed synchronously) still holds its pool checkout.
+        if let Some(pooled) = this.pooled_buffer.take() {
+            this.buffer.clear();
+            if this.buffer.capacity() > 64 * 1024 {
+                this.buffer.clear_and_free();
+            }
+            // SAFETY: `pooled` is this sink's exclusive checkout from `ByteListPool::get_if_exists`; hand the buffer back with it.
+            unsafe {
+                (*pooled.as_ptr()).data =
+                    core::mem::MaybeUninit::new(core::mem::take(&mut this.buffer));
+                ByteListPool::release(pooled.as_ptr());
+            }
+        }
         this.buffer.clear_and_free();
         this.unregister_auto_flusher();
         drop(this);

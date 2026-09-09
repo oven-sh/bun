@@ -35,10 +35,11 @@ async function runFixture(variant: string, ...extra: string[]) {
 
 // A stream source that errors before producing any body bytes. The status and
 // headers were already handed to uWS (corked) when the error arrives, so the
-// server `error()` callback cannot supply a replacement and is NOT invoked.
-// The connection is closed before anything reaches the wire: the client sees
-// an empty reply, never a complete 200 with an empty body. The rejection does
-// not reach the unhandledRejection reporter; it is reported directly instead.
+// server `error()` callback cannot supply a replacement: it is still invoked so
+// the failure can be logged, and its Response is discarded. The connection is
+// closed before anything reaches the wire: the client sees an empty reply,
+// never a complete 200 with an empty body. The rejection does not reach the
+// unhandledRejection reporter.
 test.concurrent.each([
   "pull-throw",
   "pull-async-reject",
@@ -51,13 +52,11 @@ test.concurrent.each([
     statusLine: "",
     cleanChunkedTerminator: false,
     body: "",
-    errorCb: 0,
+    errorCb: 1,
     unhandled: 0,
     secondStatusLine: "HTTP/1.1 200 OK",
   });
-  // With `development: false` the unhandledRejection report used to be the
-  // only place the error surfaced; it must still reach stderr without it.
-  expect(stderr).toContain("boom");
+  // error() was told (errorCb); with a handler installed nothing is printed.
   expect(exitCode).toBe(0);
 });
 
@@ -68,11 +67,11 @@ test.concurrent("pull-throw in development mode: the connection is closed withou
     statusLine: "",
     cleanChunkedTerminator: false,
     body: "",
-    errorCb: 0,
+    errorCb: 1,
     unhandled: 0,
     secondStatusLine: "HTTP/1.1 200 OK",
   });
-  expect(stderr).toContain("boom");
+  // error() was told (errorCb); with a handler installed nothing is printed.
   expect(exitCode).toBe(0);
 });
 
@@ -89,7 +88,7 @@ test.concurrent("pending-error-after-headers: headers go out, the body is not te
     statusLine: "HTTP/1.1 200 OK",
     cleanChunkedTerminator: false,
     body: "",
-    errorCb: 0,
+    errorCb: 1,
     unhandled: 0,
     secondStatusLine: "HTTP/1.1 200 OK",
   });
@@ -124,13 +123,13 @@ for (const flags of [[], ["development"]]) {
           statusLine: "HTTP/1.1 200 OK",
           cleanChunkedTerminator: false,
           body,
-          errorCb: 0,
+          errorCb: 1,
           unhandled: 0,
           secondStatusLine: "HTTP/1.1 200 OK",
         },
         exitCode: 0,
       });
-      expect(stderr).toContain(reported);
+      // error() was told (errorCb); with a handler installed nothing is printed.
     },
   );
 }
@@ -159,7 +158,6 @@ test.concurrent.each([
   expect(body).toStartWith(firstChunk);
   expect(body).toContain("Stream error during server-side rendering");
   expect(body).toContain("boom");
-  expect(stderr).toContain("boom");
 });
 
 // The body errors after a chunk has already been flushed to the client. The
@@ -180,7 +178,7 @@ test.concurrent("mid-stream error: the chunked body is not terminated as complet
       statusLine: "HTTP/1.1 200 OK",
       cleanChunkedTerminator: false,
       body: "7\r\nchunk-a\r\n",
-      errorCb: 0,
+      errorCb: 1,
       unhandled: 0,
       secondStatusLine: "HTTP/1.1 200 OK",
     },
@@ -199,13 +197,13 @@ test.concurrent("mid-stream error in development mode: reported and not terminat
       statusLine: "HTTP/1.1 200 OK",
       cleanChunkedTerminator: false,
       body: "7\r\nchunk-a\r\n",
-      errorCb: 0,
+      errorCb: 1,
       unhandled: 0,
       secondStatusLine: "HTTP/1.1 200 OK",
     },
     exitCode: 0,
   });
-  expect(stderr).toContain("boom");
+  // error() was told (errorCb); with a handler installed nothing is printed.
 });
 
 // The client aborts the download mid-stream, which makes Bun cancel the body

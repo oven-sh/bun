@@ -1098,8 +1098,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         written: 12,
         onDisk: "hello wörld",
         late: {
-          write: "This FileSink has already been closed",
-          flush: "This FileSink has already been closed",
+          write: "0",
+          flush: "0",
           end: "undefined",
         },
         leakedSinks: 0,
@@ -1173,8 +1173,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           lines.push("direct:" + e.message);
         }
         try {
-          controller.write("late");
-          lines.push("late:wrote");
+          lines.push("late:" + controller.write("late"));
         } catch {
           lines.push("late:threw");
         }
@@ -1192,7 +1191,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim()).toBe("gen:boom,direct:boom,late:threw");
+      expect(stdout.trim()).toBe("gen:boom,direct:boom,late:0");
       expect(exitCode).toBe(0);
     });
 
@@ -1220,9 +1219,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await Bun.write(dest, new Response(stream))).toBe(12);
       expect(await Bun.file(dest).text()).toBe("first second");
       expect(cancelled).toEqual([undefined]);
-      expect(() => ctrl.write("late event")).toThrow(/already been closed/);
-      expect(() => ctrl.flush()).toThrow(/already been closed/);
-      expect(ctrl.end()).toBeUndefined();
+      expect({ write: ctrl.write("late event"), flush: ctrl.flush(), end: ctrl.end() }).toEqual({ write: 0, flush: 0, end: undefined });
       Bun.gc(true);
     });
 

@@ -3618,13 +3618,9 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
-        // The status line is already out: report like the paths below do, but there is no response left to render into.
+        // The status line is already out: nothing can be rendered and the request is not failing as a whole, so print it rather than treat it as unhandled.
         if self.flags.has_written_status() {
-            if DEBUG_MODE {
-                vm.run_error_handler(value, None);
-            } else if status != 404 {
-                (vm.on_unhandled_rejection)(vm, global_this, value);
-            }
+            vm.run_error_handler(value, None);
             return;
         }
         if DEBUG_MODE {

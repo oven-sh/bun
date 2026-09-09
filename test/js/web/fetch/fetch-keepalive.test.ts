@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { join } from "node:path";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -699,6 +700,137 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
     });
   });
 }
+
+// A connection parked in the keep-alive pool is handed to the next request by
+// `HTTPThread::drain_events`, which runs before the event loop polls. So input
+// the origin wrote after its last response can still be unread in the kernel at
+// that moment, and `is_closed`/`is_shutdown`/`get_error` cannot see it. Writing
+// the next request onto that connection makes bun answer the request with bytes
+// that were already on the wire before it: an unsolicited response, or the
+// `HTTP/1.1 408 Request Timeout` plus `Connection: close` that many servers and
+// load balancers use to retire an idle keep-alive connection. The request was
+// never processed, yet `fetch()` resolves with 408 and the origin's timeout
+// body.
+//
+// Every round writes the injected event BEFORE it queues request 2, so the
+// bytes are in bun's kernel buffer before bun can write that request anywhere.
+// Two ballast requests to an origin that never answers are queued first, which
+// takes the HTTP thread out of `poll()`: without them the loop reads the
+// injected bytes on the idle connection and retires it through
+// `Handler::on_data`, which is the behaviour this check extends to the checkout
+// window. Whichever of the two gets there first, request 2 must be answered on
+// a connection the origin accepted later.
+const idleInjections: [label: string, bytes: string][] = [
+  [
+    "408 Request Timeout and Connection: close",
+    "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 5\r\n\r\nT-OUT",
+  ],
+  ["a complete unsolicited response", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nPWNED"],
+  ["one stray CRLF", "\r\n"],
+  ["64 bytes of garbage", Buffer.alloc(64, "!").toString()],
+  ["a FIN", ""],
+];
+// "Before" only holds when write() returns with the bytes already in the
+// peer's receive buffer. An AF_UNIX stream does that everywhere, and TCP
+// loopback does it on Linux and Windows. macOS hands a loopback segment to
+// the dlil input thread first, so it can land after the checkout, which no
+// client can tell from an answer: there only the unix-socket pool is checked.
+// fetch() does not pool unix sockets on Windows. Both pools check a socket
+// out through the same code.
+const idleTransports = [...(isMacOS ? [] : ["tcp"]), ...(isWindows ? [] : ["unix"])];
+
+test.concurrent.each(
+  idleTransports.flatMap(transport => idleInjections.map(([label, bytes]) => [transport, label, bytes])),
+)("%s: a pooled connection the origin answered with %s is not reused", async (transport, _label, bytes) => {
+  const rounds = 12;
+  using dir = tempDir("fetch-ka-idle", {});
+  // Subprocess so the keep-alive pool starts empty and so the origin shares a
+  // thread with the client: the injected write and the next fetch() are then
+  // ordered by the JS thread, not by a timer.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const bytes = ${JSON.stringify(bytes)};
+        const unix = ${JSON.stringify(transport === "unix" ? join(String(dir), "o.sock") : null)};
+        const misattributed = [];
+
+        // Accepts connections and never answers them.
+        using sink = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open() {}, data() {}, close() {}, error() {}, drain() {} },
+        });
+
+        let accepted = 0;
+        let idle = null;
+        using server = Bun.listen({
+          ...(unix ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+          socket: {
+            open(socket) {
+              socket.data = { id: ++accepted, buf: "" };
+            },
+            data(socket, chunk) {
+              socket.data.buf += chunk.toString("latin1");
+              let end;
+              while ((end = socket.data.buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+                const path = socket.data.buf.slice(0, end).split(" ")[1];
+                socket.data.buf = socket.data.buf.slice(end + 4);
+                const body = "c" + socket.data.id;
+                socket.write("HTTP/1.1 200 OK\\r\\nX-Conn: " + body + "\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
+                if (path === "/warm") idle = socket;
+              }
+            },
+            close() {}, error() {}, drain() {},
+          },
+        });
+        const origin = unix ? "http://localhost" : "http://127.0.0.1:" + server.port;
+        const init = unix ? { unix } : {};
+
+        for (let round = 0; round < ${rounds}; round++) {
+          const warm = await fetch(origin + "/warm", init);
+          const warmConn = warm.headers.get("x-conn");
+          if ((await warm.text()) !== warmConn) throw new Error("warm body " + warmConn);
+
+          const ac = new AbortController();
+          const ballast = [0, 1].map(b =>
+            fetch("http://127.0.0.1:" + sink.port + "/" + round + "/" + b, { signal: ac.signal }).catch(() => {}),
+          );
+          if (bytes.length === 0) idle.end();
+          else idle.write(bytes);
+          const pending = fetch(origin + "/next", init);
+
+          let got;
+          try {
+            const next = await pending;
+            got = next.status + ":" + (await next.text());
+          } catch (e) {
+            got = "ERR:" + (e.code ?? e.name);
+          }
+          ac.abort();
+          await Promise.all(ballast);
+
+          // The parked connection was written to before this request existed,
+          // so the answer has to be an honest 200 from a connection the origin
+          // accepted later. Anything else means bun read the injected bytes as
+          // the answer.
+          const honest = /^200:c\\d+$/.test(got) && got !== "200:" + warmConn;
+          if (!honest) misattributed.push("round " + round + " -> " + got);
+        }
+        console.log(JSON.stringify({ misattributed }));
+        process.exit(0);
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
+});
 
 test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
   function makeServer() {

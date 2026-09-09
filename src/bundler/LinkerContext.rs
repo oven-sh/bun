@@ -928,23 +928,11 @@ impl<'a> LinkerContext<'a> {
         // Size the per-file part-liveness bitsets now that `scan_imports_and_exports`
         // has finished pushing wrapper / entry-point parts.
         {
-            let loaders = self.parse_graph().input_files.items_loader();
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
-            for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
-                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts. The HTML loader's `ParseTask` builds one
-                // statement-less part per import record (so the JS-chunk visitor
-                // follows every embedded `<script src>` in document order), and all
-                // of them are live.
-                if loaders.get(i).is_some_and(|l| *l == Loader::Html) {
-                    for part_index in 1..parts.len() {
-                        bits.set(part_index);
-                    }
-                }
-                parts_live.push(bits);
+            for parts in parts_col.iter() {
+                parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
             }
             self.graph.parts_live = parts_live;
         }
@@ -2315,11 +2303,52 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
+    /// In the browser a `<script type="module">` whose evaluation suspends on a
+    /// top-level await does not hold back the page's next `<script>`. Inlined
+    /// into one chunk it would, so once an HTML file has an async script (one
+    /// with a top-level await, or with a dependency that has one) followed by
+    /// another script, the page starts its async scripts the way the dev
+    /// server's module loader does: each one gets an `__esm` wrapper
+    /// (`scan_imports_and_exports`), `init_foo()` starts it at its tag without
+    /// an `await` (`append_html_script_wrapper_calls`), and the chunk settles
+    /// them together at its end (`generate_entry_point_tail_js`). Returns how
+    /// many async scripts such a page has, `None` for every other file.
+    pub(crate) fn html_started_async_scripts(
+        records: &[ImportRecord],
+        loaders: &[Loader],
+        flags: &[crate::js_meta::Flags],
+    ) -> Option<usize> {
+        let mut async_scripts: usize = 0;
+        let mut script_after_async = false;
+        for record in records {
+            if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                continue;
+            }
+            let other = record.source_index.get() as usize;
+            if loaders[other].is_css() {
+                continue;
+            }
+            if async_scripts > 0 {
+                script_after_async = true;
+            }
+            if flags[other].is_async_or_has_async_dependency {
+                async_scripts += 1;
+            }
+        }
+        if script_after_async {
+            Some(async_scripts)
+        } else {
+            None
+        }
+    }
+
     /// The HTML loader gives each `<script src>` its own statement-less part
     /// that holds only the import record. A script that resolved to a wrapped
     /// module runs nothing until its wrapper is called, so print that call where
     /// the tag was, like `should_remove_import_export_stmt` does for a bare
-    /// `import "./script"`: `require_foo()`, `init_foo()`, or `await init_foo()`.
+    /// `import "./script"`: `require_foo()`, `init_foo()`, or `await init_foo()`
+    /// (`init_foo()` alone when the page starts its async scripts without
+    /// waiting, see `html_started_async_scripts`).
     /// Nothing observes the namespace, so the result is not passed to `__toESM`.
     pub(crate) fn append_html_script_wrapper_calls(
         &self,
@@ -2327,6 +2356,12 @@ impl<'a> LinkerContext<'a> {
         part: &Part,
         ast: &JSAst<'_>,
     ) -> Result<(), AllocError> {
+        let awaits_in_place = Self::html_started_async_scripts(
+            ast.import_records.as_slice(),
+            self.parse_graph().input_files.items_loader(),
+            self.graph.meta.items_flags(),
+        )
+        .is_none();
         for &import_record_index in part.import_record_indices.slice() {
             let record = &ast.import_records[import_record_index as usize];
             if record.kind != ImportKind::Stmt
@@ -2358,7 +2393,10 @@ impl<'a> LinkerContext<'a> {
                 },
                 Loc::EMPTY,
             );
-            if other_flags.wrap == WrapKind::Esm && other_flags.is_async_or_has_async_dependency {
+            if other_flags.wrap == WrapKind::Esm
+                && other_flags.is_async_or_has_async_dependency
+                && awaits_in_place
+            {
                 call = Expr::init(E::Await { value: call }, Loc::EMPTY);
             }
             stmts
@@ -3153,9 +3191,12 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
-        // via .url kind import records. Follow all import records for HTML files
-        // so these assets are marked live and included in the manifest.
+        // Everything an HTML file references is live: every script runs, and
+        // non-JS/CSS assets (favicons, images, etc.) referenced via .url kind
+        // import records must be included in the manifest. Its parts (one per
+        // import record, see the HTML loader's `ParseTask`) are all live too, and
+        // go through the worklist so that the runtime helpers they depend on
+        // (`scan_imports_and_exports` step 6) are included.
         if self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid() {
@@ -3163,6 +3204,15 @@ impl<'a> LinkerContext<'a> {
                     if !self.graph.files_live.is_set(other as usize) {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
+                }
+            }
+            let parts_len = ctx.parts[source_index as usize].len();
+            for part_index in (bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize + 1)..parts_len {
+                if !ctx.parts_live[source_index as usize].is_set(part_index) {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index: u32::try_from(part_index).expect("int cast"),
+                        source_index,
+                    });
                 }
             }
             return;

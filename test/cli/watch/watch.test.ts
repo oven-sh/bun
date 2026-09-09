@@ -470,31 +470,41 @@ it.skipIf(isWindows)(
 // same name (`mv lib lib.old && mv lib.new lib`). On Linux and macOS the
 // watches below it are inode watches on the old directory, so without
 // treating the replacement as a change the process keeps running the old
-// module and never sees a save under the new directory again.
-it("--watch reruns when the directory of an import is renamed over", async () => {
-  using dir = tempDir("watch-dir-replaced", {
-    "app.js": `import { V } from "./lib/dep.js";\nconsole.log("[dep] " + V);\nsetInterval(() => {}, 1000);\n`,
-    "lib/dep.js": `export const V = "a0";\n`,
-    "lib.new/dep.js": `export const V = "b0";\n`,
-  });
-  const root = String(dir);
+// module and never sees a save under the new directory again. Windows is
+// skipped: the running process holds the directory open, so the rename itself
+// fails with EPERM, and its watcher matches events by path anyway.
+it.skipIf(isWindows)(
+  "--watch reruns when the directory of an import is renamed over",
+  async () => {
+    using dir = tempDir("watch-dir-replaced", {
+      "app.js": `import { V } from "./lib/dep.js";\nconsole.log("[dep] " + V);\nsetInterval(() => {}, 1000);\n`,
+      "lib/dep.js": `export const V = "a0";\n`,
+      "lib.new/dep.js": `export const V = "b0";\n`,
+    });
+    const root = String(dir);
 
-  watchee = spawn({
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "app.js"],
-    cwd: root,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-  const { waitFor } = stdoutWaiter(watchee);
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "app.js"],
+      cwd: root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor } = stdoutWaiter(watchee);
 
-  await waitFor("[dep] a0\n");
-  renameSync(join(root, "lib"), join(root, "lib.old"));
-  renameSync(join(root, "lib.new"), join(root, "lib"));
-  await waitFor("[dep] b0\n");
+    await waitFor("[dep] a0\n");
+    renameSync(join(root, "lib"), join(root, "lib.old"));
+    renameSync(join(root, "lib.new"), join(root, "lib"));
+    await waitFor("[dep] b0\n");
 
-  // The rerun process watches the new directory: a later save in it reruns too.
-  writeFileSync(join(root, "lib", "dep.js"), `export const V = "b1";\n`);
-  await waitFor("[dep] b1\n");
-}, 30000);
+    // The rerun process watches the new directory: a later save in it reruns too.
+    writeFileSync(join(root, "lib", "dep.js"), `export const V = "b1";\n`);
+    await waitFor("[dep] b1\n");
+
+    // Stop the child before `dir` is removed on scope exit.
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+  },
+  30000,
+);

@@ -528,6 +528,9 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
   },
 });
 devTest("directory of an imported module replaced by another directory", {
+  // Windows: the running process holds the directory open, so the rename itself
+  // fails with EPERM; its watcher matches events by path anyway.
+  skip: ["win32"],
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],

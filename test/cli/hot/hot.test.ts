@@ -781,7 +781,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 // Linux and macOS the watches on that directory and on the files in it are
 // inode watches, so after the replacement they observe the old directory (or
 // nothing). `--hot` has to reload with the new contents and re-arm the
-// watches, or every later save under the new directory is invisible.
+// watches, or every later save under the new directory is invisible. Windows
+// is skipped: the running process holds the directory open, so the rename
+// itself fails with EPERM, and its watcher matches events by path anyway.
 function hotDirFixture() {
   const dir = tempDir("hot-dir-replaced", {
     "app.mjs": `import { V } from "./lib/dep.js";\nconsole.log("[dep] " + V);\n`,
@@ -840,7 +842,7 @@ function hotDirFixture() {
   };
 }
 
-it(
+it.skipIf(isWindows)(
   "should hot reload when the directory of an import is renamed over, and keep watching it",
   async () => {
     using hot = hotDirFixture();
@@ -858,7 +860,7 @@ it(
   timeout,
 );
 
-it(
+it.skipIf(isWindows)(
   "should hot reload when the directory of an import is removed and created again, and keep watching it",
   async () => {
     using hot = hotDirFixture();
@@ -879,7 +881,7 @@ it(
   timeout,
 );
 
-it(
+it.skipIf(isWindows)(
   "should hot reload when the directory of an import is renamed away and back",
   async () => {
     using hot = hotDirFixture();

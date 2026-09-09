@@ -5837,10 +5837,11 @@ impl DevServer {
                     // happens and re-arms them, and its directories to the resolver
                     // cache bust.
                     self.bun_watcher.remove_entries_under_replaced_dirs(
-                        event,
+                        *event,
                         changed_files,
-                        // SAFETY: see `ev_ptr` above; call-scoped borrows.
+                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
                         &mut |dir| unsafe { &mut *ev_ptr }.append_dir(dir, None),
+                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
                         &mut |path, _| unsafe { &mut *ev_ptr }.append_file(path),
                     );
                 }

@@ -1083,7 +1083,7 @@ where
                             // this only queues evictions.
                             unsafe {
                                 (*ctx).remove_entries_under_replaced_dirs(
-                                    event,
+                                    *event,
                                     changed_files,
                                     &mut |dir| stale_dirs.push(Box::from(dir)),
                                     &mut |path, hash| {

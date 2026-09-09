@@ -496,7 +496,7 @@ impl Watcher {
         self.evict_list_i = 0;
 
         #[cfg(not(windows))]
-        for evicted in evicted_dir_watches {
+        for evicted in &evicted_dir_watches {
             self.release_directory_watch(evicted);
         }
     }
@@ -507,7 +507,7 @@ impl Watcher {
     /// registrations by fd): when a surviving entry does, the registration is
     /// kept, and on kqueue re-pointed at the survivor's index.
     #[cfg(not(windows))]
-    fn release_directory_watch(&mut self, evicted: EvictedDirWatch) {
+    fn release_directory_watch(&mut self, evicted: &EvictedDirWatch) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let shared = self
@@ -1073,13 +1073,13 @@ impl Watcher {
     /// `self.mutex`. Returns the number of entries queued.
     pub fn remove_entries_under_replaced_dirs(
         &mut self,
-        event: &WatchEvent,
+        event: WatchEvent,
         names: &[ChangedFilePath],
         stale_dir: &mut dyn FnMut(&[u8]),
         stale_file: &mut dyn FnMut(&[u8], HashType),
     ) -> usize {
         let mut each = |kind: WatchItemKind, path: &[u8], hash: HashType| match kind {
-            WatchItemKind::Directory => stale_dir(strings::trim_right(path, &[b'/'])),
+            WatchItemKind::Directory => stale_dir(strings::trim_right(path, b"/")),
             WatchItemKind::File => stale_file(path, hash),
         };
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1091,7 +1091,7 @@ impl Watcher {
             let Some(dir) = slice.items_file_path().get(event.index as usize) else {
                 return 0;
             };
-            let dir = strings::trim_right(dir, &[b'/']);
+            let dir = strings::trim_right(dir, b"/");
             let mut child = bun_paths::path_buffer_pool::get();
             let mut queued = 0;
             for name in event.names(names).iter().flatten() {
@@ -1151,6 +1151,23 @@ impl Watcher {
             }
             if !self.queue_eviction(i as WatchItemIndex) {
                 break;
+            }
+            // The old file usually still exists under the directory's new name,
+            // so closing its fd in `flush_evictions` does not end the inotify
+            // watch the way it does for an unlinked file. Drop it here, unless
+            // another entry (the same inode under a second path) still uses it.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if kinds[i] == WatchItemKind::File {
+                let wds = slice.items_eventlist_index();
+                let shared = (0..slice.len()).any(|j| {
+                    j != i
+                        && wds[j] == wds[i]
+                        && !self.evict_list[..self.evict_list_i as usize]
+                            .contains(&(j as WatchItemIndex))
+                });
+                if !shared {
+                    self.platform.unwatch(wds[i]);
+                }
             }
             each(kinds[i], &paths[i], hashes[i]);
             queued += 1;

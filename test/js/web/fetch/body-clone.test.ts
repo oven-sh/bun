@@ -1462,6 +1462,10 @@ describe("clone() of a body that fails mid-stream", () => {
         result.resolve(await drain(body, received => received >= sent && partial.resolve()));
         return new Response("k");
       },
+      error(err) {
+        result.reject(err);
+        return new Response("handler threw", { status: 500 });
+      },
     });
     const client = net.connect(server.port, "127.0.0.1");
     try {
@@ -1470,7 +1474,8 @@ describe("clone() of a body that fails mid-stream", () => {
         `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`,
       );
       client.write(opts.firstPart);
-      await partial.promise;
+      // A drain that ends before `sent` bytes arrived settles `result` instead.
+      await Promise.race([partial.promise, result.promise]);
       opts.fail(client);
       return await result.promise;
     } finally {

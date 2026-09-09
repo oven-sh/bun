@@ -1680,6 +1680,7 @@ impl FileSink {
                 let result = self.assign_to_js_stream(stream, global_this);
                 if let Some(err) = result.to_error() {
                     self.stream_done.set(bun_jsc::JSPromiseStrong::empty());
+                    self.readable_stream.set(readable_stream::Strong::default());
                     self.stream_bytes.set(None);
                     return err;
                 }

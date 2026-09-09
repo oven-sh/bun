@@ -1001,7 +1001,7 @@ pub(crate) mod serialize {
             d.write_char(b':')?;
             // If the printer has a vendor prefix override, use that.
             let vp = if !d.vendor_prefix.is_empty() {
-                (d.vendor_prefix | prefix).or_none()
+                (d.vendor_prefix & prefix).or_none()
             } else {
                 prefix
             };

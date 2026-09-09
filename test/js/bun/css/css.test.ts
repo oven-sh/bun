@@ -9,6 +9,7 @@ import {
   cssTest,
   indoc,
   minify_error_test_with_options,
+  minify_prefix_test,
   minify_test,
   minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
@@ -160,6 +161,26 @@ describe("css tests", () => {
         safari: 14 << 16,
         opera: 67 << 16,
       },
+    );
+  });
+
+  describe("vendor prefixed pseudo classes", () => {
+    // chrome <= 109 needs :-webkit-autofill.
+    minify_prefix_test(".a:autofill{color:red}", ".a:-webkit-autofill{color:red}.a:autofill{color:red}", {
+      chrome: 103 << 16,
+    });
+    minify_prefix_test(
+      ".a:placeholder-shown .b:autofill{color:red}",
+      ".a:placeholder-shown .b:-webkit-autofill{color:red}.a:placeholder-shown .b:autofill{color:red}",
+      { chrome: 103 << 16 },
+    );
+    minify_prefix_test(".a:read-only{color:red}", ".a:-moz-read-only{color:red}.a:read-only{color:red}", {
+      firefox: 50 << 16,
+    });
+    minify_prefix_test(
+      ".a:any-link{color:red}",
+      ".a:-webkit-any-link{color:red}.a:-moz-any-link{color:red}.a:any-link{color:red}",
+      { chrome: 40 << 16, firefox: 30 << 16 },
     );
   });
 

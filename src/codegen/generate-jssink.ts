@@ -398,7 +398,7 @@ static JSC::EncodedJSValue ${controller}__closeWithReason(JSC::JSGlobalObject* l
     ${name}__close(lexicalGlobalObject, ptr, reason);
 
     // detach() must still fire onClose (it transitions the direct
-    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // ReadableStream to closed and settles its close promise)
     // even if the native close threw, matching the pre-reorder behaviour.
     // Stash and rethrow around it; the sink's error wins over any onClose
     // error.
@@ -465,7 +465,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
 
     // detach() must still fire onClose (it transitions the direct
-    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // ReadableStream to closed and settles its close promise)
     // even if the native end threw, matching the pre-reorder behaviour.
     // Stash and rethrow around it; the sink's error wins over any onClose
     // error.
@@ -691,6 +691,7 @@ void JS${controllerName}::detach() {
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream.value());
         arguments.append(jsUndefined());
+        arguments.append(JSC::jsBoolean(false)); // sinkClosed: the source ended or the owner detached
         AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
         RELEASE_AND_RETURN(scope, void());
     }
@@ -1020,6 +1021,7 @@ extern "C" void JSSinkController__onClose(JSC::EncodedJSValue controllerValue, J
     auto readableStream = controller->m_weakReadableStream.get();
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
     arguments.append(JSC::JSValue::decode(reason));
+    arguments.append(JSC::jsBoolean(true)); // sinkClosed: the native sink closed underneath the source
     AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
     RELEASE_AND_RETURN(scope, void());
 }

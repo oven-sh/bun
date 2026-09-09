@@ -752,7 +752,7 @@ static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, 
 // readDirectStreamOnClose. The state-mutation half runs only when a stream is provided; everything
 // that can throw (the sink's end(), the user's cancel(reason)) runs after the state is final, and a
 // throw from it propagates to whoever closed.
-static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectSinkCloseState* state, JSValue streamValue, JSValue reason)
+static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectSinkCloseState* state, JSValue streamValue, JSValue reason, bool sinkClosed)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* sinkController = state->sinkController();
@@ -788,7 +788,8 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
         invokeMethod(vm, globalObject, sinkController, builtinNames(vm).endPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, );
     }
-    if (source) {
+    // Only a sink that closed underneath the source (peer abort, write error) cancels it, not its own end()/close().
+    if (source && sinkClosed) {
         JSObject* cancelFunction = source->cancelFunction();
         if (!cancelFunction)
             return;
@@ -817,7 +818,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     JSObject* pull = source->pullFunction();
     if (!pull) {
-        readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
+        readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined(), false);
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
     }
@@ -1407,7 +1408,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadDirectStreamOnClose, (JSGl
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(0));
-    Bun::WebStreams::readDirectStreamCloseImpl(vm, globalObject, state, callFrame->argument(1), callFrame->argument(2));
+    bool sinkClosed = callFrame->argument(3).isTrue();
+    Bun::WebStreams::readDirectStreamCloseImpl(vm, globalObject, state, callFrame->argument(1), callFrame->argument(2), sinkClosed);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

@@ -903,9 +903,7 @@ impl SourceHandle {
                     Some(err) => err.to_js(global),
                     None => JSValue::UNDEFINED,
                 };
-                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-                    controller_abi::on_close(cpp, reason)
-                }));
+                Self::close_js_controller(global, cpp, reason);
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
@@ -918,6 +916,26 @@ impl SourceHandle {
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
+    }
+
+    /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
+    pub fn abort(&mut self, reason: CommonAbortReason) {
+        match *self {
+            SourceHandle::JSController(cpp) => {
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                Self::close_js_controller(global, cpp, reason.to_js(global));
+            }
+            _ => self.close(None),
+        }
+    }
+
+    fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
+        crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
+            controller_abi::on_close(cpp, reason)
+        }));
     }
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
@@ -1019,8 +1037,7 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// `flush_promise()` → `pending.run()`.
     pub(crate) pending: WritablePending,
     pub(crate) wrote_at_start_of_flush: BlobSizeType,
-    // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
-    // `end_from_js` install it. Safe `Deref` via `BackRef`.
+    // JSC_BORROW: process-lifetime VM global, set at construction. Safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub(crate) high_water_mark: BlobSizeType,
 
@@ -1208,6 +1225,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.has_backpressure && self.end_len > 0
     }
 
+    /// uWS `end()`/`try_end()` just completed; `res` is still live here, so release the request-body pause too.
+    fn mark_response_ended(&mut self, res: uws::AnyResponse) {
+        self.has_backpressure = false;
+        self.ended_response = true;
+        res.resume();
+    }
+
     /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
     /// the socket is now backed up, return a pending Promise for JS-controller
     /// sources (direct-stream `pull` can `await controller.write()`; the
@@ -1254,7 +1278,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             self.handle_first_write_if_necessary();
             let success = res.try_end(buf, self.end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1277,7 +1301,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
         }
@@ -1329,7 +1353,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1349,7 +1373,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // See `send_without_auto_flusher`.
         if self.requested_end {
             res.end(&self.buffer[base..], false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(
                 res.write(&self.buffer[base..]),
@@ -1451,14 +1475,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
+                debug_assert!(self.ended_response);
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
-                    // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                    res.resume();
                 }
-                // `send_readable` drained the parked `try_end`, so uWS has
-                // `markDone()`d the response and dropped its `onAborted`.
-                self.ended_response = true;
                 self.source.close(None);
                 self.flush_promise();
                 self.finalize();
@@ -1764,19 +1784,27 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.unregister_auto_flusher();
     }
 
-    /// In this case, it's always an error
-    pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
+    /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
+    pub(crate) fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
+        let global_this = self
+            .global_this
+            .expect("HTTPServerWritable.global_this used before init");
+        self.end_from_js(&global_this).map(|_| ())
+    }
+
+    /// The source failed (`close(error)`, an errored pump): end the body unflushed so the owner can truncate it.
+    pub(crate) fn fail(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
         if self.requested_end {
-            return bun_sys::Result::Ok(());
+            return;
         }
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(err);
+            self.source.close(None);
             self.mark_done();
             self.finalize();
-            return bun_sys::Result::Ok(());
+            return;
         }
 
         self.requested_end = true;
@@ -1784,14 +1812,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.end_len = readable_len;
 
         if readable_len == 0 {
-            self.source.close(err);
+            self.source.close(None);
             self.mark_done();
-            // we do not close the stream here
-            // this.res.endStream(false);
             self.finalize();
-            return bun_sys::Result::Ok(());
         }
-        bun_sys::Result::Ok(())
     }
 
     pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -1822,19 +1846,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 value.protect();
                 return bun_sys::Result::Ok(value);
             }
-        } else {
-            if let Some(res) = self.any_res() {
-                res.end(b"", false);
-            }
+        } else if let Some(res) = self.any_res() {
+            res.end(b"", false);
+            self.mark_response_ended(res);
         }
 
-        if let Some(res) = self.any_res() {
-            // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-            res.resume();
-        }
-        // Both branches above fully ended the response through uWS, which
-        // `markDone()`s it and drops its `onAborted`.
-        self.ended_response = true;
+        debug_assert!(self.ended_response);
         self.mark_done();
         self.flush_promise();
         self.source.close(None);
@@ -1869,7 +1886,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.close(None);
+        source.abort(CommonAbortReason::ConnectionClosed);
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -1912,14 +1929,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.auto_flusher.registered.set(false);
 
         if self.requested_end {
+            debug_assert!(self.ended_response);
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
-                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume();
             }
-            // `send_readable` drained the parked `try_end`/`end`, so uWS has
-            // `markDone()`d the response and dropped its `onAborted`.
-            self.ended_response = true;
             self.source.close(None);
             self.flush_promise();
             self.finalize();
@@ -1967,6 +1980,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
+            // Sends a tail parked by `fail()`; that `res.end()` sets `ended_response`.
             let _ = self.flush_no_wait();
             self.set_done();
 
@@ -2073,6 +2087,15 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // `destroy` frees it (never the inherent `finalize`), so the `&mut`
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        _global: &JSGlobalObject,
+        _reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: caller contract; `fail` does not free the sink.
+        unsafe { (*this).fail() };
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

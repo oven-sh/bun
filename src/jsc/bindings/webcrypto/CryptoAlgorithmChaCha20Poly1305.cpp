@@ -158,14 +158,8 @@ void CryptoAlgorithmChaCha20Poly1305::importKey(CryptoKeyFormat format, KeyData&
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
-            exceptionCallback(DataError, "Duplicate key operation"_s);
+        if (!validateJwkKeyOps(jwk, usages, exceptionCallback))
             return;
-        }
-        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
-            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
-            return;
-        }
         if (jwk.ext && !jwk.ext.value() && extractable) {
             exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
             return;

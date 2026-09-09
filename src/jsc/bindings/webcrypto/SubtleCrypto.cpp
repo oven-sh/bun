@@ -586,7 +586,7 @@ static void normalizeJsonWebKey(JsonWebKey& webKey)
 {
     // Importers only test that key_ops covers the requested usages, so entries
     // that are not a KeyUsage (valid per RFC 7517) drop out of the bitmap.
-    // hasDuplicateJwkKeyOps() still sees them in key_ops.
+    // CryptoAlgorithm::validateJwkKeyOps() still sees them in key_ops.
     webKey.usages = 0;
     if (!webKey.key_ops)
         return;

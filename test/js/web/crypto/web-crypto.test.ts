@@ -1151,7 +1151,7 @@ describe("X25519 JWK import", () => {
 // member as `sequence<KeyUsage>` instead makes a JWK minted by another stack
 // fail with a TypeError before the import algorithm runs.
 describe("JWK key_ops entries that are not a KeyUsage", () => {
-  const k = "AAECAwQFBgcICQoLDA0ODw";
+  const k = Buffer.alloc(32, 1).toString("base64url");
   const rsaPublic = {
     kty: "RSA",
     n: "ylJkPUUI1WdwPhfxioPyUeFOVdmpIAMNID4uCvhtnqdH3P-yDl4V9Qvcjvb4SnB1eHOWKpXhpkA1uD3gmmebqvmRJB242EbTaf89mLr6BxFvSDUBwHxMzYgewnXFUJiA85rOUrVL9mDZcwwVvpCT3836iq4_RfDIuQEKOi5OntU",
@@ -1164,10 +1164,11 @@ describe("JWK key_ops entries that are not a KeyUsage", () => {
     y: "r6xDaTpWl7d958Y4HMq6OR4F8PLe1wl7m41I2ZX1yoU",
   };
   const okpPublic = { kty: "OKP", crv: "Ed25519", x: "S89QWE7a6JwjIPX04rf9qxlJ9vQxs5bSW1NxjR03mls" };
+  const x25519Public = { kty: "OKP", crv: "X25519", x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go" };
   const outcome = (p: Promise<CryptoKey>) =>
     p.then(
       key => `imported ${JSON.stringify(key.usages)}`,
-      e => e.name,
+      e => `${e.name}: ${e.message}`,
     );
   const aes = (key_ops: unknown) =>
     outcome(crypto.subtle.importKey("jwk", { kty: "oct", k, key_ops } as JsonWebKey, "AES-GCM", true, ["encrypt"]));
@@ -1224,10 +1225,10 @@ describe("JWK key_ops entries that are not a KeyUsage", () => {
       unrequestedUsageAndForeign: `imported ["encrypt"]`,
       number: `imported ["encrypt"]`,
       null: `imported ["encrypt"]`,
-      onlyForeign: "DataError",
+      onlyForeign: "DataError: Key operations and usage mismatch",
       onlyForeignNoUsages: "imported []",
-      empty: "DataError",
-      notASequence: "TypeError",
+      empty: "DataError: Key operations and usage mismatch",
+      notASequence: "TypeError: Value is not a sequence",
       rsa: `imported ["encrypt"]`,
       ec: `imported ["verify"]`,
       okp: `imported ["verify"]`,
@@ -1236,23 +1237,46 @@ describe("JWK key_ops entries that are not a KeyUsage", () => {
   });
 
   // RFC 7517 section 4.3: "Duplicate key operation values MUST NOT be present
-  // in the array." This holds for values WebCrypto does not know, as in Chromium.
-  it("must still be unique, for every key class", async () => {
-    expect({
-      aes: await aes(["encrypt", "encrypt"]),
-      aesForeign: await aes(["encrypt", "fly", "fly"]),
-      rsa: await rsa(["encrypt", "wrapKey", "encrypt"]),
-      ec: await ec(["verify", "verify"]),
-      okp: await okp(["verify", "verify"]),
-      hmac: await hmac(["sign", "verify", "sign"]),
-    }).toEqual({
-      aes: "DataError",
-      aesForeign: "DataError",
-      rsa: "DataError",
-      ec: "DataError",
-      okp: "DataError",
-      hmac: "DataError",
-    });
+  // in the array." This holds for values WebCrypto does not know, as in
+  // Chromium, and every algorithm reports it with Node's message.
+  it("must still be unique, for every algorithm", async () => {
+    const oct = { kty: "oct", k };
+    const cases: [
+      Record<string, unknown>,
+      AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams,
+      KeyUsage[],
+    ][] = [
+      [oct, "AES-GCM", ["encrypt"]],
+      [oct, "AES-CBC", ["encrypt"]],
+      [oct, "AES-CTR", ["encrypt"]],
+      [oct, "AES-CFB-8", ["encrypt"]],
+      [oct, "AES-KW", ["wrapKey"]],
+      [oct, "ChaCha20-Poly1305", ["encrypt"]],
+      [oct, { name: "HMAC", hash: "SHA-256" }, ["sign"]],
+      [rsaPublic, { name: "RSA-OAEP", hash: "SHA-256" }, ["encrypt"]],
+      [rsaPublic, { name: "RSA-PSS", hash: "SHA-256" }, ["verify"]],
+      [rsaPublic, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["verify"]],
+      [ecPublic, { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+      [ecPublic, { name: "ECDH", namedCurve: "P-256" }, []],
+      [okpPublic, "Ed25519", ["verify"]],
+      [x25519Public, "X25519", []],
+    ];
+    const results: Record<string, string> = {};
+    for (const [jwk, algorithm, usages] of cases) {
+      const name = typeof algorithm === "string" ? algorithm : algorithm.name;
+      const op = usages[0] ?? "deriveBits";
+      for (const key_ops of [
+        [op, op],
+        [op, "urn:example:op", "urn:example:op"],
+      ]) {
+        results[`${name} ${JSON.stringify(key_ops)}`] = await outcome(
+          crypto.subtle.importKey("jwk", { ...jwk, key_ops } as JsonWebKey, algorithm, true, usages),
+        );
+      }
+    }
+    const expected = Object.fromEntries(Object.keys(results).map(name => [name, "DataError: Duplicate key operation"]));
+    expect(Object.keys(results)).toHaveLength(cases.length * 2);
+    expect(results).toEqual(expected);
   });
 
   it("survive unwrapKey, and exportKey emits only the key's usages", async () => {

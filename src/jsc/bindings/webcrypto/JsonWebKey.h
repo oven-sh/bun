@@ -67,8 +67,7 @@ Vector<String> toJwkKeyOps(const Vector<CryptoKeyUsage>&);
 
 // RFC 7517 section 4.3: "Duplicate key operation values MUST NOT be present",
 // whether or not WebCrypto knows the value (Chromium enforces both, Node only
-// the values it knows). Importers check this before the key_ops/usages
-// mismatch, in Node's order.
+// the values it knows).
 bool hasDuplicateJwkKeyOps(const std::optional<Vector<String>>&);
 
 } // namespace WebCore

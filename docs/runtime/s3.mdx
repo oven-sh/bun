@@ -771,7 +771,7 @@ const exists = await S3Client.exists("my-file.txt", credentials);
 
 The same method also works on `S3File` instances.
 
-```ts s3.ts icon="/icons/typescript.svg" highlight=7}
+```ts s3.ts icon="/icons/typescript.svg" highlight={7}
 import { s3 } from "bun";
 
 const s3file = s3.file("my-file.txt", {

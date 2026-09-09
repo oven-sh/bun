@@ -95,10 +95,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 let has_bindings =
                     !st.star_name_loc.is_empty() || st.items.len() > 0 || st.default_name.is_some();
 
-                // Nothing to link to: a plain stylesheet (it arrives through a <link> tag), a
-                // path the `browser` field maps to false, or a deferred barrel import. The body
-                // may still read the binding, so declare the namespace as the empty module a
-                // production bundle gives these (`{ default: {} }`; `{}` for a deferred import).
+                // Nothing to link to (stylesheet, `browser: false` path, deferred barrel import): bind an empty module.
                 let is_deferred = record.flags.contains(ImportRecordFlags::IS_UNUSED);
                 if record.path.is_disabled || is_deferred {
                     if has_bindings {

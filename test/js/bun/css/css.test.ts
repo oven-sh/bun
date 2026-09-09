@@ -310,7 +310,10 @@ describe("css tests", () => {
       minify_test(`a { padding: 1px; padding: 0 -1px }`, `a{padding:1px;padding:0 -1px}`);
       minify_test(`a { border-radius: 1px; border-radius: 1px / -1px }`, `a{border-radius:1px;border-radius:1px/-1px}`);
       minify_test(`a { width: 1px; width: fit-content(-1px) }`, `a{width:1px;width:fit-content(-1px)}`);
-      minify_test(`a { border: 1px solid red; border: -1px solid red }`, `a{border:1px solid red;border:-1px solid red}`);
+      minify_test(
+        `a { border: 1px solid red; border: -1px solid red }`,
+        `a{border:1px solid red;border:-1px solid red}`,
+      );
       minify_test(`a { flex-grow: 1; flex-grow: -1 }`, `a{flex-grow:1;flex-grow:-1}`);
       minify_test(`a { flex-shrink: 1; flex-shrink: -1 }`, `a{flex-shrink:1;flex-shrink:-1}`);
       minify_test(`a { flex: 2; flex: -1 }`, `a{flex:2;flex:-1}`);
@@ -347,7 +350,10 @@ describe("css tests", () => {
       // Negative values are in range here.
       minify_test(`a { margin: 1px; margin: -1px }`, `a{margin:-1px}`);
       minify_test(`a { inset: 1px; inset: -1px }`, `a{inset:-1px}`);
-      minify_test(`a { box-shadow: 0 0 1px red; box-shadow: -1px -1px 0 -1px red }`, `a{box-shadow:-1px -1px 0 -1px red}`);
+      minify_test(
+        `a { box-shadow: 0 0 1px red; box-shadow: -1px -1px 0 -1px red }`,
+        `a{box-shadow:-1px -1px 0 -1px red}`,
+      );
       minify_test(`a { transition-delay: 1s; transition-delay: -1s }`, `a{transition-delay:-1s}`);
       minify_test(`a { transition: all 1s; transition: all 1s -1s }`, `a{transition:all 1s -1s}`);
       minify_test(`a { width: 1px; width: -0px }`, `a{width:0}`);

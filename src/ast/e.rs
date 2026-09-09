@@ -1481,8 +1481,7 @@ impl Object {
     }
 }
 
-/// Flags for a string key that must print as an own property: `"__proto__"` is
-/// marked computed, since a plain `__proto__:` key sets the prototype instead.
+/// Flags for a string key that must stay an own property: `"__proto__"` prints computed.
 pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
     match &key.data {
         crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {

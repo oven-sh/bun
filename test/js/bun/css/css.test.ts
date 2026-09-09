@@ -262,6 +262,23 @@ describe("css tests", () => {
       `,
       { safari: 8 << 16 },
     );
+    // The logical corner radii overwrote the buffered value instead.
+    minify_test(
+      `a { border-start-start-radius: 1px; border-start-start-radius: var(--r) }`,
+      `a{border-start-start-radius:1px;border-start-start-radius:var(--r)}`,
+    );
+    minify_test(
+      `a { border-end-end-radius: 1px; border-end-end-radius: banana }`,
+      `a{border-end-end-radius:1px;border-end-end-radius:banana}`,
+    );
+    minify_test(
+      `a { border-start-end-radius: var(--r); border-start-end-radius: 1px }`,
+      `a{border-start-end-radius:1px}`,
+    );
+    minify_test(
+      `a { border-top-left-radius: 1px; border-top-left-radius: var(--r) }`,
+      `a{border-top-left-radius:1px;border-top-left-radius:var(--r)}`,
+    );
   });
   describe("border_spacing", () => {
     minify_test(

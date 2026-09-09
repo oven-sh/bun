@@ -302,6 +302,45 @@ describe("numbers - additional", () => {
     // 0xFFFFFFFFFFFFFFFF = u64 max
     expect(JSON5.parse("0xFFFFFFFFFFFFFFFF")).toEqual(18446744073709551615);
   });
+
+  // A JSON5 hex number is an ES HexIntegerLiteral: a Number of any magnitude,
+  // rounded to the nearest double (json5 does `Number("0x...")`).
+  test("hex number wider than 64 bits", () => {
+    expect(JSON5.parse("0x1ffffffffffffffff")).toBe(2 ** 65);
+    expect(JSON5.parse("0xfffffffffffffffff")).toBe(2 ** 68);
+    expect(JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toBe(2 ** 72);
+    expect(JSON5.parse("+0x1" + "0".repeat(30))).toBe(2 ** 120);
+    expect(JSON5.parse("-0x1" + "0".repeat(30))).toBe(-(2 ** 120));
+    expect(JSON5.parse("{a: [0x1" + "0".repeat(255) + ", -0x1" + "0".repeat(256) + "]}")).toEqual({
+      a: [2 ** 1020, -Infinity],
+    });
+    // Number.MAX_VALUE is 0xfffffffffffff8 followed by 242 zeros; half an ulp more rounds to Infinity
+    expect(JSON5.parse("0xfffffffffffff8" + "0".repeat(242))).toBe(Number.MAX_VALUE);
+    expect(JSON5.parse("0xfffffffffffffb" + "f".repeat(242))).toBe(Number.MAX_VALUE);
+    expect(JSON5.parse("0xfffffffffffffc" + "0".repeat(242))).toBe(Infinity);
+  });
+
+  test("hex number above 2^53 rounds once, ties to even", () => {
+    // 2^53 + 1 ties down to the even neighbour, 2^53 + 3 ties up to it
+    expect(JSON5.parse("0x20000000000001")).toBe(9007199254740992);
+    expect(JSON5.parse("0x20000000000003")).toBe(9007199254740996);
+    // 2^64 + 2^11 is a tie and goes to even (down); one more unit anywhere below breaks the tie upward
+    expect(JSON5.parse("0x10000000000000800")).toBe(18446744073709551616);
+    expect(JSON5.parse("0x10000000000000801")).toBe(18446744073709555712);
+    for (const digits of [
+      "97b89d834f82bbef",
+      "fffffffffffffbff",
+      "1fffffffffffffff",
+      "20000000000000fff",
+      "123456789abcdef0123",
+      "80000000000004000001",
+      "100000000000008" + "0".repeat(40) + "1",
+      "ffffffffffffffffffffffff",
+    ]) {
+      expect(JSON5.parse("0x" + digits)).toBe(Number(BigInt("0x" + digits)));
+      expect(JSON5.parse("-0X00" + digits.toUpperCase())).toBe(-Number(BigInt("0x" + digits)));
+    }
+  });
 });
 
 describe("objects - additional", () => {
@@ -705,11 +744,6 @@ describe("error messages", () => {
     expect(() => JSON5.parse("0x")).toThrow("Invalid hex number");
     expect(() => JSON5.parse("0X")).toThrow("Invalid hex number");
     expect(() => JSON5.parse("0xGG")).toThrow("Invalid hex number");
-  });
-
-  // -- Hex number too large --
-  test("hex number too large", () => {
-    expect(() => JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toThrow("Invalid hex number");
   });
 });
 

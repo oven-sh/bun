@@ -137,12 +137,16 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__isClosedUnread(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
-    safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
     safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
@@ -187,56 +191,56 @@ impl ReadableStream {
         });
     }
 
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) {
+        if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }
 
         self.reload_tag();
 
-        match self.ptr {
+        let blob = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done();
-                    return Some(blob);
-                }
+                blobby.to_any_blob(global_this)?
             }
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
-                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
-                    let blob = Blob::init_with_store(store.clone(), global_this);
-                    // The window `from_blob_copy_ref` moved onto the reader.
-                    if let Some(offset) = blobby.start_offset {
-                        blob.offset.set(offset as webcore::blob::SizeType);
-                    }
-                    if let Some(size) = blobby.max_size {
-                        blob.size.set(size as webcore::blob::SizeType);
-                    }
-                    // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started.get());
-                    self.done();
-                    return Some(webcore::blob::Any::Blob(blob));
+                let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
+                    return None;
+                };
+                let blob = Blob::init_with_store(store.clone(), global_this);
+                // The window `from_blob_copy_ref` moved onto the reader.
+                if let Some(offset) = blobby.start_offset {
+                    blob.offset.set(offset as webcore::blob::SizeType);
                 }
+                if let Some(size) = blobby.max_size {
+                    blob.size.set(size as webcore::blob::SizeType);
+                }
+                // it should be lazy, file shouldn't have opened yet.
+                debug_assert!(!blobby.started.get());
+                webcore::blob::Any::Blob(blob)
             }
             Source::Bytes(_) => {
                 // BACKREF: see `Source::bytes()` — payload valid while stream alive.
                 let bytes = self.ptr.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
-                if let Some(blob) = bytes.to_any_blob() {
-                    self.done();
-                    return Some(blob);
-                }
-                return None;
+                bytes.to_any_blob()?
             }
-            _ => {}
-        }
+            // Closed before anything read from it: the same store-less empty Blob `new Blob([])` gives.
+            Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
+                webcore::blob::Any::Blob(Blob::init_empty(global_this))
+            }
+            Source::JavaScript | Source::Invalid => return None,
+        };
 
-        None
+        self.done();
+        self.mark_consumed_as_body(global_this);
+        Some(blob)
     }
 
     pub fn done(&self) {
@@ -289,9 +293,9 @@ impl ReadableStream {
         result
     }
 
-    pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__detach(self.value, global_object);
+    /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
+    pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
+        ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native
@@ -399,6 +403,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
+    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
+        self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.

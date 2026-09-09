@@ -3756,21 +3756,21 @@ describe("http.Agent free keep-alive socket", () => {
 
   type Transport = {
     createServer: (onConnection: (socket: NetSocket) => void) => NetServer;
-    createAgent: () => Agent;
+    createAgent: (options: http.AgentOptions) => Agent;
     get: typeof http.get;
     options: object;
   };
   const transports: Record<string, Transport> = {
     http: {
       createServer: onConnection => createNetServer(onConnection),
-      createAgent: () => new Agent({ keepAlive: true }),
+      createAgent: options => new Agent({ keepAlive: true, ...options }),
       get: http.get,
       options: {},
     },
     https: {
       createServer: onConnection =>
         createTlsServer({ cert: tlsCert.cert, key: tlsCert.key }, onConnection) as NetServer,
-      createAgent: () => new https.Agent({ keepAlive: true }),
+      createAgent: options => new https.Agent({ keepAlive: true, ...options }),
       get: https.get,
       options: { ca: tlsCert.cert },
     },
@@ -3818,13 +3818,17 @@ describe("http.Agent free keep-alive socket", () => {
     ) => Promise<{ body: string; poisoned?: string; reusedSocket: boolean }>;
   };
 
-  async function withAgent(transport: Transport, body: (context: Context) => Promise<void>) {
+  async function withAgent(
+    transport: Transport,
+    body: (context: Context) => Promise<void>,
+    agentOptions: http.AgentOptions = {},
+  ) {
     const serverSockets: NetSocket[] = [];
     const server = transport.createServer(socket => {
       serverSockets.push(socket);
       respondToRequests(socket);
     });
-    const agent = transport.createAgent();
+    const agent = transport.createAgent(agentOptions);
     try {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const { port } = server.address() as AddressInfo;
@@ -3900,6 +3904,28 @@ describe("http.Agent free keep-alive socket", () => {
         expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
         expect(serverSockets.length).toBe(2);
       });
+    });
+
+    it("does not hand a freed socket that holds unsolicited data to a queued request", async () => {
+      await withAgent(
+        transport,
+        async ({ serverSockets, request }) => {
+          let firstSocket: NetSocket | undefined;
+          const first = request("/first", socket => {
+            firstSocket = socket;
+            socket.push(Buffer.from(poisonedResponse));
+          });
+          // maxSockets is 1, so this request waits in agent.requests for the
+          // first socket to be freed.
+          const second = request("/second");
+
+          expect(await first).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
+          expect(await second).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
+          expect(firstSocket!.destroyed).toBe(true);
+          expect(serverSockets.length).toBe(2);
+        },
+        { maxSockets: 1 },
+      );
     });
 
     it("reuses a free socket that received nothing", async () => {

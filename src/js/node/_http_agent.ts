@@ -77,6 +77,15 @@ function Agent(options): void {
       return;
     }
 
+    // Bytes a freed socket holds or receives have no request: the next request
+    // would parse them as its response (https://hackerone.com/reports/3582376).
+    // Destroy it here if they are buffered, in node:net if they arrive later.
+    if (socket.readableLength > 0) {
+      $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
+      socket.destroy();
+      return;
+    }
+
     const requests = this.requests[name];
     if (requests?.length) {
       const req = requests.shift();
@@ -113,15 +122,6 @@ function Agent(options): void {
       freeLen >= this.maxFreeSockets ||
       !this.keepSocketAlive(socket)
     ) {
-      socket.destroy();
-      return;
-    }
-
-    // Bytes a pooled socket holds or receives have no request: the next request
-    // would parse them as its response (https://hackerone.com/reports/3582376).
-    // Destroy it here if they are buffered, in node:net if they arrive later.
-    if (socket.readableLength > 0) {
-      $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
       socket.destroy();
       return;
     }

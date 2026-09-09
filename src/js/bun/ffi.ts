@@ -65,8 +65,7 @@ const FFIType = {
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
 var ffi = globalThis.Bun.FFI;
-// `Bun.FFI` is undefined when FFI is disabled (--no-ffi-cc or --no-addons).
-// The module still loads, but everything that would reach native code throws.
+// `Bun.FFI` is undefined under --no-ffi-cc / --no-addons; export throwers instead.
 const ffiDisabled = ffi === undefined;
 function throwFFIDisabled(): never {
   // Keep in sync with FFI_DISABLED_MESSAGE in src/runtime/ffi/mod.rs.

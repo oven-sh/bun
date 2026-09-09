@@ -93,8 +93,7 @@ mod dom_call_slowpath {
     }
 }
 
-/// Message of the `ERR_FFI_DISABLED` error (`--no-ffi-cc` / `--no-addons`).
-/// Keep in sync with `src/js/bun/ffi.ts`.
+/// `ERR_FFI_DISABLED` message; `src/js/bun/ffi.ts` throws the same text.
 pub(crate) const FFI_DISABLED_MESSAGE: &str =
     "bun:ffi is not available because FFI was disabled with --no-ffi-cc or --no-addons.";
 

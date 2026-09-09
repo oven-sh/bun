@@ -503,7 +503,7 @@ toArrayBuffer(
 
 ### Memory safety
 
-Don't use raw pointers outside of FFI. A future version of Bun may add a CLI flag to disable `bun:ffi`.
+Don't use raw pointers outside of FFI. To disable `bun:ffi` for a process, pass `--no-ffi-cc` or `--no-addons` (see [Disabling `bun:ffi`](#disabling-bun-ffi)).
 
 ### Pointer alignment
 

@@ -2659,7 +2659,7 @@ fn parse_build_command_options(
     }
 
     if ctx.bundler_options.transform_only {
-        check_no_bundle_flags(args, ctx.bundler_options.output_format);
+        check_no_bundle_flags(args);
         // Reported as ignored or without effect above; keep it that way
         // further down (`--splitting` would otherwise demand --outdir).
         ctx.bundler_options.code_splitting = false;
@@ -2675,27 +2675,13 @@ fn parse_build_command_options(
 /// only tunes resolving, chunking or linking, is reported and ignored.
 #[cold]
 #[inline(never)]
-fn check_no_bundle_flags(args: &clap::Args<clap::Help>, output_format: options::Format) {
-    let mut failed = false;
-    if let Some(format) = args.option(b"--format") {
-        if output_format != options::Format::Esm {
-            Output::err_generic(
-                "--format={} is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)",
-                (BStr::new(format),),
-            );
-            bun_core::note!(
-                "to emit one file in that format, bundle it with every import external: bun build ./file.ts --format={} --external '*'",
-                BStr::new(format)
-            );
-            failed = true;
-        }
-    }
-    let unsupported: [(&[u8], bool); 4] = [
-        (b"--bytecode", args.flag(b"--bytecode")),
+fn check_no_bundle_flags(args: &clap::Args<clap::Help>) {
+    let unsupported: [(&[u8], bool); 3] = [
         (b"--server-components", args.flag(b"--server-components")),
         (b"--metafile", args.option(b"--metafile").is_some()),
         (b"--metafile-md", args.option(b"--metafile-md").is_some()),
     ];
+    let mut failed = false;
     for (flag, passed) in unsupported {
         if passed {
             Output::err_generic("{} is not supported with --no-bundle", (BStr::new(flag),));

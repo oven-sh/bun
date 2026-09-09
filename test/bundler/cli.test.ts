@@ -816,40 +816,19 @@ describe.concurrent("--no-bundle with flags that need the bundler", () => {
   // These ask for output that transpiling one file at a time cannot produce:
   // the build fails before anything is written.
   test.each([
-    [
-      "--format=cjs",
-      "error: --format=cjs is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)\n" +
-        "note: to emit one file in that format, bundle it with every import external: bun build ./file.ts --format=cjs --external '*'\n",
-    ],
-    [
-      "--format=iife",
-      "error: --format=iife is not supported with --no-bundle (see https://github.com/oven-sh/bun/issues/29187)\n" +
-        "note: to emit one file in that format, bundle it with every import external: bun build ./file.ts --format=iife --external '*'\n",
-    ],
-    ["--bytecode", "error: --bytecode is not supported with --no-bundle\n"],
-    ["--metafile=meta.json", "error: --metafile is not supported with --no-bundle\n"],
-    ["--metafile-md=meta.md", "error: --metafile-md is not supported with --no-bundle\n"],
-    ["--server-components", "error: --server-components is not supported with --no-bundle\n"],
-  ])("%s fails the build", async (flag, expectedStderr) => {
+    ["--metafile=meta.json", "--metafile"],
+    ["--metafile-md=meta.md", "--metafile-md"],
+    ["--server-components", "--server-components"],
+  ])("%s fails the build", async (flag, name) => {
     const { stdout, stderr, exitCode, entries } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
       "./a.ts",
       "--outdir=dist",
       flag,
     ]);
-    expect(stderr).toBe(expectedStderr);
+    expect(stderr).toBe(`error: ${name} is not supported with --no-bundle\n`);
     expect(stdout).toBe("");
     expect(entries).toEqual(["a.ts"]);
     expect(exitCode).toBe(1);
-  });
-
-  test("--format=esm is the format --no-bundle emits and is accepted", async () => {
-    const { stdout, stderr, exitCode } = await buildNoBundle({ "a.ts": `export const a: number = 1;\n` }, [
-      "./a.ts",
-      "--format=esm",
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("export const a = 1;\n");
-    expect(exitCode).toBe(0);
   });
 
   // Per-file transforms this mode does not run yet: the build says it ignored

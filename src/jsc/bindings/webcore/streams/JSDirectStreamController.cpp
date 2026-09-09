@@ -860,6 +860,11 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     }
     if (m_closed)
         return;
+    // close(error): the source failed; error the stream instead of ending it (the native sink path's fail()).
+    if (reason.toBoolean(globalObject)) {
+        handleError(globalObject, reason);
+        RELEASE_AND_RETURN(scope, );
+    }
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
     auto* source = m_source.get();
@@ -1024,6 +1029,13 @@ static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDir
     controller->onFlush(globalObject);
     controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, );
+    if (controller->m_closeOnPullSettled) {
+        controller->m_pullAgain = false;
+        stream = controller->m_stream.get();
+        if (!controller->m_closed && stream && stream->m_state == ReadableStreamState::Readable)
+            controller->onClose(globalObject, jsUndefined());
+        RELEASE_AND_RETURN(scope, );
+    }
     bool pullAgain = takeDirectPullAgain(controller);
     // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
     // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.
@@ -1190,18 +1202,21 @@ static void installDirectControllerMethods(JSC::VM& vm, JSGlobalObject* globalOb
         JSString* name;
         JSFunction* target;
         double length;
+        bool ignoresArguments; // end() shares close()'s target; a bound `undefined` keeps end(x) a clean close
     };
     const Method methods[] = {
-        { names.writePublicName(), strings.writeString(), runtime->boundDirectWrite(), 1 },
-        { names.endPublicName(), strings.endString(), runtime->boundDirectClose(), 0 },
-        { names.closePublicName(), strings.closeString(), runtime->boundDirectClose(), 1 },
-        { names.flushPublicName(), strings.flushString(), runtime->boundDirectFlush(), 0 },
-        { vm.propertyNames->error, strings.fetchErrorString(), runtime->boundDirectError(), 1 },
+        { names.writePublicName(), strings.writeString(), runtime->boundDirectWrite(), 1, false },
+        { names.endPublicName(), strings.endString(), runtime->boundDirectClose(), 0, true },
+        { names.closePublicName(), strings.closeString(), runtime->boundDirectClose(), 1, false },
+        { names.flushPublicName(), strings.flushString(), runtime->boundDirectFlush(), 0, false },
+        { vm.propertyNames->error, strings.fetchErrorString(), runtime->boundDirectError(), 1, false },
     };
     SourceCode source = makeSource("DirectStreamController"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
     for (const auto& method : methods) {
         MarkedArgumentBuffer boundArgs;
         boundArgs.append(controller);
+        if (method.ignoresArguments)
+            boundArgs.append(jsUndefined());
         auto* boundFunction = JSBoundFunction::create(vm, globalObject, method.target, jsUndefined(), ArgList(boundArgs), method.length, method.name, source);
         RETURN_IF_EXCEPTION(scope, );
         controller->putDirect(vm, method.key, boundFunction, 0);

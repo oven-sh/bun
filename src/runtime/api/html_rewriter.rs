@@ -6,8 +6,9 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
-    ProtectedJSValue, SystemError, bun_string_jsc,
+    self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
+    JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, ProtectedJSValue, SystemError,
+    bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -845,19 +846,25 @@ impl RewriterPipe {
     }
 
     /// Sever the wired input source: null the upstream's raw `sink` backref
-    /// so it can no longer dispatch into this pipe. With `cancel_upstream`,
-    /// also close a native producer afterwards, so a failed or cancelled
-    /// rewrite stops a fetch mid-download and closes a file fd instead of
-    /// draining to upstream EOF; EOF paths pass `false`. Only called from
-    /// terminal paths on the JS thread. Idempotent: the handle is `None`
-    /// after the first call. Returns the severed handle for
+    /// so it can no longer dispatch into this pipe. With a `cancel` reason
+    /// (a failed or cancelled rewrite; EOF paths pass `None`) the upstream
+    /// is also told its consumer went away: a native producer is closed, so
+    /// a fetch stops mid-download and a file fd closes instead of draining
+    /// to EOF, and a JS stream's controller is closed before the detach, so
+    /// the source's `cancel(reason)` runs. Only called from terminal paths
+    /// on the JS thread, after `done` is set (closing a JS controller ends
+    /// the sink again through `end_from_js`). Idempotent: the handle is
+    /// `None` after the first call. Returns the severed handle for
     /// [`Self::release_input_roots`], which the caller runs after its
     /// terminal work.
-    fn detach_input_source(&self, cancel_upstream: bool) -> SourceHandle {
+    fn detach_input_source(&self, cancel: Option<JSValue>) -> SourceHandle {
         let mut src = self.input_source.replace(SourceHandle::None);
         let mut upstream = src;
+        if let (Some(reason), SourceHandle::JSController(_)) = (cancel, upstream) {
+            upstream.cancel(reason);
+        }
         JSSink::<RewriterPipe>::detach(&mut src, &self.global);
-        if cancel_upstream {
+        if cancel.is_some() {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
                     upstream.close(None);
@@ -1420,7 +1427,7 @@ impl RewriterPipe {
         // pipe; otherwise the controller's destructor would later dispatch
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
-        let src = self.detach_input_source(false);
+        let src = self.detach_input_source(None);
 
         if self.js_pump_reaction_pending.get() {
             // The pump closes the sink before its promise settles; the `.then()`
@@ -1465,9 +1472,12 @@ impl RewriterPipe {
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
         let _pin = self.pin();
         self.detach_output();
-        let src = self.detach_input_source(true);
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
+        // The reader's cancel reason does not travel through the output
+        // `ByteStream`; the input's `cancel()` gets the same `AbortError` the
+        // output hands a native sink wired to it.
+        let src = self.detach_input_source(Some(CommonAbortReason::UserAbort.to_js(&self.global)));
         self.pending.with_mut(|p| {
             p.result = Writable::Done;
             p.run();
@@ -1714,11 +1724,11 @@ impl RewriterPipe {
     }
 
     /// Put `err` on the output `Response`'s body / ByteStream.
-    fn fail(&self, err: webcore::body::ValueError) {
+    fn fail(&self, mut err: webcore::body::ValueError) {
         let _pin = self.pin();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        let src = self.detach_input_source(true);
+        let src = self.detach_input_source(Some(err.to_js(&self.global)));
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors
         // `cancel_from_output`).
@@ -1730,7 +1740,6 @@ impl RewriterPipe {
         if let Some(out) = self.output.get() {
             // Output emitted before the failure still precedes the error.
             self.flush_output();
-            let mut err = err;
             out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
         } else if let Some(response) = self.response.get().as_deref() {

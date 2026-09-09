@@ -456,7 +456,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
+        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
     }
 
     return String();
@@ -503,7 +503,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 auto* function = uncheckedDowncast<JSC::JSFunction>(object);
                 functionName = function->nameWithoutGC(vm);
                 if (functionName.isEmpty() && !function->isHostFunction()) {
-                    functionName = function->jsExecutable()->ecmaName().string();
+                    functionName = function->jsExecutable()->ecmaNameWithoutGC();
                 }
             } else if (jstype == JSC::InternalFunctionType) {
                 functionName = uncheckedDowncast<JSC::InternalFunction>(object)->name();
@@ -570,7 +570,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     auto str = function->nameWithoutGC(vm);
                     if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaName().string();
+                        return function->jsExecutable()->ecmaNameWithoutGC();
                     }
                     setTypeFlagsIfNecessary();
                     return str;

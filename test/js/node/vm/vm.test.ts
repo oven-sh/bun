@@ -509,12 +509,16 @@ describe("code frame of an error thrown inside a builtin called from a source wi
     header: string;
     // The text of the line that calls into the builtin.
     excerpt: string;
+    // How the first `at ...` line starts: the builtin's frame is on top.
+    topFrame: string;
   };
 
-  function expectCodeFrame(printed: string, { filename, header, excerpt }: Expected) {
+  function expectCodeFrame(printed: string, { filename, header, excerpt, topFrame }: Expected) {
     const lines = printed.split("\n");
     const headerIndex = lines.indexOf(header);
     expect(headerIndex).toBeGreaterThanOrEqual(2);
+    const firstFrame = lines.slice(headerIndex + 1).find(line => line.trim().startsWith("at "));
+    expect(firstFrame?.trim()).toStartWith(topFrame);
     const userFrame = printed.match(new RegExp(`${RegExp.escape(filename)}:(\\d+):\\d+`));
     expect(userFrame).not.toBeNull();
     // Directly above the header are the excerpt and the caret. The excerpt is
@@ -532,6 +536,7 @@ describe("code frame of an error thrown inside a builtin called from a source wi
   const reduce = {
     excerpt: "[].reduce((a, b) => a);",
     header: "TypeError: reduce of empty array with no initial value",
+    topFrame: "at reduce (",
   };
   // displayErrors: false keeps node:vm from rewriting err.stack; the code frame
   // under test is the one bun's error printer builds from the error's frames.
@@ -569,6 +574,7 @@ describe("code frame of an error thrown inside a builtin called from a source wi
       filename: "/virtual/events.js",
       header: "error: Unhandled error. (undefined)",
       excerpt: 'emitter.emit("error");',
+      topFrame: "at emitError (node:events:",
       run: filename =>
         runInNewContext(
           '"line 1";\nemitter.emit("error");',

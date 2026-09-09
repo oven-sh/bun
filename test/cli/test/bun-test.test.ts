@@ -785,57 +785,66 @@ describe("bun test", () => {
     // (`reduce`), the `native` / `unknown` placeholders such frames turn into
     // once error.stack has been read, or one of bun's own `node:*` modules.
     // The annotation has to point at the first frame below it that is in the
-    // test file. The test callbacks are async so the error reaches the
-    // reporter with its own stack; a synchronous throw is reported with the
-    // frames of the throw site instead, which would not have these on top.
+    // test file, while its body still lists every frame.
     test.each([
       {
         label: "a JS builtin",
         body: `[].reduce((a, b) => a);`,
         callee: "reduce",
+        topFrame: "at reduce (",
         title: "TypeError: reduce of empty array with no initial value",
       },
       {
         label: "a JS builtin after error.stack was read",
         body: `try { [].reduce((a, b) => a); } catch (e) { void e.stack; throw e; }`,
         callee: "reduce",
+        topFrame: "at reduce (",
         title: "TypeError: reduce of empty array with no initial value",
       },
       {
         label: "a node: module",
         body: `new EventEmitter().emit("error");`,
         callee: "emit",
+        topFrame: "at emitError (node:events:",
         title: "error: Unhandled error. (undefined)",
       },
       {
         label: "a node: module after error.stack was read",
         body: `try { new EventEmitter().emit("error"); } catch (e) { void e.stack; throw e; }`,
         callee: "emit",
+        topFrame: "at emitError (node:events:",
         title: "error: Unhandled error. (undefined)",
       },
-    ])("should annotate the first frame in the test file when the top frame is $label", ({ body, callee, title }) => {
-      const lines = [
-        `import { test } from "bun:test";`,
-        `import { EventEmitter } from "node:events";`,
-        `test("fail", async () => {`,
-        `  ${body}`,
-        `});`,
-      ];
-      const line = lines.findIndex(l => l.includes(body)) + 1;
-      const col = lines[line - 1].indexOf(callee) + 1;
-      const stderr = runTest({
-        input: [{ filename: "top-frame-has-no-file.test.ts", contents: lines.join("\n") }],
-        env: {
-          GITHUB_ACTIONS: "true",
-        },
-        expectExitCode: 1,
-      });
-      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
-      expect(annotation).toStartWith("::error file=");
-      expect(annotation!.replace(/^::error file=(?:[^,]*[\\/])?/, "")).toStartWith(
-        `top-frame-has-no-file.test.ts,line=${line},col=${col},title=${title}::`,
-      );
-    });
+    ])(
+      "should annotate the first frame in the test file when the top frame is $label",
+      ({ body, callee, topFrame, title }) => {
+        const lines = [
+          `import { test } from "bun:test";`,
+          `import { EventEmitter } from "node:events";`,
+          `test("fail", async () => {`,
+          `  ${body}`,
+          `});`,
+        ];
+        const line = lines.findIndex(l => l.includes(body)) + 1;
+        const col = lines[line - 1].indexOf(callee) + 1;
+        const stderr = runTest({
+          input: [{ filename: "top-frame-has-no-file.test.ts", contents: lines.join("\n") }],
+          env: {
+            GITHUB_ACTIONS: "true",
+          },
+          expectExitCode: 1,
+        });
+        const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+        expect(annotation).toStartWith("::error file=");
+        expect(annotation!.replace(/^::error file=(?:[^,]*[\\/])?/, "")).toStartWith(
+          `top-frame-has-no-file.test.ts,line=${line},col=${col},title=${title}::`,
+        );
+        // The builtin's frame is listed in the body, above the test file's frame.
+        const builtinFrame = annotation!.indexOf(`%0A      ${topFrame}`);
+        expect(builtinFrame).toBeGreaterThan(0);
+        expect(annotation!.indexOf("top-frame-has-no-file.test.ts:", builtinFrame)).toBeGreaterThan(builtinFrame);
+      },
+    );
     test("should annotate without a location when no frame has a file", () => {
       const stderr = runTest({
         input: `

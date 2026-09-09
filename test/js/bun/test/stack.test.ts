@@ -197,6 +197,8 @@ test.each([
   const lines = Bun.inspect(err).split("\n");
   const header = lines.indexOf("TypeError: reduce of empty array with no initial value");
   expect(header).toBeGreaterThanOrEqual(2);
+  // The builtin's frame is the first one listed, above this file's.
+  expect(lines[header + 1].trim()).toStartWith("at reduce (");
   const [sourceLine, caretLine] = lines.slice(header - 2, header);
   expect(sourceLine).toEndWith("emptyArray.reduce((a, b) => a);");
   expect(caretLine.trim()).toBe("^");

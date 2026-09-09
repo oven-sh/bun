@@ -32,6 +32,9 @@ pub struct ZigStackFrame {
     pub jsc_stack_frame_index: i32,
 }
 
+// Mirrors `ZigStackFrame` in headers-handwritten.h.
+bun_core::assert_ffi_layout!(ZigStackFrame, 72, 8);
+
 impl ZigStackFrame {
     pub(crate) fn snapshot(
         &self,

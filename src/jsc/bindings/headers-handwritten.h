@@ -249,6 +249,7 @@ typedef struct ZigStackFrame {
     {
     }
 } ZigStackFrame;
+static_assert(sizeof(ZigStackFrame) == 72 && alignof(ZigStackFrame) == 8, "ZigStackFrame layout is mirrored in src/jsc/ZigStackFrame.rs");
 
 typedef struct ZigStackTrace {
     BunString* source_lines_ptr;

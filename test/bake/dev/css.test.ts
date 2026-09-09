@@ -1008,6 +1008,34 @@ devTest("plain css import stays side-effect only next to css modules", {
     expect(await c.js<number>`globalThis.evalCount`).toBe(1);
   },
 });
+devTest("plain css imported with a binding is an empty module, as in bun build", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body { color: red; }
+    `,
+    "other.css": `
+      h1 { color: blue; }
+    `,
+    "index.ts": `
+      import sheet from "./plain.css";
+      import * as ns from "./other.css";
+      console.log(JSON.stringify({ sheet, ns: Object.keys(ns), nsDefault: ns.default }));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+    await c.style("body").color.expect.toBe("red");
+    await c.style("h1").color.expect.toBe("#00f");
+    // The same holds when the importer is bundled again and the stylesheets are cached.
+    await dev.patch("index.ts", { find: "JSON.stringify({", replace: `"again:" + JSON.stringify({` });
+    await c.expectMessage("again:" + JSON.stringify({ sheet: {}, ns: ["default"], nsDefault: {} }));
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

@@ -92,17 +92,24 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
         match &stmt.data {
             StmtData::SImport(st) => {
                 let record = &mut ast.import_records[st.import_record_index as usize];
-                if record.path.is_disabled {
-                    continue;
-                }
+                let has_bindings =
+                    !st.star_name_loc.is_empty() || st.items.len() > 0 || st.default_name.is_some();
 
-                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
-                    // Barrel optimization: this import was deferred (unused submodule).
-                    // Don't add to dep array, but declare the namespace ref as an
-                    // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
-                    let items_len = st.items.len();
-                    if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
+                // Nothing to link to: a plain stylesheet (it arrives through a <link> tag), a
+                // path the `browser` field maps to false, or a deferred barrel import. The body
+                // may still read the binding, so declare the namespace as the empty module a
+                // production bundle gives these (`{ default: {} }`; `{}` for a deferred import).
+                let is_deferred = record.flags.contains(ImportRecordFlags::IS_UNUSED);
+                if record.path.is_disabled || is_deferred {
+                    if has_bindings {
+                        let mut namespace = E::Object::default();
+                        if !is_deferred {
+                            namespace.put(
+                                bump,
+                                b"default",
+                                Expr::init(E::Object::default(), stmt.loc),
+                            )?;
+                        }
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
@@ -116,7 +123,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             },
                                             stmt.loc,
                                         ),
-                                        value: Some(Expr::init(E::Object::default(), stmt.loc)),
+                                        value: Some(Expr::init(namespace, stmt.loc)),
                                     }]),
                                     ..Default::default()
                                 },
@@ -129,8 +136,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 let is_builtin = record.tag == ImportRecordTag::Builtin
                     || record.tag == ImportRecordTag::Bun
                     || record.tag == ImportRecordTag::Runtime;
-                let is_bare_import =
-                    st.star_name_loc.is_empty() && st.items.len() == 0 && st.default_name.is_none();
+                let is_bare_import = !has_bindings;
 
                 if is_builtin {
                     if !is_bare_import {

@@ -221,11 +221,21 @@ describe("css tests", () => {
         ":-webkit-full-screen .a:-webkit-autofill:-moz-read-only{color:red}:fullscreen .a:-webkit-autofill:-moz-read-only{color:red}",
         { safari: 8 << 16 },
       );
-      // A nested rule with only an explicit prefix is printed once, in the
-      // pass of its prefix.
+      // A nested rule with prefixable components of its own prints in every
+      // pass of its parents too, and keeps its explicit prefix in all of them.
       minify_prefix_test(
         ":fullscreen{.a::-webkit-input-placeholder{color:red}}",
-        ":-webkit-full-screen .a::-webkit-input-placeholder{color:red}",
+        ":-webkit-full-screen .a::-webkit-input-placeholder{color:red}:fullscreen .a::-webkit-input-placeholder{color:red}",
+        { safari: 8 << 16 },
+      );
+      minify_prefix_test(
+        ":fullscreen{.a:read-only:-webkit-any-link{color:red}}",
+        ":-webkit-full-screen .a:read-only:-webkit-any-link{color:red}:-moz-full-screen .a:-moz-read-only:-webkit-any-link{color:red}:fullscreen .a:read-only:-webkit-any-link{color:red}",
+        { safari: 8 << 16, firefox: 30 << 16 },
+      );
+      minify_prefix_test(
+        ":fullscreen{.x::selection{color:red}}",
+        ":-webkit-full-screen .x::selection{color:red}:fullscreen .x::selection{color:red}",
         { safari: 8 << 16 },
       );
     });
@@ -276,6 +286,11 @@ describe("css tests", () => {
         ".x:not(:-webkit-any(.a,.b)){color:red}.x:not(:is(.a,.b)){color:red}",
         { safari: 8 << 16 },
       );
+      // `:-webkit-any()` takes compound selectors only, so a `:not()` list with
+      // a combinator gets no `-webkit-` copy either.
+      minify_prefix_test_again(".x:not(.a .b,.c){color:red}", ".x:not(:is(.a .b,.c)){color:red}", {
+        safari: 8 << 16,
+      });
       minify_prefix_test_again(
         ".x:lang(en,fr){color:red}",
         ".x:-webkit-any(:lang(en),:lang(fr)){color:red}.x:-moz-any(:lang(en),:lang(fr)){color:red}.x:is(:lang(en),:lang(fr)){color:red}",

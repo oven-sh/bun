@@ -152,11 +152,7 @@ fn downlevel_component<'bump>(
                     new_selectors.push(sel.deep_clone());
                 }
                 let new_selectors = new_selectors.into_boxed_slice();
-                let prefixes = if targets.should_compile_same(Feature::IsSelector) {
-                    targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo)
-                } else {
-                    VendorPrefix::NONE
-                };
+                let prefixes = is_prefixes(&new_selectors, targets);
                 necessary_prefixes.insert(prefixes);
                 let is = if prefixes != VendorPrefix::NONE {
                     Component::Any {
@@ -268,12 +264,25 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
 
 /// The vendor prefix passes that `StyleRule::to_css` prints these selectors in:
 /// each prefix a component has besides the one it is written with (added by
-/// `downlevel_selectors` or `merge_prefixes`), plus one pass as written. For
-/// selectors with an explicit prefix and nothing extra that pass is the explicit
-/// prefix, so that parent selectors substituted for `&` print the same variant.
+/// `downlevel_selectors` or `merge_prefixes`), plus one pass as written.
 pub(crate) fn prefix_passes(selectors: &[Selector]) -> VendorPrefix {
     let mut sets = Vec::new();
     prefix_sets(selectors, &mut sets);
+    passes_for(&sets)
+}
+
+/// `prefix_passes` for a nested rule printed with its parent rules substituted
+/// for `&`: the parents' components print in the same passes as its own.
+pub(crate) fn nested_prefix_passes(
+    selectors: &[Selector],
+    mut parent: Option<&StyleContext>,
+) -> VendorPrefix {
+    let mut sets = Vec::new();
+    prefix_sets(selectors, &mut sets);
+    while let Some(context) = parent {
+        prefix_sets(context.selectors.v.slice(), &mut sets);
+        parent = context.parent;
+    }
     passes_for(&sets)
 }
 
@@ -317,21 +326,11 @@ fn prefix_sets(selectors: &[Selector], sets: &mut Vec<VendorPrefix>) {
 
 /// `prefix_passes` for components with the given sets of prefixes.
 fn passes_for(sets: &[VendorPrefix]) -> VendorPrefix {
-    // Prefixes other than the one each component is written with.
-    let mut extra = VendorPrefix::empty();
-    // Prefixes of the components that have no unprefixed variant.
-    let mut explicit = VendorPrefix::empty();
+    let mut passes = VendorPrefix::NONE;
     for &prefixes in sets {
-        extra.insert(prefixes.difference(prefixes.canonical()));
-        if !prefixes.contains(VendorPrefix::NONE) {
-            explicit.insert(prefixes);
-        }
+        passes.insert(prefixes.difference(prefixes.canonical()));
     }
-    if extra.is_empty() && explicit.bits().count_ones() == 1 {
-        explicit
-    } else {
-        extra | VendorPrefix::NONE
-    }
+    passes
 }
 
 /// The prefixes that components with the given sets of prefixes print with, for

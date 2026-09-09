@@ -100,14 +100,22 @@ impl<R> StyleRule<R> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
+            // With nesting compiled away, the parent selectors substituted for
+            // `&` print in this rule's passes too.
+            let passes = match dest.ctx {
+                Some(parents) => {
+                    selector::nested_prefix_passes(self.selectors.v.slice(), Some(parents))
+                }
+                None => self.vendor_prefix,
+            };
             let mut first_rule = true;
             let mut emitted_first_pass = false;
-            let mut remaining_prefixes = self.vendor_prefix;
+            let mut remaining_prefixes = passes;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
-                if self.vendor_prefix.contains(prefix) {
+                if passes.contains(prefix) {
                     remaining_prefixes.remove(prefix);
                     if !first_rule {
                         if !dest.minify {

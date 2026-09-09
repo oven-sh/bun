@@ -650,7 +650,10 @@ describe("streaming", () => {
       expect(exitCode).toBeInteger();
       expect(outcome).toBe("rejected ECONNRESET");
       // error() got the failure (and logged); its 555 Response never reached the client, and nothing else was printed.
-      expect({ handlerCalled: stderr.includes("error handler called"), printed: stderr.includes("error: Oops") }).toEqual({ handlerCalled: true, printed: false });
+      expect({
+        handlerCalled: stderr.includes("error handler called"),
+        printed: stderr.includes("error: Oops"),
+      }).toEqual({ handlerCalled: true, printed: false });
       expect(onMessage).toHaveBeenCalled();
     });
 
@@ -681,7 +684,10 @@ describe("streaming", () => {
       expect(exitCode).toBeInteger();
       expect(outcome).toBe("rejected ECONNRESET");
       // error() got the failure (and logged); its 555 Response never reached the client, and nothing else was printed.
-      expect({ handlerCalled: stderr.includes("error handler called"), printed: stderr.includes("error: Oops") }).toEqual({ handlerCalled: true, printed: false });
+      expect({
+        handlerCalled: stderr.includes("error handler called"),
+        printed: stderr.includes("error: Oops"),
+      }).toEqual({ handlerCalled: true, printed: false });
       expect(onMessage).toHaveBeenCalled();
     });
 

@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
+import { expected as directExpected, observe as directObserve, shapes as directShapes } from "../../web/streams/direct-stream-contract";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -1732,5 +1733,41 @@ describe("close() under transport backpressure sends the buffered tail", () => {
     } finally {
       client.close();
     }
+  });
+});
+
+// The server/fetch cells of the `type: "direct"` contract matrix; the in-process cells live in test/js/web/streams/streams.test.js.
+describe("direct stream contract", () => {
+  // Each resolves to the body text, or rejects if the transfer failed or the status was not 2xx.
+  const okText = async (res: Response) => {
+    const body = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${body}`);
+    return body;
+  };
+  const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {
+    "Bun.serve response body (http)": async s => {
+      using server = Bun.serve({ port: 0, fetch: () => new Response(s) });
+      return okText(await fetch(server.url));
+    },
+    "Bun.serve response body (https)": async s => {
+      using server = Bun.serve({ port: 0, tls, fetch: () => new Response(s) });
+      return okText(await fetch(server.url, { tls: { rejectUnauthorized: false } }));
+    },
+    "fetch request body": async s => {
+      using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+      return okText(await fetch(server.url, { method: "POST", body: s, duplex: "half" } as RequestInit));
+    },
+  };
+  describe.each(Object.keys(directShapes))("%s", shapeName => {
+    test.concurrent.each(Object.keys(consumers))("%s", async consumerName => {
+      const shape = directShapes[shapeName];
+      const got = await directObserve(shape, consumers[consumerName]);
+      if ("error" in shape.expect) {
+        // The source's message cannot cross the wire; the peer sees a failed transfer or a 5xx.
+        expect({ pulls: got.pulls, cancels: got.cancels, errored: "error" in got }).toEqual({ pulls: 1, cancels: 0, errored: true });
+        return;
+      }
+      expect(got).toEqual(directExpected(shape));
+    });
   });
 });

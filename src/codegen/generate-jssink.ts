@@ -143,7 +143,7 @@ function header() {
 
                 ~${controller}();
 
-                void detach();
+                void detach(JSC::JSValue reason = {});
 
                 DECLARE_VISIT_CHILDREN;
 
@@ -220,6 +220,7 @@ public:
     }
     JSC::JSObject* readableStream() const { return m_weakReadableStream.get(); }
     JSC::EncodedJSValue end(JSC::JSGlobalObject*); // the JS-visible end(): finish the native sink, then detach()
+    JSC::EncodedJSValue close(JSC::JSGlobalObject*, JSC::JSValue reason); // the JS-visible close(reason): a truthy reason fails the sink without flushing
 
     void* m_sinkPtr;
     SinkID m_sinkId;
@@ -431,13 +432,13 @@ static JSC::EncodedJSValue ${controller}__closeWithReason(JSC::JSGlobalObject* l
         if (!scope.tryClearException()) {
             return {};
         }
-        controller->detach();
+        controller->detach(JSC::JSValue::decode(reason));
         (void)scope.tryClearException();
         scope.throwException(lexicalGlobalObject, pending);
         return {};
     }
 
-    controller->detach();
+    controller->detach(JSC::JSValue::decode(reason));
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -692,7 +693,7 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
     return ${controllerPrototypeName}::create(vm, &globalObject, ${controllerPrototypeName}::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JS${controllerName}::detach() {
+void JS${controllerName}::detach(JSC::JSValue reason) {
     auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
     auto destroy = std::exchange(m_onDestroy, 0);
 
@@ -708,7 +709,7 @@ void JS${controllerName}::detach() {
         m_weakReadableStream.clear();
         return;
     }
-    Bun::WebStreams::sinkControllerOnClose(this->globalObject(), this, JSC::jsUndefined(), /* sinkClosed */ false);
+    Bun::WebStreams::sinkControllerOnClose(this->globalObject(), this, reason ? reason : JSC::jsUndefined(), /* sinkClosed */ false);
 }
 `;
 
@@ -973,6 +974,21 @@ ${classes
   .map(
     name =>
       `    case WebCore::SinkID::${name}: return WebCore::${names(name).controller}__endImpl(globalObject, uncheckedDowncast<WebCore::${names(name).controller}>(this));`,
+  )
+  .join("\n")}
+    default: break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC::EncodedJSValue WebCore::JSReadableSinkControllerBase::close(JSC::JSGlobalObject* globalObject, JSC::JSValue reason)
+{
+    JSC::EncodedJSValue encoded = reason.toBoolean(globalObject) ? JSC::JSValue::encode(reason) : JSC::JSValue::encode(JSC::JSValue());
+    switch (m_sinkId) {
+${classes
+  .map(
+    name =>
+      `    case WebCore::SinkID::${name}: return WebCore::${names(name).controller}__closeWithReason(globalObject, uncheckedDowncast<WebCore::${names(name).controller}>(this), encoded);`,
   )
   .join("\n")}
     default: break;

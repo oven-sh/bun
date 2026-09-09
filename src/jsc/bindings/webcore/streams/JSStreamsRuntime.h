@@ -167,7 +167,7 @@ namespace WebCore {
 //   onNativeSourceCallCloseMicrotask: the native source's `queueMicrotask(callClose)` job;
 //     context = the adapter.
 //   onNativeSourceHandleClosedMicrotask: the native handle reported close (ReadableStream.rs on_close); context = the adapter.
-//   onReadDirectStreamPullFulfilled: readDirectStream's pull() resolved. context = the native sink controller.
+//   onReadDirectStreamPull{Fulfilled,Rejected}: readDirectStream's pull() settled. context = the native sink controller.
 //   onReadStreamIntoSink*: context = the JSReadStreamIntoSinkOperation.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V) \
     V(onNativePullFulfilled)                                \
@@ -175,6 +175,7 @@ namespace WebCore {
     V(onNativeSourceCallCloseMicrotask)                     \
     V(onNativeSourceHandleClosedMicrotask)                  \
     V(onReadDirectStreamPullFulfilled)                      \
+    V(onReadDirectStreamPullRejected)                       \
     V(onReadStreamIntoSinkReadManyFulfilled)                \
     V(onReadStreamIntoSinkChunk)                            \
     V(onReadStreamIntoSinkClose)                            \

@@ -73,11 +73,9 @@ When using a direct `ReadableStream`, the destination handles all chunk queueing
 
 ### Ending the stream
 
-Call `controller.close()` (or `controller.end()`) once everything is written. Every destination flushes what it has buffered and finishes at that point.
+Call `controller.close()` (or `controller.end()`) once everything is written. Every destination flushes what it has buffered and finishes at that point. `controller.close(error)` fails the stream instead: nothing more is flushed and the consumer rejects with `error`.
 
-A destination that takes the whole stream (a `Response` or `Request` body, `Bun.serve`, `fetch`, `Bun.write`, `Bun.spawn` stdin, `.text()`, `.bytes()`, `Bun.readableStreamToText()`, and so on) calls `pull()` once. If that `pull()` returns a promise, the stream also ends when the promise resolves, as if `pull()` had called `controller.close()` last. If the promise rejects, the destination fails with that error. A `pull()` that returns without a promise and without closing keeps the stream open until something calls `controller.close()`.
-
-A reader (`getReader()`, `for await`, `pipeTo()`, `pipeThrough()`, `tee()`) treats `pull()` as a request for more data instead: it calls `pull()` again for each read until the stream is closed, like a default `ReadableStream` does.
+`pull()` is called once, by whatever consumes the stream (`Bun.serve`, `fetch`, `Bun.write`, `Bun.spawn` stdin, `.text()`, a reader, `pipeTo()`, and so on). If it returns a promise, the stream stays open while that promise is pending and ends when it resolves, as if `pull()` had called `controller.close()` last; if it rejects, the stream errors with that reason. A `pull()` that returns without a promise and without closing keeps the stream open until something calls `controller.close()`, so you can hold on to the controller and write from events.
 
 ### Handling backpressure
 

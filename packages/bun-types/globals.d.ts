@@ -727,6 +727,11 @@ interface ReadableStreamDefaultController<R = any> {
 }
 
 interface ReadableStreamDirectController {
+  /**
+   * Finish the stream. With no argument this flushes buffered bytes and ends,
+   * like {@link end}. With an `error`, the stream fails: buffered bytes are
+   * dropped and the consumer rejects with `error`.
+   */
   close(error?: Error): void;
   /**
    * Write a chunk directly to the destination.

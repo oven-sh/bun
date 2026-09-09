@@ -105,19 +105,15 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed : 1 { false };
-    // An async pull()'s returned promise has not yet settled; cleared by its settlement
-    // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
-    // (edge-triggered, matching the spec default controller's [[pullAgain]]).
+    // pull() runs once: the first read calls it; if it returned a promise the stream closes when that settles, else it stays open until close()/end().
+    bool m_pulled : 1 { false };
     bool m_pullInFlight : 1 { false };
-    bool m_pullAgain : 1 { false };
     bool m_calledDone : 1 { false };
     // End-of-tick auto-flush (the JS-facing analogue of the HTTP sink's AutoFlusher):
     // armed by write() when data is buffered below the HWM while a consumer waits; the
     // process.nextTick job delivers it during the same microtask/nextTick drain.
     bool m_endOfTickFlushArmed : 1 { false };
     bool m_finalChunkArmed : 1 { false };
-    // A whole-body consumer (.text() etc.): an async pull() resolving without close()/end() closes.
-    bool m_closeOnPullSettled : 1 { false };
     // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
     // ArrayBuffer sink: m_buffer's capacity as last reported to the heap (reportExtraMemoryAllocated);

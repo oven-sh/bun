@@ -767,10 +767,9 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
     int8_t deferredClose = 0;
     int8_t deferredFlush = 0;
 
-    // Serialize pull(): while an async pull's promise is pending, subsequent reads install
-    // m_pendingRead for it to deliver into via flush()/end(); its fulfillment reaction
-    // clears m_pullInFlight and re-pulls if a consumer is still waiting.
-    if (!m_pullInFlight) {
+    // pull() runs once. Later reads register a consumer and drain what the source has written since.
+    if (!m_pulled) {
+        m_pulled = true;
         m_deferClose = -1;
         m_deferFlush = -1;
 
@@ -793,10 +792,6 @@ JSValue JSDirectStreamController::onPull(JSGlobalObject* globalObject, bool read
             RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, abrupt));
         }
     } else {
-        // A new read arrived while an async pull is pending: the fulfillment reaction will
-        // re-pull. Drain anything that pull already wrote; onFlush is a no-op-restore on an
-        // empty sink.
-        m_pullAgain = true;
         deferredFlush = 1;
     }
 
@@ -860,6 +855,11 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     }
     if (m_closed)
         return;
+    // close(error): the source failed; error the stream instead of ending it (the native sink path's fail()).
+    if (reason.toBoolean(globalObject)) {
+        handleError(globalObject, reason);
+        RELEASE_AND_RETURN(scope, );
+    }
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
     auto* source = m_source.get();
@@ -966,10 +966,6 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
                     m_pendingRead.set(vm, this, uncheckedDowncast<JSPromise>(readRequest->context()));
                 }
             }
-            // The spec's enqueue → CallPullIfNeeded equivalent: re-arm when this delivery
-            // still leaves a consumer waiting behind the in-flight pull.
-            if (m_pullInFlight && (m_pendingRead || readableStreamGetNumReadRequests(stream) > 0))
-                m_pullAgain = true;
             JSObject* result = createIteratorResultObject(globalObject, flushed, false);
             RETURN_IF_EXCEPTION(scope, );
             RELEASE_AND_RETURN(scope, pendingRead->fulfill(vm, result));
@@ -982,8 +978,6 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         JSValue flushed = flushDirectSink(vm, globalObject, this);
         RETURN_IF_EXCEPTION(scope, );
         if (byteLengthOf(flushed)) {
-            if (m_pullInFlight && readableStreamGetNumReadRequests(stream) > 1)
-                m_pullAgain = true;
             RELEASE_AND_RETURN(scope, readableStreamFulfillReadRequest(globalObject, stream, flushed, false));
         }
         return;
@@ -993,22 +987,7 @@ void JSDirectStreamController::onFlush(JSGlobalObject* globalObject)
         m_deferFlush = 1;
 }
 
-static bool takeDirectPullAgain(JSDirectStreamController* controller)
-{
-    bool pullAgain = controller->m_pullAgain;
-    controller->m_pullAgain = false;
-    return pullAgain;
-}
-
-static bool directControllerHasWaitingConsumer(JSDirectStreamController* controller, JSReadableStream* stream)
-{
-    return controller->m_pendingRead || (stream && readableStreamGetNumReadRequests(stream) > 0);
-}
-
-// Settlement reactions of the user pull()'s returned promise ([reaction-convention]).
-// The pull promise's fulfilment reaction (enterStreams): drain, then re-pull while a consumer is
-// waiting. Whatever throws in here (a chunkSteps callback, a deferred close, the source's hooks)
-// errors the stream.
+// The user pull()'s returned promise settled ([reaction-convention]): drain what it wrote, then close. A rejection errors the stream (onDirectPullRejected).
 static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1016,63 +995,15 @@ static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDir
     auto* stream = controller->m_stream.get();
     if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable) {
         controller->m_pullInFlight = false;
-        controller->m_pullAgain = false;
         return;
     }
-    // Drain anything this pull wrote while no reader was waiting. m_pullInFlight stays set
-    // so onFlush's delivery-branch re-arm fires for a pull that wrote without c.flush().
     controller->onFlush(globalObject);
     controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, );
-    if (controller->m_closeOnPullSettled) {
-        controller->m_pullAgain = false;
-        stream = controller->m_stream.get();
-        if (!controller->m_closed && stream && stream->m_state == ReadableStreamState::Readable)
-            controller->onClose(globalObject, jsUndefined());
-        RELEASE_AND_RETURN(scope, );
-    }
-    bool pullAgain = takeDirectPullAgain(controller);
-    // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
-    // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.
-    while (pullAgain && !controller->m_closed && !controller->m_pullInFlight
-        && directControllerHasWaitingConsumer(controller, controller->m_stream.get())) {
-        controller->m_deferClose = -1;
-        controller->m_deferFlush = -1;
-        JSValue abrupt = callDirectPull(vm, globalObject, controller);
-        int8_t deferredClose = controller->m_deferClose;
-        int8_t deferredFlush = controller->m_deferFlush;
-        controller->m_deferClose = 0;
-        controller->m_deferFlush = 0;
-        RETURN_IF_EXCEPTION(scope, );
-        if (!abrupt.isEmpty()) {
-            controller->handleError(globalObject, abrupt);
-            RELEASE_AND_RETURN(scope, );
-        }
-        if (deferredClose == 1) {
-            JSValue reason = controller->m_deferCloseReason.get();
-            controller->m_deferCloseReason.clear();
-            controller->onClose(globalObject, reason);
-            RETURN_IF_EXCEPTION(scope, );
-        } else {
-            // An async re-pull left m_pullInFlight set: its own fulfillment reaction drains
-            // and picks up m_pullAgain. What its synchronous part already wrote goes to the
-            // waiting reader now, as in onPull: no end-of-tick job was queued for it, and the
-            // pull may be parked on that very write.
-            if (controller->m_pullInFlight) {
-                if (deferredFlush == 1 || !controller->m_buffer.isEmpty())
-                    controller->onFlush(globalObject);
-                RETURN_IF_EXCEPTION(scope, );
-                break;
-            }
-            // Sync re-pull: drain with m_pullInFlight bracketed so onFlush's delivery-branch
-            // re-arm fires regardless of whether the pull called c.flush() itself.
-            controller->m_pullInFlight = true;
-            controller->onFlush(globalObject);
-            controller->m_pullInFlight = false;
-            RETURN_IF_EXCEPTION(scope, );
-        }
-        pullAgain = takeDirectPullAgain(controller);
-    }
+    stream = controller->m_stream.get();
+    if (controller->m_closed || !stream || stream->m_state != ReadableStreamState::Readable)
+        return;
+    RELEASE_AND_RETURN(scope, controller->onClose(globalObject, jsUndefined()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))

@@ -944,8 +944,6 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     setUpDirectStreamController(globalObject, stream, kind);
     RETURN_IF_EXCEPTION(scope, {});
-    if (auto* controller = dynamicDowncast<JSDirectStreamController>(stream->m_controller.get()))
-        controller->m_closeOnPullSettled = true;
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
@@ -1628,8 +1626,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadRejected, (J
     return {};
 }
 
-// close()/end(), and the implicit close when an async pull() resolves without calling either.
-static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink)
+// close()/end(), and the implicit close when an async pull() resolves without calling either. A truthy reason is close(error): the consumer rejects with it.
+static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (sink->m_closed)
@@ -1637,14 +1635,27 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     sink->m_closed = true;
     if (auto* source = sink->source()) {
         sink->clearSource();
-        source->close(globalObject, jsUndefined());
+        source->close(globalObject, reason);
         RETURN_IF_EXCEPTION(scope, );
     }
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
-    if (auto* capability = sink->capabilityPromise(); capability && capability->status() == JSPromise::Status::Pending)
-        capability->fulfill(vm, endResult);
+    auto* capability = sink->capabilityPromise();
+    if (!capability || capability->status() != JSPromise::Status::Pending)
+        return;
+    if (reason.toBoolean(globalObject)) {
+        if (auto* stream = sink->stream()) {
+            stream->m_lockedWithoutReader = false;
+            if (stream->m_state == ReadableStreamState::Readable) {
+                Bun::WebStreams::readableStreamError(globalObject, stream, reason);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
+        capability->reject(vm, reason);
+        return;
+    }
+    capability->fulfill(vm, endResult);
 }
 
 // pull() runs once here: its promise resolving without close()/end() is the end of the body.
@@ -1654,7 +1665,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFul
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
     auto* stream = sink->stream();
-    oneShotDirectClose(vm, globalObject, sink);
+    oneShotDirectClose(vm, globalObject, sink, jsUndefined());
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         TRY_CLEAR_EXCEPTION(scope, {});
         if (stream) {
@@ -1717,7 +1728,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalO
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
-    oneShotDirectClose(vm, globalObject, sink);
+    oneShotDirectClose(vm, globalObject, sink, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

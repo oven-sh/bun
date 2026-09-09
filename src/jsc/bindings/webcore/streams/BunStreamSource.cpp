@@ -759,6 +759,9 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), result, sinkController);
         return result;
     }
+    // A sync pull() that called close(error): the owner hears it the way it hears an async one.
+    if (JSValue failed = sinkController->m_failReason.get())
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, failed));
     if (stream->m_state == ReadableStreamState::Readable) {
         auto* closePromise = JSPromise::create(vm, globalObject->promiseStructure());
         sinkController->m_closePromise.set(vm, sinkController, closePromise);

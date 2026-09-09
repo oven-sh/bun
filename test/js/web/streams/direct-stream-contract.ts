@@ -134,18 +134,6 @@ export const shapes: Record<string, Shape> = {
         Promise.resolve(new Error("not a failure")).then(v => (c.end as any)(v));
       }),
   },
-  "close(undefined), close(0) and close('') are clean closes": {
-    expect: { body: "hello world" },
-    make: t =>
-      direct(t, async c => {
-        c.write("hello ");
-        await later();
-        c.write("world");
-        (c.close as any)(undefined);
-        (c.close as any)(0);
-        (c.close as any)("");
-      }),
-  },
   "async pull: rejects after close() already ran": {
     expect: { body: "hello world" },
     make: t =>
@@ -181,6 +169,10 @@ export const shapes: Record<string, Shape> = {
         throw { code: "E_SOURCE" };
       }),
   },
+  "sync pull: write, then close(error)": {
+    expect: { error: "source failed" },
+    make: t => direct(t, c => (c.write("partial"), c.close(new Error("source failed")))),
+  },
   "close(error) after a write": {
     expect: { error: "source failed" },
     make: t =>
@@ -191,6 +183,24 @@ export const shapes: Record<string, Shape> = {
       }),
   },
 };
+
+// Each falsy argument as the first close(): a clean close, not close(error).
+for (const [label, arg] of [
+  ["undefined", undefined],
+  ["0", 0],
+  ['""', ""],
+] as const) {
+  shapes[`close(${label}) is a clean close`] = {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.write("world");
+        (c.close as any)(arg);
+      }),
+  };
+}
 
 const decoder = new TextDecoder();
 const text = (v: unknown) => (typeof v === "string" ? v : decoder.decode(v as ArrayBufferView));

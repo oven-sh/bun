@@ -1,6 +1,6 @@
 import { cssInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import path from "node:path";
 
 // Regression test for exponential output when nested rules are re-serialized
@@ -200,9 +200,10 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
   // `-moz-`, `-ms-input-`, unprefixed); 20_000 such rules charge ~3 duplicate
   // passes of a tiny declaration each (a few MB total), well under the 64 MB
   // byte limit. Distinct declarations keep the rules from being merged. This
-  // stays linear instead of throwing.
+  // stays linear instead of throwing. Debug/ASAN builds minify 20_000 rules in
+  // about the default per-test timeout, so they use a smaller sheet.
   const oldTargets = { safari: 8 << 16, firefox: 20 << 16, chrome: 30 << 16, edge: 12 << 16 };
-  const count = 20_000;
+  const count = isDebug || isASAN ? 5_000 : 20_000;
   let src = "";
   for (let i = 0; i < count; i++) src += `input.c${i}::placeholder{--v${i}:1}`;
   const output = minifyTest(src, "", oldTargets);

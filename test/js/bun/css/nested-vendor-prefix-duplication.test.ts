@@ -180,6 +180,32 @@ test("shallow mixed vendor-prefix nesting prints the selectors as written", () =
   expect(output).not.toContain(":autofill");
 });
 
+test("a mixed vendor-prefix rule nested in a prefixed rule keeps its prefixes in every ancestor pass", () => {
+  // The nested rule has no prefix pass of its own, so it is printed inside each
+  // pass of `:fullscreen` (`-webkit-` and unprefixed for Safari 8, where nesting
+  // is compiled away). Its own pseudos must not pick up the ancestor's pass.
+  expect(minifyTest(":fullscreen { input:-moz-read-only::placeholder { color: red } }", "", safari8)).toBe(
+    ":-webkit-full-screen input:-moz-read-only::placeholder{color:red}" +
+      ":fullscreen input:-moz-read-only::placeholder{color:red}",
+  );
+  expect(minifyTest(":fullscreen { .p::placeholder, .q::-moz-placeholder { color: red } }", "", safari8)).toBe(
+    ":-webkit-full-screen .p::placeholder,:-webkit-full-screen .q::-moz-placeholder{color:red}" +
+      ":fullscreen .p::placeholder,:fullscreen .q::-moz-placeholder{color:red}",
+  );
+  // Two different explicit prefixes in one list: also printed as written.
+  expect(minifyTest(":-webkit-full-screen { .a:-webkit-autofill, .b:-moz-any-link { color: red } }", "", safari8)).toBe(
+    ":-webkit-full-screen .a:-webkit-autofill,:-webkit-full-screen .b:-moz-any-link{color:red}",
+  );
+  // With nesting preserved the rule is printed in place, once.
+  expect(minifyTest(":fullscreen { input:-moz-read-only::placeholder { color: red } }", "")).toBe(
+    ":fullscreen{& input:-moz-read-only::placeholder{color:red}}",
+  );
+  // A plain rule between the two still pairs the ancestor's pass with a prefixed descendant's.
+  expect(minifyTest(":fullscreen { .x { ::placeholder { color: red } } }", "", safari8)).toBe(
+    ":-webkit-full-screen .x ::-webkit-input-placeholder{color:red}:fullscreen .x ::placeholder{color:red}",
+  );
+});
+
 test("deeply nested single-prefix rules stay linear and do not trip the bound", () => {
   // A single selector with one vendor prefix (no mixing with an unprefixed
   // selector) sets one prefix bit, so the rule is serialized once per level —

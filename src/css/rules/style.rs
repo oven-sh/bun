@@ -181,6 +181,18 @@ impl<R> StyleRule<R> {
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
+        // A rule with prefixed pseudos but no prefix pass of its own (`x:-moz-any-link, .b`)
+        // prints them as written, also inside an ancestor's pass.
+        let inherited_prefix = dest.vendor_prefix;
+        let as_written = self.vendor_prefix.is_empty()
+            && (!inherited_prefix.is_empty() || !self.rules.v.is_empty())
+            && selector::has_vendor_prefixed_pseudo(&self.selectors);
+        let own_prefix = if as_written {
+            VendorPrefix::empty()
+        } else {
+            inherited_prefix
+        };
+
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]
             //   dest.add_mapping(self.loc);
@@ -191,12 +203,15 @@ impl<R> StyleRule<R> {
             // Each rule prelude gets its own budget for `&` substitutions when
             // compiling nesting (see `serialize::serialize_nesting`).
             dest.nesting_expansions = 0;
-            selector::serialize::serialize_selector_list(
+            dest.vendor_prefix = own_prefix;
+            let result = selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,
                 ctx,
                 false,
-            )?;
+            );
+            dest.vendor_prefix = inherited_prefix;
+            result?;
             dest.whitespace()?;
             dest.write_char(b'{')?;
             dest.indent();
@@ -312,8 +327,13 @@ impl<R> StyleRule<R> {
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
             // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
-            let result =
-                dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
+            let result = dest.with_context(
+                &self.selectors,
+                own_prefix,
+                as_written,
+                &self.rules,
+                |rules, d| rules.to_css(d),
+            );
             dest.skip_prefixed_nested_rules = saved_skip;
             result?;
         }

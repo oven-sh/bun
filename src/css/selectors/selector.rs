@@ -261,6 +261,21 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
+/// Whether some pseudo in the list carries an explicit vendor prefix, as `::-moz-placeholder` does.
+pub(crate) fn has_vendor_prefixed_pseudo(selectors: &SelectorList) -> bool {
+    selectors.v.slice().iter().any(|selector| {
+        selector.components.iter().any(|component| {
+            let prefix = match component {
+                Component::NonTsPseudoClass(pc) => pc.get_prefix(),
+                Component::PseudoElement(pe) => pe.get_prefix(),
+                Component::Any { vendor_prefix, .. } => *vendor_prefix,
+                _ => return false,
+            };
+            !prefix.difference(VendorPrefix::NONE).is_empty()
+        })
+    })
+}
+
 /// How the browser targets support a selector list. The worst member wins, hence `Ord`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum Compatibility {
@@ -1351,21 +1366,31 @@ pub(crate) mod serialize {
                     None,
                 );
             }
+            // A rule in a prefix pass of its own prints the parent selectors in that pass too.
+            // Otherwise they print as they did in the parent rule itself.
+            let saved_prefix = dest.vendor_prefix;
+            if ctx.as_written || saved_prefix.is_empty() {
+                dest.vendor_prefix = ctx.vendor_prefix;
+            }
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            if ctx.selectors.v.len() == 1
+            let result = if ctx.selectors.v.len() == 1
                 && (first
                     || (!has_type_selector(ctx.selectors.v.at(0))
                         && is_simple(ctx.selectors.v.at(0))))
             {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
+                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)
             } else {
-                dest.write_str(b":is(")?;
-                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
-                dest.write_char(b')')?;
-            }
+                dest.write_str(b":is(")
+                    .and_then(|()| {
+                        serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)
+                    })
+                    .and_then(|()| dest.write_char(b')'))
+            };
+            dest.vendor_prefix = saved_prefix;
+            result?;
         } else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.

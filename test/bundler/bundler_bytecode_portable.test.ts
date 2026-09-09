@@ -751,10 +751,10 @@ describe("bytecode cache portability", () => {
   }
 
   // A payload this build cannot use (written by an incompatible build, cut short, empty) must cost a parse, nothing more.
-  // Byte 12 is the entry header's callee-save register count (GenericCacheEntry { cacheVersion; bootSessionUUID; tag; reservedCalleeLocals }).
+  // Bytes 0..3 are the entry header's cache version (GenericCacheEntry { cacheVersion; tag; reservedCalleeLocals }).
   const recordsBuild = corpusBuilds.find(({ entry, args }) => entry === "./records.js" && args.length === 0)!;
   for (const [variant, spoil] of [
-    ["a different build's header", (jsc: Buffer) => ((jsc[1] ^= 0xff), jsc)], // inside the u32 cache version
+    ["a different build's header", (jsc: Buffer) => ((jsc[1] ^= 0xff), jsc)],
     ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
     ["empty", (jsc: Buffer) => jsc.subarray(0, 0)],
   ] as const) {

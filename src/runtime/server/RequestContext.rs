@@ -2162,22 +2162,13 @@ where
             return;
         }
 
-        #[cfg(debug_assertions)]
-        if resp.has_responded() {
-            stream_log!("responded");
-        }
-
-        if let Some(err_value) = assignment_result.to_error() {
-            stream_log!("returned an error");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
-            return this.handle_reject(err_value);
-        }
-
+        // Checked before the thrown-error arm below: a sync `pull()` that ends
+        // the response and then throws has already put a complete body on the
+        // wire, so the throw must not end the response again. `handle_reject()`
+        // does nothing once the response has responded, which leaves the
+        // request looking unanswered: the handler tail
+        // (`should_render_missing()` in `mod.rs`) then ends it a second time,
+        // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
             ResponseStreamJSSink::<SSL_ENABLED>::detach(
@@ -2191,6 +2182,17 @@ where
                 .with_mut(|s| s.deinit());
             this.end_stream(this.should_close_connection());
             return;
+        }
+
+        if let Some(err_value) = assignment_result.to_error() {
+            stream_log!("returned an error");
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut response_stream.sink.source,
+                global_this,
+            );
+            this.sink.set(None);
+            Self::destroy_sink(response_stream_ptr);
+            return this.handle_reject(err_value);
         }
 
         // A fully-synchronous ReadableStream can drain through writeBytes

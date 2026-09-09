@@ -1263,6 +1263,56 @@ describe("close() with unflushed data writes the chunked terminator exactly once
       rest: "",
     });
   });
+
+  // A sync pull() that ends the response and then throws in the same call. The
+  // body is already complete on the wire, so the throw must not end the
+  // response again. do_render_stream read the thrown error before it checked
+  // whether the response had responded, so handle_reject() left the request
+  // looking unanswered and the handler tail wrote a second last-chunk.
+  describe("pull() throws after it ended the response", () => {
+    const throwingShapes: Record<string, { body: string; pull: (c: any) => unknown }> = {
+      "write, flush(), close(), throw": {
+        body: "hello",
+        pull(c) {
+          c.write("hello");
+          c.flush();
+          c.close();
+          throw new Error("boom");
+        },
+      },
+      "write, flush(), end(), throw": {
+        body: "hello",
+        pull(c) {
+          c.write("hello");
+          c.flush();
+          c.end();
+          throw new Error("boom");
+        },
+      },
+      // Over the sink's high water mark: write() already put a chunk on the
+      // wire, so close() ends a chunked response and not a Content-Length one.
+      "write(800 bytes), close(), throw": {
+        body: x800,
+        pull(c) {
+          c.write(x800);
+          c.close();
+          throw new Error("boom");
+        },
+      },
+    };
+
+    test.concurrent.each(Object.keys(throwingShapes))("%s", async name => {
+      const { body, pull } = throwingShapes[name];
+      using server = serve(pull);
+      const { decoded, terminated, rest } = await exchange(server);
+      expect({ decoded, terminated }).toEqual({ decoded: body, terminated: true });
+      // The very next bytes are the second response, framed by Content-Length,
+      // and nothing else is on the connection.
+      expect(rest.slice(0, 15)).toBe("HTTP/1.1 200 OK");
+      expect(rest).toEndWith("\r\n\r\nok");
+      expect(rest.split("\r\n0\r\n\r\n").length - 1).toBe(0);
+    });
+  });
 });
 
 // A direct stream's cancel() is the "consumer went away" hook. The source's own

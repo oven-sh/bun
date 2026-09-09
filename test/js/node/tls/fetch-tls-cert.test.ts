@@ -97,10 +97,7 @@ it("rejects a client cert the server's CA cannot verify, every time", async () =
   expect(served).toBe(0);
 });
 
-// Known gap: `ca` on a Bun.serve TLS server sets SSL_VERIFY_PEER|FAIL_IF_NO_PEER_CERT even
-// without `requestCert`, so the server demands a client cert and aborts (ECONNRESET).
-// Node only requests one when `requestCert: true`.
-it.todo("complete cert chains sent to peer, but without requesting client's cert.", async () => {
+it("complete cert chains sent to peer, but without requesting client's cert.", async () => {
   await connect({
     client: {
       ca: server.ca,

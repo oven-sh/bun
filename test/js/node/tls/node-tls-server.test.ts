@@ -1721,9 +1721,9 @@ describe("tls.Server secure-context options", () => {
   });
 
   it("accepts a cert-less client on a STARTTLS-wrapped connection when the server has `ca` but no requestCert", async () => {
-    // A shared SecureContext built with `ca` carries FAIL_IF_NO_PEER_CERT on
-    // its SSL_CTX; Node's TLSWrap::SetVerifyMode overrides it per socket to
-    // SSL_VERIFY_NONE for !requestCert, so an ordinary client still connects:
+    // The verify mode of a wrapped server socket comes from its own
+    // requestCert, as in Node's TLSWrap::SetVerifyMode, and a server `ca`
+    // never asks for a certificate by itself, so an ordinary client connects:
     // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1225-L1234
     const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain, ca: [ca3Cert, ca1Cert] });
     const judged = Promise.withResolvers<{ secure: boolean }>();

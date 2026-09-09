@@ -1085,7 +1085,7 @@ it("verifies against a user-supplied `ca` when the TLS socket rides on a Duplex"
   const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
 
   const server = tls.createServer({ key: agent1Key, cert: agent1Cert }, socket => socket.end("hi"));
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = (server.address() as AddressInfo).port;
 

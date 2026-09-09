@@ -294,6 +294,15 @@ describe.concurrent("Bun.serve TLS client certificates", () => {
     expect(await request(server.port)).toBe("HTTP/1.1 200 OK");
   });
 
+  test("a `caFile` on its own does not make the server demand a client certificate", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: { cert: serverCert, key: serverKey, caFile: join(keys, "ca1-cert.pem") },
+      fetch: () => new Response("ok"),
+    });
+    expect(await request(server.port)).toBe("HTTP/1.1 200 OK");
+  });
+
   test("a `ca` on its own does not reject a client certificate from another CA", async () => {
     using server = Bun.serve({
       port: 0,

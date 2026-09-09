@@ -1439,8 +1439,7 @@ impl Diff {
             let cur_to_i = to_i;
             to_i += 1;
 
-            // A range that links the same workspace as before compares equal, but bun.lock records the
-            // literal, so a retyped one (`1.0.0` -> `1.0.1` after a version bump) still counts as an update.
+            // Workspace versions compare by path; bun.lock records the literal, so a retyped one is an update.
             let workspace_literal_retyped = {
                 let to_dep = &to_deps!()[cur_to_i];
                 to_dep.version.tag == dependency::version::Tag::Workspace

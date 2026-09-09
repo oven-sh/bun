@@ -249,7 +249,8 @@ class Session {
     const ws = new WebSocket(url);
     ws.onmessage = event => this.onMessage(String(event.data));
     ws.onerror = () => this.disconnect(new Error(`inspector WebSocket error\nstderr:\n${this.stderr}`));
-    ws.onclose = event => this.disconnect(new Error(`inspector WebSocket closed (${event.code})\nstderr:\n${this.stderr}`));
+    ws.onclose = event =>
+      this.disconnect(new Error(`inspector WebSocket closed (${event.code})\nstderr:\n${this.stderr}`));
     await Promise.race([new Promise<void>(resolve => (ws.onopen = () => resolve())), this.failed, this.disconnected]);
     this.transport = { send: text => ws.send(text), close: () => ws.close() };
   }
@@ -280,7 +281,11 @@ class Session {
   }
 
   waitForEvent(method: string): Promise<any> {
-    return Promise.race([new Promise(resolve => this.eventWaiters.set(method, resolve)), this.failed, this.disconnected]);
+    return Promise.race([
+      new Promise(resolve => this.eventWaiters.set(method, resolve)),
+      this.failed,
+      this.disconnected,
+    ]);
   }
 
   async close() {

@@ -1,10 +1,12 @@
-// The `type: "direct"` lifecycle contract: every consumer sees pull() once, the bytes written before the end signal, the same error, and cancel() only on abort.
+// The `type: "direct"` lifecycle contract: every consumer sees the bytes written before the end signal, the same error, and cancel() only on abort. One-shot consumers call pull() once; a reader calls it again on demand.
 
 export type Tally = { pulls: number; cancels: unknown[] };
 
 export type Shape = {
   /** What the consumer receives, or the error it rejects with. */
   expect: { body: string } | { error: string };
+  /** pull() returns or resolves without closing: a reader would call it again for the next read, so only one-shot consumers run this shape. */
+  oneShotOnly?: true;
   make(t: Tally): ReadableStream;
 };
 
@@ -43,6 +45,7 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "async pull: write, await, write, resolve without close()": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, async c => {
@@ -60,6 +63,7 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "sync pull keeps the controller; writes arrive later, then close()": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, c => {
@@ -71,6 +75,7 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "async pull with no await (already-resolved promise)": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, async c => {
@@ -79,6 +84,7 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "sync pull: close() from the write() promise's reaction": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, c => {
@@ -86,10 +92,12 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "sync pull: close() from process.nextTick": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t => direct(t, c => (c.write("hello world"), void process.nextTick(() => c.close()))),
   },
   "sync pull: close() from setTimeout(0)": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t => direct(t, c => (c.write("hello world"), void setTimeout(() => c.close(), 0))),
   },
@@ -118,6 +126,7 @@ export const shapes: Record<string, Shape> = {
       }),
   },
   "end(value) is a clean close, unlike close(error)": {
+    oneShotOnly: true,
     expect: { body: "hello world" },
     make: t =>
       direct(t, c => {
@@ -226,6 +235,15 @@ export const consumers: Record<string, (s: ReadableStream) => Promise<string>> =
     return ta;
   },
 };
+
+/** Consumers that read through a reader: pull() is their demand signal. */
+export const readerConsumers = new Set([
+  "getReader() loop",
+  "for await",
+  "pipeTo(WritableStream)",
+  "pipeThrough(identity TransformStream)",
+  "tee(): both branches",
+]);
 
 /** Runs one cell of the matrix and returns what a test should compare against `expected(shape)`. */
 export async function observe(shape: Shape, consume: (s: ReadableStream) => Promise<string>) {

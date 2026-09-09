@@ -944,6 +944,8 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     setUpDirectStreamController(globalObject, stream, kind);
     RETURN_IF_EXCEPTION(scope, {});
+    if (auto* controller = dynamicDowncast<JSDirectStreamController>(stream->m_controller.get()))
+        controller->m_closeOnPullSettled = true;
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);

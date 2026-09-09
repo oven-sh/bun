@@ -580,13 +580,17 @@ declare module "bun" {
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
     /**
-     * Called once. Write the stream's data with `controller.write()` (await
-     * it for backpressure) and finish with `controller.close()`.
+     * Write the stream's data with `controller.write()` (await it for
+     * backpressure) and finish with `controller.close()`.
      *
-     * If `pull()` returns a promise, the stream stays open while it is
-     * pending, ends when it resolves, and errors if it rejects. If it returns
-     * synchronously without closing, the stream stays open until
-     * `controller.close()` is called.
+     * A destination that takes the whole body (`Bun.serve`, `Bun.write`,
+     * `.text()`, ...) calls `pull()` once. If it returns a promise, the stream
+     * stays open while it is pending, ends when it resolves, and errors if it
+     * rejects. If it returns synchronously without closing, the stream stays
+     * open until `controller.close()` is called.
+     *
+     * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
+     * for a later read, once the previous call has settled.
      */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";

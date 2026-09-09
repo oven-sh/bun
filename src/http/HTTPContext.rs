@@ -1404,8 +1404,6 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            // No request is in flight on a pooled HTTP/1.1 socket, so any byte
-            // (a late `0\r\n\r\n` included) means the peer's framing diverged.
             bun_core::scoped_log!(
                 HTTPContext,
                 "Unexpected data on idle pooled socket, evicting"

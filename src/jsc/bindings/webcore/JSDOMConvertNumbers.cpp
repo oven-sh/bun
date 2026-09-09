@@ -134,7 +134,7 @@ static inline T toSmallerInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
     case IntegerConversionConfiguration::Normal:
         break;
     case IntegerConversionConfiguration::EnforceRange:
-        return enforceRange(lexicalGlobalObject, x, LimitsTrait::minValue, LimitsTrait::maxValue);
+        RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, LimitsTrait::minValue, LimitsTrait::maxValue));
     case IntegerConversionConfiguration::Clamp:
         return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
     }
@@ -180,7 +180,7 @@ static inline T toSmallerUInt(JSGlobalObject& lexicalGlobalObject, JSValue value
     case IntegerConversionConfiguration::Normal:
         break;
     case IntegerConversionConfiguration::EnforceRange:
-        return enforceRange(lexicalGlobalObject, x, 0, LimitsTrait::maxValue);
+        RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, LimitsTrait::maxValue));
     case IntegerConversionConfiguration::Clamp:
         return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
     }
@@ -265,7 +265,7 @@ template<> int32_t convertToIntegerEnforceRange<int32_t>(JSC::JSGlobalObject& le
 
     double x = value.toNumber(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, 0);
-    return enforceRange(lexicalGlobalObject, x, kMinInt32, kMaxInt32);
+    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, kMinInt32, kMaxInt32));
 }
 
 template<> uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -278,7 +278,7 @@ template<> uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject& 
 
     double x = value.toNumber(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, 0);
-    return enforceRange(lexicalGlobalObject, x, 0, kMaxUInt32);
+    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, kMaxUInt32));
 }
 
 template<> int32_t convertToIntegerClamp<int32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -319,7 +319,7 @@ template<> int64_t convertToIntegerEnforceRange<int64_t>(JSC::JSGlobalObject& le
 
     double x = value.toNumber(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, 0);
-    return enforceRange(lexicalGlobalObject, x, -kJSMaxInteger, kJSMaxInteger);
+    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, -kJSMaxInteger, kJSMaxInteger));
 }
 
 template<> uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -332,7 +332,7 @@ template<> uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject& 
 
     double x = value.toNumber(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, 0);
-    return enforceRange(lexicalGlobalObject, x, 0, kJSMaxInteger);
+    RELEASE_AND_RETURN(scope, enforceRange(lexicalGlobalObject, x, 0, kJSMaxInteger));
 }
 
 template<> int64_t convertToIntegerClamp<int64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)

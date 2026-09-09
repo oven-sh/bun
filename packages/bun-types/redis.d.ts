@@ -7,7 +7,10 @@ declare module "bun" {
     connectionTimeout?: number;
 
     /**
-     * Idle timeout in milliseconds
+     * Idle timeout in milliseconds. Bun counts it from the last data the
+     * server sent. Sending does not reset it. When it fires, Bun closes the
+     * connection and runs `onclose`. Bun does not reconnect on its own, even
+     * with `autoReconnect: true`. Call `connect()` to reconnect.
      * @default 0 (no timeout)
      */
     idleTimeout?: number;
@@ -19,8 +22,9 @@ declare module "bun" {
     autoReconnect?: boolean;
 
     /**
-     * Maximum number of reconnection attempts
-     * @default 10
+     * Maximum number of reconnection attempts before the client gives up and
+     * runs `onclose`.
+     * @default 20
      */
     maxRetries?: number;
 
@@ -32,7 +36,6 @@ declare module "bun" {
 
     /**
      * TLS options
-     * Can be a boolean or an object with TLS options
      */
     tls?: boolean | Bun.TLSOptions;
 
@@ -107,6 +110,19 @@ declare module "bun" {
      * @param command The command to send
      * @param args The arguments to the command
      * @returns A promise that resolves with the command result
+     *
+     * The reply is converted as follows. See the type conversion section in
+     * docs/runtime/redis.mdx.
+     * - A simple, bulk or verbatim string becomes a string. Methods that return a Buffer, such as getBuffer, keep the bytes.
+     * - An integer becomes a number.
+     * - A double becomes a number.
+     * - A big number becomes a bigint. When its payload is not an integer literal it becomes a string.
+     * - A boolean becomes a boolean.
+     * - A null, a null bulk string and a null array become null.
+     * - An array becomes an array.
+     * - A set becomes an array.
+     * - A map becomes a plain object with a null prototype.
+     * - An error reply (`-` or `!`) rejects the promise with code ERR_REDIS_SERVER_ERROR.
      */
     send(command: string, args: string[]): Promise<any>;
 
@@ -225,7 +241,7 @@ declare module "bun" {
     set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...options: string[]): Promise<"OK" | string | null>;
 
     /**
-     * Delete a key(s)
+     * Delete one or more keys
      * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys removed
      */
@@ -659,14 +675,14 @@ declare module "bun" {
     hexists(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<boolean>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get a random field from a hash
      * @param key The hash key
      * @returns Promise that resolves with a random field name, or null if the hash doesn't exist
      */
     hrandfield(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get one or multiple random fields from a hash
+     * Get count random fields from a hash
      * @param key The hash key
      * @param count The number of fields to return (positive for unique fields, negative for potentially duplicate fields)
      * @returns Promise that resolves with an array of random field names
@@ -674,7 +690,7 @@ declare module "bun" {
     hrandfield(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
-     * Get one or multiple random fields with values from a hash
+     * Get count random fields with their values from a hash
      * @param key The hash key
      * @param count The number of fields to return
      * @param withValues Literal "WITHVALUES" to include values
@@ -968,7 +984,7 @@ declare module "bun" {
      * Blocking move from one list to another
      *
      * Atomically moves an element from source to destination list, blocking until an element is available
-     * or the timeout expires. Allows specifying which end to pop from (LEFT/RIGHT) and which end to push to (LEFT/RIGHT).
+     * or the timeout expires.
      *
      * @param source Source list key
      * @param destination Destination list key
@@ -1245,9 +1261,7 @@ declare module "bun" {
     pttl(key: RedisClient.KeyLike): Promise<number>;
 
     /**
-     * Return a random key from the keyspace
-     *
-     * Returns a random key from the currently selected database.
+     * Return a random key from the currently selected database
      *
      * @returns Promise that resolves with a random key name, or null if the
      * database is empty
@@ -1271,17 +1285,17 @@ declare module "bun" {
     rpop(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Remove and get the last element in a list
+     * Remove and get the last count elements in a list
      * @param key The list key
-     * @returns Promise that resolves with the last element, or null if the list is empty
+     * @param count The number of elements to pop
+     * @returns Promise that resolves with the removed elements
      */
     rpop(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
      * Atomically pop the last element from a source list and push it to the head of a destination list
      *
-     * This is equivalent to LMOVE with "RIGHT" "LEFT". It's an atomic operation that removes
-     * the last element (tail) from the source list and pushes it to the head of the destination list.
+     * Equivalent to LMOVE with "RIGHT" "LEFT".
      *
      * @param source The source list key
      * @param destination The destination list key
@@ -1303,13 +1317,9 @@ declare module "bun" {
     /**
      * Incrementally iterate the keyspace
      *
-     * The SCAN command is used to incrementally iterate over a collection of
-     * elements. SCAN iterates the set of keys in the currently selected Redis
-     * database.
-     *
-     * SCAN is a cursor based iterator. This means that at every call of the
-     * command, the server returns an updated cursor that the user needs to use
-     * as the cursor argument in the next call.
+     * SCAN iterates the set of keys in the currently selected Redis database.
+     * It is a cursor-based iterator: each call returns an updated cursor to
+     * pass as the cursor argument in the next call.
      *
      * An iteration starts when the cursor is set to "0", and terminates when
      * the cursor returned by the server is "0".
@@ -1474,10 +1484,6 @@ declare module "bun" {
     /**
      * Determine the type of value stored at key
      *
-     * The TYPE command returns the string representation of the type of the
-     * value stored at key. The different types that can be returned are:
-     * string, list, set, zset, hash and stream.
-     *
      * @param key The key to check
      * @returns Promise that resolves with the type of value stored at key, or
      * "none" if the key doesn't exist
@@ -1592,7 +1598,7 @@ declare module "bun" {
     bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
 
     /**
-     * Get one or multiple random members from a sorted set
+     * Get a random member from a sorted set
      * @param key The sorted set key
      * @returns Promise that resolves with a random member, or null if the set
      * is empty
@@ -1600,18 +1606,18 @@ declare module "bun" {
     zrandmember(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
-     * Get one or multiple random members from a sorted set
+     * Get count random members from a sorted set
      * @param key The sorted set key
-     * @returns Promise that resolves with a random member, or null if the set
-     * is empty
+     * @returns Promise that resolves with an array of random members, or null
+     * if the set is empty
      */
     zrandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
-     * Get one or multiple random members from a sorted set, with scores
+     * Get count random members from a sorted set, with their scores
      * @param key The sorted set key
-     * @returns Promise that resolves with a random member, or null if the set
-     * is empty
+     * @returns Promise that resolves with the members and their scores, or
+     * null if the set is empty
      */
     zrandmember(key: RedisClient.KeyLike, count: number, withscores: "WITHSCORES"): Promise<[string, number][] | null>;
 
@@ -1875,7 +1881,7 @@ declare module "bun" {
     ltrim(key: RedisClient.KeyLike, start: number, stop: number): Promise<string>;
 
     /**
-     * Add one or more members to a HyperLogLog
+     * Add an element to a HyperLogLog
      * @param key The HyperLogLog key
      * @param element The element to add
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0
@@ -1975,7 +1981,7 @@ declare module "bun" {
      * Add one or more members to a sorted set, or update scores if they already exist
      *
      * ZADD adds all the specified members with the specified scores to the sorted set stored at key.
-     * It is possible to specify multiple score / member pairs. If a specified member is already a
+     * You can pass multiple score/member pairs. If a specified member is already a
      * member of the sorted set, the score is updated and the element reinserted at the right position
      * to ensure the correct ordering.
      *
@@ -1983,7 +1989,7 @@ declare module "bun" {
      * If the key exists but does not hold a sorted set, an error is returned.
      *
      * The score values should be the string representation of a double precision floating point number.
-     * +inf and -inf values are valid values as well.
+     * +inf and -inf are also valid.
      *
      * Options:
      * - NX: Only add new elements. Don't update already existing elements.
@@ -1993,7 +1999,7 @@ declare module "bun" {
      * - CH: Modify the return value from the number of new elements added, to the total number of elements changed (CH is an abbreviation of changed).
      * - INCR: When this option is specified ZADD acts like ZINCRBY. Only one score-member pair can be specified in this mode.
      *
-     * Note: The GT, LT and NX options are mutually exclusive.
+     * The GT, LT and NX options are mutually exclusive.
      *
      * @param key The sorted set key
      * @param args Score-member pairs and optional flags (NX, XX, GT, LT, CH, INCR)
@@ -2022,21 +2028,17 @@ declare module "bun" {
     /**
      * Incrementally iterate sorted set elements and their scores
      *
-     * The ZSCAN command is used in order to incrementally iterate over sorted set elements and their scores.
-     * ZSCAN is a cursor based iterator. This means that at every call of the command, the server returns an
-     * updated cursor that the user needs to use as the cursor argument in the next call.
+     * ZSCAN is a cursor-based iterator: each call returns an updated cursor to
+     * pass as the cursor argument in the next call.
      *
      * An iteration starts when the cursor is set to 0, and terminates when the cursor returned by the server is 0.
      *
-     * ZSCAN and the other SCAN family commands are able to provide to the user a set of guarantees associated
-     * to full iterations:
-     * - A full iteration always retrieves all the elements that were present in the collection from the start
-     *   to the end of a full iteration. This means that if a given element is inside the collection when an
-     *   iteration is started, and is still there when an iteration terminates, then at some point ZSCAN returned it.
-     * - A full iteration never returns any element that was NOT present in the collection from the start to the
-     *   end of a full iteration. So if an element was removed before the start of an iteration, and is never
-     *   added back to the collection for all the time an iteration lasts, ZSCAN ensures that this element will
-     *   never be returned.
+     * ZSCAN and the other SCAN family commands guarantee the following for a
+     * full iteration:
+     * - An element present in the collection from the start to the end of the
+     *   iteration is returned at some point.
+     * - An element absent from the collection from the start to the end of the
+     *   iteration is never returned.
      *
      * Options:
      * - MATCH pattern: Only return elements matching the pattern (glob-style)
@@ -2499,13 +2501,11 @@ declare module "bun" {
     /**
      * Set multiple keys to multiple values atomically
      *
-     * Sets the given keys to their respective values. MSET replaces existing
-     * values with new values, just as regular SET. Use MSETNX if you don't want
-     * to overwrite existing values.
+     * MSET replaces existing values, just as regular SET does. Use MSETNX if
+     * you don't want to overwrite existing values.
      *
-     * MSET is atomic, so all given keys are set at once. It is not possible for
-     * clients to see that some of the keys were updated while others are
-     * unchanged.
+     * MSET is atomic: all given keys are set at once, so clients never see
+     * some of the keys updated while others are unchanged.
      *
      * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
      * @returns Promise that resolves with "OK" on success
@@ -2520,16 +2520,13 @@ declare module "bun" {
     /**
      * Set multiple keys to multiple values, only if none of the keys exist
      *
-     * Sets the given keys to their respective values. MSETNX will not perform
-     * any operation at all even if just a single key already exists.
+     * MSETNX performs no operation at all if even a single key already exists.
      *
-     * Because of this semantic, MSETNX can be used in order to set different
-     * keys representing different fields of a unique logic object in a way that
-     * ensures that either all the fields or none at all are set.
+     * This lets you set several keys representing fields of a single logical
+     * object and guarantee that either all of them or none are set.
      *
-     * MSETNX is atomic, so all given keys are set at once. It is not possible
-     * for clients to see that some of the keys were updated while others are
-     * unchanged.
+     * MSETNX is atomic: all given keys are set at once, so clients never see
+     * some of the keys updated while others are unchanged.
      *
      * @param keyValuePairs Alternating keys and values (key1, value1, key2, value2, ...)
      * @returns Promise that resolves with 1 if all keys were set, 0 if no key was set
@@ -2702,27 +2699,26 @@ declare module "bun" {
      * @param channel The channel to publish to.
      * @param message The message to publish.
      *
-     * @returns The number of clients that received the message. Note that in a
-     * cluster this returns the total number of clients in the same node.
+     * @returns The number of clients that received the message. In a cluster,
+     * this is the total number of clients in the same node.
      */
     publish(channel: string, message: string): Promise<number>;
 
     /**
      * Subscribe to a Redis channel.
      *
-     * Subscribing disables automatic pipelining, so all commands will be
-     * received immediately.
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
      *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
      * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
-     * {@link unsubscribe `.unsubscribe()`} are legal to invoke in a subscribed
-     * upon channel.
+     * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
      *
      * @param channel The channel to subscribe to.
      * @param listener The listener to call when a message is received on the
-     * channel. The listener will receive the message as the first argument and
-     * the channel as the second argument.
+     * channel. The listener receives the message as the first argument and
+     * the channel as the second.
      *
      * @example
      * ```ts
@@ -2736,31 +2732,30 @@ declare module "bun" {
     /**
      * Subscribe to multiple Redis channels.
      *
-     * Subscribing disables automatic pipelining, so all commands will be
-     * received immediately.
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
      *
      * Subscribing moves the channels to a dedicated subscription state in which
      * only a limited set of commands can be executed.
      *
      * @param channels An array of channels to subscribe to.
      * @param listener The listener to call when a message is received on any of
-     * the subscribed channels. The listener will receive the message as the
-     * first argument and the channel as the second argument.
+     * the subscribed channels. The listener receives the message as the
+     * first argument and the channel as the second.
      */
     subscribe(channels: string[], listener: RedisClient.StringPubSubListener): Promise<number>;
 
     /**
-     * Unsubscribe from a singular Redis channel.
-     *
-     * @param channel The channel to unsubscribe from.
+     * Unsubscribe from a single Redis channel.
      *
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
+     *
+     * @param channel The channel to unsubscribe from.
      */
     unsubscribe(channel: string): Promise<void>;
 
@@ -2770,9 +2765,8 @@ declare module "bun" {
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
      *
      * @param channel The channel to unsubscribe from.
@@ -2785,12 +2779,11 @@ declare module "bun" {
     /**
      * Unsubscribe from all registered Redis channels.
      *
-     * The client will automatically re-enable pipelining if it was previously
+     * The client automatically re-enables pipelining if it was previously
      * enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
      */
     unsubscribe(): Promise<void>;
@@ -2798,23 +2791,22 @@ declare module "bun" {
     /**
      * Unsubscribe from multiple Redis channels.
      *
-     * @param channels An array of channels to unsubscribe from.
-     *
      * If there are no more channels subscribed to, the client automatically
      * re-enables pipelining if it was previously enabled.
      *
-     * Unsubscribing moves the channel back to a normal state out of the
-     * subscription state if all channels have been unsubscribed from. For
-     * further details on the subscription state, see
+     * Once all channels have been unsubscribed from, the client leaves the
+     * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
+     *
+     * @param channels An array of channels to unsubscribe from.
      */
     unsubscribe(channels: string[]): Promise<void>;
 
     /**
-     * @brief Create a new RedisClient instance with the same configuration as
-     *        the current instance.
+     * Create a new RedisClient instance with the same configuration as the
+     * current instance.
      *
-     * This will open up a new connection to the Redis server.
+     * Opens a new connection to the Redis server.
      */
     duplicate(): Promise<RedisClient>;
 
@@ -2861,11 +2853,9 @@ declare module "bun" {
     /**
      * Asynchronously delete one or more keys
      *
-     * This command is very similar to DEL: it removes the specified keys.
-     * Just like DEL a key is ignored if it does not exist. However, the
-     * command performs the actual memory reclaiming in a different thread, so
-     * it is not blocking, while DEL is. This is particularly useful when
-     * deleting large values or large numbers of keys.
+     * Like DEL, UNLINK removes the specified keys and ignores keys that don't
+     * exist. Unlike DEL, it reclaims the memory in a different thread, so it
+     * does not block. Use it when deleting large values or many keys.
      *
      * @param keys The keys to delete
      * @returns Promise that resolves with the number of keys that were unlinked
@@ -2883,8 +2873,7 @@ declare module "bun" {
     /**
      * Alters the last access time of one or more keys
      *
-     * A key is ignored if it does not exist. The command returns the number
-     * of keys that were touched.
+     * A key is ignored if it does not exist.
      *
      * This command is useful in conjunction with maxmemory-policy
      * allkeys-lru / volatile-lru to change the last access time of keys for
@@ -2906,8 +2895,8 @@ declare module "bun" {
     /**
      * Rename a key to a new key
      *
-     * Renames key to newkey. If newkey already exists, it is overwritten. If
-     * key does not exist, an error is returned.
+     * If newkey already exists, it is overwritten. If key does not exist, an
+     * error is returned.
      *
      * @param key The key to rename
      * @param newkey The new key name
@@ -2926,8 +2915,7 @@ declare module "bun" {
     /**
      * Rename a key to a new key only if the new key does not exist
      *
-     * Renames key to newkey only if newkey does not yet exist. If key does not
-     * exist, an error is returned.
+     * If key does not exist, an error is returned.
      *
      * @param key The key to rename
      * @param newkey The new key name
@@ -3173,8 +3161,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
@@ -3216,8 +3203,7 @@ declare module "bun" {
     /**
      * Compute the union of multiple sorted sets
      *
-     * Returns the union of the sorted sets given by the specified keys.
-     * For every element that appears in at least one of the input sorted sets, the output will contain that element.
+     * For every element that appears in at least one of the input sorted sets, the output contains that element.
      *
      * Options:
      * - WEIGHTS: Multiply the score of each member in the corresponding sorted set by the given weight before aggregation
@@ -3337,16 +3323,673 @@ declare module "bun" {
       numkeys: number,
       ...args: (string | number)[]
     ): Promise<[string, [string, number][]] | null>;
+
+    /**
+     * Perform a bitwise NOT on a key and store the result in the destination key
+     * @param operation The bitwise operation (NOT takes exactly one source key)
+     * @param destkey The destination key to store the result
+     * @param key The source key
+     * @returns Promise that resolves with the size of the string stored in the destination key
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "foobar");
+     * await redis.bitop("NOT", "dest", "key1");
+     * ```
+     */
+    bitop(operation: "NOT" | "not", destkey: RedisClient.KeyLike, key: RedisClient.KeyLike): Promise<number>;
+    /**
+     * Perform a bitwise operation between multiple keys and store the result in the destination key
+     * @param operation The bitwise operation to perform: AND, OR, XOR, or (Redis 8.2+) DIFF, DIFF1, ANDOR, ONE
+     * @param destkey The destination key to store the result
+     * @param key The first source key
+     * @param moreKeys Additional source keys
+     * @returns Promise that resolves with the size of the string stored in the destination key
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "foobar");
+     * await redis.set("key2", "abcdef");
+     * await redis.bitop("AND", "dest", "key1", "key2");
+     * ```
+     */
+    bitop(
+      operation:
+        | "AND"
+        | "OR"
+        | "XOR"
+        | "DIFF"
+        | "DIFF1"
+        | "ANDOR"
+        | "ONE"
+        | "and"
+        | "or"
+        | "xor"
+        | "diff"
+        | "diff1"
+        | "andor"
+        | "one",
+      destkey: RedisClient.KeyLike,
+      key: RedisClient.KeyLike,
+      ...moreKeys: RedisClient.KeyLike[]
+    ): Promise<number>;
+
+    /**
+     * Find the position of the first bit set to 1 or 0 in a string
+     * @param key The key to search
+     * @param bit The bit value to search for (0 or 1)
+     * @param options Optional start, end, and index unit (BYTE or BIT)
+     * @returns Promise that resolves with the position of the first bit, or -1 if not found
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", Buffer.from([0xff, 0xf0, 0x00]));
+     * await redis.bitpos("mykey", 0); // 12
+     * await redis.bitpos("mykey", 1, 2); // -1
+     * ```
+     */
+    bitpos(key: RedisClient.KeyLike, bit: 0 | 1, ...options: (string | number)[]): Promise<number>;
+
+    /**
+     * Perform arbitrary bitfield integer operations on strings
+     * @param key The key to operate on
+     * @param operations GET, SET, INCRBY, and OVERFLOW subcommands
+     * @returns Promise that resolves with an array of results, one per subcommand
+     *
+     * @example
+     * ```ts
+     * await redis.bitfield("mykey", "SET", "u8", 0, 255, "GET", "u8", 0);
+     * // [0, 255]
+     * ```
+     */
+    bitfield(key: RedisClient.KeyLike, ...operations: (string | number)[]): Promise<(number | null)[]>;
+
+    /**
+     * Return the approximated cardinality of the set(s) observed by the HyperLogLog at key(s)
+     * @param key The first HyperLogLog key
+     * @param moreKeys Additional HyperLogLog keys (union cardinality)
+     * @returns Promise that resolves with the approximated number of unique elements
+     *
+     * @example
+     * ```ts
+     * await redis.pfadd("hll", "a");
+     * await redis.pfadd("hll", "b");
+     * await redis.pfcount("hll"); // 2
+     * ```
+     */
+    pfcount(key: RedisClient.KeyLike, ...moreKeys: RedisClient.KeyLike[]): Promise<number>;
+
+    /**
+     * Merge multiple HyperLogLog values into a single one
+     * @param destkey The destination key
+     * @param sourcekeys The source HyperLogLog keys
+     * @returns Promise that resolves with "OK"
+     *
+     * @example
+     * ```ts
+     * await redis.pfadd("hll1", "a");
+     * await redis.pfadd("hll2", "b");
+     * await redis.pfmerge("merged", "hll1", "hll2");
+     * await redis.pfcount("merged"); // 2
+     * ```
+     */
+    pfmerge(destkey: RedisClient.KeyLike, ...sourcekeys: RedisClient.KeyLike[]): Promise<"OK">;
+
+    /**
+     * Add one or more geospatial items to the specified key
+     * @param key The key of the geo set
+     * @param args Longitude, latitude, member triples (optionally preceded by NX/XX/CH)
+     * @returns Promise that resolves with the number of elements added
+     *
+     * @example
+     * ```ts
+     * await redis.geoadd("Sicily", 13.361389, 38.115556, "Palermo");
+     * await redis.geoadd("Sicily", 15.087269, 37.502669, "Catania");
+     * ```
+     */
+    geoadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+
+    /**
+     * Return the distance in meters between two members in the geospatial index
+     * @param key The key of the geo set
+     * @param member1 The first member
+     * @param member2 The second member
+     * @returns Promise that resolves with the distance as a string, or null if one or both members are missing
+     *
+     * @example
+     * ```ts
+     * await redis.geodist("Sicily", "Palermo", "Catania"); // "166274.1516"
+     * ```
+     */
+    geodist(key: RedisClient.KeyLike, member1: string, member2: string): Promise<string | null>;
+    /**
+     * Return the distance between two members in the geospatial index
+     * @param key The key of the geo set
+     * @param member1 The first member
+     * @param member2 The second member
+     * @param unit The unit of the returned distance (m, km, mi, ft)
+     * @returns Promise that resolves with the distance as a string, or null if one or both members are missing
+     *
+     * @example
+     * ```ts
+     * await redis.geodist("Sicily", "Palermo", "Catania", "km"); // "166.2742"
+     * ```
+     */
+    geodist(
+      key: RedisClient.KeyLike,
+      member1: string,
+      member2: string,
+      unit: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
+    ): Promise<string | null>;
+
+    /**
+     * Return valid Geohash strings representing the position of members
+     * @param key The key of the geo set
+     * @param members The members to get hashes for
+     * @returns Promise that resolves with an array of geohash strings
+     *
+     * @example
+     * ```ts
+     * await redis.geohash("Sicily", "Palermo", "Catania");
+     * // ["sqc8b49rny0", "sqdtr74hyu0"]
+     * ```
+     */
+    geohash(key: RedisClient.KeyLike, ...members: string[]): Promise<(string | null)[]>;
+
+    /**
+     * Return the longitude/latitude of members of a geospatial index
+     * @param key The key of the geo set
+     * @param members The members to get positions for
+     * @returns Promise that resolves with an array of [longitude, latitude] pairs
+     *
+     * @example
+     * ```ts
+     * await redis.geopos("Sicily", "Palermo");
+     * // [[13.36138933897018433, 38.11555639549629859]]
+     * ```
+     */
+    geopos(key: RedisClient.KeyLike, ...members: string[]): Promise<([number, number] | null)[]>;
+
+    /**
+     * Query a geospatial index for members inside an area of a box or circle
+     * @param key The key of the geo set
+     * @param args FROMMEMBER/FROMLONLAT, BYRADIUS/BYBOX, and optional modifiers
+     * @returns Promise that resolves with matching members (and optional coordinates/distances/hashes)
+     *
+     * @example
+     * ```ts
+     * await redis.geosearch("Sicily", "FROMLONLAT", 15, 37, "BYRADIUS", 200, "km", "ASC");
+     * // ["Catania", "Palermo"]
+     * ```
+     */
+    geosearch(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<unknown[]>;
+
+    /**
+     * Query a geospatial index and store the result in a destination key
+     * @param destination The destination key
+     * @param source The source geo set key
+     * @param args FROMMEMBER/FROMLONLAT, BYRADIUS/BYBOX, and optional modifiers
+     * @returns Promise that resolves with the number of elements in the resulting set
+     */
+    geosearchstore(
+      destination: RedisClient.KeyLike,
+      source: RedisClient.KeyLike,
+      ...args: (string | number)[]
+    ): Promise<number>;
+
+    /**
+     * Execute a Lua script server side
+     * @param script The Lua script source
+     * @param numkeys The number of keys in the keys array
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the script's return value
+     *
+     * @example
+     * ```ts
+     * await redis.eval("return ARGV[1]", 0, "hello"); // "hello"
+     * await redis.eval("return redis.call('GET', KEYS[1])", 1, "mykey");
+     * ```
+     *
+     * The reply is converted the same way as for `send`.
+     */
+    eval(script: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Execute a Lua script server side using the script's SHA1 digest
+     * @param sha1 The SHA1 digest of the script (from SCRIPT LOAD)
+     * @param numkeys The number of keys in the keys array
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the script's return value
+     *
+     * @example
+     * ```ts
+     * const sha = await redis.script("LOAD", "return ARGV[1]");
+     * await redis.evalsha(sha, 0, "hello"); // "hello"
+     * ```
+     *
+     * The reply is converted the same way as for `send`.
+     */
+    evalsha(sha1: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage the Lua script cache
+     * @param args Subcommand and its arguments (LOAD, EXISTS, FLUSH, KILL)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * const sha = await redis.script("LOAD", "return ARGV[1]");
+     * await redis.script("EXISTS", sha); // [1]
+     * await redis.script("FLUSH");
+     * ```
+     */
+    script(...args: string[]): Promise<any>;
+
+    /**
+     * Invoke a function from a loaded library
+     * @param name The fully-qualified function name
+     * @param numkeys The number of keys
+     * @param keysAndArgs The keys followed by additional arguments
+     * @returns Promise that resolves with the function's return value
+     *
+     * The reply is converted the same way as for `send`.
+     */
+    fcall(name: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage Redis functions (libraries of Lua functions)
+     * @param args Subcommand and its arguments (LOAD, DELETE, LIST, DUMP, FLUSH, etc.)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.function("LOAD", "#!lua name=mylib\nredis.register_function('myfunc', function() return 1 end)");
+     * await redis.fcall("myfunc", 0); // 1
+     * await redis.function("DELETE", "mylib");
+     * ```
+     */
+    function(...args: RedisClient.KeyLike[]): Promise<any>;
+
+    /**
+     * Return the number of keys in the currently-selected database
+     * @returns Promise that resolves with the number of keys
+     */
+    dbsize(): Promise<number>;
+
+    /**
+     * Remove all keys from the current database, using the server's configured flush mode
+     * @returns Promise that resolves with "OK"
+     */
+    flushdb(): Promise<"OK">;
+    /**
+     * Remove all keys from the current database
+     * @param mode Whether to flush asynchronously (ASYNC) or synchronously (SYNC)
+     * @returns Promise that resolves with "OK"
+     */
+    flushdb(mode: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+
+    /**
+     * Remove all keys from all databases, using the server's configured flush mode
+     * @returns Promise that resolves with "OK"
+     */
+    flushall(): Promise<"OK">;
+    /**
+     * Remove all keys from all databases
+     * @param mode Whether to flush asynchronously (ASYNC) or synchronously (SYNC)
+     * @returns Promise that resolves with "OK"
+     */
+    flushall(mode: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+
+    /**
+     * Get information and statistics about the server
+     * @param sections Optional section name(s) to filter the output
+     * @returns Promise that resolves with the info string
+     *
+     * @example
+     * ```ts
+     * const info = await redis.info("server");
+     * ```
+     */
+    info(...sections: string[]): Promise<string>;
+
+    /**
+     * Return the server time
+     * @returns Promise that resolves with [unixTimeSeconds, microseconds] as strings
+     */
+    time(): Promise<[string, string]>;
+
+    /**
+     * Echo the given string
+     * @param message The message to echo
+     * @returns Promise that resolves with the same message
+     */
+    echo(message: string): Promise<string>;
+
+    /**
+     * Get the Unix timestamp of the last successful save to disk
+     * @returns Promise that resolves with the timestamp
+     */
+    lastsave(): Promise<number>;
+
+    /**
+     * Manage client connections
+     * @param args Subcommand and its arguments (ID, GETNAME, SETNAME, LIST, KILL, etc.)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.client("SETNAME", "myconnection");
+     * const name = await redis.client("GETNAME"); // "myconnection"
+     * ```
+     */
+    client(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get or set server configuration parameters
+     * @param args Subcommand and its arguments (GET, SET, REWRITE, RESETSTAT)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.config("GET", "maxmemory");
+     * ```
+     */
+    config(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Run a debugging command. Most subcommands are intended for internal use.
+     * @param args Subcommand and its arguments
+     * @returns Promise that resolves with the subcommand's result
+     */
+    debug(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get details about all Redis commands or specific commands
+     * @param args Optional subcommand and arguments (COUNT, DOCS, INFO, LIST, GETKEYS, etc.)
+     * @returns Promise that resolves with command information
+     *
+     * @example
+     * ```ts
+     * const count = await redis.command("COUNT");
+     * ```
+     */
+    command(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Inspect the internals of Redis objects
+     * @param subcommand The subcommand (ENCODING, FREQ, IDLETIME, REFCOUNT, HELP)
+     * @param args The key to inspect (and any subcommand-specific arguments)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "hello");
+     * await redis.object("ENCODING", "mykey"); // "embstr"
+     * ```
+     */
+    object(subcommand: string, ...args: RedisClient.KeyLike[]): Promise<any>;
+
+    /**
+     * Sort the elements in a list, set or sorted set
+     * @param key The key to sort
+     * @param args Optional BY, LIMIT, GET, ASC/DESC, ALPHA, STORE modifiers
+     * @returns Promise that resolves with the sorted elements (`null` for a GET pattern whose key is missing), or the count if STORE is used
+     *
+     * @example
+     * ```ts
+     * await redis.rpush("mylist", "3", "1", "2");
+     * await redis.sort("mylist"); // ["1", "2", "3"]
+     * await redis.sort("mylist", "DESC"); // ["3", "2", "1"]
+     * await redis.sort("mylist", "GET", "missing:*"); // [null, null, null]
+     * ```
+     */
+    sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<(string | null)[] | number>;
+
+    /**
+     * Block until all write commands are acknowledged by at least the specified number of replicas
+     * @param numreplicas The number of replicas to wait for
+     * @param timeout The timeout in milliseconds (0 = wait forever)
+     * @returns Promise that resolves with the number of replicas that acknowledged the writes
+     */
+    wait(numreplicas: number, timeout: number): Promise<number>;
+
+    /**
+     * Find the longest common subsequence between two string values
+     * @param key1 The first key
+     * @param key2 The second key
+     * @param options Optional LEN, IDX, MINMATCHLEN, WITHMATCHLEN modifiers
+     * @returns Promise that resolves with the LCS (string), its length (number), or match details
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "ohmytext");
+     * await redis.set("key2", "mynewtext");
+     * await redis.lcs("key1", "key2"); // "mytext"
+     * await redis.lcs("key1", "key2", "LEN"); // 6
+     * ```
+     */
+    lcs(key1: RedisClient.KeyLike, key2: RedisClient.KeyLike, ...options: (string | number)[]): Promise<any>;
+
+    /**
+     * Append a new entry to a stream
+     * @param key The stream key
+     * @param args Optional NOMKSTREAM/MAXLEN/MINID, the entry ID (use "*" for auto-generate), and field-value pairs
+     * @returns Promise that resolves with the ID of the added entry
+     *
+     * @example
+     * ```ts
+     * const id = await redis.xadd("mystream", "*", "field1", "value1", "field2", "value2");
+     * ```
+     */
+    xadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<string | null>;
+
+    /**
+     * Get the number of entries in a stream
+     * @param key The stream key
+     * @returns Promise that resolves with the number of entries
+     */
+    xlen(key: RedisClient.KeyLike): Promise<number>;
+
+    /**
+     * Get a range of entries from a stream
+     * @param key The stream key
+     * @param start The start ID (use "-" for the minimum ID)
+     * @param end The end ID (use "+" for the maximum ID)
+     * @param options Optional COUNT modifier
+     * @returns Promise that resolves with an array of [id, [field, value, ...]] entries
+     *
+     * @example
+     * ```ts
+     * await redis.xrange("mystream", "-", "+");
+     * await redis.xrange("mystream", "-", "+", "COUNT", 10);
+     * ```
+     */
+    xrange(
+      key: RedisClient.KeyLike,
+      start: string,
+      end: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
+
+    /**
+     * Get a range of entries from a stream in reverse order
+     * @param key The stream key
+     * @param end The end ID (use "+" for the maximum ID)
+     * @param start The start ID (use "-" for the minimum ID)
+     * @param options Optional COUNT modifier
+     * @returns Promise that resolves with an array of [id, [field, value, ...]] entries
+     */
+    xrevrange(
+      key: RedisClient.KeyLike,
+      end: string,
+      start: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
+
+    /**
+     * Read entries from one or more streams
+     * @param args COUNT/BLOCK options, STREAMS keyword, stream keys, and starting IDs
+     * @returns Promise that resolves with stream entries, or null if BLOCK timed out
+     *
+     * @example
+     * ```ts
+     * await redis.xread("COUNT", 2, "STREAMS", "mystream", "0");
+     * ```
+     */
+    xread(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Read entries from one or more streams using a consumer group
+     * @param args GROUP groupname consumername, optional COUNT/BLOCK/NOACK, STREAMS keyword, keys, and IDs
+     * @returns Promise that resolves with stream entries, or null if BLOCK timed out
+     *
+     * @example
+     * ```ts
+     * await redis.xreadgroup("GROUP", "mygroup", "consumer1", "COUNT", 10, "STREAMS", "mystream", ">");
+     * ```
+     */
+    xreadgroup(...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Delete one or more entries from a stream
+     * @param key The stream key
+     * @param id The first entry ID to delete
+     * @param moreIds Additional entry IDs to delete
+     * @returns Promise that resolves with the number of entries actually deleted
+     */
+    xdel(key: RedisClient.KeyLike, id: string, ...moreIds: string[]): Promise<number>;
+
+    /**
+     * Trim a stream to a given size or minimum ID
+     * @param key The stream key
+     * @param strategy MAXLEN (trim by length) or MINID (trim by minimum ID)
+     * @param threshold The threshold value, or "~"/"=" followed by the threshold in `options`
+     * @param options Optional ~/= operator (as the threshold), actual threshold, and LIMIT count
+     * @returns Promise that resolves with the number of entries deleted
+     *
+     * @example
+     * ```ts
+     * await redis.xtrim("mystream", "MAXLEN", 1000);
+     * await redis.xtrim("mystream", "MAXLEN", "~", 1000);
+     * ```
+     */
+    xtrim(
+      key: RedisClient.KeyLike,
+      strategy: "MAXLEN" | "MINID" | "maxlen" | "minid",
+      threshold: string | number,
+      ...options: (string | number)[]
+    ): Promise<number>;
+
+    /**
+     * Acknowledge one or more messages as processed for a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param id The first message ID to acknowledge
+     * @param moreIds Additional message IDs to acknowledge
+     * @returns Promise that resolves with the number of messages successfully acknowledged
+     */
+    xack(key: RedisClient.KeyLike, group: string, id: string, ...moreIds: string[]): Promise<number>;
+
+    /**
+     * Change the ownership of pending messages in a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param consumer The consumer that will claim the messages
+     * @param minIdleTime Claim only messages idle for at least this many milliseconds
+     * @param id The first message ID to claim
+     * @param rest Additional message IDs and optional IDLE/TIME/RETRYCOUNT/FORCE/JUSTID modifiers
+     * @returns Promise that resolves with the claimed entries
+     */
+    xclaim(
+      key: RedisClient.KeyLike,
+      group: string,
+      consumer: string,
+      minIdleTime: number,
+      id: string,
+      ...rest: (string | number)[]
+    ): Promise<any>;
+
+    /**
+     * Transfer ownership of pending messages idle longer than the threshold to a consumer
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param consumer The consumer that will claim the messages
+     * @param minIdleTime Claim only messages idle for at least this many milliseconds
+     * @param start The starting ID for the scan
+     * @param options Optional COUNT and JUSTID modifiers
+     * @returns Promise that resolves with [nextCursor, entries, deletedIds]
+     */
+    xautoclaim(
+      key: RedisClient.KeyLike,
+      group: string,
+      consumer: string,
+      minIdleTime: number,
+      start: string,
+      ...options: (string | number)[]
+    ): Promise<any>;
+
+    /**
+     * Inspect the list of pending messages for a consumer group
+     * @param key The stream key
+     * @param group The consumer group name
+     * @param args Optional IDLE, start, end, count, consumer filters
+     * @returns Promise that resolves with pending entries information
+     *
+     * @example
+     * ```ts
+     * // Summary form
+     * await redis.xpending("mystream", "mygroup");
+     * // Extended form
+     * await redis.xpending("mystream", "mygroup", "-", "+", 10);
+     * ```
+     */
+    xpending(key: RedisClient.KeyLike, group: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Get information about a stream or its consumer groups
+     * @param subcommand STREAM, GROUPS, CONSUMERS, or HELP
+     * @param args The stream key and any additional arguments
+     * @returns Promise that resolves with the requested information
+     *
+     * @example
+     * ```ts
+     * await redis.xinfo("STREAM", "mystream");
+     * await redis.xinfo("GROUPS", "mystream");
+     * ```
+     */
+    xinfo(subcommand: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Manage consumer groups for a stream
+     * @param subcommand CREATE, CREATECONSUMER, DELCONSUMER, DESTROY, SETID
+     * @param args The stream key and subcommand-specific arguments
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * await redis.xgroup("CREATE", "mystream", "mygroup", "$", "MKSTREAM");
+     * await redis.xgroup("DESTROY", "mystream", "mygroup");
+     * ```
+     */
+    xgroup(subcommand: string, ...args: (string | number)[]): Promise<any>;
+
+    /**
+     * Set the last entry ID of a stream
+     * @param key The stream key
+     * @param lastId The new last entry ID
+     * @param options Optional ENTRIESADDED and MAXDELETEDID modifiers
+     * @returns Promise that resolves with "OK"
+     */
+    xsetid(key: RedisClient.KeyLike, lastId: string, ...options: (string | number)[]): Promise<"OK">;
   }
 
   /**
    * Default Redis client
    *
-   * Connection information populated from one of, in order of preference:
+   * Connection information comes from the first of these that is set:
    * - `process.env.VALKEY_URL`
    * - `process.env.REDIS_URL`
    * - `"valkey://localhost:6379"`
-   *
    */
   export const redis: RedisClient;
 }

@@ -27,7 +27,7 @@
 # the `bun_sys::windows` re-export layer) under the same paths.
 #
 # Built by `scripts/build/rust.ts` (Windows targets only) before the main
-# `cargo build -p bun_bin`, with `--profile shim` (workspace `[profile.shim]`:
+# `cargo build -p bun_runtime`, with `--profile shim` (workspace `[profile.shim]`:
 # panic=abort, opt-level=z, lto, strip) plus `-Zbuild-std=core` /
 # `panic_immediate_abort` / `/ENTRY:shim_main` (no CRT), and the output is
 # copied to `src/install/windows-shim/bun_shim_impl.exe` for `include_bytes!`.

@@ -33,15 +33,17 @@ namespace WebCore {
 
 class CryptoKeyRaw final : public CryptoKey {
 public:
-    static Ref<CryptoKeyRaw> create(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages)
+    static Ref<CryptoKeyRaw> create(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages, bool extractable = false)
     {
-        return adoptRef(*new CryptoKeyRaw(identifier, WTF::move(keyData), usages));
+        return adoptRef(*new CryptoKeyRaw(identifier, WTF::move(keyData), usages, extractable));
     }
 
     const Vector<uint8_t>& key() const { return m_key; }
 
+    static bool isValidRawAlgorithm(CryptoAlgorithmIdentifier);
+
 private:
-    CryptoKeyRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap);
+    CryptoKeyRaw(CryptoAlgorithmIdentifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap, bool extractable);
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::Raw; }
 

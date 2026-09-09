@@ -76,9 +76,9 @@ object->putDirectBuiltinFunction(
   vm,
   globalObject,
   identifier,
-  // ReadableStream.ts, `function readableStreamToJSON()`
+  // Fifo.ts, `function createFIFO()`
   // This returns a FunctionExecutable* (extends JSCell*, but not JSFunction*).
-  readableStreamReadableStreamToJSONCodeGenerator(vm),
+  fifoCreateFIFOCodeGenerator(vm),
   JSC::PropertyAttribute::DontDelete | 0
 );
 ```

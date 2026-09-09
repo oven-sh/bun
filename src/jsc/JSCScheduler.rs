@@ -1,9 +1,7 @@
-use core::ffi::c_int;
-
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JsResult};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
@@ -12,6 +10,12 @@ bun_opaque::opaque_ffi! {
 
 impl Taskable for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
+    /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
+    /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
+        unsafe { Bun__deleteDeferredWorkTask(this) }
+    }
 }
 
 unsafe extern "C" {
@@ -19,56 +23,57 @@ unsafe extern "C" {
     // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
     // C++ side consuming it is interior to the opaque cell.
     safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
+    fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
 }
 
 impl JSCDeferredWorkTask {
-    pub fn run(&mut self) -> Result<(), JsTerminated> {
-        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; `global` is
-        // initialized during VM startup and remains valid for the VM's lifetime.
-        let global_this = VirtualMachine::get().global();
-        crate::validation_scope!(scope, global_this);
-        Bun__runDeferredWork(self);
-        // The only error variant that fn returns is termination, so map the
-        // wider `JsError` back down.
-        scope
-            .assert_no_exception_except_termination()
-            .map_err(|_| JsTerminated::JSTerminated)
+    /// Delete the C++ job without running it (its ticket is cancelled with the
+    /// DeferredWorkTimer at VM teardown).
+    ///
+    /// # Safety
+    /// `this` is the job handed over by `onScheduleWorkSoon`, not yet run.
+    pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { Bun__deleteDeferredWorkTask(this) };
+    }
+
+    /// The C++ side reports what a job throws at its own boundary; what can
+    /// still be pending here is the VM's termination.
+    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        crate::call_check_slow(global, || Bun__runDeferredWork(self))
     }
 }
 
+/// JSC helper threads (DeferredWorkTimer): deliver a deferred-work job to the
+/// VM's `kind` loop (captured by `JSCTaskScheduler::onAddPendingWork` on the JS
+/// thread when the work was registered), or run its release path here if the
+/// VM is gone.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: &VirtualMachine,
-    delta: c_int,
-) {
-    crate::mark_binding!();
-    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
-    // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
-    let event_loop: &EventLoop = jsc_vm.event_loop_shared();
-    if delta > 0 {
-        event_loop.ref_concurrently();
-    } else {
-        event_loop.unref_concurrently();
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
-    jsc_vm: &VirtualMachine,
+unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
+    r: *const crate::vm_handle::Shared,
     task: *mut JSCDeferredWorkTask,
+    kind: crate::LoopKind,
 ) {
     crate::mark_binding!();
-    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
-    let loop_: &EventLoop = jsc_vm.event_loop_shared();
+    // SAFETY: C++ passes the reference its JSVMClientData holds.
+    let handle = unsafe { crate::VmHandle::borrow_ref(r) };
     // `create_from` heap-allocates with the auto-delete bit set.
-    loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
+    let ct = ConcurrentTask::create_from(task);
+    if let crate::vm_handle::Posted::Refused(ct) = handle.post(kind, ct) {
+        // SAFETY: refused ⇒ we own the ConcurrentTask box; the C++ job's ticket
+        // was already cancelled by the VM teardown (DeferredWorkTimer is shut
+        // down before ~VM), so dropping the job pointer here loses nothing.
+        drop(unsafe { bun_core::heap::take(ct.as_ptr()) });
+        // SAFETY: `task` is the C++ job handed over for exactly one run/destroy.
+        unsafe { JSCDeferredWorkTask::destroy(task) };
+    }
 }
 
 /// # Safety
 /// `paused` must point to a live `bool`; C++ writes `true` through it from a
 /// callback inside `tick()`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
+unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: see fn contract.
     unsafe {

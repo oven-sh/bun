@@ -201,6 +201,60 @@ devTest("default export same-scope handling", {
     c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
+// An anonymous `export default class` that cannot be moved into the exports
+// object (it has an `extends` clause, a static block, or a computed key) has to
+// stay a class statement, which needs a name. It used to crash the dev server
+// with `called Option::unwrap() on a None value` while visiting the file.
+devTest("anonymous export default class that must stay a statement", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import.meta.hot.accept();
+      import { Base } from "./base";
+      import Derived from "./derived";
+      import StaticBlock from "./static-block";
+      import ComputedKey from "./computed-key";
+      console.log("extends: " + (new Derived() instanceof Base) + " " + new Derived().tag);
+      console.log("static block: " + StaticBlock.initialized);
+      console.log("computed key: " + new ComputedKey().computed);
+    `,
+    "base.ts": `
+      export class Base {
+        tag = "base";
+      }
+    `,
+    "derived.ts": `
+      import { Base } from "./base";
+      export default class extends Base {
+        tag = "derived";
+      }
+    `,
+    "static-block.ts": `
+      export default class {
+        static initialized = false;
+        static {
+          this.initialized = true;
+        }
+      }
+    `,
+    "computed-key.ts": `
+      const key = "computed";
+      export default class {
+        [key] = "value";
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("extends: true derived", "static block: true", "computed key: value");
+
+    await dev.patch("derived.ts", { find: '"derived"', replace: '"updated"' });
+    await c.expectMessage("extends: true updated", "static block: true", "computed key: value");
+  },
+});
 devTest("directory cache bust case #17576", {
   files: {
     "web/index.html": emptyHtmlFile({
@@ -812,5 +866,56 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("got: ALPHA BETA");
+  },
+});
+
+devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { x, y, deepValue } from 'loop-lib';
+      import { keep } from 'loop-lib/w.js';
+      import { other } from 'loop-lib/g.js';
+      console.log('result: ' + typeof x + ' ' + y + ' ' + keep + ' ' + deepValue + ' ' + other);
+    `,
+    "node_modules/loop-lib/package.json": JSON.stringify({
+      name: "loop-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/loop-lib/index.js": `
+      export * from './t.js';
+    `,
+    "node_modules/loop-lib/t.js": `
+      export { x } from './w.js';
+      export * from './r.js';
+      export * from './g.js';
+    `,
+    "node_modules/loop-lib/w.js": `
+      import * as ns from './t.js';
+      export { ns as x };
+      export { keep } from './keep.js';
+    `,
+    "node_modules/loop-lib/keep.js": `
+      export const keep = "KEEP";
+    `,
+    "node_modules/loop-lib/r.js": `
+      export const y = "Y";
+    `,
+    "node_modules/loop-lib/g.js": `
+      export { deepValue } from './deep.js';
+      export { other } from './other.js';
+    `,
+    "node_modules/loop-lib/deep.js": `
+      export const deepValue = "DEEP";
+    `,
+    "node_modules/loop-lib/other.js": `
+      export const other = "OTHER";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });

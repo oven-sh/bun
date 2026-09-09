@@ -3127,7 +3127,8 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     }
 
     for item in sources_content.items() {
-        let utf8 = item.as_str().ok_or(crate::Error::InvalidSourceMap)?;
+        // A `null` entry (content unavailable) is stored as empty, which the loader treats as "no contents".
+        let utf8 = item.as_str().unwrap_or(b"");
 
         let offset = string_payload.len();
 

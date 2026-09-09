@@ -4,6 +4,8 @@ use bun_ast::{Log, Source, Span};
 use bun_sourcemap::InputSourceMap;
 use bun_sourcemap::input_source_map::{path_from_file_url, url_scheme};
 
+bun_core::declare_scope!(InputSourceMap, hidden);
+
 /// A map that cannot be loaded is a warning on `log`; the file then maps to itself.
 pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<InputSourceMap>> {
     let url: &[u8] = comment.text.slice();
@@ -66,27 +68,25 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
 
             json = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &map_path) {
                 Ok(bytes) => bytes,
+                // Published packages routinely name a `.map` they do not ship; like esbuild, say nothing.
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                    bun_core::scoped_log!(
+                        InputSourceMap,
+                        "missing source map {}",
+                        bstr::BStr::new(&map_path)
+                    );
+                    return None;
+                }
                 Err(err) => {
-                    if err.get_errno() == bun_sys::E::ENOENT {
-                        log.add_range_warning_fmt(
-                            Some(source),
-                            comment.range,
-                            format_args!(
-                                "Cannot find source map file: {}",
-                                bstr::BStr::new(&map_path)
-                            ),
-                        );
-                    } else {
-                        log.add_range_warning_fmt(
-                            Some(source),
-                            comment.range,
-                            format_args!(
-                                "Cannot read source map file \"{}\": {}",
-                                bstr::BStr::new(&map_path),
-                                bstr::BStr::new(err.name())
-                            ),
-                        );
-                    }
+                    log.add_range_warning_fmt(
+                        Some(source),
+                        comment.range,
+                        format_args!(
+                            "Cannot read source map file \"{}\": {}",
+                            bstr::BStr::new(&map_path),
+                            bstr::BStr::new(err.name())
+                        ),
+                    );
                     return None;
                 }
             };

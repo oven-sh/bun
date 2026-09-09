@@ -1642,11 +1642,12 @@ describe("bundler", () => {
   });
   itBundled("edgecase/InputSourceMapMissingOrInvalid", {
     files: {
+      // A sidecar that does not exist (common in published packages) and a
+      // remote URL are skipped silently; a map that is there but unusable warns.
       "/lib/missing.js": inputSourceMapFixture.js.replaceAll("MARK", "MISS") + `//# sourceMappingURL=missing.js.map\n`,
       "/lib/invalid.js":
         inputSourceMapFixture.js.replaceAll("MARK", "OOPS") +
         `//# sourceMappingURL=data:application/json;base64,${Buffer.from("{oops").toString("base64")}\n`,
-      // Not something the build can read: skipped without a warning.
       "/lib/remote.js":
         inputSourceMapFixture.js.replaceAll("MARK", "HTTP") +
         `//# sourceMappingURL=https://example.com/remote.js.map\n`,
@@ -1656,7 +1657,6 @@ describe("bundler", () => {
     outdir: "/out",
     sourceMap: "external",
     bundleWarnings: {
-      "/lib/missing.js": ["Cannot find source map file: "],
       "/lib/invalid.js": [`Ignoring the source map "data: URL" of this file: invalid JSON`],
     },
     async onAfterBundle(api) {
@@ -1668,6 +1668,26 @@ describe("bundler", () => {
         '"OOPS"': "../lib/invalid.js:3:18",
         '"HTTP"': "../lib/remote.js:3:18",
       });
+    },
+  });
+  itBundled("edgecase/InputSourceMapCompile", {
+    files: {
+      // The original is not on disk and the sidecar has no `sourcesContent`,
+      // so the composed map carries a `null` entry the executable must accept.
+      "/lib/lib.js": inputSourceMapFixture.js + `//# sourceMappingURL=lib.js.map\n`,
+      "/lib/lib.js.map": inputSourceMapFixture.map({ sourcesContent: undefined }),
+      "/entry.ts": `import { f } from "./lib/lib.js";\nf({ x: 1 });\n`,
+    },
+    entryPoints: ["/entry.ts"],
+    target: "bun",
+    compile: true,
+    sourceMap: "external",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("error: MARK");
+        expect(stderr).toMatch(/src[\\/]lib\.ts:6:9/);
+      },
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {

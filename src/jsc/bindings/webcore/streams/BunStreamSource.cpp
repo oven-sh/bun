@@ -681,8 +681,7 @@ static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, 
 
 //                       The native-sink path
 
-// The direct stream's sink closed. State mutation first; everything that can throw (the sink's
-// end(), the user's cancel(reason)) runs after the state is final and propagates to whoever closed.
+// The direct stream's sink closed: state first, then the parts that can throw (sink end(), user cancel()).
 static void directStreamOnClose(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableSinkControllerBase* sinkController, JSDirectStreamSource* source, JSPromise* closePromise, JSReadableStream* stream, JSValue reason, bool sinkClosed)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

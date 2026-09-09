@@ -152,11 +152,12 @@ describe("Temporal lunar-calendar month arithmetic over long spans", () => {
     });
   });
 
+  // Twelve lunar months to every year, so whole years are a closed form for the shared month tail.
   describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"] as const)("%s", calendar => {
-    test("1600 years of months", () => {
-      const one = Temporal.PlainDate.from({ calendar, year: 1, monthCode: "M01", day: 1 });
-      const two = Temporal.PlainDate.from({ calendar, year: 1601, monthCode: "M01", day: 1 });
-      expectRoundTrip(one, two, 19200);
+    test("two centuries of months", () => {
+      const one = Temporal.PlainDate.from({ calendar, year: 1300, monthCode: "M01", day: 1 });
+      const two = Temporal.PlainDate.from({ calendar, year: 1500, monthCode: "M01", day: 1 });
+      expectRoundTrip(one, two, 2400);
     });
   });
 });

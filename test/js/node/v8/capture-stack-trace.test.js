@@ -1223,3 +1223,122 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(exitCode).toBe(0);
   },
 );
+
+test("call sites of an error created in a class field initializer", () => {
+  let callSites;
+  Error.prepareStackTrace = (err, sites) => {
+    callSites = sites;
+    return "prepared";
+  };
+  const reference = new Error("reference");
+  class WithField {
+    field = new Error("from a field"); // two lines below `reference`
+  }
+  reference.stack;
+  const [referenceSite] = callSites;
+  new WithField().field.stack;
+  const [initializer, constructor] = callSites;
+
+  expect({
+    functionName: initializer.getFunctionName(),
+    // The initializer is class code, so it is a strict frame: it exposes neither its function nor its receiver.
+    function: initializer.getFunction(),
+    receiver: initializer.getThis(),
+    isConstructor: initializer.isConstructor(),
+    fileName: initializer.getFileName(),
+    lineNumber: initializer.getLineNumber(),
+    callerName: constructor.getFunctionName(),
+    callerIsConstructor: constructor.isConstructor(),
+  }).toEqual({
+    functionName: "<instance_members_initializer>",
+    function: undefined,
+    receiver: undefined,
+    isConstructor: false,
+    fileName: referenceSite.getFileName(),
+    lineNumber: referenceSite.getLineNumber() + 2,
+    callerName: "WithField",
+    callerIsConstructor: true,
+  });
+});
+
+// A class field initializer runs as a function of its own. Its frame must stay in the trace and report the field's
+// position, and the error message must quote the field's expression. (The frame of a constructor that JSC synthesized
+// for a class without one still reports JSC's template source; #38507 maps it to the class declaration.)
+test("an exception in a class field initializer reports the field's position", async () => {
+  using dir = tempDir("class-field-initializer-frames", {
+    "fields.js": [
+      `const cfg = globalThis.nothingHere;`, // 1
+      `class Base {`, // 2
+      `  port = cfg.port;`, // 3
+      `}`, // 4
+      `class Derived extends Base {`, // 5
+      `  extra = 1;`, // 6
+      `}`, // 7
+      `class Explicit {`, // 8
+      `  port = cfg.port;`, // 9
+      `  constructor() {`, // 10
+      `    this.made = true;`, // 11
+      `  }`, // 12
+      `}`, // 13
+      `function makeStatic() {`, // 14
+      `  class Static {`, // 15
+      `    static port = cfg.port;`, // 16
+      `  }`, // 17
+      `}`, // 18
+      `const { basename } = require("node:path");`,
+      `function frames(fn, format) {`,
+      `  try { fn(); } catch (error) {`,
+      `    return { message: error.message, frames: format(error.stack) };`,
+      `  }`,
+      `}`,
+      `const dir = __dirname.replaceAll("\\\\", "/") + "/";`,
+      `const lines = stack => stack.split("\\n").slice(1, 3).map(line => line.trim().replaceAll("\\\\", "/").replace(dir, ""));`,
+      `const stacks = { derived: frames(() => new Derived(), lines), explicit: frames(() => new Explicit(), lines), static: frames(makeStatic, lines) };`,
+      `Error.prepareStackTrace = (_error, callSites) =>`,
+      `  callSites.slice(0, 1).map(callSite => ({`,
+      `    name: callSite.getFunctionName(),`,
+      `    file: basename(callSite.getFileName()),`,
+      `    line: callSite.getLineNumber(),`,
+      `    column: callSite.getColumnNumber(),`,
+      `    isConstructor: callSite.isConstructor(),`,
+      `  }));`,
+      `const callSites = frames(() => new Derived(), stack => stack);`,
+      `Error.prepareStackTrace = undefined;`,
+      `console.log(JSON.stringify({ stacks, callSites }));`,
+      `new Derived();`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fields.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout && JSON.parse(stdout)).toEqual({
+    stacks: {
+      derived: {
+        message: "undefined is not an object (evaluating 'cfg.port')",
+        frames: ["at <instance_members_initializer> (fields.js:3:10)", expect.stringMatching(/^at new Base \(/)],
+      },
+      explicit: {
+        message: "undefined is not an object (evaluating 'cfg.port')",
+        frames: ["at <instance_members_initializer> (fields.js:9:10)", "at new Explicit (fields.js:10:17)"],
+      },
+      static: {
+        message: "undefined is not an object (evaluating 'cfg.port')",
+        frames: ["at <static_initializer> (fields.js:16:19)", "at makeStatic (fields.js:15:3)"],
+      },
+    },
+    callSites: {
+      message: "undefined is not an object (evaluating 'cfg.port')",
+      // Call site columns are zero based.
+      frames: [{ name: "<instance_members_initializer>", file: "fields.js", line: 3, column: 9, isConstructor: false }],
+    },
+  });
+  // The uncaught error printer excerpts the field's line, not JSC's "(function () { })".
+  expect(stderr).toContain("3 |   port = cfg.port;");
+  expect(stderr).toMatch(/at <instance_members_initializer> \(.*fields\.js:3:10\)/);
+  expect(exitCode).toBe(1);
+});

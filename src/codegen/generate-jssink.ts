@@ -1057,17 +1057,24 @@ extern "C" void JSSinkController__clearPipeStream(JSC::EncodedJSValue cell)
     pipeCell(cell)->m_pipeStream.clear();
 }
 
+extern "C" void JSSinkController__setPipeDone(JSC::EncodedJSValue cell, JSC::EncodedJSValue done)
+{
+    auto* controller = pipeCell(cell);
+    controller->m_pipeDone.setMayBeNull(controller->vm(), controller, dynamicDowncast<JSC::JSPromise>(JSC::JSValue::decode(done)));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__pipeDone(JSC::EncodedJSValue cell)
+{
+    auto* done = pipeCell(cell)->m_pipeDone.get();
+    return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
+}
+
 extern "C" JSC::EncodedJSValue JSSinkController__takePipeDone(JSC::EncodedJSValue cell)
 {
     auto* controller = pipeCell(cell);
     auto* done = controller->m_pipeDone.get();
     controller->m_pipeDone.clear();
     return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
-}
-
-extern "C" bool JSSinkController__hasPipeDone(JSC::EncodedJSValue cell)
-{
-    return !!pipeCell(cell)->m_pipeDone;
 }
 
 extern "C" void JSSinkController__setPipeError(JSC::EncodedJSValue cell, JSC::EncodedJSValue error)

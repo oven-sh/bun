@@ -265,6 +265,7 @@ impl<T: JsSinkAbi> JSSink<T> {
         // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
         // call; the pointer is only stashed in C++ `m_sinkPtr`.
         let ptr = unsafe { ptr.as_mut() };
+        ptr.controller_created(controller, global);
         if let Some(src) = ptr.source() {
             *src = streams::SourceHandle::JSController(controller);
         }
@@ -369,6 +370,13 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
+    }
+    /// `assign_to_stream` made `controller` for this sink: a sink that keeps JS values roots it and puts them on it.
+    fn controller_created(
+        &mut self,
+        _controller: crate::webcore::jsc::JSValue,
+        _global: &crate::webcore::jsc::JSGlobalObject,
+    ) {
     }
     /// Called from `js_controller_detached`: once per JS-pump controller, on
     /// every detach path including its GC destructor. A sink co-owned by

@@ -2202,7 +2202,7 @@ where
         // above resolves it) instead of falling through to the cancel path.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
-            if let Some(flush) = response_stream.sink.pending_flush {
+            if let Some(flush) = response_stream.sink.pending_flush() {
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 effective_result = jsc::JSPromise::opaque_ref(flush).to_js();
             }
@@ -2867,7 +2867,7 @@ where
                 // flush_promise) is armed on `resp`. With no response the flush
                 // can never settle, so taking a ref and attaching here would
                 // leak the ref and hang the request; fall through to teardown.
-                if let Some(flush) = wrapper.sink.pending_flush
+                if let Some(flush) = wrapper.sink.pending_flush()
                     && self.resp.get().is_some()
                 {
                     stream_log!("handleResolveStream: waiting for pending flush");
@@ -3002,14 +3002,8 @@ where
                 self.flags.set_request_body_paused(false);
                 self.detach_request_body_producer();
             }
-            if let Some(prom) = wrapper.sink.pending_flush.take() {
-                // The promise value was protected when pending_flush was
-                // assigned (flushFromJS / endFromJS). Drop that root before
-                // abandoning the pointer, otherwise it leaks for the
-                // lifetime of the VM.
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(prom).to_js().unprotect();
-            }
+            // The body failed: a parked flush()/end() promise is abandoned, not resolved by the teardown below.
+            let _ = wrapper.sink.take_pending_flush();
             wrapper.sink.set_done();
             let aborted = self.flags.aborted() || wrapper.sink.is_aborted();
             self.flags.set_aborted(aborted);

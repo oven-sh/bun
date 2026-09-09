@@ -482,8 +482,7 @@ impl FileSink {
         }
     }
 
-    /// Serves the Windows `on_writable` slot. POSIX resumes a pending pull
-    /// from `on_write` instead.
+    /// Windows `on_writable` slot. POSIX resumes a pending pull in `on_write`.
     ///
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see

@@ -231,8 +231,7 @@ mod tests {
     /// xoshiro256++ with the state seeded by splitmix64. `AutoHashContext`
     /// routes through `bun_wyhash::auto_hash` (mum-mix). The 100%-load probe
     /// bound of the static test was validated for this hash by exact
-    /// simulation of all 128 seeds: max slot index touched is 548 of 632,
-    /// with no 64-bit hash collisions among any seed's 512 keys.
+    /// simulation of all 128 seeds: max slot 548 of 632, no 64-bit hash collisions.
     struct Xoshiro256PlusPlus {
         s: [u64; 4],
     }

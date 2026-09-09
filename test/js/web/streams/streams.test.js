@@ -1705,12 +1705,11 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
-  // A consumer that takes the whole body (.text(), .bytes(), Bun.readableStreamTo*(), a native
-  // sink) calls a direct stream's pull() once. When that pull() returns a promise, the promise
-  // resolving without close()/end() is the end of the body: the consumer finishes with everything
-  // written, as Bun.serve always did. Before, these consumers pulled once and then never settled.
-  // A reader (getReader/for-await/pipeTo) is a demand signal instead and pulls again; a sync
-  // pull() that returns without closing gives no completion signal, so it waits for close().
+  // Every consumer (.text(), .bytes(), Bun.readableStreamTo*(), a native sink, a reader, pipeTo)
+  // calls a direct stream's pull() once. When that pull() returns a promise, the promise resolving
+  // without close()/end() is the end of the body; a sync pull() that returns without closing gives
+  // no completion signal, so it waits for close(). Before, whole-body consumers pulled once and then
+  // never settled, and readers pulled again per read.
   describe("an async direct pull() that resolves without close() completes a whole-body consumer", () => {
     const nextTask = () => new Promise(resolve => setImmediate(resolve));
     const mk = (hooks = {}) =>

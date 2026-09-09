@@ -978,11 +978,13 @@ JSValue readableStreamToArrayDirect(JSGlobalObject* globalObject, WebCore::JSRea
 
 // The one-shot direct → ArrayBuffer/Uint8Array conversion (RSI:2474-2554).
 
-static JSObject* createOneShotBoundMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* target, JSValue contextArgument, unsigned length, ASCIILiteral name)
+static JSObject* createOneShotBoundMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* target, JSValue contextArgument, unsigned length, ASCIILiteral name, bool ignoresArguments = false)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer boundArguments;
     boundArguments.append(contextArgument);
+    if (ignoresArguments)
+        boundArguments.append(jsUndefined());
     SourceCode source = makeSource(WTF::String(name), SourceOrigin(), SourceTaintedOrigin::Untainted);
     JSString* boundName = jsString(vm, WTF::String(name));
     RELEASE_AND_RETURN(scope, JSBoundFunction::create(vm, globalObject, target, jsUndefined(), ArgList(boundArguments), length, boundName, source));
@@ -998,7 +1000,8 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     auto* writeMethod = createOneShotBoundMethod(vm, globalObject, runtime->boundOneShotDirectWrite(), sink, 1, "write"_s);
     RETURN_IF_EXCEPTION(scope, );
     sink->putDirect(vm, builtinNames(vm).writePublicName(), writeMethod, 0);
-    auto* endMethod = createOneShotBoundMethod(vm, globalObject, runtime->boundOneShotDirectClose(), sink, 0, "end"_s);
+    // end() shares close()'s target; the bound `undefined` keeps end(x) a clean close.
+    auto* endMethod = createOneShotBoundMethod(vm, globalObject, runtime->boundOneShotDirectClose(), sink, 0, "end"_s, true);
     RETURN_IF_EXCEPTION(scope, );
     sink->putDirect(vm, builtinNames(vm).endPublicName(), endMethod, 0);
     auto* closeMethod = createOneShotBoundMethod(vm, globalObject, runtime->boundOneShotDirectClose(), sink, 1, "close"_s);

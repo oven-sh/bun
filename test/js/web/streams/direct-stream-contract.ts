@@ -117,6 +117,14 @@ export const shapes: Record<string, Shape> = {
         } catch {}
       }),
   },
+  "end(value) is a clean close, unlike close(error)": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c => {
+        c.write("hello world");
+        Promise.resolve(new Error("not a failure")).then(v => (c.end as any)(v));
+      }),
+  },
   "close(undefined), close(0) and close('') are clean closes": {
     expect: { body: "hello world" },
     make: t =>

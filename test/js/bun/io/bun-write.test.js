@@ -1195,8 +1195,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(exitCode).toBe(0);
     });
 
-    // The implicit end closes the stream like controller.close(): the source's cancel() runs once
-    // with no reason, and the controller is detached from the sink it no longer owns.
+    // The implicit end closes the stream like controller.close(): cancel() does not run (nobody aborted), and the detached controller reports 0 bytes.
     it("ends a direct stream's sink when its pull() returns", async () => {
       using dir = tempDir("bun-write-direct-pull-returns", {});
       const dest = join(String(dir), "out.txt");
@@ -1218,7 +1217,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
       expect(await Bun.write(dest, new Response(stream))).toBe(12);
       expect(await Bun.file(dest).text()).toBe("first second");
-      expect(cancelled).toEqual([undefined]);
+      expect(cancelled).toStrictEqual([]);
       expect({ write: ctrl.write("late event"), flush: ctrl.flush(), end: ctrl.end() }).toEqual({
         write: 0,
         flush: 0,

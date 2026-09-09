@@ -47,9 +47,6 @@ pub enum Strong {
     Weak(bun_jsc::Weak<()>),
 }
 
-/// Re-export under the qualified name callers expect.
-pub type ReadableStreamStrong = Strong;
-
 impl Strong {
     fn value(&self) -> Option<JSValue> {
         match self {

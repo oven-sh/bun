@@ -1128,18 +1128,21 @@ static void installDirectControllerMethods(JSC::VM& vm, JSGlobalObject* globalOb
         JSString* name;
         JSFunction* target;
         double length;
+        bool ignoresArguments; // end() shares close()'s target; a bound `undefined` keeps end(x) a clean close
     };
     const Method methods[] = {
-        { names.writePublicName(), strings.writeString(), runtime->boundDirectWrite(), 1 },
-        { names.endPublicName(), strings.endString(), runtime->boundDirectClose(), 0 },
-        { names.closePublicName(), strings.closeString(), runtime->boundDirectClose(), 1 },
-        { names.flushPublicName(), strings.flushString(), runtime->boundDirectFlush(), 0 },
-        { vm.propertyNames->error, strings.fetchErrorString(), runtime->boundDirectError(), 1 },
+        { names.writePublicName(), strings.writeString(), runtime->boundDirectWrite(), 1, false },
+        { names.endPublicName(), strings.endString(), runtime->boundDirectClose(), 0, true },
+        { names.closePublicName(), strings.closeString(), runtime->boundDirectClose(), 1, false },
+        { names.flushPublicName(), strings.flushString(), runtime->boundDirectFlush(), 0, false },
+        { vm.propertyNames->error, strings.fetchErrorString(), runtime->boundDirectError(), 1, false },
     };
     SourceCode source = makeSource("DirectStreamController"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
     for (const auto& method : methods) {
         MarkedArgumentBuffer boundArgs;
         boundArgs.append(controller);
+        if (method.ignoresArguments)
+            boundArgs.append(jsUndefined());
         auto* boundFunction = JSBoundFunction::create(vm, globalObject, method.target, jsUndefined(), ArgList(boundArgs), method.length, method.name, source);
         RETURN_IF_EXCEPTION(scope, );
         controller->putDirect(vm, method.key, boundFunction, 0);

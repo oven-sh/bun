@@ -140,7 +140,7 @@
 "unused_pub:src/io/ParentDeathWatchdog.rs" = 1
 "unused_pub:src/io/PipeWriter.rs" = 2
 "unused_pub:src/jsc/bindgen.rs" = 6
-"unused_pub:src/jsc/host_fn.rs" = 1
+"unused_pub:src/jsc/host_fn.rs" = 2
 "unused_pub:src/jsc/lib.rs" = 1
 "unused_pub:src/jsc/webcore_types.rs" = 2
 "unused_pub:src/libarchive/lib.rs" = 1

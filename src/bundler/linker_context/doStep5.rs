@@ -557,19 +557,16 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
-            let key = Expr::allocate(
-                arena,
-                // TODO: test emoji work as expected (relevant for WASM exports)
-                // SAFETY: `alias` borrows the worker arena which outlives the
-                // link pass; `E::String::data: &'static [u8]` is the arena
-                // erasure used throughout the AST.
-                E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                loc,
-            );
-            let key_flags = E::own_key_property_flags(&key);
-            properties.push(G::Property {
-                flags: key_flags,
-                key: Some(key),
+            let mut property = G::Property {
+                key: Some(Expr::allocate(
+                    arena,
+                    // TODO: test emoji work as expected (relevant for WASM exports)
+                    // SAFETY: `alias` borrows the worker arena which outlives the
+                    // link pass; `E::String::data: &'static [u8]` is the arena
+                    // erasure used throughout the AST.
+                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    loc,
+                )),
                 value: Some(Expr::allocate(
                     arena,
                     E::Arrow {
@@ -580,7 +577,11 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 ..Default::default()
-            });
+            };
+            let key_flags =
+                E::own_key_property_flags(property.key.as_ref().expect("infallible: prop has key"));
+            property.flags = key_flags;
+            properties.push(property);
             if lifted_setter_param.is_valid()
                 && exp_data.source_index.get() == id
                 && self

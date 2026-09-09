@@ -1725,14 +1725,16 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
 
       // A consumed body's stream is locked for every other consumer too,
       // including the node:stream adapter's native fast path.
-      test("Readable.fromWeb() refuses a consumed body's stream", async () => {
-        for (const [, init] of sources) {
-          const owner = make(init());
-          const stream = owner.body!;
-          await owner.text();
-          expect(() => Readable.fromWeb(stream)).toThrow(
-            expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
-          );
+      describe("Readable.fromWeb() refuses a consumed body's stream", () => {
+        for (const [name, init] of sources) {
+          test(name, async () => {
+            const owner = make(init());
+            const stream = owner.body!;
+            await owner.text();
+            expect(() => Readable.fromWeb(stream)).toThrow(
+              expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+            );
+          });
         }
       });
     });

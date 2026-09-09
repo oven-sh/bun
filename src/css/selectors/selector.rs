@@ -267,8 +267,7 @@ pub(crate) enum Compatibility {
     Compatible,
     /// Some target lacks, or (with no support data) may lack, a feature that a selector uses.
     Incompatible,
-    /// A selector is vendor prefixed, so every other engine drops the whole rule. Browser hacks
-    /// rely on that, and no rewrite of the list is right for every browser.
+    /// A member is vendor prefixed: other engines drop the whole rule, and browser hacks use that.
     VendorPrefixed,
 }
 

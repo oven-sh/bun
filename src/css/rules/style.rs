@@ -58,8 +58,7 @@ impl<R> StyleRule<R> {
             return;
         }
         if self.vendor_prefix != VendorPrefix::NONE {
-            // The author mixed prefixed and unprefixed pseudos. Print once, as written: a pass
-            // per prefix would print the prefixed one unprefixed in the `NONE` pass.
+            // Mixed as written. A pass per prefix would print the prefixed pseudo unprefixed.
             self.vendor_prefix = VendorPrefix::empty();
         } else if context.targets.should_compile_selectors() {
             self.vendor_prefix = selector::downlevel_selectors(
@@ -74,8 +73,7 @@ impl<R> StyleRule<R> {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
-    /// Whether to `:is()`-wrap or split this rule's selector list so the selectors every target
-    /// supports keep applying. A vendor-prefixed member keeps the list as written.
+    /// Whether the targets need this selector list `:is()`-wrapped or split. See `Compatibility`.
     pub(crate) fn should_compile_selector_list(&self, targets: &css::targets::Targets) -> bool {
         self.selectors.v.len() > 1
             && targets.should_compile_selectors()

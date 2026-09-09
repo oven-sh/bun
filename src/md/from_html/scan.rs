@@ -54,23 +54,39 @@ fn load(hay: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(b)
 }
 
-/// The final `n - i < 8` bytes as one word, plus which result bits are
-/// theirs. With eight bytes available the word is an overlapping load ending
-/// at `n` (its low bytes were already examined and are masked off);
-/// otherwise the few bytes there are get assembled. Returns
-/// `(word, valid_mask, index_of_byte_0)`.
+/// The last few (< 8) bytes of a probe as one word.
+struct Tail {
+    word: u64,
+    /// Result bits that belong to the bytes not yet examined.
+    valid: u64,
+    /// Index in `hay` of the word's byte 0.
+    base: usize,
+}
+
+/// The final `n - i < 8` bytes as one word. With eight bytes available the
+/// word is an overlapping load ending at `n` (its low bytes were already
+/// examined and are masked off); otherwise the few bytes there are get
+/// assembled.
 #[inline(always)]
-fn load_tail(hay: &[u8], i: usize, n: usize) -> (u64, u64, usize) {
+fn load_tail(hay: &[u8], i: usize, n: usize) -> Tail {
     debug_assert!(i < n && n - i < 8 && n <= hay.len());
     if n >= 8 {
         let fresh = n - i; // 1..=7 new bytes at the top of the word
-        (load(hay, n - 8), !((1u64 << (8 * (8 - fresh))) - 1), n - 8)
-    } else {
-        let mut w = 0u64;
-        for (k, &b) in hay[i..n].iter().enumerate() {
-            w |= u64::from(b) << (8 * k);
+        Tail {
+            word: load(hay, n - 8),
+            valid: !((1u64 << (8 * (8 - fresh))) - 1),
+            base: n - 8,
         }
-        (w, (1u64 << (8 * (n - i))) - 1, i)
+    } else {
+        let mut word = 0u64;
+        for (k, &b) in hay[i..n].iter().enumerate() {
+            word |= u64::from(b) << (8 * k);
+        }
+        Tail {
+            word,
+            valid: (1u64 << (8 * (n - i))) - 1,
+            base: i,
+        }
     }
 }
 
@@ -91,14 +107,14 @@ pub(crate) fn find_any<const N: usize>(hay: &[u8], set: &[u8; N]) -> Option<usiz
         i += 8;
     }
     if i < n {
-        let (w, valid, base) = load_tail(hay, i, n);
+        let t = load_tail(hay, i, n);
         let mut m = 0u64;
         for &c in set {
-            m |= eq_mask(w, c);
+            m |= eq_mask(t.word, c);
         }
-        m &= valid;
+        m &= t.valid;
         if m != 0 {
-            return Some(base + (m.trailing_zeros() / 8) as usize);
+            return Some(t.base + (m.trailing_zeros() / 8) as usize);
         }
     }
     if n == hay.len() {
@@ -120,10 +136,10 @@ pub(crate) fn find_byte(hay: &[u8], c: u8) -> Option<usize> {
         i += 8;
     }
     if i < n {
-        let (w, valid, base) = load_tail(hay, i, n);
-        let m = eq_mask(w, c) & valid;
+        let t = load_tail(hay, i, n);
+        let m = eq_mask(t.word, c) & t.valid;
         if m != 0 {
-            return Some(base + (m.trailing_zeros() / 8) as usize);
+            return Some(t.base + (m.trailing_zeros() / 8) as usize);
         }
     }
     if n == hay.len() {
@@ -164,15 +180,19 @@ pub(crate) fn first_uncollapsed(text: &[u8]) -> Option<usize> {
         i += 8;
     }
     if i < n {
-        let (w, valid, base) = load_tail(text, i, n);
-        let spaces = eq_mask_exact(w, b' ');
+        let t = load_tail(text, i, n);
+        let spaces = eq_mask_exact(t.word, b' ');
         // For an overlapping word the left neighbours are inside the word
         // itself; only a word assembled at `i` needs the carried bit.
-        let carry = if base == i { carry } else { 0 };
+        let carry = if t.base == i { carry } else { 0 };
         let second_space = spaces & ((spaces << 8) | carry);
-        let m = (eq_mask(w, b'\t') | eq_mask(w, b'\n') | eq_mask(w, b'\r') | second_space) & valid;
+        let m = (eq_mask(t.word, b'\t')
+            | eq_mask(t.word, b'\n')
+            | eq_mask(t.word, b'\r')
+            | second_space)
+            & t.valid;
         if m != 0 {
-            return Some(base + (m.trailing_zeros() / 8) as usize);
+            return Some(t.base + (m.trailing_zeros() / 8) as usize);
         }
     }
     if n == text.len() {

@@ -261,18 +261,14 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-/// How the browser targets support a selector list. A browser drops the whole style rule when it
-/// does not support one selector in the list. Ordered so that the worst verdict of the list wins.
+/// How the browser targets support a selector list. The worst member wins, hence `Ord`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) enum Compatibility {
-    /// Every target supports every selector.
     Compatible,
-    /// Some target lacks (or, with no support data, may lack) a feature that a selector uses.
+    /// Some target lacks, or (with no support data) may lack, a feature that a selector uses.
     Incompatible,
-    /// A selector uses a vendor-prefixed pseudo-class or pseudo-element (or `:-webkit-any()`),
-    /// which only that engine will ever accept. The other engines drop the rule, and browser hacks
-    /// such as `_:-ms-lang(x), .ie-only {}` rely on that, so no rewrite of the list is right for
-    /// every browser.
+    /// A selector is vendor prefixed, so every other engine drops the whole rule. Browser hacks
+    /// rely on that, and no rewrite of the list is right for every browser.
     VendorPrefixed,
 }
 
@@ -280,8 +276,7 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
     compatibility(selectors, targets) == Compatibility::Compatible
 }
 
-/// `feature` taking `selectors` as an unforgiving argument list, where one unsupported argument
-/// invalidates the whole selector.
+/// `feature` with an unforgiving argument list: one unsupported argument invalidates the selector.
 fn unforgiving(
     feature: Feature,
     selectors: &[parser::Selector],
@@ -293,8 +288,7 @@ fn unforgiving(
     }
 }
 
-/// Whether an unknown pseudo-class or pseudo-element name is vendor specific (`-moz-focusring`).
-/// The parser uses the same test to skip its unsupported-pseudo warning.
+/// `-moz-focusring` and the like. The parser skips its unsupported-pseudo warning by the same test.
 fn is_vendor_name(name: &[u8]) -> bool {
     bun_core::strings::starts_with_char(name, b'-')
 }

@@ -58,9 +58,8 @@ impl<R> StyleRule<R> {
             return;
         }
         if self.vendor_prefix != VendorPrefix::NONE {
-            // The author put an unprefixed pseudo next to a vendor-prefixed one. One printing
-            // pass per prefix would write the prefixed one without its prefix in the unprefixed
-            // pass, so print the rule once, as written.
+            // The author mixed prefixed and unprefixed pseudos. Print once, as written: a pass
+            // per prefix would print the prefixed one unprefixed in the `NONE` pass.
             self.vendor_prefix = VendorPrefix::empty();
         } else if context.targets.should_compile_selectors() {
             self.vendor_prefix = selector::downlevel_selectors(
@@ -75,12 +74,8 @@ impl<R> StyleRule<R> {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
-    /// Whether the targets call for rewriting this rule's selector list: an `:is()` wrap or a
-    /// split, so that the selectors every target supports keep applying in the targets that lack
-    /// a feature another selector uses. A vendor-prefixed selector keeps the list as written: the
-    /// other engines drop the whole rule because of it, browser hacks such as
-    /// `_:-ms-lang(x), .ie-only {}` rely on that, and any rewrite would revive the other selectors
-    /// there.
+    /// Whether to `:is()`-wrap or split this rule's selector list so the selectors every target
+    /// supports keep applying. A vendor-prefixed member keeps the list as written.
     pub(crate) fn should_compile_selector_list(&self, targets: &css::targets::Targets) -> bool {
         self.selectors.v.len() > 1
             && targets.should_compile_selectors()

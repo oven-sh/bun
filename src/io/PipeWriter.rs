@@ -589,9 +589,6 @@ pub trait PosixStreamingWriterParent {
     unsafe fn on_error(this: *mut Self, err: sys::Error);
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn on_ready(_this: *mut Self) {}
-    /// # Safety
-    /// `this` must point to a live `Self`.
     unsafe fn on_close(this: *mut Self);
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -2646,11 +2643,6 @@ macro_rules! impl_streaming_writer_parent {
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(err)) }
             }
             #[inline]
-            unsafe fn on_ready(this: *mut Self) {
-                // SAFETY: see on_write.
-                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_ready()) }
-            }
-            #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
@@ -2698,7 +2690,6 @@ macro_rules! impl_streaming_writer_parent {
 
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsStreamingWriterParent for $Ty {
-            // Same body as POSIX `on_ready`.
             const HAS_ON_WRITABLE: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {

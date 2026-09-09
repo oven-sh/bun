@@ -159,31 +159,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn len_mut(&mut self) -> &mut usize;
     fn shift(&self) -> u8;
 
-    /// Full backing slice (capacity + overflow).
-    fn slice(&mut self) -> &mut [Entry<K, V>] {
-        // The storage carries its exact length; the assert checks it stays
-        // consistent with the `shift`-derived `capacity + overflow` size.
-        let capacity = 1u64 << (63 - self.shift() + 1);
-        let overflow = compute_overflow(capacity, self.shift());
-        debug_assert_eq!(
-            self.storage_mut().len(),
-            usize::try_from(capacity + overflow).expect("int cast")
-        );
-        self.storage_mut()
-    }
-
-    fn put_assume_capacity(&mut self, key: K, value: V)
-    where
-        K: Copy,
-        V: Copy + Default,
-        Ctx: HashContext<K>,
-    {
-        let result = self.get_or_put_assume_capacity(key);
-        if !result.found_existing {
-            *result.value_ptr = value;
-        }
-    }
-
     fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, V>
     where
         K: Copy,
@@ -232,26 +207,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         }
     }
 
-    fn get(&self, key: K) -> Option<V>
-    where
-        K: Copy,
-        V: Copy,
-        Ctx: HashContext<K>,
-    {
-        let hash = Ctx::ctx_hash(&key);
-        debug_assert!(hash != EMPTY_HASH);
-
-        for entry in &self.storage()[to_idx(hash >> self.shift())..] {
-            if entry.hash >= hash {
-                if !Ctx::ctx_eql(&entry.key, &key) {
-                    return None;
-                }
-                return Some(entry.value);
-            }
-        }
-        unreachable!()
-    }
-
     fn has_with_hash(&self, key_hash: u64) -> bool {
         debug_assert!(key_hash != EMPTY_HASH);
 
@@ -262,45 +217,6 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         }
 
         false
-    }
-
-    fn delete(&mut self, key: K) -> Option<V>
-    where
-        K: Copy + Default,
-        V: Copy + Default,
-        Ctx: HashContext<K>,
-    {
-        let hash = Ctx::ctx_hash(&key);
-        debug_assert!(hash != EMPTY_HASH);
-
-        let shift = self.shift();
-        let mut i = to_idx(hash >> shift);
-        loop {
-            let entry = self.storage()[i];
-            if entry.hash >= hash {
-                if !Ctx::ctx_eql(&entry.key, &key) {
-                    return None;
-                }
-                break;
-            }
-            i += 1;
-        }
-
-        let value = self.storage()[i].value;
-
-        loop {
-            let next = self.storage()[i + 1];
-            let j = to_idx(next.hash >> shift);
-            if i < j || next.is_empty() {
-                break;
-            }
-            self.storage_mut()[i] = next;
-            i += 1;
-        }
-        self.storage_mut()[i] = Entry::empty();
-        *self.len_mut() -= 1;
-
-        Some(value)
     }
 }
 
@@ -315,9 +231,8 @@ mod tests {
     /// xoshiro256++ with the state seeded by splitmix64. `AutoHashContext`
     /// routes through `bun_wyhash::auto_hash` (mum-mix). The 100%-load probe
     /// bound of the static test was validated for this hash by exact
-    /// simulation of all 128 seeds: max slot index touched (incl. delete's
-    /// `i + 1` backshift read) is 548 of 632, with no 64-bit hash collisions
-    /// among any seed's 512 keys.
+    /// simulation of all 128 seeds: max slot index touched is 548 of 632,
+    /// with no 64-bit hash collisions among any seed's 512 keys.
     struct Xoshiro256PlusPlus {
         s: [u64; 4],
     }
@@ -354,16 +269,16 @@ mod tests {
     }
 
     #[test]
-    fn static_hash_map_put_get_delete_grow() {
+    fn static_hash_map_put_get_grow() {
         const CAP: usize = 512;
         const SLOTS: usize = static_slots(CAP);
-        // Boxed: ~15 KB of entries is fine on the heap, gratuitous on the stack.
-        let mut map: Box<StaticHashMap<usize, usize, AutoContext, CAP, SLOTS>> =
-            Box::new(Default::default());
 
-        // Miri is ~100× slower; 2 seeds still cover the put/get/delete cycle.
+        // Miri is ~100× slower; 2 seeds still cover the put/get cycle.
         const SEEDS: u64 = if cfg!(miri) { 2 } else { 128 };
         for seed in 0..SEEDS {
+            // Boxed: ~15 KB of entries is fine on the heap, gratuitous on the stack.
+            let mut map: Box<StaticHashMap<usize, usize, AutoContext, CAP, SLOTS>> =
+                Box::new(Default::default());
             let mut rng = Xoshiro256PlusPlus::init(seed);
 
             let keys: Vec<usize> = (0..512).map(|_| rng.next() as usize).collect();
@@ -371,12 +286,12 @@ mod tests {
             assert_eq!(map.shift, 55);
 
             for (i, &key) in keys.iter().enumerate() {
-                map.put_assume_capacity(key, i);
+                *map.get_or_put_assume_capacity(key).value_ptr = i;
             }
             assert_eq!(map.len, keys.len());
 
             let mut it: u64 = 0;
-            for entry in map.slice().iter() {
+            for entry in map.entries.iter() {
                 if !entry.is_empty() {
                     assert!(it <= entry.hash, "Unsorted");
                     it = entry.hash;
@@ -384,11 +299,12 @@ mod tests {
             }
 
             for (i, &key) in keys.iter().enumerate() {
-                assert_eq!(map.get(key).unwrap(), i);
+                let existing = map.get_or_put_assume_capacity(key);
+                assert!(existing.found_existing);
+                assert_eq!(*existing.value_ptr, i);
+                assert!(map.has_with_hash(<AutoContext as HashContext<usize>>::ctx_hash(&key)));
             }
-            for (i, &key) in keys.iter().enumerate() {
-                assert_eq!(map.delete(key).unwrap(), i);
-            }
+            assert_eq!(map.len, keys.len());
         }
     }
 }

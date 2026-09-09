@@ -12,7 +12,7 @@ import {
 } from "../../web/streams/direct-stream-contract";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
-test("HTTPResponseSink displays correct message", async () => {
+test("HTTPResponseSink controller after the response ended: write() reports 0 bytes; a foreign this still throws", async () => {
   let leakedCtrl: any;
   using server = Bun.serve({
     port: 0,
@@ -33,9 +33,7 @@ test("HTTPResponseSink displays correct message", async () => {
   });
   let response = await fetch(server.url);
   expect(await response.text()).toBe("ab");
-  expect(() => leakedCtrl.write("c")).toThrow(
-    'This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
-  );
+  expect(leakedCtrl.write("c")).toBe(0);
   expect(() => leakedCtrl.write.call({}, "c")).toThrow("Expected HTTPResponseSink");
 });
 
@@ -612,21 +610,15 @@ describe("direct stream whose pull() runs while its Response is being attached",
 
   const lateWrites = `
     try {
-      controller.write("late");
-      events.push("write() returned");
+      events.push("write() returned " + controller.write("late"));
     } catch (error) {
       events.push("write() threw: " + error.message);
     }
     controller.end();
     events.push("end() returned");
   `;
-  const abortedEvents = [
-    "stop(true)",
-    "cancel()",
-    "stop(true) returned",
-    'write() threw: This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
-    "end() returned",
-  ];
+  // After the stop aborted the stream, write() reports 0 bytes instead of throwing.
+  const abortedEvents = ["stop(true)", "cancel()", "stop(true) returned", "write() returned 0", "end() returned"];
 
   // Called directly, the stop runs while the stream is being attached. From a
   // microtask it runs inside the microtask drain that follows the attach (sync
@@ -1890,11 +1882,9 @@ describe("direct stream edge cases over Bun.serve", () => {
           direct(t, async c => {
             c.write("first");
             await c.flush();
-            // Keep writing until the socket pushes back, so the abort always finds pull() parked on a write.
+            // Keep writing until the socket pushes back, so the abort always finds pull() parked on a write; 0 bytes means the peer is gone.
             try {
-              for (;;) await c.write(Buffer.alloc(256 * 1024, "x"));
-            } catch (e: any) {
-              t.events.push("write threw");
+              while (await c.write(Buffer.alloc(256 * 1024, "x"))) {}
             } finally {
               done.resolve();
             }

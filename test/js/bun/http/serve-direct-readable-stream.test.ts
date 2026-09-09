@@ -4,8 +4,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
+import {
+  expected as directExpected,
+  observe as directObserve,
+  shapes as directShapes,
+} from "../../web/streams/direct-stream-contract";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
-import { expected as directExpected, observe as directObserve, shapes as directShapes } from "../../web/streams/direct-stream-contract";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -1760,7 +1764,11 @@ describe("direct stream contract", () => {
       const got = await directObserve(shape, consumers[consumerName]);
       if ("error" in shape.expect) {
         // The source's message cannot cross the wire; the peer sees a failed transfer or a 5xx.
-        expect({ pulls: got.pulls, cancels: got.cancels, errored: "error" in got }).toEqual({ pulls: 1, cancels: 0, errored: true });
+        expect({ pulls: got.pulls, cancels: got.cancels, errored: "error" in got }).toEqual({
+          pulls: 1,
+          cancels: 0,
+          errored: true,
+        });
         return;
       }
       expect(got).toEqual(directExpected(shape));

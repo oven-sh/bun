@@ -11,7 +11,12 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, 
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { consumers as directConsumers, expected as directExpected, observe as directObserve, shapes as directShapes } from "./direct-stream-contract";
+import {
+  consumers as directConsumers,
+  expected as directExpected,
+  observe as directObserve,
+  shapes as directShapes,
+} from "./direct-stream-contract";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -3806,4 +3811,3 @@ describe("direct stream contract", () => {
     });
   });
 });
-

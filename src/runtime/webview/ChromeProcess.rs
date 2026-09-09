@@ -561,6 +561,13 @@ fn spawn(
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),
+            // Chrome on Windows relaunches itself de-elevated when the parent
+            // runs as Administrator (ChromeBrowserMainPartsWin::MaybeAutoDeElevate)
+            // and the original process exits. The relaunched process does not
+            // inherit the pipe handles we pass via STARTUPINFO.lpReserved2, so
+            // the transport sees EOF before the first CDP message. This switch
+            // suppresses the relaunch; other platforms ignore it.
+            c"--do-not-de-elevate".as_ptr(),
         ];
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's

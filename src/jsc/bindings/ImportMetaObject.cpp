@@ -69,23 +69,19 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, create(globalObject, keyString));
 }
 
-// True when URL::fileURLWithFileSystemPath(path).fileSystemPath() gives back `path` unchanged, which
-// is the case for what the resolver produces: a normalized absolute path in the platform's own syntax.
+// True when URL::fileURLWithFileSystemPath(path).fileSystemPath() == path: a normalized absolute path.
 static bool isFileSystemPathInURLForm(const WTF::String& path)
 {
 #if OS(WINDOWS)
-    // `C:\dir\file`. Forward slashes come back as backslashes (the standalone executable's
-    // `B:/~BUN/root/...`), and a UNC or rooted path takes a different shape.
+    // `C:\...` only. `B:/~BUN/...` (standalone) comes back with backslashes, UNC paths change shape.
     if (path.length() < 3 || !isASCIIAlpha(path[0]) || path[1] != ':' || path[2] != '\\')
         return false;
     if (path.find('/') != notFound)
         return false;
-    // The URL parser collapses `.` and `..` segments.
     return !path.contains("\\.\\"_s) && !path.contains("\\..\\"_s) && !path.endsWith("\\."_s) && !path.endsWith("\\.."_s);
 #else
     if (!path.startsWith('/'))
         return false;
-    // The URL parser collapses `.` and `..` segments.
     return !path.contains("/./"_s) && !path.contains("/../"_s) && !path.endsWith("/."_s) && !path.endsWith("/.."_s);
 #endif
 }

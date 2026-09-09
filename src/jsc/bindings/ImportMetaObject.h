@@ -28,20 +28,11 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
 
-    /// `key` is a module registry key or a CommonJS filename. For a file that is its absolute
-    /// path as the resolver produced it, with the `?query` of the import (if any) appended, and
-    /// that JSString becomes `import.meta.path` as is. Any other key (one with a query, a plugin's
-    /// virtual module id, `data:`, `blob:`, `vm:module(n)`) goes through a `file:` URL round trip.
-    ///
-    /// Caveats of that format: the `?` is not a literal `?` in a file name but the start of
-    /// the query string, and nothing is URL encoded despite that. So a module with a `?` in
-    /// its file name cannot be represented. Fixing this means making the module resolver
-    /// operate on URLs, see https://github.com/oven-sh/bun/issues/8640 and
-    /// https://github.com/oven-sh/bun/pull/9399.
+    /// `key` is a module registry key or a CommonJS filename: normally an absolute path, where a `?`
+    /// starts the import's query string (https://github.com/oven-sh/bun/issues/8640).
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue key);
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSString* key);
-
-    /// For a module whose key is a URL and not a file path (`bake://server-runtime.js`).
+    /// For a key that is a URL and not a path (`bake://server-runtime.js`).
     static ImportMetaObject* createFromURL(JSC::JSGlobalObject* globalObject, const WTF::URL& url);
 
     DECLARE_INFO;
@@ -59,8 +50,7 @@ public:
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 
-    /// `import.meta.path`: the file system path of the module, without the query string.
-    /// Never a rope. `url`, `dir`, `file` and `require` derive from it on first access.
+    /// `import.meta.path`. Never a rope.
     JSString* path() const { return m_path.get(); }
 
     LazyProperty<JSObject, JSCell> requireProperty;
@@ -69,7 +59,7 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
 
 private:
-    /// `url` may be null, in which case it is `URL::fileURLWithFileSystemPath(path)` computed on first access.
+    /// A null `url` means `URL::fileURLWithFileSystemPath(path)`, computed on first access.
     static ImportMetaObject* create(JSC::VM& vm, JSC::Structure* structure, JSString* path, JSString* url);
 
     ImportMetaObject(JSC::VM& vm, JSC::Structure* structure)

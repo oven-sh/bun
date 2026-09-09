@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -260,6 +270,59 @@ server.close();`,
     expect(appStderr).toBe("");
     expect(appExitCode).toBe(0);
   });
+
+  // An `index.*` entrypoint is named after its directory, like `bun build --compile`. When there is
+  // no usable directory name (`./index.ts`), or the name is already a directory at the destination
+  // (`./src/index.ts` built from the project root), the executable is named `index`. So is an
+  // explicit outfile of `.` or `./`. The executable is never written over the working directory or
+  // `outdir`.
+  test.each([
+    { entry: "./index.ts", outdir: "", outfile: "", expected: "index" },
+    { entry: "./index.ts", outdir: "out", outfile: "", expected: "out/index" },
+    // A Windows executable gets `.exe`, so `src.exe` does not collide with `src/`.
+    { entry: "./src/index.ts", outdir: "", outfile: "", expected: isWindows ? "src" : "index" },
+    { entry: "./tools/cli/index.ts", outdir: "", outfile: "", expected: "cli" },
+    { entry: "./tools/cli/index.ts", outdir: "out", outfile: "./", expected: "out/index" },
+  ])(
+    "compile $entry with outdir '$outdir' and outfile '$outfile' writes $expected",
+    async ({ entry, outdir, outfile, expected }) => {
+      using dir = tempDir("build-compile-index-outfile", {
+        "index.ts": `console.log("index");`,
+        "src/index.ts": `console.log("src/index");`,
+        "tools/cli/index.ts": `console.log("tools/cli/index");`,
+        "build.ts": `
+          import { relative, sep } from "node:path";
+          const [entry, outdir, outfile] = process.argv.slice(2);
+          const result = await Bun.build({
+            entrypoints: [entry],
+            compile: outfile ? { outfile } : true,
+            ...(outdir ? { outdir } : {}),
+          });
+          console.log(JSON.stringify(result.outputs.map(o => relative(process.cwd(), o.path).split(sep).join("/"))));
+        `,
+      });
+      const cwd = String(dir);
+      if (outdir) mkdirSync(join(cwd, outdir));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts", entry, outdir, outfile],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([expected + (isWindows ? ".exe" : "")]);
+      expect(exitCode).toBe(0);
+
+      expect(statSync(join(cwd, expected + (isWindows ? ".exe" : ""))).isFile()).toBe(true);
+      // The directories the name was derived from, and outdir, are still directories.
+      for (const d of ["src", "tools/cli", ...(outdir ? [outdir] : [])]) {
+        expect(statSync(join(cwd, d)).isDirectory()).toBe(true);
+      }
+    },
+  );
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {

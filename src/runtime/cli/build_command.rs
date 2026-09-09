@@ -255,7 +255,6 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
-        let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
             if ctx.bundler_options.transform_only {
@@ -331,24 +330,8 @@ impl BuildCommand {
                 this_transpiler.options.public_path = base_public_path.into();
 
                 if outfile.is_empty() {
-                    outfile = bun_paths::basename(&first_entry_point);
-                    let ext = bun_paths::extension(outfile);
-                    if !ext.is_empty() {
-                        outfile = &outfile[0..outfile.len() - ext.len()];
-                    }
-
-                    if outfile == b"index" {
-                        outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"index"),
-                        );
-                        was_renamed_from_index = outfile != b"index";
-                    }
-
-                    if outfile == b"bun" {
-                        outfile = bun_paths::basename(
-                            bun_core::dirname(&first_entry_point).unwrap_or(b"bun"),
-                        );
-                    }
+                    // No --outdir with --compile, so the executable goes to the working directory.
+                    outfile = default_compile_outfile(&first_entry_point, b"", compile_target.os);
                 }
 
                 // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
@@ -887,17 +870,6 @@ impl BuildCommand {
                     write!(&mut outfile_owned, "{}.exe", bstr::BStr::new(outfile))
                         .expect("unreachable");
                     outfile = &outfile_owned;
-                } else if was_renamed_from_index && outfile != b"index" {
-                    // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    let mut zbuf = bun_paths::path_buffer_pool::get();
-                    let n = outfile.len().min(zbuf.0.len() - 1);
-                    zbuf.0[..n].copy_from_slice(&outfile[..n]);
-                    zbuf.0[n] = 0;
-                    // SAFETY: NUL-terminated above.
-                    let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
-                    if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
-                        outfile = b"index";
-                    }
                 }
 
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
@@ -1184,12 +1156,47 @@ impl BuildCommand {
     }
 }
 
-fn compile_outfile(outfile: &[u8]) -> &[u8] {
-    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+/// An outfile that names no file (empty, `.`, `..`, `./`, `../`) names the executable `index`.
+pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
+    let name = match outfile.split_last() {
+        Some((&last, rest)) if bun_paths::is_sep_native(last) => rest,
+        _ => outfile,
+    };
+    if matches!(name, b"" | b"." | b"..") {
         b"index"
     } else {
         outfile
     }
+}
+
+/// Outfile when none is given: the entry's file stem; `index.*`/`bun.*` use their directory's name, or `index` if there is none or `dest_dir` (empty: cwd) already has that directory.
+pub(crate) fn default_compile_outfile<'a>(
+    entry_point: &'a [u8],
+    dest_dir: &[u8],
+    target_os: OperatingSystem,
+) -> &'a [u8] {
+    let file_name = bun_paths::basename(entry_point);
+    let name = &file_name[..file_name.len() - bun_paths::extension(file_name).len()];
+    if !name.is_empty() && name != b"index" && name != b"bun" {
+        return name;
+    }
+
+    let dir_name = match bun_paths::dirname(entry_point).map_or(&b""[..], bun_paths::basename) {
+        b"" | b"." | b".." => return b"index",
+        dir_name => dir_name,
+    };
+    // A Windows executable gets `.exe` appended, so its name cannot collide with the directory.
+    if target_os != OperatingSystem::Windows {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let dest = resolve_path::join_z_buf::<bun_paths::platform::Auto>(
+            &mut buf[..],
+            &[dest_dir, dir_name],
+        );
+        if bun_sys::directory_exists_at(Fd::cwd(), dest).unwrap_or(false) {
+            return b"index";
+        }
+    }
+    dir_name
 }
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {

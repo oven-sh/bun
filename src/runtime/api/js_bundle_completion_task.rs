@@ -197,8 +197,8 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
     // initialized during VM startup before any `Bun.build` is reachable.
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-    let outdir_slice = &config.outdir.list;
-    let outfile_slice = &compile.outfile.list;
+    let outdir_slice: &[u8] = &config.outdir.list;
+    let outfile_slice = crate::cli::build_command::compile_outfile(&compile.outfile.list);
     let joined: &[u8] = if !outdir_slice.is_empty() {
         join_abs_string_buf::<platform::Auto>(
             top_level_dir,

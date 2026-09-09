@@ -782,6 +782,7 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
+                let was_string = self.was_string();
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
@@ -789,6 +790,13 @@ impl Value {
                 let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
 
                 let stream = ReadableStream::from_js_direct(value).unwrap();
+                if was_string {
+                    if let webcore::readable_stream::Source::Blob(loader) = stream.ptr {
+                        // SAFETY: `Source::Blob` holds the live `*mut ByteBlobLoader` that
+                        // `from_blob_copy_ref` just created; the JS wrapper in `value` owns it.
+                        unsafe { (*loader).was_string = true };
+                    }
+                }
                 *self = Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(stream, global_this),
                     ..PendingValue::new(global_this)

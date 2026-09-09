@@ -159,8 +159,9 @@ impl StaticRoute {
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();
-            let was_string = body_value.was_string();
+            // Unwrap an unread `.body` stream first: `was_string` comes back with it.
             body_value.to_blob_if_possible();
+            let was_string = body_value.was_string();
 
             let blob: AnyBlob = 'brk: {
                 match body_value {

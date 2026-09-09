@@ -28,8 +28,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
 
-    /// `key` is a module registry key or a CommonJS filename: normally an absolute path, where a `?`
-    /// starts the import's query string (https://github.com/oven-sh/bun/issues/8640).
+    /// `key` is a module registry key or a CommonJS filename. A `?` in it starts the import's query string (#8640).
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue key);
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSString* key);
     /// For a key that is a URL and not a path (`bake://server-runtime.js`).

@@ -14,9 +14,9 @@ import { join } from "node:path";
 import { PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
-  readerConsumers as directReaderConsumers,
   expected as directExpected,
   observe as directObserve,
+  readerConsumers as directReaderConsumers,
   shapes as directShapes,
 } from "./direct-stream-contract";
 

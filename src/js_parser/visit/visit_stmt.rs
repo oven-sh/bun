@@ -2461,7 +2461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///
     /// `B` only gets a value if `NS.Inner.X` is known when `Outer` is visited. So compute the
     /// value of each constant member of the enums inside the namespace from its unvisited
-    /// initializer first. The visit of those enums stores the same values again.
+    /// initializer first, by the rules of `s_enum`, which stores the same values again later.
     pub(crate) fn compute_enum_values_inside_namespace(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt.data {
@@ -2488,38 +2488,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_scope = self.current_scope;
         self.current_scope = scope;
 
+        // An initializer can reference the members before it by name.
+        let mut members_so_far: smallvec::SmallVec<[Ref; 16]> = smallvec::SmallVec::new();
         let mut next_numeric_value: Option<f64> = Some(0.0);
         for value in data.values.slice() {
-            let name: &[u8] = value.name.slice();
-            let current = (*exported_members).get(name).unwrap().data;
-            let known = match current {
-                // Computed by an earlier call.
-                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumString(_) => Some(current),
-                _ => match value.value {
-                    Some(initializer) => match self.eval_ts_constant_expression(&initializer) {
-                        Some(TSConstantValue::Number(number)) => {
-                            Some(js_ast::ts::Data::EnumNumber(number))
-                        }
-                        Some(TSConstantValue::String(str_)) => {
-                            Some(js_ast::ts::Data::EnumString(str_))
-                        }
-                        None => None,
-                    },
-                    None => next_numeric_value.map(js_ast::ts::Data::EnumNumber),
+            let known = match value.value {
+                Some(initializer) => match self.eval_ts_constant_expression(&initializer) {
+                    Some(TSConstantValue::Number(number)) => {
+                        Some(js_ast::ts::Data::EnumNumber(number))
+                    }
+                    Some(TSConstantValue::String(str_)) => Some(js_ast::ts::Data::EnumString(str_)),
+                    None => None,
                 },
+                None => next_numeric_value.map(js_ast::ts::Data::EnumNumber),
             };
             next_numeric_value = match known {
                 Some(js_ast::ts::Data::EnumNumber(number)) => Some(number + 1.0),
                 _ => None,
             };
-            if let Some(known) = known
-                && matches!(current, js_ast::ts::Data::EnumProperty)
-            {
-                exported_members.get_ptr_mut(name).unwrap().data = known;
+            if let Some(known) = known {
+                exported_members
+                    .get_ptr_mut(value.name.slice())
+                    .unwrap()
+                    .data = known;
                 if value.ref_.is_valid() {
                     self.ref_to_ts_namespace_member.insert(value.ref_, known);
+                    members_so_far.push(value.ref_);
                 }
             }
+        }
+        // `s_enum` adds these one member at a time, so that a member after the initializer
+        // stays a property access there, as it does in an enum that is not nested.
+        for ref_ in members_so_far {
+            self.ref_to_ts_namespace_member.remove(&ref_);
         }
 
         self.current_scope = old_scope;

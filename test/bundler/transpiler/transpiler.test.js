@@ -2289,6 +2289,13 @@ export default class {
         );
       });
 
+      it("a member that references a later member stays a property access, as at top level", () => {
+        exp(
+          "namespace M { export enum Z { A = B, B = 5, C } }\nenum D { X = M.Z.C, Y = M.Z.A }",
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["A"] = Z.B] = "A";\n    Z[Z["B"] = 5] = "B";\n    Z[Z["C"] = 6] = "C";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["X"] = 6] = "X";\n  D[D["Y"] = M.Z.A] = "Y";\n})(D ||= {})',
+        );
+      });
+
       it("a const declared before the namespace", () => {
         exp(
           "const k = 2;\nnamespace M { export enum Z { Q = k * 10, R } }\nenum D { A = M.Z.R, B }",

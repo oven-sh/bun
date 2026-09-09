@@ -372,6 +372,7 @@ pub(crate) fn scan_imports_and_exports(
                             && this.is_external_dynamic_import(record, id as u32)
                         {
                             let exports = &col_ref!(named_exports)[other_file];
+                            // A user entry point keeps its own export list, `exports.default` as `default` (#12463).
                             let user_entry = col_ref!(entry_point_kinds)[other_file]
                                 == EntryPoint::Kind::UserSpecified;
                             let is_lifted = other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)

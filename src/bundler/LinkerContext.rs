@@ -4403,7 +4403,7 @@ impl<'a> LinkerContext<'a> {
             .any(|&part| parts[part as usize].tag == bun_ast::PartTag::ImportToConvertFromRequire)
     }
 
-    /// A split `import()` whose chunk exports `module.exports` as `default`: unwrap `exports.default`.
+    /// A split `import()` whose chunk exports `module.exports` as `default` (not a user entry, #12463).
     pub(crate) fn split_import_of_lifted_module_needs_to_esm(
         &self,
         importer: crate::IndexInt,

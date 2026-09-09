@@ -1,5 +1,7 @@
-import { describe, expect } from "bun:test";
-import { readdirSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const fakeReactNodeModules = {
@@ -1882,6 +1884,31 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "d 1 1 true __esModule,default,x" },
   });
+  // A lifted CommonJS file that is itself an entry point of the build keeps its
+  // own export list: `default` is its `exports.default`, for the output file and
+  // so for a split `import()` of it too. Node would give `module.exports`; that
+  // shape is #12463's to change, so this pins today's output.
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSUserEntryPoint", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        console.log(typeof m.default, m.default === lib, lib.default, m.x, Object.keys(m).join(","));
+      `,
+      "/lib.cjs": /* js */ `
+        exports.default = "d";
+        exports.x = 1;
+      `,
+    },
+    entryPoints: ["/entry.mjs", "/lib.cjs"],
+    outdir: "/out",
+    outputPaths: ["/out/entry.js", "/out/lib.js"],
+    splitting: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/lib.js").toContain("$default as default");
+    },
+    run: { file: "/out/entry.js", stdout: "string false d 1 default,x" },
+  });
   // Static imports of a lifted module bind its exports directly, whether or
   // not a split `import()` of the module reads `default`. Only a read of
   // `default` creates the namespace object.
@@ -2569,4 +2596,106 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+});
+
+// Every way an ES module reaches a lifted CommonJS module must print what
+// `bun run` prints for the unbundled sources (which is also what Node prints,
+// `exports.__esModule` aside). Each cell bundles one module shape, one importer
+// and one set of flags and compares the two runs, so no expectation here is
+// hand-written. `lifted` says whether that cell keeps the module lifted; an
+// unsplit `import()` puts it back into a CommonJS wrapper.
+describe("cjs2esm/LiftedNamespaceMatchesBunRun", () => {
+  const fn = `function () { return typeof this + ":" + (this && this.named); }`;
+  const libs: Record<string, string> = {
+    ExportsDefault: `exports.default = { tag: "D" };\nexports.named = "n";\nexports.fn = ${fn};\n`,
+    NoDefault: `exports.named = "n";\nexports.fn = ${fn};\n`,
+    ModuleExportsProps: `module.exports.named = "n";\nmodule.exports.default = "d";\nmodule.exports.fn = ${fn};\n`,
+  };
+  const mid =
+    `import * as inner from "./lib.cjs";\nexport { inner };\n` +
+    `export * as outer from "./lib.cjs";\nexport { default as viaMid } from "./lib.cjs";\n`;
+  const probe = (dynamic: boolean) => /* js */ `
+    import d, { default as d2, named } from "./lib.cjs";
+    import * as ns from "./lib.cjs";
+    import { inner, outer, viaMid } from "./mid.mjs";
+    const dyn = ${dynamic ? `await import("./lib.cjs")` : `null`};
+    const key = "def" + "ault";
+    const stable = (v) =>
+      JSON.stringify(v, (k, val) =>
+        val && typeof val === "object" && !Array.isArray(val)
+          ? Object.fromEntries(Object.keys(val).sort().map(k2 => [k2, val[k2]]))
+          : val,
+      );
+    console.log(
+      stable({
+        dIsNsDefault: d === ns.default,
+        d2IsD: d2 === d,
+        viaMidIsD: viaMid === d,
+        nsIsD: ns === d,
+        computedIsD: ns[key] === d,
+        innerIsNs: inner === ns,
+        outerIsNs: outer === ns,
+        innerDefaultIsD: inner.default === d,
+        typeofDDefault: typeof d.default,
+        typeofNsDefault: typeof ns.default,
+        nsDefaultDefaultIsDDefault: ns.default.default === d.default,
+        nsKeys: Object.keys(ns).sort(),
+        dKeys: Object.keys(d),
+        ns: stable(ns),
+        d: JSON.stringify(d),
+        named,
+        nsNamed: ns.named,
+        outerNamed: outer.named,
+        nsFn: ns.fn(),
+        dFn: d.fn(),
+        hasDefault: "default" in ns,
+        dyn: dyn && {
+          defaultIsD: dyn.default === d,
+          keys: Object.keys(dyn).sort(),
+          json: stable(dyn),
+          named: dyn.named,
+        },
+      }),
+    );
+  `;
+  const run = (cwd: string, ...args: string[]) => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  };
+  const cells: { dynamic: boolean; flags: string[]; lifted: boolean }[] = [
+    { dynamic: false, flags: [], lifted: true },
+    { dynamic: false, flags: ["--minify"], lifted: true },
+    { dynamic: false, flags: ["--splitting"], lifted: true },
+    { dynamic: true, flags: ["--splitting"], lifted: true },
+    { dynamic: true, flags: [], lifted: false },
+  ];
+  for (const [libName, lib] of Object.entries(libs)) {
+    for (const { dynamic, flags, lifted } of cells) {
+      const name = `${libName} ${dynamic ? "static+dynamic" : "static"} ${flags.join(" ")}`.trim();
+      test.concurrent(name, () => {
+        using dir = tempDir("cjs2esm-oracle", { "lib.cjs": lib, "mid.mjs": mid, "entry.mjs": probe(dynamic) });
+        const cwd = String(dir);
+        const expected = run(cwd, "entry.mjs");
+        expect(expected.stderr).toBe("");
+        expect(expected.exitCode).toBe(0);
+        const build = run(cwd, "build", "./entry.mjs", "--outdir=out", "--entry-naming=[name].mjs", ...flags);
+        expect(build.stderr).not.toContain("error");
+        expect(build.exitCode).toBe(0);
+        const out = readdirSync(join(cwd, "out"))
+          .map(f => readFileSync(join(cwd, "out", f), "utf8"))
+          .join("\n");
+        expect(out.includes("__commonJS(")).toBe(!lifted);
+        const actual = run(cwd, join("out", "entry.mjs"));
+        expect(actual.stderr).toBe("");
+        expect(JSON.parse(actual.stdout)).toEqual(JSON.parse(expected.stdout));
+        expect(actual.exitCode).toBe(0);
+      });
+    }
+  }
 });

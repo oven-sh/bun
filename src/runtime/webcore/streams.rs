@@ -2116,6 +2116,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        // end() while a flush(true) waits on the same drain: one promise settles both.
+        if let Some(parked) = self.pending_flush() {
+            return JSPromise::opaque_ref(parked).to_js();
+        }
         let promise = JSPromise::create(global_this).to_js();
         self.global_this = Some(BackRef::new(global_this));
         self.pipe.set_done(promise);

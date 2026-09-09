@@ -444,4 +444,54 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // Math.sin from DFG code is a direct call into libm. JIT code does not store
+  // vm.topCallFrame before such a call, so a sample taken while the PC is in
+  // libm used to be dropped (a stale topCallFrame fails the walk) or credited
+  // to whichever frame last stored topCallFrame (here: the async caller).
+  test("samples inside a C leaf called from optimized code are credited to the JS function", async () => {
+    const windowMs = 250;
+    using dir = tempDir("cpu-prof-c-leaf", {
+      "test.mjs": `
+        function hot(n) {
+          let s = 0;
+          for (let i = 0; i < n; i++) s += Math.sin(i);
+          return s;
+        }
+        async function main() {
+          const end = performance.now() + ${windowMs};
+          let s = 0;
+          while (performance.now() < end) {
+            s += hot(1e5);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          return s;
+        }
+        await main();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name=leaf.cpuprofile", "test.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "leaf.cpuprofile"), "utf-8"));
+    const selfSamples = (functionName: string) =>
+      profile.nodes
+        .filter((node: any) => node.callFrame.functionName === functionName)
+        .reduce((sum: number, node: any) => sum + node.hitCount, 0);
+    const hot = selfSamples("hot");
+    const main = selfSamples("main");
+
+    expect(hot).toBeGreaterThan(main);
+    // The sampler ticks every 1ms. Without the fix fewer than a fifth of the
+    // samples survive. Windows ticks at the 15.6ms timer quantum, so only the
+    // attribution check applies there.
+    if (!isWindows) expect(hot).toBeGreaterThan(windowMs / 3);
+  });
 });

@@ -1107,7 +1107,8 @@ describe("close() with unflushed data writes the chunked terminator exactly once
       }
     });
     sock.on("close", () => resolve(raw));
-    sock.on("error", reject);
+    // close(error) aborts the connection; a reset still hands back whatever arrived before it.
+    sock.on("error", () => resolve(raw));
     const data = await promise;
 
     const headerEnd = data.indexOf("\r\n\r\n");
@@ -1239,10 +1240,7 @@ describe("close() with unflushed data writes the chunked terminator exactly once
     expect(rest.split("\r\n0\r\n\r\n").length - 1).toBe(0);
   });
 
-  // close(error) does not flush: the tail stays parked and the request's own
-  // teardown performs the final `res.end()`. That send must also count as the
-  // end of the response. Only the framing is pinned here, not whether an
-  // errored source still delivers its tail.
+  // close(error) fails the response: what was flushed stands, no last-chunk is written, and the connection is torn down.
   test.concurrent("write, await flush(), task, write, close(error)", async () => {
     using server = serve(async c => {
       c.write("hello");
@@ -1252,13 +1250,11 @@ describe("close() with unflushed data writes the chunked terminator exactly once
       c.close(new Error("boom"));
     });
     const { decoded, terminated, rest } = await exchange(server);
-    expect(decoded.startsWith("hello")).toBe(true);
-    if (terminated) {
-      expect(rest.slice(0, 15)).toBe("HTTP/1.1 200 OK");
-      expect(rest).toEndWith("\r\n\r\nok");
-    } else {
-      expect(rest).toBe("");
-    }
+    expect({ startsWithHello: decoded.startsWith("hello"), terminated, rest }).toEqual({
+      startsWithHello: true,
+      terminated: false,
+      rest: "",
+    });
   });
 });
 

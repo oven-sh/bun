@@ -921,12 +921,26 @@ impl SourceHandle {
     /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
     pub fn abort(&mut self, reason: CommonAbortReason) {
         match *self {
+            SourceHandle::JSController(_) => {
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                self.cancel(reason.to_js(global));
+            }
+            _ => self.close(None),
+        }
+    }
+
+    /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
+    pub fn cancel(&mut self, reason: JSValue) {
+        match *self {
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
-                Self::close_js_controller(global, cpp, reason.to_js(global));
+                Self::close_js_controller(global, cpp, reason);
             }
             _ => self.close(None),
         }

@@ -340,14 +340,8 @@ impl Request {
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
-            }
-        }
-
+        // Through `req.headers` like `get_blob_content_type`: a handler may have set or deleted it.
+        self.load_headers_from_request_context();
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return Ok(Some(value.to_utf8()));

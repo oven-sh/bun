@@ -3869,7 +3869,8 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     continue;
                 }
                 if (static_cast<unsigned>(alias) < builtinRecords.size() && builtinRecords[alias]) {
-                    record->setPrelinkedRequestedModule(vm, i, builtinRecords[alias]);
+                    record->setImportedModule(globalObject, record->requestedModules()[i], builtinRecords[alias]);
+                    RETURN_IF_EXCEPTION(scope, void());
                     continue;
                 }
                 Identifier key = Identifier::fromString(vm, Bun::builtinModuleKeys[alias]);
@@ -3906,7 +3907,11 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                 complete = false; // a typed import: JSC's pipeline makes that record
                 continue;
             }
-            record->setPrelinkedRequestedModule(vm, i, target);
+            // A graph module in the loader's index table is found by index; anything else goes through [[LoadedModules]].
+            if (request.moduleIndex == PrelinkedModuleGraph::noModule || loader->prelinkedRecord(request.moduleIndex) != target) {
+                record->setImportedModule(globalObject, record->requestedModules()[i], target);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
     }
 

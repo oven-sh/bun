@@ -665,12 +665,18 @@ describe("bun install --cpu and --os flags", () => {
     },
   );
 
-  it("bun add does not report a dependency skipped for the target platform as installed", async () => {
+  // `bun add` used to print `installed dep-win32-only@1.0.0` for a package it
+  // had skipped. It now says `skipped`; a required one also gets the warning,
+  // an optional one only the `skipped` row.
+  it.each([
+    ["dependencies", [] as string[]],
+    ["optionalDependencies", ["--optional"]],
+  ])("bun add reports a dependency skipped for the target platform as skipped (%s)", async (field, flags) => {
     setHandler(platformWarningRegistry());
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "test-platform-add", version: "1.0.0" }));
 
     await using proc = spawn({
-      cmd: [bunExe(), "add", "dep-win32-only@1.0.0", "--os", "linux", "--cpu", "x64"],
+      cmd: [bunExe(), "add", "dep-win32-only@1.0.0", ...flags, "--os", "linux", "--cpu", "x64"],
       cwd: package_dir,
       env: bunEnv,
       stdout: "pipe",
@@ -679,13 +685,16 @@ describe("bun install --cpu and --os flags", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("error:");
-    expect(stderr.split("\n").filter(line => line.startsWith("warn:"))).toEqual([
-      `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32", current os "linux")`,
-    ]);
+    expect(stderr.split("\n").filter(line => line.startsWith("warn:"))).toEqual(
+      field === "dependencies"
+        ? [`warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32", current os "linux")`]
+        : [],
+    );
     expect(stdout).not.toContain("installed dep-win32-only");
+    expect(stdout).toContain("skipped dep-win32-only@1.0.0 (unsupported platform)");
     expect((await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."))).toEqual([]);
-    // the dependency is still recorded, as for an optional dependency on another platform
-    expect(JSON.parse(await Bun.file(join(package_dir, "package.json")).text()).dependencies).toEqual({
+    // the dependency is still recorded in package.json
+    expect(JSON.parse(await Bun.file(join(package_dir, "package.json")).text())[field]).toEqual({
       "dep-win32-only": "1.0.0",
     });
     expect(exitCode).toBe(0);

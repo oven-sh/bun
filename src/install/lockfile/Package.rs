@@ -1439,12 +1439,26 @@ impl Diff {
             let cur_to_i = to_i;
             to_i += 1;
 
-            if Dependency::eql(
-                &to_deps!()[cur_to_i],
-                from_dep,
-                to_lockfile.buffers.string_bytes.as_slice(),
-                from_lockfile.buffers.string_bytes.as_slice(),
-            ) {
+            // A range that links the same workspace as before compares equal, but bun.lock records the
+            // literal, so a retyped one (`1.0.0` -> `1.0.1` after a version bump) still counts as an update.
+            let workspace_literal_retyped = {
+                let to_dep = &to_deps!()[cur_to_i];
+                to_dep.version.tag == dependency::version::Tag::Workspace
+                    && !from_dep.behavior.is_workspace()
+                    && !to_dep.version.literal.eql(
+                        from_dep.version.literal,
+                        to_lockfile.buffers.string_bytes.as_slice(),
+                        from_lockfile.buffers.string_bytes.as_slice(),
+                    )
+            };
+            if !workspace_literal_retyped
+                && Dependency::eql(
+                    &to_deps!()[cur_to_i],
+                    from_dep,
+                    to_lockfile.buffers.string_bytes.as_slice(),
+                    from_lockfile.buffers.string_bytes.as_slice(),
+                )
+            {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
                         || (named_update_here

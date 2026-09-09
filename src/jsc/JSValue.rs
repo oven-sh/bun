@@ -776,15 +776,13 @@ impl JSValue {
         }
         JSC__JSValue__toInt32(self)
     }
+    /// Numbers convert as `f64 as i64` (NaN → 0, saturating). Heap BigInt → its low 64 bits.
     pub fn to_int64(self) -> i64 {
         if self.is_int32() {
             return self.as_int32() as i64;
         }
         if let Some(num) = self.get_number() {
-            if num.is_nan() {
-                return 0;
-            }
-            return num as i64; // saturating truncation
+            return num as i64;
         }
         JSC__JSValue__toInt64(self)
     }
@@ -836,10 +834,12 @@ impl JSValue {
     pub fn coerce_to_i32(self, global: &JSGlobalObject) -> JsResult<i32> {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__coerceToInt32(self, global))
     }
-    /// `JSValue.coerceToInt64` — full ToNumber → Int64 path
-    /// (may throw via `valueOf`/`toString`).
+    /// [`to_int64`](Self::to_int64) after `ToNumber` for other values (may throw via `valueOf`).
     pub fn coerce_to_int64(self, global: &JSGlobalObject) -> JsResult<i64> {
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__coerceToInt64(self, global))
+        if self.is_number() || self.is_big_int() {
+            return Ok(self.to_int64());
+        }
+        Ok(self.to_number(global)? as i64)
     }
     /// Generic coercion. Per-type helpers are
     /// `coerce_to_i32` / `coerce_f64` etc.; this fronts the i32 path.
@@ -1912,20 +1912,7 @@ impl CoerceTo for i32 {
 }
 impl CoerceTo for i64 {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i64> {
-        if v.is_int32() {
-            return Ok(v.as_int32() as i64);
-        }
-        if let Some(num) = v.get_number() {
-            return Ok(if num.is_nan() { 0 } else { num as i64 });
-        }
-        if v.is_big_int() {
-            return v.coerce_to_int64(global);
-        }
-        // `JSC__JSValue__coerceToInt64` falls through to 32-bit `toInt32` for
-        // non-number, non-BigInt cells (strings wrap at 2^31). Go through full
-        // ToNumber here so string inputs above 2^31 round-trip to i64.
-        let num = v.to_number(global)?;
-        Ok(if num.is_nan() { 0 } else { num as i64 })
+        v.coerce_to_int64(global)
     }
 }
 /// No coercion: `get_optional::<JSValue>` is `get` with `null` filtered out.
@@ -2006,7 +1993,6 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isBigInt(this: JSValue) -> bool;
     safe fn JSC__JSValue__isCallable(this: JSValue) -> bool;
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
-    safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,

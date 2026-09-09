@@ -4302,18 +4302,15 @@ JSC::EncodedJSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
 
+// BigInt only: JSValue::to_int64 (Rust) and JSVALUE_TO_INT64 (FFI.h) convert numbers themselves.
 [[ZIG_EXPORT(nothrow)]] int64_t JSC__JSValue__toInt64(JSC::EncodedJSValue val)
 {
     JSC::JSValue value = JSC::JSValue::decode(val);
-    ASSERT(value.isHeapBigInt() || value.isNumber());
-    if (value.isHeapBigInt()) {
-        if (auto* heapBigInt = value.asHeapBigInt()) {
-            return heapBigInt->toBigInt64(heapBigInt);
-        }
+    ASSERT(value.isBigInt());
+    if (value.isBigInt()) {
+        return JSC::JSBigInt::toBigInt64(value);
     }
-    if (value.isInt32())
-        return value.asInt32();
-    return static_cast<int64_t>(value.asDouble());
+    return 0;
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
@@ -4734,25 +4731,6 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     if (value.isCell() && value.isHeapBigInt()) {
         return static_cast<int32_t>(value.toBigInt64(arg1));
     }
-    return value.toInt32(arg1);
-}
-
-[[ZIG_EXPORT(check_slow)]] int64_t JSC__JSValue__coerceToInt64(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
-{
-    JSValue value = JSValue::decode(JSValue0);
-    if (value.isCell() && value.isHeapBigInt()) {
-        return value.toBigInt64(arg1);
-    }
-
-    if (value.isDouble()) {
-        int64_t result = tryConvertToInt52(value.asDouble());
-        if (result != JSValue::notInt52) {
-            return result;
-        }
-
-        return static_cast<int64_t>(value.asDouble());
-    }
-
     return value.toInt32(arg1);
 }
 

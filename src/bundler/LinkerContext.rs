@@ -4405,6 +4405,25 @@ impl<'a> LinkerContext<'a> {
             .any(|&part| parts[part as usize].tag == bun_ast::PartTag::ImportToConvertFromRequire)
     }
 
+    /// The same question, asked of the import record instead of its namespace symbol.
+    pub(crate) fn record_is_unwrapped_require(
+        &self,
+        source_index: crate::IndexInt,
+        record_index: u32,
+    ) -> bool {
+        self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .any(|part| {
+                part.tag == bun_ast::PartTag::ImportToConvertFromRequire
+                    && part.stmts.slice().iter().any(|stmt| {
+                        stmt.data
+                            .s_import()
+                            .is_some_and(|import| import.import_record_index == record_index)
+                    })
+            })
+    }
+
     /// A split `import()` whose chunk exports `module.exports` as `default` (not a user entry, #12463).
     pub(crate) fn split_import_of_lifted_module_needs_to_esm(
         &self,

@@ -2310,6 +2310,27 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: 'true false {"__esModule":true,"default":{"m":"D"},"a":"a"} {"m":"D"} default,__esModule,a' },
   });
+  // A `require()` that the parser turned into an import (the module is in the
+  // `react` family) returns `module.exports` whatever `__esModule` says, so it
+  // keeps the module lifted; `.default` on it is `exports.default`.
+  itBundled("cjs2esm/UnwrappedRequireWithEsModuleStaysLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        console.log(React.default.tag, React.a, React.__esModule, React === require("react"), Object.keys(React).join(","));
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = { tag: "D" };
+        exports.a = "a";
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "D a true true __esModule,default,a" },
+  });
   // For any other importer `ns.default` depends on the flag at run time, like a
   // default import does, so a star import keeps the CommonJS wrapper too.
   itBundled("cjs2esm/StarImportWithEsModuleFromCjsImporterKeepsWrapper", {
@@ -2658,15 +2679,16 @@ describe("cjs2esm/LiftedNamespaceMatchesBunRun", () => {
       }),
     );
   `;
-  const run = (cwd: string, ...args: string[]) => {
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
+  const run = async (cwd: string, ...args: string[]) => {
+    await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   };
   const cells: { dynamic: boolean; flags: string[]; lifted: boolean }[] = [
     { dynamic: false, flags: [], lifted: true },
@@ -2678,20 +2700,22 @@ describe("cjs2esm/LiftedNamespaceMatchesBunRun", () => {
   for (const [libName, lib] of Object.entries(libs)) {
     for (const { dynamic, flags, lifted } of cells) {
       const name = `${libName} ${dynamic ? "static+dynamic" : "static"} ${flags.join(" ")}`.trim();
-      test.concurrent(name, () => {
+      test.concurrent(name, async () => {
         using dir = tempDir("cjs2esm-oracle", { "lib.cjs": lib, "mid.mjs": mid, "entry.mjs": probe(dynamic) });
         const cwd = String(dir);
-        const expected = run(cwd, "entry.mjs");
+        const [expected, build] = await Promise.all([
+          run(cwd, "entry.mjs"),
+          run(cwd, "build", "./entry.mjs", "--outdir=out", "--entry-naming=[name].mjs", ...flags),
+        ]);
         expect(expected.stderr).toBe("");
         expect(expected.exitCode).toBe(0);
-        const build = run(cwd, "build", "./entry.mjs", "--outdir=out", "--entry-naming=[name].mjs", ...flags);
         expect(build.stderr).not.toContain("error");
         expect(build.exitCode).toBe(0);
         const out = readdirSync(join(cwd, "out"))
           .map(f => readFileSync(join(cwd, "out", f), "utf8"))
           .join("\n");
         expect(out.includes("__commonJS(")).toBe(!lifted);
-        const actual = run(cwd, join("out", "entry.mjs"));
+        const actual = await run(cwd, join("out", "entry.mjs"));
         expect(actual.stderr).toBe("");
         expect(JSON.parse(actual.stdout)).toEqual(JSON.parse(expected.stdout));
         expect(actual.exitCode).toBe(0);

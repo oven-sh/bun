@@ -336,7 +336,13 @@ pub(crate) fn scan_imports_and_exports(
                                     && LinkerContext::lifted_default_import_needs_wrapper(
                                         col_ref!(module_types)[id],
                                         &col_ref!(named_exports)[other_file],
-                                    )))
+                                    )
+                                    // `require()` returns `module.exports` whatever `__esModule` says.
+                                    && (has_default_alias
+                                        || !this.record_is_unwrapped_require(
+                                            id as u32,
+                                            import_record_index as u32,
+                                        ))))
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;

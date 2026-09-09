@@ -1384,7 +1384,11 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> sys::Result<()> {
-        // SAFETY: caller contract; the pump promise's +1 or `assign_to_stream`'s caller keeps `this` alive.
+        // `end_from_stream` can re-enter `on_close`, which releases the keep-alive ref; hold one
+        // across the call like `on_write`/`on_attached_process_exit` do.
+        // SAFETY: caller contract; `this` is live.
+        let _guard = unsafe { RefPtr::init_ref(this) };
+        // SAFETY: `_guard` keeps `this` live for this borrow.
         unsafe { &*this }.end_from_stream(Some(streams::StreamError::JSValue(
             bun_jsc::strong::Optional::create(reason, global),
         )));

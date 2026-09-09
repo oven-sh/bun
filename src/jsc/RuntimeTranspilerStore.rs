@@ -224,9 +224,7 @@ impl Default for RuntimeTranspilerStore {
 // ImportOrder
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The import index at each level of the first path by which a depth-first,
-/// source-order walk of the import graph reaches a module. For leaves (CommonJS
-/// records import nothing) slice order is `InnerModuleEvaluation`'s order.
+/// Import indices along the depth-first, source-order path that first reaches a module.
 type Position = Box<[u32]>;
 
 /// Hash of a module key (the resolved specifier).
@@ -468,8 +466,7 @@ impl RuntimeTranspilerStore {
         // SAFETY: `event_loop` is the VM's live event-loop self-pointer; no borrow of `*this` is live.
         let drain =
             || unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-        // Set while the last fulfilment's microtasks (where JSC makes the record and, for an ES
-        // module, fetches its imports) have yet to run; nothing is decided or fulfilled until they have.
+        // The last fulfilment's microtasks (record creation, and an ES module's fetches) are pending.
         let mut undrained = false;
         loop {
             let job = iter.next();

@@ -228,7 +228,9 @@ test.concurrent("js file with through export", async () => {
 
   const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr.trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
+  expect(result.stderr.trim()).toMatch(
+    /^SyntaxError: Export named 'type_only' not found in module '[^']*[\\/]ts\.ts'\.$/m,
+  );
   expect(result.exitCode).toBe(1);
 });
 
@@ -240,8 +242,81 @@ test.concurrent("js file with through export 2", async () => {
 
   const result = await run([bunExe(), "b.js"], dir);
 
-  expect(result.stderr.trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
+  expect(result.stderr.trim()).toMatch(
+    /^SyntaxError: Export named 'type_only' not found in module '[^']*[\\/]ts\.ts'\.$/m,
+  );
   expect(result.exitCode).toBe(1);
+});
+
+// The link-time check for `export { a as b } from "./m"` used to name the alias
+// (`b`) and, for a missing `default`, print "export default cannot be used with
+// export *". It now uses the same messages as `import { a } from "./m"`: the
+// requested binding and the resolved path of the requested module.
+describe("re-export of a binding the requested module does not provide", () => {
+  const cases: [name: string, files: Record<string, string>, message: RegExp][] = [
+    [
+      "export { default } from",
+      {
+        "p.mjs": `export const a = 1;`,
+        "mid.mjs": `export { default } from "./p.mjs";`,
+        "main.mjs": `import d from "./mid.mjs"; console.log(d);`,
+      },
+      /^SyntaxError: Missing 'default' export in module '[^']*[\\/]p\.mjs'\.$/m,
+    ],
+    [
+      "export { default as x } from",
+      {
+        "p.mjs": `export const a = 1;`,
+        "mid.mjs": `export { default as x } from "./p.mjs";`,
+        "main.mjs": `import { x } from "./mid.mjs"; console.log(x);`,
+      },
+      /^SyntaxError: Missing 'default' export in module '[^']*[\\/]p\.mjs'\.$/m,
+    ],
+    [
+      "import d from; export { d as x }",
+      {
+        "p.mjs": `export const a = 1;`,
+        "mid.mjs": `import d from "./p.mjs"; export { d as x };`,
+        "main.mjs": `import { x } from "./mid.mjs"; console.log(x);`,
+      },
+      /^SyntaxError: Missing 'default' export in module '[^']*[\\/]p\.mjs'\.$/m,
+    ],
+    [
+      "export { nope as y } from",
+      {
+        "p.mjs": `export const a = 1;`,
+        "mid.mjs": `export { nope as y } from "./p.mjs";`,
+        "main.mjs": `import { y } from "./mid.mjs"; console.log(y);`,
+      },
+      /^SyntaxError: Export named 'nope' not found in module '[^']*[\\/]p\.mjs'\.$/m,
+    ],
+    [
+      "export { dup as z } from a module with conflicting export *",
+      {
+        "a.mjs": `export const dup = "a";`,
+        "b.mjs": `export const dup = "b";`,
+        "root.mjs": `export * from "./a.mjs"; export * from "./b.mjs";`,
+        "mid.mjs": `export { dup as z } from "./root.mjs";`,
+        "main.mjs": `import { z } from "./mid.mjs"; console.log(z);`,
+      },
+      /^SyntaxError: Export named 'dup' cannot be resolved due to ambiguous multiple bindings in module '[^']*[\\/]root\.mjs'\.$/m,
+    ],
+  ];
+
+  for (const [name, files, message] of cases) {
+    // The check runs when mid.mjs links, so it fires the same way whether
+    // mid.mjs is a dependency or the entry point.
+    for (const entry of ["main.mjs", "mid.mjs"]) {
+      test.concurrent(`${name} (entry ${entry})`, async () => {
+        await using dir = tempDir("reexport-missing", files);
+
+        const result = await run([bunExe(), entry], String(dir));
+
+        expect(result.stderr.trim()).toMatch(message);
+        expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      });
+    }
+  }
 });
 
 describe("through export merge", () => {

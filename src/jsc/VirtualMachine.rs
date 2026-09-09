@@ -2241,7 +2241,7 @@ pub struct WorkerExecArgvFlags {
     /// `!--no-addons`
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
-    pub allow_ffi_cc: bool,
+    pub allow_ffi: bool,
 }
 
 pub struct RuntimeHooks {
@@ -3638,10 +3638,10 @@ impl VirtualMachine {
             .unwrap_or(true)
     }
 
-    /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
-    pub fn allow_ffi_cc(&self) -> bool {
+    /// Whether `bun:ffi` / `Bun.FFI` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
+    pub fn allow_ffi(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;
-        opts.allow_ffi_cc.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
+        opts.allow_ffi.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
     }
 
     /// Whether to warn when a previously-unhandled rejection later gains a handler.

@@ -1577,7 +1577,7 @@ unsafe fn parse_worker_exec_argv_flags(
 ) -> Option<WorkerExecArgvFlags> {
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
-        allow_ffi_cc: true,
+        allow_ffi: true,
     };
     for &arg in exec_argv {
         if arg.is_null() {
@@ -1595,7 +1595,7 @@ unsafe fn parse_worker_exec_argv_flags(
         if bytes == b"--no-addons" {
             flags.allow_addons = false;
         } else if bytes == b"--no-ffi-cc" {
-            flags.allow_ffi_cc = false;
+            flags.allow_ffi = false;
         }
     }
     Some(flags)

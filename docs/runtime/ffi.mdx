@@ -593,3 +593,17 @@ let png = new Uint8Array(toArrayBuffer(out));
 // save it to disk:
 await Bun.write("out.png", png);
 ```
+
+---
+
+## Disabling `bun:ffi`
+
+Pass `--no-ffi-cc` to disable `bun:ffi` for a process. The module still imports, but every function in it that reaches native code or memory throws an error with the code `ERR_FFI_DISABLED`: `dlopen`, `cc`, `JSCallback`, `CFunction`, `linkSymbols`, `ptr`, `read.*`, `toBuffer`, `toArrayBuffer`, `CString`, and `viewSource`. `Bun.FFI` is `undefined`. Constants such as `FFIType` and `suffix` stay available.
+
+```sh
+bun --no-ffi-cc ./app.ts
+```
+
+`--no-addons` disables `bun:ffi` in the same way, in addition to `process.dlopen` and the `node-addons` export condition. Pass `--no-addons` to block every way of loading native code.
+
+Workers inherit the setting from their parent. A Worker can also set it for itself with `execArgv: ["--no-ffi-cc"]`, but cannot re-enable what its parent disabled. The flags also work through `BUN_OPTIONS`, and standalone executables can bake them in with `bun build --compile --compile-exec-argv="--no-ffi-cc"`.

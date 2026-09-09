@@ -65,6 +65,45 @@ const FFIType = {
 const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
 var ffi = globalThis.Bun.FFI;
+// `Bun.FFI` is undefined when FFI is disabled (--no-ffi-cc or --no-addons).
+// The module still loads, but everything that would reach native code throws.
+const ffiDisabled = ffi === undefined;
+function throwFFIDisabled(): never {
+  // Keep in sync with FFI_DISABLED_MESSAGE in src/runtime/ffi/mod.rs.
+  throw $ERR_FFI_DISABLED("bun:ffi is not available because FFI was disabled with --no-ffi-cc or --no-addons.");
+}
+if (ffiDisabled) {
+  ffi = {
+    ptr: throwFFIDisabled,
+    toBuffer: throwFFIDisabled,
+    toArrayBuffer: throwFFIDisabled,
+    viewSource: throwFFIDisabled,
+    linkSymbols: throwFFIDisabled,
+    dlopen: throwFFIDisabled,
+    callback: throwFFIDisabled,
+    closeCallback: throwFFIDisabled,
+    cfunction: throwFFIDisabled,
+    CString: class CString {
+      constructor() {
+        throwFFIDisabled();
+      }
+    },
+    read: {
+      u8: throwFFIDisabled,
+      u16: throwFFIDisabled,
+      u32: throwFFIDisabled,
+      ptr: throwFFIDisabled,
+      i8: throwFFIDisabled,
+      i16: throwFFIDisabled,
+      i32: throwFFIDisabled,
+      i64: throwFFIDisabled,
+      u64: throwFFIDisabled,
+      intptr: throwFFIDisabled,
+      f32: throwFFIDisabled,
+      f64: throwFFIDisabled,
+    },
+  };
+}
 const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
@@ -195,6 +234,7 @@ function normalizePath(path) {
 }
 
 function dlopen(path, options) {
+  if (ffiDisabled) throwFFIDisabled();
   path = normalizePath(path);
 
   const result = nativeDLOpen(path, options);
@@ -208,6 +248,7 @@ function dlopen(path, options) {
 }
 
 function cc(options) {
+  if (ffiDisabled) throwFFIDisabled();
   if (!$isObject(options)) {
     throw new Error("Expected options to be an object");
   }

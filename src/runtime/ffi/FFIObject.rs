@@ -711,7 +711,13 @@ fn to_buffer(
     )
 }
 
+/// `Bun.FFI`. `undefined` when FFI is disabled (`--no-ffi-cc` / `--no-addons`),
+/// so none of the native entry points or their DOMJIT fast paths are reachable.
+/// `bun:ffi` checks for this and exports functions that throw `ERR_FFI_DISABLED`.
 pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
+    if !global_object.bun_vm().allow_ffi() {
+        return JSValue::UNDEFINED;
+    }
     to_js(global_object)
 }
 

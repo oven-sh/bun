@@ -93,6 +93,11 @@ mod dom_call_slowpath {
     }
 }
 
+/// Message of the `ERR_FFI_DISABLED` error (`--no-ffi-cc` / `--no-addons`).
+/// Keep in sync with `src/js/bun/ffi.ts`.
+pub(crate) const FFI_DISABLED_MESSAGE: &str =
+    "bun:ffi is not available because FFI was disabled with --no-ffi-cc or --no-addons.";
+
 /// Get the last dynamic-library loading error message in a cross-platform way.
 /// On POSIX systems, this calls `dlerror()`.
 /// On Windows, this uses `GetLastError()` and formats the error code.

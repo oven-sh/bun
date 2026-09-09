@@ -935,6 +935,9 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
 JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
 {
+    // A finished file's realm is stopped while the VM runs on, as a detached document's is.
+    if (Bun::isRetiredTestIsolationRealm(globalObject))
+        return JSC::ScriptExecutionStatus::Stopped;
     switch (Bun__VM__scriptExecutionStatus(uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
     case 0:
         return JSC::ScriptExecutionStatus::Running;
@@ -4377,7 +4380,9 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 }
 
 // `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
-// (as WebCore does for a stopped document), so work it left in flight cannot resume its script.
+// (as WebCore does for a stopped document), and the realm reports ScriptExecutionStatus::Stopped so
+// its deferred work (FinalizationRegistry cleanup, wasm completions) is dropped too. Work the file
+// left in flight cannot resume its script.
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
@@ -4387,7 +4392,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
 {
     JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    return object && object->globalObject()->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+    return object && Bun::isRetiredTestIsolationRealm(object->globalObject());
 }
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)

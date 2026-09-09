@@ -803,6 +803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
+        use bun_ast::fold_string_addition::TemplatePartsBuilder;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
 
         // The handling of binary expressions is convoluted because we're using
@@ -822,6 +823,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // should almost always be very small, and almost all visits should reuse
         // existing memory without allocating anything.
         let stack_bottom = p.binary_expression_stack.len();
+
+        // Shared by every `+` fold along this chain so a run of template
+        // literals appends to one `parts` buffer instead of re-copying it.
+        let mut template_parts = TemplatePartsBuilder::default();
 
         // Assigned on every `break` arm of the loop below; the initial input
         // `expr` is never read directly.
@@ -851,7 +856,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // statement).
             if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
                 p.visit_expr_in_out(&mut v.e.left, left_in);
-                current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
+                current =
+                    BinaryExpressionVisitor::visit_right_and_finish(&mut v, p, &mut template_parts);
                 break;
             }
 
@@ -871,7 +877,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.binary_expression_stack.len() > stack_bottom {
             v = p.binary_expression_stack.pop().unwrap();
             v.e.left = current;
-            current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
+            current =
+                BinaryExpressionVisitor::visit_right_and_finish(&mut v, p, &mut template_parts);
         }
 
         *e = current;

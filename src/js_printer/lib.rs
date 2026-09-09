@@ -4081,22 +4081,6 @@ pub(crate) mod __gated_printer {
                         },
                     };
                     if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
-                        // `TemplatePart` is structurally
-                        // `Copy` but `EString` doesn't derive it; field-wise copy.
-                        #[inline]
-                        fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
-                            E::TemplatePart {
-                                value: p.value,
-                                tail_loc: p.tail_loc,
-                                tail: match &p.tail {
-                                    E::TemplateContents::Cooked(c) => {
-                                        E::TemplateContents::Cooked(c.shallow_clone())
-                                    }
-                                    E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
-                                },
-                            }
-                        }
-
                         // Bump-allocated (printer arena) so the folded
                         // template's parts outlive the inner block: the
                         // thread-local `e` above keeps the parts slice alive
@@ -4104,7 +4088,7 @@ pub(crate) mod __gated_printer {
                         let mut replaced =
                             bun_alloc::ArenaVec::<E::TemplatePart>::new_in(self.bump);
                         for (i, _part) in e.parts().iter().enumerate() {
-                            let mut part = part_clone(_part);
+                            let mut part = _part.shallow_clone();
                             let inlined_value: Option<Expr> = match &part.value.data {
                                 ExprData::ENameOfSymbol(e2) => Some(Expr::init(
                                     E::String::init(self.mangled_prop_name(e2.ref_)),
@@ -4119,7 +4103,9 @@ pub(crate) mod __gated_printer {
 
                             if let Some(value) = inlined_value {
                                 if replaced.is_empty() {
-                                    replaced.extend(e.parts()[..i].iter().map(part_clone));
+                                    replaced.extend(
+                                        e.parts()[..i].iter().map(E::TemplatePart::shallow_clone),
+                                    );
                                 }
                                 part.value = value;
                                 replaced.push(part);

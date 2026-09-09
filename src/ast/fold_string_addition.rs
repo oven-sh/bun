@@ -1,6 +1,8 @@
+use core::mem::ManuallyDrop;
+
 use crate::expr::{Data, PrimitiveType, data};
-use crate::{E, Expr, e};
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use crate::{E, Expr, StoreRef, e};
+use bun_alloc::{Arena, ArenaVec};
 
 /// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
 fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
@@ -13,25 +15,70 @@ fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     new
 }
 
-/// Concat two `TemplatePart` slices into the bump arena.
-/// `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
-/// `EString` opted out; mirror `Template::fold`'s field-wise copy via
-/// `shallow_clone` instead of raw `copy_nonoverlapping`.
-fn concat_parts(
-    bump: &Arena,
-    a: &[e::TemplatePart],
-    b: &[e::TemplatePart],
-) -> crate::StoreSlice<e::TemplatePart> {
-    let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
-    for p in a.iter().chain(b.iter()) {
-        // Field-wise copy (all fields structurally `Copy`).
-        v.push(e::TemplatePart {
-            value: p.value,
-            tail_loc: p.tail_loc,
-            tail: p.tail.shallow_clone(),
-        });
+/// The one template node a `TemplatePartsBuilder` may grow in place, and the
+/// buffer that backs its `parts`.
+struct Accumulator<'a> {
+    node: StoreRef<E::Template>,
+    /// Never dropped, so a buffer the builder stops using is not freed and
+    /// every view of it stays valid.
+    parts: ManuallyDrop<ArenaVec<'a, e::TemplatePart>>,
+}
+
+impl Accumulator<'_> {
+    /// Growing can move the buffer and free the old block. That is sound only
+    /// when `node` holds the one view of the whole buffer and `extra` lives
+    /// outside it.
+    fn can_grow_for(&self, node: StoreRef<E::Template>, extra: &[e::TemplatePart]) -> bool {
+        let view = node.parts;
+        let buffer = self.parts.as_ptr();
+        let buffer_end = buffer.wrapping_add(self.parts.capacity());
+        core::ptr::eq(self.node.as_ptr(), node.as_ptr())
+            && core::ptr::eq(buffer, view.as_ptr())
+            && self.parts.len() == view.len()
+            && (extra.as_ptr() >= buffer_end || extra.as_ptr().wrapping_add(extra.len()) <= buffer)
     }
-    crate::StoreSlice::from_bump(v)
+}
+
+/// Growable backing buffer for the `parts` of the template that a
+/// left-associated `+` chain folds into. `E::Template.parts` is a bare
+/// `(ptr, len)` view with no spare capacity, so without this every
+/// `` `a${x}` + `b${y}` `` step would copy all parts accumulated so far into
+/// a fresh arena slice: quadratic memory in the chain length.
+///
+/// One instance lives for one run of the iterative binary-expression visitor,
+/// i.e. one left-nested operator chain.
+#[derive(Default)]
+pub struct TemplatePartsBuilder<'a> {
+    accumulator: Option<Accumulator<'a>>,
+}
+
+impl<'a> TemplatePartsBuilder<'a> {
+    /// Append `extra` to `template`'s parts: in place when `template` is this
+    /// builder's accumulator, with one copy into a new buffer otherwise.
+    fn append(
+        &mut self,
+        bump: &'a Arena,
+        mut template: StoreRef<E::Template>,
+        extra: &[e::TemplatePart],
+    ) {
+        let mut accumulator = match self.accumulator.take() {
+            Some(accumulator) if accumulator.can_grow_for(template, extra) => accumulator,
+            _ => {
+                let current = template.parts();
+                let mut parts = ArenaVec::with_capacity_in(current.len() + extra.len(), bump);
+                parts.extend(current.iter().map(e::TemplatePart::shallow_clone));
+                Accumulator {
+                    node: template,
+                    parts: ManuallyDrop::new(parts),
+                }
+            }
+        };
+        accumulator
+            .parts
+            .extend(extra.iter().map(e::TemplatePart::shallow_clone));
+        template.parts = crate::StoreSlice::new_mut(accumulator.parts.as_mut_slice());
+        self.accumulator = Some(accumulator);
+    }
 }
 
 /// Transforming the left operand into a string is not safe if it comes from a
@@ -48,11 +95,12 @@ pub enum FoldStringAdditionKind {
 
 /// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
 /// the input AST in the case of rope strings
-pub fn fold_string_addition(
+pub fn fold_string_addition<'a>(
     l: Expr,
     r: Expr,
-    bump: &Arena,
+    bump: &'a Arena,
     kind: FoldStringAdditionKind,
+    template_parts: &mut TemplatePartsBuilder<'a>,
 ) -> Option<Expr> {
     // "See through" inline enum constants
     // TODO: implement foldAdditionPreProcess to fold some more things :)
@@ -173,12 +221,9 @@ pub fn fold_string_addition(
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
 
-                                    let new_parts = if right.parts().is_empty() {
-                                        left.parts
-                                    } else {
-                                        concat_parts(bump, left.parts(), right.parts())
-                                    };
-                                    left.parts = new_parts;
+                                    if !right.parts().is_empty() {
+                                        template_parts.append(bump, left, right.parts());
+                                    }
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {

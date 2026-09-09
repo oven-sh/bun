@@ -2119,6 +2119,19 @@ pub struct TemplatePart {
     pub tail: TemplateContents,
 }
 
+impl TemplatePart {
+    /// Field-wise copy. `TemplatePart` is not `Copy` only because `EString`
+    /// does not derive it; all fields are structurally `Copy`.
+    #[inline]
+    pub fn shallow_clone(&self) -> TemplatePart {
+        TemplatePart {
+            value: self.value,
+            tail_loc: self.tail_loc,
+            tail: self.tail.shallow_clone(),
+        }
+    }
+}
+
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
     /// Arena-owned mutable slice. Stored as a
@@ -2197,13 +2210,7 @@ impl Template {
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
-            // Field-wise copy (TemplatePart is not `Copy` only
-            // because `EString` does not derive it; all fields are structurally `Copy`).
-            let mut part = TemplatePart {
-                value: part_src.value,
-                tail_loc: part_src.tail_loc,
-                tail: part_src.tail.shallow_clone(),
-            };
+            let mut part = part_src.shallow_clone();
             debug_assert!(matches!(part.tail, TemplateContents::Cooked(_)));
 
             part.value = part.value.unwrap_inlined();

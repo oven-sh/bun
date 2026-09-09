@@ -144,8 +144,6 @@ typedef struct ResolvedSource {
     bool bytecode_cache_owned;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
-    // The bytes are part of this executable (standalone module graph): JSC skips per-code-block integrity checks.
-    bool bytecode_cache_integrity_verified;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is

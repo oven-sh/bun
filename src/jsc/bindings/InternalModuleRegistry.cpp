@@ -116,7 +116,6 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize)) {
         Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
         cached->setPayloadIsPersistent();
-        cached->setPayloadIntegrityIsPreVerified();
         executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
@@ -265,7 +264,7 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

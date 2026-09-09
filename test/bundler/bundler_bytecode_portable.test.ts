@@ -373,15 +373,12 @@ function build({ name, entry, args }: { name: string; entry: string; args: reado
   return pending;
 }
 
-// The payload starts with GenericCacheEntry { uint32 cacheVersion; uint32 headerSize; uint32 headerChecksum; ... }.
-// cacheVersion is a hash of the WebKit version string and headerChecksum covers it, so both change on every WebKit
-// upgrade whether or not the format did; mask them so the snapshot only moves when the serialized bytes do.
+// The payload starts with GenericCacheEntry { uint32 cacheVersion; ... }. cacheVersion is a hash of the WebKit version
+// string, so it changes on every WebKit upgrade whether or not the format did; mask it so the snapshot only moves when
+// the serialized bytes do.
 function fingerprint(bytecode: Uint8Array, isPayload = true) {
   const copy = new Uint8Array(bytecode);
-  if (isPayload) {
-    copy.fill(0, 0, 4);
-    copy.fill(0, 8, 12);
-  }
+  if (isPayload) copy.fill(0, 0, 4);
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
 
@@ -754,10 +751,10 @@ describe("bytecode cache portability", () => {
   }
 
   // A payload this build cannot use (written by an incompatible build, cut short, empty) must cost a parse, nothing more.
-  // Byte 20 is the entry header's callee-save register count; changing any header byte also fails the header checksum.
+  // Byte 12 is the entry header's callee-save register count (GenericCacheEntry { cacheVersion; bootSessionUUID; tag; reservedCalleeLocals }).
   const recordsBuild = corpusBuilds.find(({ entry, args }) => entry === "./records.js" && args.length === 0)!;
   for (const [variant, spoil] of [
-    ["a different build's header", (jsc: Buffer) => ((jsc[20] ^= 0xff), jsc)],
+    ["a different build's header", (jsc: Buffer) => ((jsc[12] ^= 0xff), jsc)],
     ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
     ["empty", (jsc: Buffer) => jsc.subarray(0, 0)],
   ] as const) {

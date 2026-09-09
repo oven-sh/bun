@@ -821,6 +821,9 @@ describe("Bun.Terminal", () => {
           terminal = null;
         }
 
+        // Spawn once first so any fd the spawn machinery opens lazily and
+        // keeps is part of the baseline.
+        await Bun.spawn(["sh", "-c", "exit 0"], { stdio: ["ignore", "ignore", "ignore"] }).exited;
         const fdsBefore = openFds();
         for (let i = 0; i < N; i++) await one(i);
 

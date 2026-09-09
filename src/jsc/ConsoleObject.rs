@@ -459,6 +459,12 @@ fn message_with_type_and_level_(
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
 
+    // console.assert with a message prints "Assertion failed:" before the
+    // formatted output, matching Node.js; the no-message case is handled above.
+    if message_type == MessageType::Assert && len > 0 {
+        let _ = writer.write_all(b"Assertion failed: ");
+    }
+
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
     // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op

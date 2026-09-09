@@ -1214,7 +1214,7 @@ void sinkControllerOnClose(JSGlobalObject* globalObject, WebCore::JSReadableSink
     JSC::EnsureStillAliveScope streamCell(controller->readableStream());
     controller->m_source.clear();
     controller->m_closePromise.clear();
-    controller->m_weakReadableStream.clear();
+    controller->clearReadableStream();
     // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
     if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
         return;

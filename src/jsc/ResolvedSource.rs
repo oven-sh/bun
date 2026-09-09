@@ -33,6 +33,9 @@ pub struct ResolvedSource {
     pub tag: Tag,
 
     pub already_bundled: bool,
+    /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
+    /// record from the graph.
+    pub is_prelinked_module: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -42,7 +45,8 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; }`
+/// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
 /// borrowed from the standalone module graph or the compile cache.
@@ -117,4 +121,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17);

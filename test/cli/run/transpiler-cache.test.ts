@@ -622,18 +622,18 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   // the entry regenerates, not read out of bounds.
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; sourcemap_byte_offset @ 54,
-  //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: flags u8,
+  //   then twelve u64 fields; sourcemap_byte_offset @ 55,
+  //   sourcemap_byte_length @ 63, sourcemap_hash @ 71.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
   //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
   //   24: sync_count u32, 28: stream_offset u32.
-  const SOURCEMAP_BYTE_OFFSET_AT = 54;
-  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  const SOURCEMAP_BYTE_OFFSET_AT = 55;
+  const SOURCEMAP_BYTE_LENGTH_AT = 63;
 
   function corruptSourceMapHeader(file: string): boolean {
     const data = readFileSync(file);
-    if (data.length < 102) return false;
+    if (data.length < 103) return false;
     const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
     const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
     if (smLen < 32 || smOff + smLen > data.length) return false;

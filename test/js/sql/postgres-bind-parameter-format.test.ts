@@ -197,13 +197,22 @@ const noBinaryEncoder: Case[] = [
   ["array-literal object -> float4[]", "float4[]", pgArray, "{1.5,2}"],
 ];
 
+// The value's `String()` form is what the server judges, so `[0]` is `false`
+// and an object whose toString() is a boolean literal is accepted. `valueOf()`
+// is not consulted. Before, ToBoolean / ToInt32 ran: every row stored `true`,
+// a wrapped integer or the valueOf() result.
 const classMismatch: Case[] = [
   ["Date -> bool", "bool", date, "22P02"],
   ["{} -> bool", "bool", {}, "22P02"],
   ["[1, 2] -> bool", "bool", [1, 2], "22P02"],
+  ["function -> bool", "bool", () => false, "22P02"],
+  ["[true] -> bool", "bool", [true], "true"],
+  ["[0] -> bool", "bool", [0], "false"],
+  ["'yes' object -> bool", "bool", { toString: () => "yes" }, "true"],
   ["Date -> int4", "int4", date, "22P02"],
   ["[1, 2] -> int4", "int4", [1, 2], "22P02"],
   ["{} -> int4", "int4", {}, "22P02"],
+  ["valueOf() object -> int4", "int4", { valueOf: () => 5 }, "22P02"],
   ["Date -> float8", "float8", date, "22P02"],
   ["[1, 2] -> float8", "float8", [1, 2], "22P02"],
   ["{} -> float8", "float8", {}, "22P02"],

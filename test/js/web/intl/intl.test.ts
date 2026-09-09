@@ -290,6 +290,144 @@ describe("Intl.RelativeTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
+// DurationFormat — a "numeric" sub-second unit is the decimal fraction of the
+// unit before it. The expectations are built from NumberFormat and ListFormat
+// the way ECMA-402 PartitionDurationFormatPattern builds them, so they hold on
+// any ICU; the digital and numeric cases have no unit text and use literals.
+// ---------------------------------------------------------------------------
+
+describe("Intl.DurationFormat", () => {
+  const unit = (value: number, unit: string, unitDisplay: "long" | "short" | "narrow" = "short") =>
+    new Intl.NumberFormat("en", {
+      style: "unit",
+      unit,
+      unitDisplay,
+      maximumFractionDigits: 9,
+      roundingMode: "trunc",
+    }).format(value);
+  const list = (parts: string[], style: "long" | "short" | "narrow" = "short") =>
+    new Intl.ListFormat("en", { type: "unit", style }).format(parts);
+
+  test("fraction of a sub-second unit is shown when the unit that carries it is zero", () => {
+    const df = new Intl.DurationFormat("en", { milliseconds: "numeric" });
+    expect(df.format({ milliseconds: 250 })).toBe(unit(0.25, "second"));
+    expect(df.format({ hours: 3, milliseconds: 250 })).toBe(list([unit(3, "hour"), unit(0.25, "second")]));
+    expect(df.format({ microseconds: 500 })).toBe(unit(0.0005, "second"));
+    expect(df.format({ nanoseconds: 1 })).toBe(unit(0.000000001, "second"));
+    // Unchanged: a non-zero carrier, and a zero duration.
+    expect(df.format({ seconds: 1, milliseconds: 500 })).toBe(unit(1.5, "second"));
+    expect(df.format({ milliseconds: 0 })).toBe("");
+    expect(df.format({ hours: 3 })).toBe(unit(3, "hour"));
+
+    expect(df.formatToParts({ milliseconds: 999 }).map(p => [p.type, p.value])).toEqual(
+      new Intl.NumberFormat("en", { style: "unit", unit: "second", unitDisplay: "short", maximumFractionDigits: 9 })
+        .formatToParts(0.999)
+        .map(p => [p.type, p.value]),
+    );
+
+    expect(
+      new Intl.DurationFormat("en", { style: "digital", milliseconds: "numeric" }).format({ milliseconds: 250 }),
+    ).toBe("0:00:00.25");
+
+    const micro = new Intl.DurationFormat("en", { microseconds: "numeric" });
+    expect(micro.format({ microseconds: 55 })).toBe(unit(0.055, "millisecond"));
+    expect(micro.format({ seconds: 3, microseconds: 55 })).toBe(list([unit(3, "second"), unit(0.055, "millisecond")]));
+    const nano = new Intl.DurationFormat("en", { nanoseconds: "numeric" });
+    expect(nano.format({ nanoseconds: 7 })).toBe(unit(0.007, "microsecond"));
+    expect(nano.format({ hours: 1, nanoseconds: 7 })).toBe(list([unit(1, "hour"), unit(0.007, "microsecond")]));
+
+    // fractionalDigits truncates what is shown; the display test is on the exact value.
+    const twoDigits = new Intl.DurationFormat("en", { milliseconds: "numeric", fractionalDigits: 2 });
+    expect(twoDigits.format({ milliseconds: 5 })).toBe(
+      new Intl.NumberFormat("en", {
+        style: "unit",
+        unit: "second",
+        unitDisplay: "short",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        roundingMode: "trunc",
+      }).format(0.005),
+    );
+    expect(twoDigits.format({ seconds: 0 })).toBe("");
+  });
+
+  test.each(["long", "short", "narrow"] as const)("zero carrier with base style %s", style => {
+    const df = new Intl.DurationFormat("en", { style, milliseconds: "numeric" });
+    expect(df.format({ milliseconds: 250 })).toBe(unit(0.25, "second", style));
+    expect(df.format({ minutes: 2, microseconds: 300 })).toBe(
+      list([unit(2, "minute", style), unit(0.0003, "second", style)], style),
+    );
+  });
+
+  test("a carrier with integer part zero keeps the sign of the fraction", () => {
+    expect(new Intl.DurationFormat("en", { milliseconds: "numeric" }).format({ milliseconds: -250 })).toBe(
+      unit(-0.25, "second"),
+    );
+    expect(new Intl.DurationFormat("en", { milliseconds: "numeric" }).format({ hours: -3, milliseconds: -250 })).toBe(
+      list([unit(-3, "hour"), unit(0.25, "second")]),
+    );
+    expect(new Intl.DurationFormat("en", { microseconds: "numeric" }).format({ microseconds: -55 })).toBe(
+      unit(-0.055, "millisecond"),
+    );
+    expect(new Intl.DurationFormat("en", { seconds: "numeric" }).format({ milliseconds: -250 })).toBe("-0.25");
+    expect(new Intl.DurationFormat("en", { seconds: "numeric" }).format({ milliseconds: 250 })).toBe("0.25");
+    expect(new Intl.DurationFormat("en", { seconds: "2-digit" }).format({ milliseconds: -250 })).toBe("-00.25");
+    expect(new Intl.DurationFormat("en", { style: "digital" }).format({ milliseconds: -250 })).toBe("-0:00:00.25");
+    expect(
+      new Intl.DurationFormat("en", { seconds: "numeric" })
+        .formatToParts({ milliseconds: -250 })
+        .map(p => [p.type, p.value, p.unit]),
+    ).toEqual([
+      ["minusSign", "-", "second"],
+      ["integer", "0", "second"],
+      ["decimal", ".", "second"],
+      ["fraction", "25", "second"],
+    ]);
+  });
+
+  test('"numeric" on a sub-second unit defaults its display to "auto" and rejects "always"', () => {
+    const resolved = new Intl.DurationFormat("en", { milliseconds: "numeric" }).resolvedOptions();
+    expect({
+      milliseconds: resolved.milliseconds,
+      millisecondsDisplay: resolved.millisecondsDisplay,
+      microseconds: resolved.microseconds,
+      microsecondsDisplay: resolved.microsecondsDisplay,
+      nanoseconds: resolved.nanoseconds,
+      nanosecondsDisplay: resolved.nanosecondsDisplay,
+    }).toEqual({
+      milliseconds: "numeric",
+      millisecondsDisplay: "auto",
+      microseconds: "numeric",
+      microsecondsDisplay: "auto",
+      nanoseconds: "numeric",
+      nanosecondsDisplay: "auto",
+    });
+    expect(new Intl.DurationFormat("en", { microseconds: "numeric" }).resolvedOptions().microsecondsDisplay).toBe(
+      "auto",
+    );
+    expect(new Intl.DurationFormat("en", { nanoseconds: "numeric" }).resolvedOptions().nanosecondsDisplay).toBe("auto");
+    // Numeric seconds are not a fraction of anything and keep "always"; so does a sub-second unit in a text style.
+    expect(new Intl.DurationFormat("en", { seconds: "numeric" }).resolvedOptions().secondsDisplay).toBe("always");
+    expect(new Intl.DurationFormat("en", { milliseconds: "short" }).resolvedOptions().millisecondsDisplay).toBe(
+      "always",
+    );
+
+    for (const options of [
+      { milliseconds: "numeric", millisecondsDisplay: "always" },
+      { microseconds: "numeric", microsecondsDisplay: "always" },
+      { nanoseconds: "numeric", nanosecondsDisplay: "always" },
+      { milliseconds: "numeric", nanosecondsDisplay: "always" },
+      { seconds: "numeric", millisecondsDisplay: "always" },
+      { style: "digital", millisecondsDisplay: "always" },
+    ] as const) {
+      expect(() => new Intl.DurationFormat("en", options)).toThrow(RangeError);
+    }
+    expect(() => new Intl.DurationFormat("en", { milliseconds: "numeric", millisecondsDisplay: "auto" })).not.toThrow();
+    expect(() => new Intl.DurationFormat("en", { milliseconds: "short", millisecondsDisplay: "always" })).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // String / URL paths through ICU — raw
 // ---------------------------------------------------------------------------
 

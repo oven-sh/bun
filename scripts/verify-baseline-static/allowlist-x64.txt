@@ -1368,8 +1368,9 @@ jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]
 # decoded as AVX and as RDPMC), so a ceiling has nothing to bound. On ELF each
 # opcode handler has its own symbol, so layout shifts can move the desync
 # between llint_op_* siblings; add them here as they trip.
-# (3 symbols)
+# (4 symbols)
 # ----------------------------------------------------------------------------
 llint_op_enter_wide32
 llint_op_jmp_wide32
+llint_op_wide16
 llint_op_wide16_wide16

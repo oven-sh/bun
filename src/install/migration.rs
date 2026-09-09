@@ -2,7 +2,6 @@ use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_core::strings;
 use bun_core::{Output, ZStr, zstr};
-use bun_paths::AutoAbsPath;
 use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
 use bun_sys::{self, Fd, File, O};
@@ -70,6 +69,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             migrate_result,
             manager,
             log,
+            dir,
             &timer,
             zstr!("package-lock.json"),
         );
@@ -92,7 +92,14 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
+        return finish_migration(
+            migrate_result,
+            manager,
+            log,
+            dir,
+            &timer,
+            zstr!("yarn.lock"),
+        );
     }
 
     'pnpm: {
@@ -159,6 +166,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             migrate_result,
             manager,
             log,
+            dir,
             &timer,
             zstr!("pnpm-lock.yaml"),
         );
@@ -171,13 +179,14 @@ fn finish_migration<'a>(
     migrate_result: LoadResult<'a>,
     manager: &PackageManager,
     log: &mut bun_ast::Log,
+    dir: Fd,
     timer: &std::time::Instant,
     lockfile_name: &'static ZStr,
 ) -> LoadResult<'a> {
     let LoadResult::Ok(ok) = migrate_result else {
         return migrate_result;
     };
-    if let Err(err) = copy_trusted_and_patched_dependencies(&mut *ok.lockfile, log) {
+    if let Err(err) = copy_trusted_and_patched_dependencies(&mut *ok.lockfile, log, dir) {
         if !manager.options.log_level.is_silent() && log.has_errors() {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Output::flush();
@@ -473,14 +482,13 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
 fn copy_trusted_and_patched_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
+    dir: Fd,
 ) -> Result<(), Error> {
     let arena = bun_alloc::Arena::new();
-    let mut root_path = AutoAbsPath::init_top_level_dir();
-    let _ = root_path.append(b"package.json"); // OOM/capacity error is non-actionable here
-    let Ok(contents) = File::read_from(Fd::cwd(), root_path.slice()) else {
+    let Ok(contents) = File::read_from(dir, b"package.json") else {
         return Ok(());
     };
-    let root_source = bun_ast::Source::init_path_string(root_path.slice(), contents.as_slice());
+    let root_source = bun_ast::Source::init_path_string(b"package.json", contents.as_slice());
     let Some(root) = parse_package_json(&root_source, log, &arena) else {
         return Err(Error::InvalidPackageJSON);
     };
@@ -489,14 +497,12 @@ fn copy_trusted_and_patched_dependencies(
     append_trusted_dependencies(&mut trusted, &arena, log, &root_source, &root)?;
     let string_bytes = this.buffers.string_bytes.as_slice();
     for workspace_path in this.workspace_paths.values() {
-        let mut path = AutoAbsPath::init_top_level_dir();
-        let _ = path.append(workspace_path.slice(string_bytes));
-        let _ = path.append(b"package.json");
+        let path = [workspace_path.slice(string_bytes), b"/package.json"].concat();
         // A missing or unparseable workspace package.json fails the install itself.
-        let Ok(contents) = File::read_from(Fd::cwd(), path.slice()) else {
+        let Ok(contents) = File::read_from(dir, &path) else {
             continue;
         };
-        let source = bun_ast::Source::init_path_string(path.slice(), contents.as_slice());
+        let source = bun_ast::Source::init_path_string(path.as_slice(), contents.as_slice());
         let Some(json) = parse_package_json(&source, &mut bun_ast::Log::init(), &arena) else {
             continue;
         };

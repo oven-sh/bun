@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
-use crate::webcore::streams::{self, SourceHandle};
+use crate::webcore::streams::{self, SourceHandle, controller_abi};
 use bun_collections::TaggedPtrUnion;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -300,15 +300,14 @@ impl<T: JsSinkAbi> JSSink<T> {
 /// instantiations share one copy.
 #[inline(never)]
 fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> JSValue {
-    let result = streams::controller_abi::assign_to_stream(global, stream, controller);
+    let result = controller_abi::assign_to_stream(global, stream, controller);
     // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
     // end()/close() the controller, and its destructor would otherwise run
     // `${name}__finalize` on the sink after its owner has freed it. Detach it
     // while the sink is live; that reaches `js_controller_detached`, which
     // drops it from `source()` (a no-op if it already detached in the call).
     if result.to_error().is_some() {
-        let _ =
-            ::bun_jsc::call_check_slow(global, || streams::controller_abi::detach_ptr(controller));
+        let _ = bun_jsc::call_check_slow(global, || controller_abi::detach_ptr(controller));
     }
     result
 }

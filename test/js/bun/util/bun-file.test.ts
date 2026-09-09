@@ -151,7 +151,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   expect(JSON.parse(stdout)).toEqual({
     ascii: { a: 1, b: "two" },
     utf8: { s: "wörld" },
-    emptyErr: "Unexpected end of JSON input",
+    emptyErr: "JSON Parse error: Unexpected EOF",
   });
   expect(exitCode).toBe(0);
 });

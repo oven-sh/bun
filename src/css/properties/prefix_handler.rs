@@ -129,8 +129,7 @@ impl FallbackHandler {
                 return false;
             };
 
-            // Browsers drop a value they cannot parse, so it cannot stand in for the
-            // declaration before it. A later parsed value still replaces it.
+            // Appended, not replaced: the declaration before it is its fallback.
             context.add_unparsed_fallbacks(arena, &mut unparsed);
             *index = Some(dest.len());
             dest.push(Property::Unparsed(unparsed));

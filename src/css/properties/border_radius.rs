@@ -211,8 +211,7 @@ macro_rules! property_helper {
 macro_rules! logical_property_helper {
     ($self:expr, $d:expr, $ctx:expr, $prop:ident, $val:expr) => {{
         let val = $val;
-        // An unparsed value may be one browsers drop, so the value before it is kept
-        // as its fallback.
+        // An unparsed value keeps the one before it as its fallback.
         if $self.category != PropertyCategory::Logical
             || ($self.$prop.is_some() && matches!(val, Property::Unparsed(_)))
         {

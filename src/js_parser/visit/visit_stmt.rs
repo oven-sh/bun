@@ -2437,9 +2437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// What `ref_` names when that is an enum, a namespace, or a member of one. A member of
-    /// another block of the same enum or namespace is reached through this block's closure
-    /// argument (see `find_symbol`), as in `handle_identifier`.
+    /// The enum, namespace, or member that `ref_` names; a sibling block's member goes through `namespace_alias`.
     fn ts_member_data_of_symbol(&self, ref_: Ref) -> Option<js_ast::ts::Data> {
         if let Some(alias) = &self.symbols[ref_.inner_index() as usize].namespace_alias {
             let js_ast::ts::Data::Namespace(map) =
@@ -2452,16 +2450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.ref_to_ts_namespace_member.get(&ref_).copied()
     }
 
-    /// `visit_stmts` visits the enums of a statement list ahead of its other statements, so
-    /// that their member values are known everywhere in the list. Enums nested in a namespace
-    /// of that list are only visited with the namespace, but the list can reference them too:
-    ///
-    ///   namespace NS { export enum Inner { X = 1 } }
-    ///   enum Outer { A = NS.Inner.X, B }
-    ///
-    /// `B` only gets a value if `NS.Inner.X` is known when `Outer` is visited. So compute the
-    /// value of each constant member of the enums inside the namespace from its unvisited
-    /// initializer first, by the rules of `s_enum`, which stores the same values again later.
+    /// Stores the constant members of the enums in an unvisited namespace body, for the enums `visit_stmts` pre-visits.
     pub(crate) fn compute_enum_values_inside_namespace(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt.data {
@@ -2517,8 +2506,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
-        // `s_enum` adds these one member at a time, so that a member after the initializer
-        // stays a property access there, as it does in an enum that is not nested.
+        // `s_enum` adds these back one member at a time, so that a later member stays a property access.
         for ref_ in members_so_far {
             self.ref_to_ts_namespace_member.remove(&ref_);
         }

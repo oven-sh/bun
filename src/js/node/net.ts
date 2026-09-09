@@ -401,8 +401,6 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// The native 'data' callback of every handler table that feeds the stream
-// (all but the `onread` option's, which bypasses the stream) lands here.
 function deliverSocketData(self, socket, buffer) {
   if (self[kDestroyOnRead]) {
     $debug("DATA on a socket that must receive nothing - destroying it");

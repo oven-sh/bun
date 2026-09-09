@@ -117,12 +117,9 @@ function Agent(options): void {
       return;
     }
 
-    // A pooled socket has no parser and no reader. Bytes it holds or receives
-    // are unsolicited, and the next request that reuses it would parse them as
-    // the start of its own response (response queue poisoning,
-    // https://hackerone.com/reports/3582376). Such a socket is destroyed: here
-    // when the bytes are already buffered, by node:net's read path
-    // (kDestroyOnRead) when they arrive while it is pooled.
+    // Bytes a pooled socket holds or receives have no request: the next request
+    // would parse them as its response (https://hackerone.com/reports/3582376).
+    // Destroy it here if they are buffered, in node:net if they arrive later.
     if (socket.readableLength > 0) {
       $debug("BUFFERED DATA on FREE socket - destroying poisoned socket");
       socket.destroy();

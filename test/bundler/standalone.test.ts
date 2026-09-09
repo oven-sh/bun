@@ -626,7 +626,7 @@ console.log(message);`,
         "index.html": `<!doctype html><html><head>
 <meta http-equiv="Content-Security-Policy" content="script-src 'self'">
 </head><body><script src="./app.js"></script></body></html>`,
-        "app.js": `document.title = "</script><script>alert(1)</script>";`,
+        "app.js": `document.title = "</script><script>alert(1)</script>" + "<!-- x -->";`,
       });
 
       const { html } = await buildStandalone(String(dir));
@@ -634,6 +634,39 @@ console.log(message);`,
       const script = inlineScript(html)!;
       expect(script).toContain("<\\/script>");
       expect(policies(html)).toEqual([`script-src 'self' ${sha256(script)}`]);
+    });
+
+    test("CRLF and CR are written as LF, which is what the browser hashes", async () => {
+      // The HTML tokenizer turns CRLF and lone CR into LF before the text of
+      // an inline <script>/<style> exists, so a hash over raw CR bytes never
+      // matches. The CSS printer keeps CRLF inside /*! */ comments, and
+      // banner/footer text is written as given.
+      using dir = tempDir("compile-browser-csp-crlf", {
+        "index.html": `<!doctype html><html><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<link rel="stylesheet" href="./a.css"></head><body><script src="./app.js"></script></body></html>`,
+        "a.css": "/*! license\r\n * line 2\r\n */\r\nbody { color: red }\r\n",
+        "app.js": "/*! license\r\n * line 2 */\r\nconsole.log(`a\r\nb`);\r\n",
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        banner: "/* banner\r\n * line 2 */\r",
+        footer: "// footer\rend",
+      });
+      expect(result.success).toBe(true);
+      const html = await result.outputs[0].text();
+      const script = inlineScript(html)!;
+      const style = inlineStyle(html)!;
+      expect(script).toContain("banner\n * line 2 */\n");
+      expect(script).toContain("// footer\nend");
+      expect(style).toContain("license\n * line 2\n */");
+      expect(html).not.toContain("\r");
+      expect(policies(html)).toEqual([
+        `default-src 'self'; script-src 'self' ${sha256(script)}; style-src 'self' ${sha256(style)}`,
+      ]);
     });
 
     test("every policy in the document is rewritten, other http-equiv metas are not", async () => {

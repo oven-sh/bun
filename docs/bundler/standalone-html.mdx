@@ -334,5 +334,4 @@ Bun replaces references to `process.env.API_URL` in your JavaScript with the lit
 
 - **Code splitting** is not supported — `--splitting` cannot be used with `--compile --target=browser`
 - **Large assets** increase file size since they're base64-encoded (33% overhead vs the raw binary)
-- **Repeated references** to one asset each embed their own copy. A `data:` URI cannot be shared, so an image used by two `<img>` tags, a CSS `url()` and a JS import is stored four times. When size matters, reference a large asset from one place (one CSS class, or one JS import that the rest of the code reuses)
 - **External URLs** (CDN links, absolute URLs) stay as-is: Bun inlines only relative paths

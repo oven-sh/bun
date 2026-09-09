@@ -554,56 +554,72 @@ impl IntermediateOutput {
         &()
     }
 
-    /// Streams `content` as it must appear inside an inline `<script>`/`<style>`: each `</` that starts `close_tag` becomes `<\/`.
-    fn for_each_escaping_closing_tags(
-        content: &[u8],
-        close_tag: &[u8],
-        mut emit: impl FnMut(&[u8]),
-    ) {
+    /// Streams `content` as the text of an inline `<script>`/`<style>`: `close_tag`'s `</` becomes `<\/`, and CRLF or CR becomes LF as the HTML tokenizer would make it.
+    fn for_each_inline_text_piece(content: &[u8], close_tag: &[u8], mut emit: impl FnMut(&[u8])) {
         let tag_suffix = &close_tag[2..];
-        let mut remaining = content;
-        while let Some(idx) = strings::index_of(remaining, b"</") {
-            emit(&remaining[..idx]);
-            remaining = &remaining[idx + 2..];
-            if remaining.len() >= tag_suffix.len()
-                && strings::eql_case_insensitive_ascii_ignore_length(
-                    &remaining[..tag_suffix.len()],
-                    tag_suffix,
-                )
-            {
-                emit(b"<\\/");
+        let find_lt = |from: usize| strings::index_of(&content[from..], b"</").map(|i| from + i);
+        let find_cr =
+            |from: usize| strings::index_of_char_usize(&content[from..], b'\r').map(|i| from + i);
+        let mut start: usize = 0;
+        let mut next_lt = find_lt(0);
+        let mut next_cr = find_cr(0);
+        loop {
+            let at_cr = match (next_lt, next_cr) {
+                (Some(lt), Some(cr)) => cr < lt,
+                (Some(_), None) => false,
+                (None, Some(_)) => true,
+                (None, None) => break,
+            };
+            if at_cr {
+                let at = next_cr.unwrap();
+                emit(&content[start..at]);
+                emit(b"\n");
+                start = at + 1;
+                if content.get(start) == Some(&b'\n') {
+                    start += 1;
+                }
+                next_cr = find_cr(start);
             } else {
-                emit(b"</");
+                let at = next_lt.unwrap();
+                emit(&content[start..at]);
+                start = at + 2;
+                if content.len() - start >= tag_suffix.len()
+                    && strings::eql_case_insensitive_ascii_ignore_length(
+                        &content[start..start + tag_suffix.len()],
+                        tag_suffix,
+                    )
+                {
+                    emit(b"<\\/");
+                } else {
+                    emit(b"</");
+                }
+                next_lt = find_lt(start);
             }
         }
-        emit(remaining);
+        emit(&content[start..]);
     }
 
-    /// The extra bytes [`memcpy_escaping_closing_tags`] needs over `content.len()`.
-    fn count_closing_tags(content: &[u8], close_tag: &[u8]) -> usize {
-        let mut escaped_len: usize = 0;
-        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| {
-            escaped_len += bytes.len()
-        });
-        escaped_len - content.len()
+    /// The number of bytes [`memcpy_inline_text`] writes for `content`.
+    fn inline_text_len(content: &[u8], close_tag: &[u8]) -> usize {
+        let mut len: usize = 0;
+        Self::for_each_inline_text_piece(content, close_tag, |bytes| len += bytes.len());
+        len
     }
 
-    /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
-    /// replacing `</` with `<\/`. Returns the number of bytes written.
-    /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
-    fn memcpy_escaping_closing_tags(dest: &mut [u8], content: &[u8], close_tag: &[u8]) -> usize {
+    /// Writes `content` as inline `<script>`/`<style>` text into `dest`, which must hold [`inline_text_len`] bytes. Returns the number written.
+    fn memcpy_inline_text(dest: &mut [u8], content: &[u8], close_tag: &[u8]) -> usize {
         let mut dst: usize = 0;
-        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| {
+        Self::for_each_inline_text_piece(content, close_tag, |bytes| {
             dest[dst..][..bytes.len()].copy_from_slice(bytes);
             dst += bytes.len();
         });
         dst
     }
 
-    /// SHA-256 of `content` as [`memcpy_escaping_closing_tags`] writes it (what a browser hashes for CSP).
-    pub(crate) fn sha256_escaping_closing_tags(content: &[u8], close_tag: &[u8]) -> [u8; 32] {
+    /// SHA-256 of `content` as [`memcpy_inline_text`] writes it, which is the text a browser hashes for CSP.
+    pub(crate) fn sha256_inline_text(content: &[u8], close_tag: &[u8]) -> [u8; 32] {
         let mut hasher = bun_sha_hmac::sha::SHA256::init();
-        Self::for_each_escaping_closing_tags(content, close_tag, |bytes| hasher.update(bytes));
+        Self::for_each_inline_text_piece(content, close_tag, |bytes| hasher.update(bytes));
         let mut digest = [0u8; 32];
         hasher.r#final(&mut digest);
         digest
@@ -811,13 +827,10 @@ impl IntermediateOutput {
                                 match piece.query.kind() {
                                     QueryKind::Chunk => {
                                         if let Some(content) = scc[index].as_deref() {
-                                            // Account for escaping </script or </style inside inline content.
-                                            // Each occurrence of the closing tag adds 1 byte (`</` → `<\/`).
-                                            count += content.len()
-                                                + Self::count_closing_tags(
-                                                    content,
-                                                    chunks[index].closing_tag_for_content(),
-                                                );
+                                            count += Self::inline_text_len(
+                                                content,
+                                                chunks[index].closing_tag_for_content(),
+                                            );
                                             continue;
                                         }
                                     }
@@ -989,7 +1002,7 @@ impl IntermediateOutput {
                                     // For chunk content, escape closing tags (</script, </style)
                                     // that would prematurely terminate the inline tag.
                                     if piece.query.kind() == QueryKind::Chunk {
-                                        let written = Self::memcpy_escaping_closing_tags(
+                                        let written = Self::memcpy_inline_text(
                                             remain,
                                             content,
                                             chunks[index].closing_tag_for_content(),

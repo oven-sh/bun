@@ -42,12 +42,10 @@ pub(crate) fn resolve_for_html_chunk(
         if content.is_empty() {
             return None;
         }
-        Some(hash_source(
-            &IntermediateOutput::sha256_escaping_closing_tags(
-                content,
-                chunks[index].closing_tag_for_content(),
-            ),
-        ))
+        Some(hash_source(&IntermediateOutput::sha256_inline_text(
+            content,
+            chunks[index].closing_tag_for_content(),
+        )))
     };
     let scripts: Vec<HashSource> = inline_block_hash(js_chunk).into_iter().collect();
     let styles: Vec<HashSource> = inline_block_hash(css_chunk).into_iter().collect();

@@ -1362,7 +1362,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectStreamPullRejected, (JS
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     JSValue reason = callFrame->argument(0);
-    uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1))->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() rejected"_s)));
+    auto* sinkController = uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1));
+    if (!sinkController->wrapped()) {
+        // close(error) already failed the sink: the owner hears that error. A clean close()/end() or a peer abort already settled it: nothing left to fail.
+        if (JSValue failed = sinkController->m_failReason.get())
+            throwException(globalObject, scope, failed);
+        return scope.exception() ? EncodedJSValue() : JSValue::encode(jsUndefined());
+    }
+    sinkController->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() rejected"_s)));
     RETURN_IF_EXCEPTION(scope, {});
     throwException(globalObject, scope, reason);
     return {};

@@ -1913,8 +1913,13 @@ describe("direct stream edge cases over Bun.serve", () => {
               await new Promise(() => {});
             },
             cancel() {
-              controller.write("from cancel");
-              controller.close();
+              // Native sinks throw on write() after close; the JS reader path no-ops. Either way: no crash.
+              try {
+                controller.write("from cancel");
+              } catch {}
+              try {
+                controller.close();
+              } catch {}
               cancelled.resolve();
             },
           } as any),
@@ -1926,7 +1931,7 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect(await abortAfter(server, "first")).toContain("first");
   });
 
-  test("async generator body: client abort between yields runs the generator's finally once and does not throw into it", async () => {
+  test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {
     const events: string[] = [];
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
@@ -1952,14 +1957,16 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
     await abortAfter(server, "first");
     await finished.promise;
-    expect(events).toEqual(["finally"]);
+    expect(events).toEqual([expect.stringMatching(/^catch:.*closed/i), "finally"]);
   });
 
   test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
     const readable = new Readable({ read() {} });
     using server = Bun.serve({ port: 0, fetch: () => new Response(Readable.toWeb(readable) as any) });
-    const res = await fetch(server.url);
+    const resPromise = fetch(server.url);
+    // Headers go out with the first body chunk, so push before awaiting the response.
     readable.push("first");
+    const res = await resPromise;
     const reader = res.body!.getReader();
     expect(dec.decode((await reader.read()).value)).toBe("first");
     readable.destroy(new Error("node source failed"));

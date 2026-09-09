@@ -83,10 +83,9 @@ if (ffiDisabled) {
     callback: throwFFIDisabled,
     closeCallback: throwFFIDisabled,
     cfunction: throwFFIDisabled,
-    CString: class CString {
-      constructor() {
-        throwFFIDisabled();
-      }
+    // A plain function so that both `new CString()` and `CString()` throw ERR_FFI_DISABLED.
+    CString: function CString() {
+      throwFFIDisabled();
     },
     read: {
       u8: throwFFIDisabled,

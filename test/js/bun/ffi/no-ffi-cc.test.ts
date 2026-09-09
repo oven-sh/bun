@@ -193,7 +193,7 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
     const { results, stderr, exitCode } = await run([
       "--no-ffi-cc",
       "-e",
-      'const keys = Object.keys({ ...Bun }); Bun.inspect(Bun); console.log(JSON.stringify({ hasFFIKey: keys.includes("FFI"), FFI: typeof Bun.FFI }));',
+      'for (const key in Bun) void Bun[key]; Bun.inspect(Bun); console.log(JSON.stringify({ hasFFIKey: Object.keys(Bun).includes("FFI"), FFI: typeof Bun.FFI }));',
     ]);
     expect({ results, stderr, exitCode }).toMatchObject({
       results: { hasFFIKey: true, FFI: "undefined" },

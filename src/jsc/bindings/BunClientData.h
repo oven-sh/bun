@@ -126,6 +126,7 @@ private:
 namespace JSC {
 struct HashTableValue;
 class DecoderStringTable;
+class PrelinkedModuleGraph;
 }
 
 namespace Bun {
@@ -285,9 +286,15 @@ public:
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 
+    // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
+    // standalone module graph; null when there is none (or it does not validate).
+    JSC::PrelinkedModuleGraph* prelinkedModuleGraph(JSC::VM&);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
     std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
+    RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
+    bool m_prelinkedModuleGraphChecked { false };
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`

@@ -99,7 +99,8 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub(crate) fn len(self) -> usize {
+        /// `StringID` slots the record occupies in `ModuleInfo::buffer` (part of the serialized format).
+        pub fn len(self) -> usize {
             match self {
                 Self::ImportInfoSingle => 4,
                 Self::ImportInfoSingleTypeScript => 4,

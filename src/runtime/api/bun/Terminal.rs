@@ -172,6 +172,9 @@ bitflags::bitflags! {
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 6;
+        /// The `exit` callback has run (or was skipped). The wrapper stays
+        /// strong until then; see `maybe_downgrade_after_eof`.
+        const EXIT_DISPATCHED = 1 << 7;
     }
 }
 
@@ -1815,12 +1818,14 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::READER_DONE));
         #[cfg(unix)]
         self.finish_io_after_eof();
-        // EOF from master - downgrade to weak ref to allow GC.
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.maybe_downgrade_after_eof();
             self.call_exit_callback(exit_code, None);
         }
+        // The wrapper stayed strong for `exit`; only a pending `drain` needs
+        // it from here on.
+        self.update_flags(|f| f.insert(Flags::EXIT_DISPATCHED));
+        self.maybe_downgrade_after_eof();
         self.deref_();
     }
 
@@ -1843,16 +1848,16 @@ impl Terminal {
         }
     }
 
-    /// Downgrade `this_value` once no further callback can fire: the reader is
-    /// done and no `drain` is owed. Downgrading with a drain pending would let
-    /// GC collect the wrapper, and with it the callbacks it roots, before
-    /// `on_writer_ready` dispatches through it.
+    /// Downgrade `this_value` once no further callback can fire: `exit` has
+    /// been dispatched and no `drain` is owed. Downgrading earlier would let
+    /// GC collect the wrapper, and with it the callbacks it roots, before the
+    /// last dispatch goes through it.
     ///
     /// Reads only `Cell` fields, never `self.writer`: callers include
     /// writer-parent callbacks that run while a writer borrow is live.
     fn maybe_downgrade_after_eof(&self) {
         let flags = self.flags.get();
-        if !flags.contains(Flags::READER_DONE) || flags.contains(Flags::FINALIZED) {
+        if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
             return;
         }
         if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {

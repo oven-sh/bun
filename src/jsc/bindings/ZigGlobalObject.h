@@ -382,8 +382,6 @@ public:
         Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
-        Bun__FileStreamWrapper__onRejectRequestStream,
-        Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,
@@ -868,6 +866,13 @@ ALWAYS_INLINE void* vm(JSC::VM& vm)
 ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
+// A realm that `bun test --isolate` retired because its file finished
+// (Zig__GlobalObject__retireForTestIsolation). Nothing enters its script again.
+ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
 }
 
 }

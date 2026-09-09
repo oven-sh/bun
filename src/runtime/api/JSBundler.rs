@@ -136,6 +136,7 @@ pub mod js_bundler {
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
+        pub(crate) optimize_bytecode: bool,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -204,6 +205,7 @@ pub mod js_bundler {
                 format: options::Format::Esm,
                 bytecode: false,
                 bytecode_depth: u32::MAX,
+                optimize_bytecode: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -241,6 +243,8 @@ pub mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
+        pub(crate) jit_policy: f32,
     }
 
     impl Default for CompileOptions {
@@ -262,6 +266,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                jit_policy: 1.0,
             }
         }
     }
@@ -436,6 +441,30 @@ pub mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
+                if !jit_policy.is_undefined() {
+                    if !jit_policy.is_number() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.jitPolicy",
+                            b"number",
+                            jit_policy,
+                        ));
+                    }
+                    let scale = jit_policy.as_number() as f32;
+                    if !(scale.is_finite() && scale >= 1.0) {
+                        return Err(global_this.throw_range_error(
+                            jit_policy.as_number(),
+                            bun_jsc::RangeErrorOptions {
+                                field_name: b"compile.jitPolicy",
+                                msg: b"a finite number >= 1",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.jit_policy = scale;
+                }
             }
 
             Ok(Some(this))
@@ -618,6 +647,17 @@ pub mod js_bundler {
                         always_allow_zero: false,
                     },
                 )?;
+            }
+
+            if let Some(optimize) = config.get_truthy(global_this, "optimize")? {
+                if !optimize.is_object() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected optimize to be an object"
+                    )));
+                }
+                if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
+                    this.optimize_bytecode = bytecode;
+                }
             }
 
             if let Some(react_fast_refresh) =

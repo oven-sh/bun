@@ -1811,9 +1811,8 @@ describe("direct stream edge cases over Bun.serve", () => {
     return raw;
   }
 
-  test("client abort while pull() is parked: cancel() once with the connection-closed reason, the parked write settles, no end", async () => {
+  test("client abort while pull() is parked: cancel() once with the connection-closed reason, and pull() gets unstuck", async () => {
     const t = tally();
-    let parked: any;
     const done = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
@@ -1822,22 +1821,22 @@ describe("direct stream edge cases over Bun.serve", () => {
           direct(t, async c => {
             c.write("first");
             await c.flush();
-            parked = c.write(Buffer.alloc(512 * 1024, "x"));
-            t.events.push("parked");
-            await parked;
-            t.events.push("unparked");
-            done.resolve();
+            // Keep writing until the socket pushes back, so the abort always finds pull() parked on a write.
+            try {
+              for (;;) await c.write(Buffer.alloc(256 * 1024, "x"));
+            } catch (e: any) {
+              t.events.push("write threw");
+            } finally {
+              done.resolve();
+            }
           }),
         ),
     });
     await abortAfter(server, "first");
-    // The parked write must settle (either way) once the peer is gone; otherwise pull() leaks forever.
-    await Promise.race([done.promise, (async () => { while (t.cancels.length === 0) await later(); await later(); })()]);
-    expect({ pulls: t.pulls, cancels: t.cancels.length, parkedSettled: "ok" in (await settle(Promise.race([parked, later().then(() => "pending")]))) }).toEqual({
-      pulls: 1,
-      cancels: 1,
-      parkedSettled: true,
-    });
+    // pull() must not stay parked forever once the peer is gone: the pending write settles (or the next one throws).
+    await done.promise;
+    await later();
+    expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
   });
 
   test("client abort racing pull() resolution: exactly one of end / cancel is observed", async () => {

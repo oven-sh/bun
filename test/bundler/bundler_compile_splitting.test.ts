@@ -1,8 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isCI, isDebug, isWindows, tempDir } from "harness";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
+
+// The module graph that `--compile` embeds: the bytes from the start of the payload up to its trailer. Reads from the
+// end of the executable instead of loading the whole file.
+function embeddedPayload(executable: string): Buffer {
+  const fd = openSync(executable, "r");
+  try {
+    const size = fstatSync(fd).size;
+    for (let window = Math.min(size, 1 << 20); ; window = Math.min(size, window * 8)) {
+      const tail = Buffer.alloc(window);
+      for (let read = 0; read < window; ) read += readSync(fd, tail, read, window - read, size - window + read);
+      const trailer = tail.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      // `Offsets` is the 32 bytes before the trailer. Its first field, `byte_count: usize`, counts every payload byte
+      // before `Offsets`.
+      if (trailer >= 32) {
+        const base = trailer - 32 - Number(tail.readBigUInt64LE(trailer - 32));
+        if (base >= 0) return Buffer.from(tail.subarray(base, trailer));
+      }
+      expect(window, `no embedded module graph found in ${executable}`).toBeLessThan(size);
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
 
 // `main.ts` loads the entry point `tool.ts` at run time. `tool.ts` loads `main.ts` back with `import()` and with
 // `require()`, and `main.ts` prints what each of the two returns, or the first line of its error.
@@ -634,6 +657,63 @@ describe("bundler", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // Building the same inputs twice must embed the same bytes. Imports between chunks are printed with a per-build
+    // placeholder as the specifier, and the linker swaps in the final path once chunk hashes are known. With
+    // `--bytecode`, the module record used to keep the placeholder as an extra string, and it was written to the
+    // executable's shared string table. Not concurrent: two in-process compiles would starve the tests beside it.
+    test(
+      "--bytecode: the embedded module graph is the same on every build",
+      async () => {
+        using dir = tempDir("compile-splitting-reproducible", {
+          "entry.ts": /* js */ `
+            import { x } from "./s";
+            console.log("static", x);
+            const m = await import("./d");
+            console.log("dyn", m.d);
+          `,
+          "s.ts": `export const x = 1;`,
+          "d.ts": `export const d = "D";`,
+        });
+        const build = async (outdir: string) => {
+          const result = await Bun.build({
+            entrypoints: [join(String(dir), "entry.ts"), join(String(dir), "s.ts")],
+            compile: { outfile: join(String(dir), outdir, "app") },
+            splitting: true,
+            bytecode: true,
+            format: "esm",
+          });
+          expect(result.logs).toEqual([]);
+          expect(result.success).toBe(true);
+          return { executable: result.outputs[0].path, payload: embeddedPayload(result.outputs[0].path) };
+        };
+        const first = await build("1");
+        const second = await build("2");
+
+        const differAt = first.payload.findIndex((byte, i) => byte !== second.payload[i]);
+        const around = (payload: Buffer) =>
+          JSON.stringify(payload.toString("latin1", Math.max(0, differAt - 32), differAt + 32));
+        expect(
+          differAt,
+          `payloads differ at byte ${differAt}: ${around(first.payload)} vs ${around(second.payload)}`,
+        ).toBe(-1);
+        expect(second.payload.length).toBe(first.payload.length);
+
+        await using proc = Bun.spawn({
+          cmd: [first.executable],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("static 1\ndyn D\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+      // Two compiles with bytecode: the allowance `itBundled` gives one `compile` test.
+      isCI ? undefined : isDebug ? Infinity : 30_000,
+    );
 
     // `--outfile .` writes the executable as `index`. The entry point is embedded under that name too, so `main.ts`
     // resolves `./tool.ts` next to it, and `tool.ts` can load `main.ts` back.

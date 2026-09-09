@@ -1291,9 +1291,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
-  // A type:"direct" pull() is re-invoked per read as a demand signal, but never while a
-  // previous async pull() is still pending and never after end(). A pull that writes the
-  // whole body and ends therefore runs exactly once.
+  // A type:"direct" pull() runs once: later reads drain what it has written since.
   describe("a direct stream's async pull() is not re-entered while pending", () => {
     const N = 30000;
     const CS = 4096;
@@ -3940,7 +3938,7 @@ describe("direct stream edge cases", () => {
       });
     });
 
-    test("write()/flush()/end() after close() report 0 bytes on every path instead of throwing", async () => {
+    test("write()/flush() after close(): the reader path reports 0 bytes, a native sink throws", async () => {
       const after = {};
       const mk = key =>
         direct(tally(), async c => {
@@ -3964,7 +3962,7 @@ describe("direct stream edge cases", () => {
       await later();
       expect(after).toEqual({
         reader: { write: 0, flush: undefined, end: undefined },
-        fileSink: { write: 0, flush: 0, end: undefined },
+        fileSink: { write: "throws", flush: "throws", end: undefined },
       });
     });
   });

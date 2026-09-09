@@ -230,6 +230,7 @@ public:
     mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
     mutable JSC::Weak<JSObject> m_weakReadableStream;
     uintptr_t m_onDestroy { 0 };
+    bool m_destinationClosed { false }; // the sink closed underneath the source (peer abort, write error): write()/flush() report 0 instead of throwing
 
 protected:
     JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, SinkID sinkId, uintptr_t onDestroy)
@@ -952,7 +953,7 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
         return sink->wrapped();
 
     if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(value)))
-        return controller->wrapped() ? controller->wrapped() : (void*)2;
+        return controller->wrapped() ? controller->wrapped() : (controller->m_destinationClosed ? (void*)2 : nullptr);
 
     return (void*)1;
 }
@@ -1013,6 +1014,7 @@ extern "C" void JSSinkController__onReady(JSC::EncodedJSValue controllerValue, J
 extern "C" void JSSinkController__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
     auto* controller = static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(controllerValue).getObject());
+    controller->m_destinationClosed = true;
     if (controller->m_sourceKind == WebCore::SinkSource::None)
         return;
     Bun::WebStreams::sinkControllerOnClose(controller->globalObject(), controller, JSC::JSValue::decode(reason), /* sinkClosed */ true);

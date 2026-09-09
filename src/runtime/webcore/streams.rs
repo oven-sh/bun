@@ -1962,21 +1962,28 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             JSPromise::opaque_ref(prom).to_js().unprotect();
         }
         // A sink torn down without finalize() (assignToStream failed synchronously) still holds its pool checkout.
-        if let Some(pooled) = this.pooled_buffer.take() {
-            this.buffer.clear();
-            if this.buffer.capacity() > 64 * 1024 {
-                this.buffer.clear_and_free();
-            }
-            // SAFETY: `pooled` is this sink's exclusive checkout from `ByteListPool::get_if_exists`; hand the buffer back with it.
-            unsafe {
-                (*pooled.as_ptr()).data =
-                    core::mem::MaybeUninit::new(core::mem::take(&mut this.buffer));
-                ByteListPool::release(pooled.as_ptr());
-            }
-        }
+        this.release_pooled_buffer();
         this.buffer.clear_and_free();
         this.unregister_auto_flusher();
         drop(this);
+    }
+
+    /// Hand the pool checkout back with the (emptied) buffer; `false` when nothing was checked out.
+    fn release_pooled_buffer(&mut self) -> bool {
+        let Some(pooled) = self.pooled_buffer.take() else {
+            return false;
+        };
+        self.buffer.clear();
+        if self.buffer.capacity() > 64 * 1024 {
+            self.buffer.clear_and_free();
+        }
+        // SAFETY: `pooled` is this sink's exclusive `ByteListPool` checkout; `data` is rewritten before the release.
+        unsafe {
+            (*pooled.as_ptr()).data =
+                core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
+            ByteListPool::release(pooled.as_ptr());
+        }
+        true
     }
 
     /// This can be called _many_ times for the same instance
@@ -2014,26 +2021,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(pooled) = self.pooled_buffer {
-            self.buffer.clear();
-            if self.buffer.capacity() > 64 * 1024 {
-                self.buffer.clear_and_free();
-            }
-            // SAFETY: pooled is a valid pool node checkout
-            unsafe {
-                (*pooled.as_ptr()).data =
-                    core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
-            }
-
-            self.buffer = Vec::<u8>::default();
-            self.pooled_buffer = None;
-            // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
-            // exclusively owned by this stream; `data` was rewritten just above,
-            // so it is initialized. Ownership returns to the pool.
-            unsafe { ByteListPool::release(pooled.as_ptr()) };
-        } else if self.buffer.capacity() == 0 {
-            //
-        } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
+        if self.release_pooled_buffer() || self.buffer.capacity() == 0 {
+            return;
+        }
+        if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
             let buffer = core::mem::take(&mut self.buffer);
             ByteListPool::push(buffer);
         } else {

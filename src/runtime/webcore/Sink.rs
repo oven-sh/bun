@@ -191,7 +191,7 @@ pub(crate) mod from_js_result {
     pub(crate) const DETACHED: usize = 0;
     /// JS exception has not yet been thrown.
     pub(crate) const CAST_FAILED: usize = 1;
-    /// A direct-stream controller whose sink is gone (the source closed it, or the destination went away).
+    /// A direct-stream controller whose destination went away (peer abort, write error) before the source closed it.
     pub(crate) const CONTROLLER_DETACHED: usize = 2;
 }
 
@@ -405,10 +405,11 @@ impl<T: JsSinkType> JSSink<T> {
     ) -> crate::webcore::jsc::JsResult<Option<&'a mut JSSink<T>>> {
         let raw = T::from_js_extern(frame.this());
         match raw {
-            from_js_result::DETACHED => {
-                Err(global.throw(format_args!("This {} has already been closed.", T::NAME,)))
-            }
-            // A direct stream's controller after close() or after the destination went away: write()/flush()/end() report 0 bytes, like the JS reader path.
+            from_js_result::DETACHED => Err(global.throw(format_args!(
+                "This {} has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.",
+                T::NAME,
+            ))),
+            // The destination went away under a direct stream's controller: write()/flush()/end() report 0 bytes so the source can stop.
             from_js_result::CONTROLLER_DETACHED => Ok(None),
             from_js_result::CAST_FAILED => Err(bun_jsc::ErrorCode::INVALID_THIS
                 .throw(global, format_args!("Expected {}", T::NAME))),

@@ -747,8 +747,8 @@ interface ReadableStreamDirectController {
    * The promise resolves once the destination has drained.
    * `await controller.flush(true)` is equivalent.
    *
-   * Returns `0` once the stream is closed or the destination has gone away
-   * (for example, the HTTP client disconnected).
+   * Returns `0` once the destination has gone away (for example, the HTTP
+   * client disconnected).
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;

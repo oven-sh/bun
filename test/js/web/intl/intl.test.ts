@@ -325,14 +325,6 @@ describe("Intl.DurationFormat", () => {
         .map(p => [p.type, p.value]),
     );
 
-    for (const style of ["long", "short", "narrow"] as const) {
-      expect(new Intl.DurationFormat("en", { style, milliseconds: "numeric" }).format({ milliseconds: 250 })).toBe(
-        unit(0.25, "second", style),
-      );
-      expect(
-        new Intl.DurationFormat("en", { style, milliseconds: "numeric" }).format({ minutes: 2, microseconds: 300 }),
-      ).toBe(list([unit(2, "minute", style), unit(0.0003, "second", style)], style));
-    }
     expect(
       new Intl.DurationFormat("en", { style: "digital", milliseconds: "numeric" }).format({ milliseconds: 250 }),
     ).toBe("0:00:00.25");
@@ -357,6 +349,14 @@ describe("Intl.DurationFormat", () => {
       }).format(0.005),
     );
     expect(twoDigits.format({ seconds: 0 })).toBe("");
+  });
+
+  test.each(["long", "short", "narrow"] as const)("zero carrier with base style %s", style => {
+    const df = new Intl.DurationFormat("en", { style, milliseconds: "numeric" });
+    expect(df.format({ milliseconds: 250 })).toBe(unit(0.25, "second", style));
+    expect(df.format({ minutes: 2, microseconds: 300 })).toBe(
+      list([unit(2, "minute", style), unit(0.0003, "second", style)], style),
+    );
   });
 
   test("a carrier with integer part zero keeps the sign of the fraction", () => {

@@ -321,10 +321,11 @@ pub(crate) fn compute_chunks(
     if js_chunks.count() > 0 {
         for source_index in this.graph.reachable_files.slice() {
             if this.graph.files_live.is_set(source_index.get() as usize) {
-                // A CSS module script's stub is placed like a JS file.
-                if css_reprs[source_index.get() as usize].is_none()
-                    || this.css_module_scripts.contains(&source_index.get())
-                {
+                if crate::linker_context_mod::is_chunked_as_js(
+                    css_reprs,
+                    &this.css_module_scripts,
+                    source_index.get(),
+                ) {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
                     if this.graph.code_splitting {

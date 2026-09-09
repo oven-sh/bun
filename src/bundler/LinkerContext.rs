@@ -156,6 +156,17 @@ pub(crate) struct CssModuleScript {
     pub(crate) resolve_asset_urls: bool,
 }
 
+/// Whether chunk assignment treats `source_index` like a JS file: every file
+/// but a plain CSS file (the stub of a CSS module script is a JS module).
+#[inline]
+pub(crate) fn is_chunked_as_js(
+    css_asts: &[crate::bundled_ast::CssCol],
+    css_module_scripts: &ArrayHashMap<u32, CssModuleScript>,
+    source_index: u32,
+) -> bool {
+    css_asts[source_index as usize].is_none() || css_module_scripts.contains(&source_index)
+}
+
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose

@@ -385,9 +385,11 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     }
 
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
-                        && (self.c.graph.ast.items_css()[source_index as usize].is_none()
-                            || self.c.is_css_module_script(source_index))
-                    {
+                        && crate::linker_context_mod::is_chunked_as_js(
+                            self.c.graph.ast.items_css(),
+                            &self.c.css_module_scripts,
+                            source_index,
+                        ) {
                         // when code splitting, include the file in the chunk if ALL of the entry points overlap
                         self.entry_bits
                             .eql(&self.c.graph.files.items_entry_bits()[source_index as usize])

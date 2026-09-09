@@ -260,7 +260,8 @@ struct ImportOrder {
     nodes: HashMap<ModuleKey, ModuleNode>,
     /// Every issued fetch not yet fulfilled, held ones included.
     outstanding: BTreeSet<(Position, ModuleKey)>,
-    held: Vec<CompletedJob>,
+    /// More than one per module only if the loader fetched it twice.
+    held: HashMap<ModuleKey, Vec<CompletedJob>>,
 }
 
 impl ImportOrder {
@@ -302,8 +303,10 @@ impl ImportOrder {
 
     /// Moves `key` and its imports to `position` unless an earlier path already reaches it.
     fn place(&mut self, key: ModuleKey, position: Position) {
-        let mut work = vec![(key, position)];
-        while let Some((key, position)) = work.pop() {
+        // Depth-first in import order, so that each module below `key` is reached by its
+        // smallest path first and moves at most once: a later, larger path fails the test.
+        let mut stack = vec![(key, position)];
+        while let Some((key, position)) = stack.pop() {
             let Some(node) = self.nodes.get_mut(&key) else {
                 self.nodes.insert(key, ModuleNode::at(position));
                 continue;
@@ -311,13 +314,22 @@ impl ImportOrder {
             if position >= node.position {
                 continue;
             }
-            let previous = core::mem::replace(&mut node.position, position.clone());
+            let previous = core::mem::replace(&mut node.position, position);
             if node.outstanding > 0 {
                 self.outstanding.remove(&(previous, key));
-                self.outstanding.insert((position.clone(), key));
+                self.outstanding.insert((node.position.clone(), key));
             }
-            for (index, import) in node.imports.iter().enumerate() {
-                work.push((*import, child_position(&position, index)));
+            let node = self.nodes.get(&key).unwrap();
+            for (index, import) in node.imports.iter().enumerate().rev() {
+                // A module keeps pos(import) <= pos(self) ++ [index] for each of its imports,
+                // so one that does not move has nothing below it to move either.
+                if self
+                    .nodes
+                    .get(import)
+                    .is_none_or(|below| precedes(&node.position, index, &below.position))
+                {
+                    stack.push((*import, child_position(&node.position, index)));
+                }
             }
         }
     }
@@ -352,17 +364,21 @@ impl ImportOrder {
             completed.specifier,
             self.outstanding.first().map(|(position, _)| &position[..])
         );
-        self.held.push(completed);
+        self.held
+            .entry(completed.order_key)
+            .or_default()
+            .push(completed);
     }
 
     /// A held result with no unfulfilled predecessor left, if any.
     fn next_ready(&mut self) -> Option<CompletedJob> {
-        let (_, first) = self.outstanding.first()?;
-        let index = self
-            .held
-            .iter()
-            .position(|completed| completed.order_key == *first)?;
-        Some(self.held.swap_remove(index))
+        let first = self.outstanding.first()?.1;
+        let same_module = self.held.get_mut(&first)?;
+        let completed = same_module.pop();
+        if same_module.is_empty() {
+            self.held.remove(&first);
+        }
+        completed
     }
 
     fn fulfilled(&mut self, key: ModuleKey) {
@@ -393,6 +409,22 @@ fn child_position(parent: &Position, index: usize) -> Position {
     position.extend_from_slice(parent);
     position.push(index as u32);
     position.into_boxed_slice()
+}
+
+/// `parent ++ [index] < other`, without building it.
+fn precedes(parent: &[u32], index: usize, other: &[u32]) -> bool {
+    let shared = parent.len().min(other.len());
+    match parent[..shared].cmp(&other[..shared]) {
+        core::cmp::Ordering::Less => true,
+        core::cmp::Ordering::Greater => false,
+        core::cmp::Ordering::Equal => match other.get(parent.len()) {
+            // `other` is `parent` or a prefix of it, so the longer child comes after it.
+            None => false,
+            Some(&next) => {
+                (index as u32) < next || ((index as u32) == next && other.len() > parent.len() + 1)
+            }
+        },
+    }
 }
 
 /// `GlobalObject::moduleLoaderResolve`: record one edge of the import graph.
@@ -538,6 +570,13 @@ impl RuntimeTranspilerStore {
             referrer,
             mut log,
         } = completed;
+        bun_core::scoped_log!(
+            RuntimeTranspilerStore,
+            "fulfill {} (outstanding {})",
+            specifier,
+            // SAFETY: fn contract.
+            unsafe { (*this).order.outstanding.len() }
+        );
         let fulfilled = AsyncModule::fulfill(
             &global_this,
             promise.swap(),

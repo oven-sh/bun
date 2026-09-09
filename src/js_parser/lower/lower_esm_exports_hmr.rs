@@ -77,12 +77,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             // if the symbol is not used, we don't need to preserve
                             // a binding in this scope. we can move it to the exports object.
                             if symbol.use_count_estimate == 0 && value.can_be_moved() {
+                                // SAFETY: arena-owned name slice valid for the parse.
+                                let key = Expr::init(
+                                    E::EString::init(symbol.original_name.slice()),
+                                    binding.loc,
+                                );
                                 self.export_props.push(G::Property {
-                                    key: Some(Expr::init(
-                                        // SAFETY: arena-owned name slice valid for the parse.
-                                        E::EString::init(symbol.original_name.slice()),
-                                        binding.loc,
-                                    )),
+                                    flags: E::own_key_property_flags(&key),
+                                    key: Some(key),
                                     value: Some(value),
                                     ..Default::default()
                                 });
@@ -257,16 +259,18 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 let class_name_ref = st.class.class_name.unwrap().ref_;
                 // Export as CommonJS
+                // SAFETY: arena-owned name slice valid for the parse.
+                let key = Expr::init(
+                    E::EString::init(
+                        p.symbols[class_name_ref.inner_index() as usize]
+                            .original_name
+                            .slice(),
+                    ),
+                    stmt.loc,
+                );
                 self.export_props.push(G::Property {
-                    key: Some(Expr::init(
-                        // SAFETY: arena-owned name slice valid for the parse.
-                        E::EString::init(
-                            p.symbols[class_name_ref.inner_index() as usize]
-                                .original_name
-                                .slice(),
-                        ),
-                        stmt.loc,
-                    )),
+                    flags: E::own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(Expr::init_identifier(class_name_ref, stmt.loc)),
                     ..Default::default()
                 });
@@ -350,12 +354,11 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 if let Some(alias) = &st.alias {
                     // 'export * as ns from' creates one named property.
+                    // SAFETY: arena-owned name slice valid for the parse.
+                    let key = Expr::init(E::EString::init(alias.original_name.slice()), stmt.loc);
                     self.export_props.push(G::Property {
-                        // SAFETY: arena-owned name slice valid for the parse.
-                        key: Some(Expr::init(
-                            E::EString::init(alias.original_name.slice()),
-                            stmt.loc,
-                        )),
+                        flags: E::own_key_property_flags(&key),
+                        key: Some(key),
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
@@ -563,6 +566,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         } else {
             Expr::init_identifier(ref_, loc)
         };
+        let key = Expr::init(
+            E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
+            loc,
+        );
         if is_live_binding_source
             || (kind == js_ast::symbol::Kind::Import && !self.is_in_node_modules)
             || has_been_assigned_to
@@ -576,10 +583,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // of importers. For local live bindings, these can just remember to
             // mutate the field in the exports object. Re-exports can just be
             // encoded into the module format, propagated in `replaceModules`
-            let key = Expr::init(
-                E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
-                loc,
-            );
 
             // This is technically incorrect in that we've marked this as a
             // top level symbol. but all we care about is preventing name
@@ -620,12 +623,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             });
             // no setter is added since live bindings are read-only
         } else {
-            // 'abc,'
+            // 'abc,' (or 'alias: abc,'; an alias of `__proto__` must stay an own key)
             self.export_props.push(G::Property {
-                key: Some(Expr::init(
-                    E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
-                    loc,
-                )),
+                flags: E::own_key_property_flags(&key),
+                key: Some(key),
                 value: Some(id),
                 ..Default::default()
             });

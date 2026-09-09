@@ -232,6 +232,48 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+// The HMR transform lowers a module's exports to one object literal. An export named `__proto__`
+// must be an own key of that object: as a plain `__proto__:` key it would set (or, for a
+// primitive, silently drop) the prototype instead.
+devTest("exports named __proto__ are own keys", {
+  framework: minimalFramework,
+  files: {
+    // unused locally with a movable value: the binding moves into the exports object
+    "moved.ts": `
+      export const __proto__ = "moved";
+    `,
+    "aliased.ts": `
+      const p = { form: "aliased" };
+      export { p as __proto__ };
+    `,
+    "star.ts": `
+      export * as __proto__ from "./inner";
+      export const other = 1;
+    `,
+    "inner.ts": `
+      export const x = 1;
+    `,
+    "routes/index.ts": `
+      import * as moved from "../moved";
+      import * as aliased from "../aliased";
+      import * as star from "../star";
+      export default function (req, meta) {
+        return Response.json({
+          moved: [Object.keys(moved), moved["__proto__"]],
+          aliased: [Object.keys(aliased), aliased["__proto__"]],
+          star: [Object.keys(star).sort(), star["__proto__"].x],
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      moved: [["__proto__"], "moved"],
+      aliased: [["__proto__"], { form: "aliased" }],
+      star: [["__proto__", "other"], 1],
+    });
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

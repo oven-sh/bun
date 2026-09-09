@@ -1693,7 +1693,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     );
 
     parse_root_overrides(this, manager, log, &package_json_source, package_json)?;
-    crate::migration::copy_trusted_and_patched_dependencies(this, log, dir)?;
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];

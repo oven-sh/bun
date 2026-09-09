@@ -1623,7 +1623,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
     update_package_json_after_migration(manager, log, dir, &found_patches)?;
-    crate::migration::copy_trusted_and_patched_dependencies(lockfile, log, dir)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,

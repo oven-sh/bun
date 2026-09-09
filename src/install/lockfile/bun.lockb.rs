@@ -280,10 +280,7 @@ pub(crate) fn save(
     }
 
     if this.patched_dependencies.count() > 0 {
-        for patched_dep in this.patched_dependencies.values() {
-            debug_assert!(!patched_dep.patchfile_hash_is_null);
-        }
-
+        // A migrated lockfile has no patch hashes yet; `PatchedDepExternal` encodes that and install computes them.
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
         write_array::<PackageNameAndVersionHash>(

@@ -1,7 +1,8 @@
 use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_core::strings;
-use bun_core::{Output, zstr};
+use bun_core::{Output, ZStr, zstr};
+use bun_paths::AutoAbsPath;
 use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
 use bun_sys::{self, Fd, File, O};
@@ -10,8 +11,10 @@ use crate::install::{self as Install, PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
 };
-use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::{
+    JsonObjectStringRows, PackageColumns as _, append_trusted_dependencies,
+};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -63,11 +66,13 @@ pub fn detect_and_load_other_lockfile<'a>(
                 }
             };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "package-lock.json");
-        }
-
-        return migrate_result;
+        return finish_migration(
+            migrate_result,
+            manager,
+            log,
+            &timer,
+            zstr!("package-lock.json"),
+        );
     }
 
     'yarn: {
@@ -87,11 +92,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "yarn.lock");
-        }
-
-        return migrate_result;
+        return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
     }
 
     'pnpm: {
@@ -154,14 +155,43 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "pnpm-lock.yaml");
-        }
-
-        return migrate_result;
+        return finish_migration(
+            migrate_result,
+            manager,
+            log,
+            &timer,
+            zstr!("pnpm-lock.yaml"),
+        );
     }
 
     LoadResult::NotFound
+}
+
+fn finish_migration<'a>(
+    migrate_result: LoadResult<'a>,
+    manager: &PackageManager,
+    log: &mut bun_ast::Log,
+    timer: &std::time::Instant,
+    lockfile_name: &'static ZStr,
+) -> LoadResult<'a> {
+    let LoadResult::Ok(ok) = migrate_result else {
+        return migrate_result;
+    };
+    if let Err(err) = copy_trusted_and_patched_dependencies(&mut *ok.lockfile, log) {
+        if !manager.options.log_level.is_silent() && log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::flush();
+        }
+        log.reset();
+        return LoadResult::Err(LoadResultErr {
+            step: LoadStep::Migrating,
+            value: err,
+            lockfile_path: lockfile_name,
+            format: LockfileFormat::Text,
+        });
+    }
+    report_migrated(manager, log, timer, lockfile_name);
+    LoadResult::Ok(ok)
 }
 
 /// True when the migrator already printed the version warn/error + upgrade note, so lockfile-load reporters must stay quiet.
@@ -228,7 +258,7 @@ fn report_migrated(
     manager: &PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
-    lockfile_name: &str,
+    lockfile_name: &ZStr,
 ) {
     if manager.options.log_level.is_silent() {
         log.reset();
@@ -239,7 +269,10 @@ fn report_migrated(
         log.reset();
     }
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-    bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
+    bun_core::pretty_errorln!(
+        " <d>migrated lockfile from <r><green>{}<r>",
+        bstr::BStr::new(lockfile_name.as_bytes())
+    );
     Output::flush();
 }
 
@@ -401,7 +434,6 @@ fn migrate_npm_lockfile<'a>(
     )?;
     clear_non_registry_platform_constraints(this);
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
-    copy_trusted_and_patched_dependencies(this, log, dir)?;
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
     this.resolve(log)?;
@@ -437,48 +469,45 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
     }
 }
 
-/// The fields `bun install` takes from package.json (`Package::parse`), not from any lockfile.
-pub(crate) fn copy_trusted_and_patched_dependencies(
+/// Other lockfiles have no `trustedDependencies` or `patchedDependencies`; read them from package.json as `Package::parse` does.
+fn copy_trusted_and_patched_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
-    dir: Fd,
 ) -> Result<(), Error> {
     let arena = bun_alloc::Arena::new();
-    let Ok(contents) = File::read_from(dir, b"package.json") else {
+    let mut root_path = AutoAbsPath::init_top_level_dir();
+    let _ = root_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+    let Ok(contents) = File::read_from(Fd::cwd(), root_path.slice()) else {
         return Ok(());
     };
-    let Some(root) = parse_package_json(b"package.json", &contents, log, &arena) else {
+    let root_source = bun_ast::Source::init_path_string(root_path.slice(), contents.as_slice());
+    let Some(root) = parse_package_json(&root_source, log, &arena) else {
         return Err(Error::InvalidPackageJSON);
     };
 
     let mut trusted = this.trusted_dependencies.take();
-    add_trusted_dependencies(&mut trusted, &root, &arena)?;
-    let workspace_package_jsons: Vec<Vec<u8>> = this
-        .workspace_paths
-        .values()
-        .iter()
-        .map(|path| [path.slice(&this.buffers.string_bytes), b"/package.json"].concat())
-        .collect();
-    for path in &workspace_package_jsons {
-        // Best effort: a missing or broken workspace package.json fails the install itself.
-        let mut scratch = bun_ast::Log::init();
-        let Ok(contents) = File::read_from(dir, path) else {
+    append_trusted_dependencies(&mut trusted, &arena, log, &root_source, &root)?;
+    let string_bytes = this.buffers.string_bytes.as_slice();
+    for workspace_path in this.workspace_paths.values() {
+        let mut path = AutoAbsPath::init_top_level_dir();
+        let _ = path.append(workspace_path.slice(string_bytes));
+        let _ = path.append(b"package.json");
+        // A missing or unparseable workspace package.json fails the install itself.
+        let Ok(contents) = File::read_from(Fd::cwd(), path.slice()) else {
             continue;
         };
-        if let Some(json) = parse_package_json(path, &contents, &mut scratch, &arena) {
-            add_trusted_dependencies(&mut trusted, &json, &arena)?;
-        }
+        let source = bun_ast::Source::init_path_string(path.slice(), contents.as_slice());
+        let Some(json) = parse_package_json(&source, &mut bun_ast::Log::init(), &arena) else {
+            continue;
+        };
+        append_trusted_dependencies(&mut trusted, &arena, log, &source, &json)?;
     }
     this.trusted_dependencies = trusted;
 
     if let Some(q) = root.as_property(b"patchedDependencies") {
-        if let ExprData::EObject(obj) = &q.expr.data {
-            for prop in obj.properties.iter() {
-                let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
-                    continue;
-                };
-                let (Some(key), Some(path)) = (key.as_string(&arena), value.as_string(&arena))
-                else {
+        if let Some(rows) = JsonObjectStringRows::new(&q.expr, &arena) {
+            for (key, value, _) in rows {
+                let Some(path) = value else {
                     continue;
                 };
                 let path = this.string_buf().append(path)?;
@@ -492,50 +521,21 @@ pub(crate) fn copy_trusted_and_patched_dependencies(
 }
 
 fn parse_package_json(
-    path: &[u8],
-    contents: &[u8],
+    source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     arena: &bun_alloc::Arena,
 ) -> Option<bun_ast::Expr> {
-    let source = bun_ast::Source::init_path_string(path, contents);
     crate::bun_json::parse_package_json_utf8_with_opts(
         crate::bun_json::JSONOptions {
             json_warn_duplicate_keys: false,
             ..crate::bun_json::PACKAGE_JSON_OPTS
         },
-        &source,
+        source,
         log,
         arena,
     )
     .ok()
     .map(|parsed| parsed.root)
-}
-
-/// As in `Package::parse`: any array, even an empty one, replaces the default list; arrays merge.
-fn add_trusted_dependencies(
-    trusted: &mut Option<crate::lockfile::TrustedDependenciesSet>,
-    json: &bun_ast::Expr,
-    arena: &bun_alloc::Arena,
-) -> Result<(), bun_alloc::AllocError> {
-    let Some(q) = json.as_property(b"trustedDependencies") else {
-        return Ok(());
-    };
-    if !q.expr.is_array() {
-        return Ok(());
-    }
-    let set = trusted.get_or_insert_default();
-    if let Some(mut items) = q.expr.as_array() {
-        while let Some(item) = items.next() {
-            let Some(name) = item.as_string(arena) else {
-                continue;
-            };
-            set.put(
-                string_hash(name) as crate::TruncatedPackageNameHash,
-                Box::<[u8]>::from(name),
-            )?;
-        }
-    }
-    Ok(())
 }
 
 fn pkg_flag_is_true(pkg: &E::ObjectJSON, key: &[u8]) -> bool {

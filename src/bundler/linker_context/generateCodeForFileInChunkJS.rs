@@ -460,9 +460,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             // empty" invariant makes that drop a no-op today, but
                             // `ptr::write` enforces it structurally.
                             let key = prop.key;
-                            // Keeps `IsComputed` on a `"__proto__"` key; the value is no longer an
-                            // identifier of the same name once renamed, so no shorthand saves it.
-                            let flags = prop.flags;
+                            let flags = prop.flags; // `IsComputed` for a `"__proto__"` key
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;
                             // SAFETY: `prop` is a valid `&mut G::Property` slot;

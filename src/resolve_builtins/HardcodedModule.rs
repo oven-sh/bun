@@ -119,7 +119,7 @@ pub enum HardcodedModule {
     NodeWorkerThreads,
     #[strum(serialize = "node:punycode")]
     NodePunycode,
-    #[strum(serialize = "undici")]
+    #[strum(serialize = "internal:undici")]
     Undici,
     #[strum(serialize = "ws")]
     Ws,
@@ -297,7 +297,7 @@ bun_core::comptime_string_map! {
 
         b"node-fetch" => HardcodedModule::NodeFetch,
         b"isomorphic-fetch" => HardcodedModule::IsomorphicFetch,
-        b"undici" => HardcodedModule::Undici,
+        b"internal:undici" => HardcodedModule::Undici,
         b"ws" => HardcodedModule::Ws,
         b"@vercel/fetch" => HardcodedModule::VercelFetch,
         b"utf-8-validate" => HardcodedModule::Utf8Validate,
@@ -747,7 +747,8 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("@vercel/fetch"),
     entry!("isomorphic-fetch"),
     entry!("node-fetch"),
-    entry!("undici"),
+    // Fallback only (`Alias::fallback`); not the npm name, so the key never re-resolves into node_modules.
+    entry!("internal:undici"),
     entry!("utf-8-validate"),
     entry!("ws"),
     (
@@ -794,7 +795,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     (
         b"next/dist/compiled/undici",
         Alias {
-            path: zstr!("undici"),
+            path: zstr!("internal:undici"),
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
@@ -918,6 +919,17 @@ pub struct Cfg {
 impl Alias {
     pub fn has(name: &[u8], target: Target, cfg: Cfg) -> bool {
         Self::get(name, target, cfg).is_some()
+    }
+
+    /// The builtin that stands in for `name` when node_modules resolution fails (#36098).
+    pub fn fallback(name: &[u8], target: Target) -> Option<Alias> {
+        if !target.is_bun() {
+            return None;
+        }
+        match name {
+            b"undici" => Self::get(b"internal:undici", target, Cfg::default()),
+            _ => None,
+        }
     }
 
     pub fn get(name: &[u8], target: Target, cfg: Cfg) -> Option<Alias> {

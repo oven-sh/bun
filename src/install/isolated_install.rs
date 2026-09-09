@@ -43,8 +43,8 @@ use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::{
-    DependencyFilter, filter_dependency_or_workspace, is_filtered_dependency_or_workspace,
-    warn_unsupported_platform,
+    DependencyFilter, UnsupportedPlatform, filter_dependency_or_workspace,
+    is_filtered_dependency_or_workspace, warn_unsupported_platform,
 };
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
@@ -235,7 +235,7 @@ pub(crate) fn build_store(
     let string_buf = &lockfile.buffers.string_bytes[..];
 
     let mut nodes: store::node::List = store::node::List::default();
-    let mut unsupported_platform: Vec<PackageID> = Vec::new();
+    let mut unsupported_platform = UnsupportedPlatform::default();
 
     // DFS so a deduplicated node's full subtree (and therefore its `peers`)
     // is finalized before any later sibling encounters it.
@@ -702,10 +702,8 @@ pub(crate) fn build_store(
                 ) {
                     DependencyFilter::Keep => {}
                     DependencyFilter::Skip => continue,
-                    DependencyFilter::SkipUnsupportedPlatform => {
-                        if !unsupported_platform.contains(&pkg_id) {
-                            unsupported_platform.push(pkg_id);
-                        }
+                    DependencyFilter::SkipUnsupportedPlatform { direct } => {
+                        unsupported_platform.insert(pkg_id, direct);
                         continue;
                     }
                 }

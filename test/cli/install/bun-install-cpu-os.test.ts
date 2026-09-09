@@ -606,26 +606,29 @@ describe("bun install --cpu and --os flags", () => {
   });
 
   // A required dependency that is dropped for the target platform must not go
-  // missing silently (npm: EBADPLATFORM, pnpm: warning). Optional ones stay quiet.
+  // missing silently (npm fails with EBADPLATFORM; pnpm warns and installs it
+  // anyway). Optional ones stay quiet. Every package name below resolves
+  // against this one version table; a skipped package needs no tarball.
+  const platformWarningRegistry = () =>
+    dummyRegistry([], {
+      "1.0.0": { os: ["win32"] },
+      "2.0.0": { cpu: ["arm64", "ppc64"], os: ["!linux"] },
+      "3.0.0": {},
+      "4.0.0": { cpu: ["s390x"] },
+      // served from dep-universal-3.0.0.tgz; its own dependencies are win32-only
+      "5.0.0": { as: "3.0.0", dependencies: { "dep-win32-only": "1.0.0", "transitive-win32-only": "1.0.0" } },
+    });
+
   it.each(["hoisted", "isolated"])(
     "warns for each required dependency skipped for the target platform (%s linker)",
     async linker => {
-      const urls: string[] = [];
-      setHandler(
-        dummyRegistry(urls, {
-          "1.0.0": { os: ["win32"] },
-          "2.0.0": { cpu: ["arm64", "ppc64"], os: ["!linux"] },
-          "3.0.0": {},
-          "4.0.0": { cpu: ["s390x"] },
-        }),
-      );
-
+      setHandler(platformWarningRegistry());
       await writeFile(
         join(package_dir, "package.json"),
         JSON.stringify({
           name: "test-platform-warning",
           version: "1.0.0",
-          dependencies: { "dep-win32-only": "1.0.0", "dep-universal": "3.0.0" },
+          dependencies: { "dep-win32-only": "1.0.0", "dep-universal": "5.0.0" },
           devDependencies: { "dep-not-linux": "2.0.0" },
           optionalDependencies: { "dep-s390x-only": "4.0.0" },
         }),
@@ -641,12 +644,16 @@ describe("bun install --cpu and --os flags", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).not.toContain("error:");
+      // one line per direct dependency (dep-win32-only is also a dependency of
+      // dep-universal, and is reported once, as direct), one summary line for
+      // the dependencies of dependencies, nothing for the optional one
       expect(
         stderr
           .split("\n")
           .filter(line => line.startsWith("warn:"))
           .sort(),
       ).toEqual([
+        `warn: 1 dependency of other packages was not installed: unsupported platform (transitive-win32-only@1.0.0)`,
         `warn: dep-not-linux@2.0.0 was not installed: unsupported platform (wants os "!linux" cpu [ "arm64", "ppc64", ], current os "linux" cpu "x64")`,
         `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32", current os "linux")`,
       ]);
@@ -657,4 +664,30 @@ describe("bun install --cpu and --os flags", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it("bun add does not report a dependency skipped for the target platform as installed", async () => {
+    setHandler(platformWarningRegistry());
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "test-platform-add", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "dep-win32-only@1.0.0", "--os", "linux", "--cpu", "x64"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr.split("\n").filter(line => line.startsWith("warn:"))).toEqual([
+      `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32", current os "linux")`,
+    ]);
+    expect(stdout).not.toContain("installed dep-win32-only");
+    expect((await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."))).toEqual([]);
+    // the dependency is still recorded, as for an optional dependency on another platform
+    expect(JSON.parse(await Bun.file(join(package_dir, "package.json")).text()).dependencies).toEqual({
+      "dep-win32-only": "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

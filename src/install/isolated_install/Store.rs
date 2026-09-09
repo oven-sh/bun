@@ -26,8 +26,7 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
-    /// Required dependencies left out for an `os`/`cpu` mismatch (deduplicated).
-    pub(crate) unsupported_platform: Vec<PackageID>,
+    pub(crate) unsupported_platform: crate::lockfile::tree::UnsupportedPlatform,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

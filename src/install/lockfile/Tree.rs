@@ -444,8 +444,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
-    /// Required dependencies left out for an `os`/`cpu` mismatch (deduplicated).
-    pub(crate) unsupported_platform: Vec<PackageID>,
+    pub(crate) unsupported_platform: UnsupportedPlatform,
 }
 
 pub struct BuilderEntry {
@@ -468,8 +467,7 @@ pub(crate) struct CleanResult {
 pub(crate) struct Hoisted {
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub late_bound_optional_peer: bool,
-    /// Required dependencies left out for an `os`/`cpu` mismatch (deduplicated).
-    pub unsupported_platform: Vec<PackageID>,
+    pub unsupported_platform: UnsupportedPlatform,
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
@@ -552,8 +550,32 @@ pub(crate) enum DependencyFilter {
     Keep,
     Skip,
     /// A required dependency that is left out only because the package's
-    /// `os`/`cpu` does not match the install target.
-    SkipUnsupportedPlatform,
+    /// `os`/`cpu` does not match the install target. `direct`: the dependent
+    /// is the root package or a workspace.
+    SkipUnsupportedPlatform {
+        direct: bool,
+    },
+}
+
+/// Required dependencies left out for an `os`/`cpu` mismatch, deduplicated.
+#[derive(Default)]
+pub(crate) struct UnsupportedPlatform {
+    pub direct: Vec<PackageID>,
+    pub transitive: Vec<PackageID>,
+}
+
+impl UnsupportedPlatform {
+    pub(crate) fn insert(&mut self, pkg_id: PackageID, direct: bool) {
+        if self.direct.contains(&pkg_id) {
+            return;
+        }
+        if direct {
+            self.transitive.retain(|&id| id != pkg_id);
+            self.direct.push(pkg_id);
+        } else if !self.transitive.contains(&pkg_id) {
+            self.transitive.push(pkg_id);
+        }
+    }
 }
 
 pub(crate) fn is_filtered_dependency_or_workspace(
@@ -669,24 +691,31 @@ pub(crate) fn filter_dependency_or_workspace(
     if filtered || dep.behavior.is_optional() || dep.behavior.is_optional_peer() {
         return DependencyFilter::Skip;
     }
-    DependencyFilter::SkipUnsupportedPlatform
+    DependencyFilter::SkipUnsupportedPlatform {
+        direct: matches!(
+            parent_res.tag,
+            crate::resolution::Tag::Root | crate::resolution::Tag::Workspace
+        ),
+    }
 }
 
-/// One warning per package in `pkg_ids` (the `SkipUnsupportedPlatform` set of
-/// an install), so a required dependency never goes missing silently.
+/// One warning per direct dependency and one summary line for the transitive
+/// ones, so a required dependency never goes missing silently.
 pub(crate) fn warn_unsupported_platform(
     log: &mut bun_ast::Log,
     lockfile: &Lockfile,
     manager: &PackageManager,
-    pkg_ids: &[PackageID],
+    skipped: &UnsupportedPlatform,
 ) {
+    use core::fmt::Write as _;
+
     let pkgs = lockfile.packages.slice();
     let pkg_names = pkgs.items_name();
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-    for &pkg_id in pkg_ids {
+    for &pkg_id in &skipped.direct {
         let meta = &pkg_metas[pkg_id as usize];
         let mut wants = String::new();
         let mut target = String::new();
@@ -715,6 +744,44 @@ pub(crate) fn warn_unsupported_platform(
                 pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Auto),
                 wants,
                 target,
+            ),
+        );
+    }
+
+    // Dependencies of dependencies get one line in total: a lockfile written
+    // by an old bun can list a package's optional platform builds as plain
+    // dependencies, and those must not bury the output.
+    if !skipped.transitive.is_empty() {
+        const LISTED: usize = 3;
+        let count = skipped.transitive.len();
+        let mut names = String::new();
+        for (i, &pkg_id) in skipped.transitive.iter().take(LISTED).enumerate() {
+            if i > 0 {
+                names.push_str(", ");
+            }
+            let _ = write!(
+                names,
+                "{}@{}",
+                pkg_names[pkg_id as usize].fmt(string_buf),
+                pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Auto),
+            );
+        }
+        if count > LISTED {
+            let _ = write!(names, " and {} more", count - LISTED);
+        }
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{} {} of other packages {} not installed: unsupported platform ({})",
+                count,
+                if count == 1 {
+                    "dependency"
+                } else {
+                    "dependencies"
+                },
+                if count == 1 { "was" } else { "were" },
+                names,
             ),
         );
     }
@@ -819,10 +886,8 @@ impl Tree {
                 ) {
                     DependencyFilter::Keep => {}
                     DependencyFilter::Skip => continue,
-                    DependencyFilter::SkipUnsupportedPlatform => {
-                        if !builder.unsupported_platform.contains(&pkg_id) {
-                            builder.unsupported_platform.push(pkg_id);
-                        }
+                    DependencyFilter::SkipUnsupportedPlatform { direct } => {
+                        builder.unsupported_platform.insert(pkg_id, direct);
                         continue;
                     }
                 }

@@ -750,12 +750,18 @@ where
         if dependency_id == INVALID_PACKAGE_ID {
             continue;
         }
-        if cfg!(debug_assertions) {
-            had_printed_new_install = true;
-        }
 
         let dependency = &dependencies_buffer[dependency_id as usize];
         let package_id = resolutions_buffer[dependency_id as usize];
+        // skipped for this os/cpu; the install already warned about it
+        if (package_id as usize) < pkg_metas.len()
+            && pkg_metas[package_id as usize].is_disabled(this.options.cpu, this.options.os)
+        {
+            continue;
+        }
+        if cfg!(debug_assertions) {
+            had_printed_new_install = true;
+        }
         let bin = bins[package_id as usize];
         let resolution = &resolved[package_id as usize];
 

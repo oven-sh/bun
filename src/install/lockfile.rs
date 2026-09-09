@@ -1354,8 +1354,7 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
         )?;
-        // `packages_to_install` is the security scanner pre-pass; the full
-        // install that follows reports these.
+        // `Some(packages_to_install)` is the security scanner pre-pass, not the install
         if packages_to_install.is_none() {
             tree::warn_unsupported_platform(log, self, manager, &hoisted.unsupported_platform);
         }

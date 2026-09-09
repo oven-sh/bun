@@ -699,8 +699,7 @@ pub(crate) fn filter_dependency_or_workspace(
     }
 }
 
-/// One warning per direct dependency and one summary line for the transitive
-/// ones, so a required dependency never goes missing silently.
+/// One warning per direct dependency, one summary line for all transitive ones.
 pub(crate) fn warn_unsupported_platform(
     log: &mut bun_ast::Log,
     lockfile: &Lockfile,
@@ -748,9 +747,7 @@ pub(crate) fn warn_unsupported_platform(
         );
     }
 
-    // Dependencies of dependencies get one line in total: a lockfile written
-    // by an old bun can list a package's optional platform builds as plain
-    // dependencies, and those must not bury the output.
+    // one line in total: old bun lockfiles list esbuild's platform builds as plain dependencies
     if !skipped.transitive.is_empty() {
         const LISTED: usize = 3;
         let count = skipped.transitive.len();

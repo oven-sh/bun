@@ -1171,8 +1171,7 @@ pub(crate) fn install_isolated_packages(
         packages_to_install,
         timings,
     )?;
-    // `packages_to_install` is the security scanner pre-pass; the full
-    // install that follows reports these.
+    // `Some(packages_to_install)` is the security scanner pre-pass, not the install
     if packages_to_install.is_none() {
         warn_unsupported_platform(
             manager.log_mut(),

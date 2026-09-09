@@ -2834,6 +2834,13 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
+        // `Bun__standaloneInternalModuleBytecode` serves the executable's embedded bytecode to every VM in the
+        // process, so every VM needs the executable's string table (the debugger thread's VM included).
+        if let Some(graph) = standalone_module_graph() {
+            // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
+            unsafe { &*vm }.install_bytecode_string_table(graph);
+        }
+
         Ok(vm)
     }
 
@@ -4153,7 +4160,6 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
-        vm_ref.install_bytecode_string_table(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
@@ -4201,9 +4207,6 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        if let Some(graph) = opts.graph {
-            vm_ref.install_bytecode_string_table(graph);
-        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;

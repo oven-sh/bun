@@ -387,7 +387,7 @@ describe("bun build --compile --bytecode executable", () => {
   // decodes Bun's internal modules from the executable's embedded bytecode without the shared
   // string table installed ("bytecode payload uses an external string table but the embedder did
   // not provide one" in JSC::Decoder::externalStrings). Flip to `test` once that is fixed.
-  test.todo("debugger attached via inspector.open() pauses inside a never-called function", async () => {
+  test("debugger attached via inspector.open() pauses inside a never-called function", async () => {
     const session = new Session();
     try {
       session.spawn("debug-open", bunEnv);

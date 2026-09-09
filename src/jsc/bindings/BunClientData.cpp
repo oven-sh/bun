@@ -278,6 +278,8 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
 {
+    if (m_decoderStringTable)
+        return; // slots may already hold cells this VM visits; never replace
     m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
 }
 

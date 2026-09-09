@@ -114,11 +114,8 @@ pub enum Calc<V> {
 }
 
 impl<V> Calc<V> {
-    /// Whether this expression resolves to a `<number>` rather than to a `V`, which
-    /// makes it invalid where a dimension or a percentage is required: there is no
-    /// unit-less zero inside a math function. The operands of a sum and the
-    /// arguments of `min()`, `max()` and `hypot()` have one type, so the first one
-    /// decides.
+    /// Whether this resolves to a `<number>` rather than a `V` (sum operands and
+    /// `min()`/`max()`/`hypot()` arguments share one type, so the first decides).
     pub(crate) fn resolves_to_number(&self) -> bool {
         match self {
             Calc::Value(_) => false,

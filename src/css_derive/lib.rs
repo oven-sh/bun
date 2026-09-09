@@ -798,8 +798,7 @@ enum VariantShape<'a> {
         ident: &'a syn::Ident,
         keyword: String,
     },
-    /// `Foo(Payload)` — single unnamed field. `#[css(non_negative)]` parses the
-    /// payload with `values::number::parse_non_negative` (a `[0,∞]` range).
+    /// `Foo(Payload)` — single unnamed field; `#[css(non_negative)]` adds a `[0,∞]` range.
     Payload {
         ident: &'a syn::Ident,
         ty: &'a syn::Type,

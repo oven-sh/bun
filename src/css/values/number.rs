@@ -6,8 +6,7 @@ use crate::values::calc::Calc;
 
 pub type CSSNumber = f32;
 
-/// The value of the next token if it is a `<number>`, `<percentage>` or
-/// `<dimension>` literal, without consuming it.
+/// The next token's value if it is a number, percentage or dimension; not consumed.
 pub(crate) fn peek_number_literal(input: &mut Parser) -> Option<CSSNumber> {
     let start = input.state();
     let value = match input.next() {
@@ -20,16 +19,10 @@ pub(crate) fn peek_number_literal(input: &mut Parser) -> Option<CSSNumber> {
     value
 }
 
-/// A numeric value whose property grammar carries a `[0,∞]` range
-/// (`<length-percentage [0,∞]>`, `<number [0,∞]>`, `<time [0,∞]>`, ...).
-///
-/// Range restrictions apply to literals only: a negative literal makes the
-/// declaration invalid, while a math function is never range-checked at parse
-/// time and its result is clamped to the range instead
-/// (https://drafts.csswg.org/css-values-4/#calc-range).
+/// A value parsed with a `[0,∞]` range: a negative literal is invalid, a math
+/// result clamps to 0 (https://drafts.csswg.org/css-values-4/#calc-range).
 pub(crate) trait ClampNegative: Sized {
-    /// Clamps a fully resolved negative value to zero. Unresolved math is left
-    /// for the browser to clamp.
+    /// Clamps a resolved negative value to zero; unresolved math is left alone.
     fn clamp_negative(self) -> Self;
 }
 
@@ -50,8 +43,7 @@ pub(crate) fn parse_non_negative<T: ClampNegative>(
     parse(input).map(T::clamp_negative)
 }
 
-/// Parse-only wrapper that applies [parse_non_negative] to `T`, for use inside
-/// generic containers (`SmallList`, `parse_value`).
+/// Applies [parse_non_negative] to `T` inside generic containers (`SmallList`).
 pub struct NonNegative<T>(pub T);
 
 impl<T: Parse + ClampNegative> Parse for NonNegative<T> {

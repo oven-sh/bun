@@ -32,8 +32,7 @@ impl TextShadow {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(i)?;
                     let vertical = Length::parse(i)?;
-                    // A third length is the blur radius (`<length [0,∞]>`). A negative
-                    // literal there makes the shadow invalid rather than being the spread.
+                    // A negative third length is an invalid blur radius, not the spread.
                     if peek_number_literal(i).is_some_and(|v| v < 0.0) {
                         return Err(i.new_custom_error(css::ParserError::invalid_value));
                     }

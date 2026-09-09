@@ -79,8 +79,7 @@ impl BoxShadow {
                 let value = input.try_parse(|p: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(p)?;
                     let vertical = Length::parse(p)?;
-                    // A third length is the blur radius (`<length [0,∞]>`). A negative
-                    // literal there makes the shadow invalid rather than being the spread.
+                    // A negative third length is an invalid blur radius, not the spread.
                     if peek_number_literal(p).is_some_and(|v| v < 0.0) {
                         return Err(p.new_custom_error(css::ParserError::invalid_value));
                     }

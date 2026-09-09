@@ -54,8 +54,7 @@ impl Transition {
 
         loop {
             if duration.is_none() {
-                // The first <time> is the duration (`<time [0,∞]>`). A negative literal
-                // there makes the transition invalid rather than being the delay.
+                // The first <time> is the duration; a negative literal is not the delay.
                 let negative = peek_number_literal(parser).is_some_and(|v| v < 0.0);
                 if let Ok(value) = parser.try_parse(Time::parse) {
                     if negative {

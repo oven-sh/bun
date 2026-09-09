@@ -242,12 +242,13 @@ impl<T: JsSinkAbi> JSSink<T> {
             *src = streams::SourceHandle::JSController(controller);
         }
         let result = streams::controller_abi::assign_to_stream(global, stream, controller);
-        // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
-        // end()/close() the controller, and its destructor would otherwise run
-        // `${name}__finalize` on the sink after the caller has freed it. Detach
-        // it while `ptr` is live; that reaches `js_controller_detached`, which
-        // drops it from `source()` (a no-op if it already detached in the call).
-        if result.to_error().is_some() {
+        // Setup threw (e.g. a direct stream's `pull` getter, or the VM's termination landed in
+        // `pull()`: `to_error()` does not unwrap that cell): nothing will ever end()/close() the
+        // controller, and its destructor would otherwise run `${name}__finalize` on the sink
+        // after the caller has freed it. Detach it while `ptr` is live; that reaches
+        // `js_controller_detached`, which drops it from `source()` (a no-op if it already
+        // detached in the call).
+        if result.to_error().is_some() || result.is_termination_exception() {
             let _ = ::bun_jsc::call_check_slow(global, || {
                 streams::controller_abi::detach_ptr(controller)
             });

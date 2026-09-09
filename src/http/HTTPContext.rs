@@ -1408,7 +1408,10 @@ impl<const SSL: bool> Handler<SSL> {
             // here (a late `0\r\n\r\n` included) means the peer's framing no
             // longer matches ours. Evict rather than let the next request
             // read it as the start of its response.
-            bun_core::scoped_log!(HTTPContext, "Unexpected data on idle pooled socket, evicting");
+            bun_core::scoped_log!(
+                HTTPContext,
+                "Unexpected data on idle pooled socket, evicting"
+            );
             HTTPContext::<SSL>::terminate_socket(socket);
 
             return;

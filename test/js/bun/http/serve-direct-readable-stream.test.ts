@@ -1918,7 +1918,7 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect([...outcomes].every(o => o === "cancelled" || o === "ended")).toBe(true);
   });
 
-  test("client abort while a sync pull() has not returned yet: the late writes and close() are no-ops", async () => {
+  test("client abort while a sync pull() has not returned yet: the late writes and close() return 0 / no-op", async () => {
     const t = tally();
     let controller: any;
     const gotController = Promise.withResolvers<void>();
@@ -1944,8 +1944,9 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
   });
 
-  test("cancel() hook that writes to and closes its controller after a client abort does not crash", async () => {
+  test("cancel() hook that writes to and closes its controller after a client abort: write() returns 0, no crash", async () => {
     let controller: any;
+    let written: unknown = "not called";
     const cancelled = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
@@ -1960,13 +1961,8 @@ describe("direct stream edge cases over Bun.serve", () => {
               await new Promise(() => {});
             },
             cancel() {
-              // Native sinks throw on write() after close; the JS reader path no-ops. Either way: no crash.
-              try {
-                controller.write("from cancel");
-              } catch {}
-              try {
-                controller.close();
-              } catch {}
+              written = controller.write("from cancel");
+              controller.close();
               cancelled.resolve();
             },
           } as any),
@@ -1974,8 +1970,8 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
     await abortAfter(server, "first");
     await cancelled.promise;
-    // The same server still serves the next request.
-    expect(await abortAfter(server, "first")).toContain("first");
+    // write() after the peer left reports 0 bytes; the same server still serves the next request.
+    expect({ written, next: (await abortAfter(server, "first")).includes("first") }).toEqual({ written: 0, next: true });
   });
 
   test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {

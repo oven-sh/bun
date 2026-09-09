@@ -3924,6 +3924,34 @@ describe("direct stream edge cases", () => {
       await reader.cancel(new Error("gone"));
       expect({ settled: await settle(pendingWrite), cancels: t.cancels.length }).toEqual({ settled: expect.anything(), cancels: 1 });
     });
+
+    test("write()/flush()/end() after close() report 0 bytes on every path instead of throwing", async () => {
+      const after = {};
+      const mk = key =>
+        direct(tally(), async c => {
+          c.write("a");
+          await c.flush();
+          c.close();
+          const r = {};
+          for (const m of ["write", "flush", "end"]) {
+            try {
+              const v = m === "write" ? c.write("late") : c[m]();
+              r[m] = v instanceof Promise ? "promise" : v;
+            } catch (e) {
+              r[m] = "throws";
+            }
+          }
+          after[key] = r;
+        });
+      await Bun.readableStreamToText(mk("reader"));
+      using dir = tempDir("direct-write-after-close", {});
+      await Bun.write(join(String(dir), "out.txt"), new Response(mk("fileSink")));
+      await later();
+      expect(after).toEqual({
+        reader: { write: 0, flush: undefined, end: undefined },
+        fileSink: { write: 0, flush: 0, end: undefined },
+      });
+    });
   });
 
   describe("ordering", () => {

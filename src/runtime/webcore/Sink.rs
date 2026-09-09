@@ -184,13 +184,15 @@ pub trait JsSinkAbi {
     ) -> crate::webcore::jsc::JSValue;
 }
 
-/// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
+/// `from_js_extern` encodes three distinct failure types using 0, 1 and 2. Any other
 /// value is `*ThisSink`.
 pub(crate) mod from_js_result {
     /// The sink has been closed and the wrapped type is freed.
     pub(crate) const DETACHED: usize = 0;
     /// JS exception has not yet been thrown.
     pub(crate) const CAST_FAILED: usize = 1;
+    /// A direct-stream controller whose sink is gone (the source closed it, or the destination went away).
+    pub(crate) const CONTROLLER_DETACHED: usize = 2;
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
@@ -215,7 +217,9 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
         let raw = T::from_js_extern(value);
         match raw {
-            from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
+            from_js_result::DETACHED
+            | from_js_result::CAST_FAILED
+            | from_js_result::CONTROLLER_DETACHED => None,
             ptr => Some(ptr as *mut JSSink<T>),
         }
     }
@@ -398,18 +402,19 @@ impl<T: JsSinkType> JSSink<T> {
     fn get_this<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
+    ) -> crate::webcore::jsc::JsResult<Option<&'a mut JSSink<T>>> {
         let raw = T::from_js_extern(frame.this());
         match raw {
-            from_js_result::DETACHED => Err(global.throw(format_args!(
-                "This {} has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.",
-                T::NAME,
-            ))),
+            from_js_result::DETACHED => {
+                Err(global.throw(format_args!("This {} has already been closed.", T::NAME,)))
+            }
+            // A direct stream's controller after close() or after the destination went away: write()/flush()/end() report 0 bytes, like the JS reader path.
+            from_js_result::CONTROLLER_DETACHED => Ok(None),
             from_js_result::CAST_FAILED => Err(bun_jsc::ErrorCode::INVALID_THIS
                 .throw(global, format_args!("Expected {}", T::NAME))),
             // SAFETY: codegen returns a non-null `*mut JSSink<T>` for live
             // wrappers; see fn doc for the `'a` justification.
-            ptr => Ok(unsafe { &mut *(ptr as *mut JSSink<T>) }),
+            ptr => Ok(Some(unsafe { &mut *(ptr as *mut JSSink<T>) })),
         }
     }
 
@@ -439,8 +444,9 @@ impl<T: JsSinkType> JSSink<T> {
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(JSValue::js_number(0.0));
+        };
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -515,7 +521,9 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        let this = Self::get_this(global, frame)?;
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(crate::webcore::jsc::JSValue::js_number(0.0));
+        };
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -559,7 +567,9 @@ impl<T: JsSinkType> JSSink<T> {
             streams::Start::Empty
         };
 
-        let this = Self::get_this(global, frame)?;
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -579,8 +589,9 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
+        let Some(this) = Self::get_this(global, frame)? else {
+            return Ok(JSValue::js_number(0.0));
+        };
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));

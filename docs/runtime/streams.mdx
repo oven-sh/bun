@@ -79,7 +79,7 @@ Call `controller.close()` (or `controller.end()`) once everything is written. Ev
 
 ### Handling backpressure
 
-`controller.write()` returns the number of bytes written, or a **pending `Promise<number>`** when the destination's internal buffer is full (for example, a slow HTTP client). The chunk is accepted either way. The promise resolves once the destination has drained, so `await`ing the result is enough:
+`controller.write()` returns the number of bytes written, or a **pending `Promise<number>`** when the destination's internal buffer is full (for example, a slow HTTP client). The chunk is accepted either way. Once the stream is closed, or the destination has gone away (for example the HTTP client disconnected), `write()` returns `0`. The promise resolves once the destination has drained, so `await`ing the result is enough:
 
 ```ts
 const stream = new ReadableStream({

@@ -952,7 +952,7 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
         return sink->wrapped();
 
     if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(value)))
-        return controller->wrapped();
+        return controller->wrapped() ? controller->wrapped() : (void*)2;
 
     return (void*)1;
 }

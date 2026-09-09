@@ -882,10 +882,11 @@ impl<'a> JSON5Parser<'a> {
             return Err(ParseError::InvalidHexNumber);
         }
 
-        // scanner pre-filters to is_ascii_hexdigit → `_`/sign unreachable
-        let value = bun_core::fmt::parse_int::<u64>(&self.source[hex_start..self.pos], 16)
-            .map_err(|_| ParseError::InvalidHexNumber)?;
-        Ok(value as f64)
+        // A HexIntegerLiteral is a Number of any magnitude: the nearest double, as for a JS literal.
+        Ok(bun_core::fmt::parse_power_of_two_radix_digits(
+            &self.source[hex_start..self.pos],
+            16,
+        ))
     }
 
     fn scan_identifier(&mut self) -> Result<&'a [u8], ParseError> {

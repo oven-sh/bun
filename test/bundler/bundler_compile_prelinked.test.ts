@@ -511,15 +511,16 @@ describe("bundler", () => {
       "/entry.ts": /* js */ `
         import { self, counter, bump } from "./b";
         console.log(counter());
-        const wasCached = self in import.meta.require.cache;
-        delete import.meta.require.cache[self];
+        const slashes = (p: string) => p.replaceAll("\\\\", "/");
+        const key = Object.keys(import.meta.require.cache).find(k => slashes(k) === slashes(self));
+        if (key !== undefined) delete import.meta.require.cache[key];
         Bun.gc(true);
         function linkedAfterDelete() { bump(); return counter(); }
-        console.log(wasCached, linkedAfterDelete());
+        console.log(key !== undefined, linkedAfterDelete());
         Bun.gc(true);
-        if (self !== Bun.main) {
+        if (key !== undefined) {
           // With splitting, b's code lives in a chunk of its own: importing that key again makes a fresh record.
-          const again = await import(self);
+          const again = await import(key);
           console.log(Object.values(again).includes(counter) ? "same" : "fresh", counter());
         } else {
           console.log("single", counter());

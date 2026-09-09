@@ -1,6 +1,5 @@
 #include "root.h"
 #include "BunClientData.h"
-#include "headers.h"
 
 #include <atomic>
 
@@ -23,12 +22,6 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // int32_t, but Rust writes it (env parsing) while this thread reads it, so read
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
-
-// The event loop just blocked in the kernel for >=100ms with nothing runnable (epoll_kqueue.c).
-extern "C" void Bun__JSC_onLongIdleWait(JSC::VM* _Nonnull vm)
-{
-    JSC__VM__endStartupJITDeferral(vm, "first idle event-loop park of >=100ms");
-}
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {

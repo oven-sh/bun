@@ -640,7 +640,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 });
                 chunk_indices.push(chunk_index as u32);
             }
-            if c.options.prelink_modules && complete && !inputs.is_empty() {
+            if complete && !inputs.is_empty() {
                 prelinked_graph = crate::prelinked_module_graph::build(
                     &inputs,
                     &mut module_info_strings,

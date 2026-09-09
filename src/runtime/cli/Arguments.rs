@@ -402,7 +402,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
-            "--compile-jit-policy <NUMBER>    Scale JIT tier-up thresholds by this until the executable's first output, input or idle (default 8; 1 = normal JIT policy)"
+            "--compile-jit-policy <NUMBER>    Multiply JSC's JIT tier-up thresholds by this in the executable until it calls Bun.unsafe.setJITPolicy(1) (default 1 = normal)"
         ),
         parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
@@ -440,9 +440,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
-        ),
-        parse_param!(
-            "--no-prelink-modules             With --compile --bytecode --format=esm: don't embed the pre-resolved module graph"
         ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -2076,7 +2073,6 @@ fn parse_build_command_options(
     }
 
     ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
-    ctx.bundler_options.prelink_modules = !args.flag(b"--no-prelink-modules");
 
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
@@ -2264,7 +2260,7 @@ fn parse_build_command_options(
             .and_then(|s| s.parse::<f32>().ok())
         {
             Some(scale) if scale.is_finite() && scale >= 1.0 => {
-                ctx.bundler_options.compile_jit_policy = Some(scale);
+                ctx.bundler_options.compile_jit_policy = scale;
             }
             _ => {
                 Output::err_generic(

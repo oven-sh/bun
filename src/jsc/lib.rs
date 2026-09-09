@@ -496,9 +496,6 @@ pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
-    if bun_core::getenv_z(bun_core::zstr!("BUN_JSC_startupJITDeferralScale")).is_some() {
-        crate::vm::STARTUP_JIT_DEFERRAL_ARMED.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)

@@ -1021,9 +1021,8 @@ console.log(require("fs").statSync(big).size);`,
 
 // file command test works well
 
-// `optimize.prelinkModules: false` / `--no-prelink-modules` is the only build that still loads compile+bytecode+esm
-// chunks through per-module module_info records instead of the embedded graph, and `optimize.bytecode: false` /
-// `--no-optimize-bytecode` the only one that embeds unoptimized bytecode; both must keep producing working output.
+// `optimize.bytecode: false` / `--no-optimize-bytecode` is the only build that embeds unoptimized bytecode; it must
+// keep producing working output.
 describe("Bun.build compile optimize", () => {
   const files = {
     "entry.ts": `
@@ -1060,28 +1059,35 @@ describe("Bun.build compile optimize", () => {
     expect(exitCode).toBe(0);
   }
 
-  test.each([
-    ["prelinkModules-off", { prelinkModules: false }],
-    ["bytecode-off", { bytecode: false }],
-    ["both-off", { prelinkModules: false, bytecode: false }],
-  ] as const)("optimize %s (Bun.build, esm + splitting)", async (tag, optimize) => {
-    using dir = tempDir("build-compile-optimize-" + tag, files);
-    const outfile = join(String(dir), "app-" + tag + (isWindows ? ".exe" : ""));
+  test("optimize.bytecode: false (Bun.build, esm + splitting)", async () => {
+    using dir = tempDir("build-compile-optimize-bytecode-off", files);
+    const outfile = join(String(dir), "app" + (isWindows ? ".exe" : ""));
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.ts")],
       compile: { outfile },
       bytecode: true,
       format: "esm",
       splitting: true,
-      optimize,
+      optimize: { bytecode: false },
     });
     expect(result.logs.map(String).join("\n")).toBe("");
     expect(result.success).toBe(true);
     await runExe(outfile);
   });
 
+  test("compile.jitPolicy must be a finite number >= 1", () => {
+    using dir = tempDir("build-compile-jit-policy", files);
+    for (const jitPolicy of [0, 0.5, NaN, Infinity]) {
+      expect(() => Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy } })).toThrow(
+        RangeError,
+      );
+    }
+    expect(() =>
+      Bun.build({ entrypoints: [join(String(dir), "entry.ts")], compile: { jitPolicy: "8" as unknown as number } }),
+    ).toThrow(TypeError);
+  });
+
   test.each([
-    ["--no-prelink-modules", ["--format=esm", "--no-prelink-modules"]],
     ["--no-optimize-bytecode esm", ["--format=esm", "--no-optimize-bytecode"]],
     ["--no-optimize-bytecode cjs", ["--format=cjs", "--no-optimize-bytecode"]],
   ])("%s (CLI)", async (tag, flags) => {

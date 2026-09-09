@@ -3424,7 +3424,7 @@ declare module "bun" {
     bytecodeDepth?: number;
 
     /**
-     * Startup optimizations for `bytecode` / `compile` builds. Each defaults to on when it applies.
+     * Build-time optimizations for `bytecode` builds.
      */
     optimize?: {
       /**
@@ -3433,13 +3433,6 @@ declare module "bun" {
        * @default true
        */
       bytecode?: boolean;
-      /**
-       * Embed a pre-resolved module graph so the executable links its ES modules
-       * without resolving imports and exports by name at startup. Only used with
-       * `compile` + `bytecode: true` + `format: "esm"`.
-       * @default true
-       */
-      prelinkModules?: boolean;
     };
 
     /**
@@ -3740,14 +3733,14 @@ declare module "bun" {
      */
     autoloadPackageJson?: boolean;
     /**
-     * The JIT policy the executable starts with ({@link Bun.unsafe.setJITPolicy}):
-     * tier-up thresholds are multiplied by this until the program's first output,
-     * first stdin data or first idle event loop, then return to 1. `1` starts in
-     * the normal JIT policy. `BUN_STARTUP_JIT_DEFERRAL=0` overrides it at run time.
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
      *
      * Equivalent CLI flag: `--compile-jit-policy <n>`
      *
-     * @default 8
+     * @default 1
      */
     jitPolicy?: number;
     windows?: {
@@ -5433,13 +5426,14 @@ declare module "bun" {
      * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *
      * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
-     * reluctant to compile, e.g. during a burst of run-once code. The policy returns
-     * to `1` on the next write to stdout/stderr or a terminal, the next stdin data,
-     * the next idle event loop, or `setJITPolicy(1)`, whichever comes first.
-     * `bun build --compile` executables start at `8` (see `compile.jitPolicy`); an app
-     * that knows better when startup is over can call `setJITPolicy(1)` itself.
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
      *
      * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
      */
     function setJITPolicy(scale: number): void;
 

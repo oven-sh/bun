@@ -137,7 +137,6 @@ pub mod js_bundler {
         pub(crate) bytecode: bool,
         pub(crate) bytecode_depth: u32,
         pub(crate) optimize_bytecode: bool,
-        pub(crate) prelink_modules: bool,
         pub(crate) banner: OwnedString,
         pub(crate) footer: OwnedString,
         /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
@@ -207,7 +206,6 @@ pub mod js_bundler {
                 bytecode: false,
                 bytecode_depth: u32::MAX,
                 optimize_bytecode: true,
-                prelink_modules: true,
                 banner: OwnedString::default(),
                 footer: OwnedString::default(),
                 metafile_json_path: OwnedString::default(),
@@ -268,7 +266,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
-                jit_policy: StandaloneModuleGraph::RuntimeOptions::DEFAULT_JIT_POLICY,
+                jit_policy: 1.0,
             }
         }
     }
@@ -662,9 +660,6 @@ pub mod js_bundler {
                 }
                 if let Some(bytecode) = optimize.get_boolean_loose(global_this, "bytecode")? {
                     this.optimize_bytecode = bytecode;
-                }
-                if let Some(prelink) = optimize.get_boolean_loose(global_this, "prelinkModules")? {
-                    this.prelink_modules = prelink;
                 }
             }
 

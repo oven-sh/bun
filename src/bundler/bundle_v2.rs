@@ -3080,7 +3080,6 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
-            this.linker.options.prelink_modules = this.transpiler.options.prelink_modules;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

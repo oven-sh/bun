@@ -22,10 +22,6 @@ bun build <entry points>
   With <code>--bytecode</code>: skip the build-time bytecode optimization passes
 </ParamField>
 
-<ParamField path="--no-prelink-modules" type="boolean">
-  With <code>--compile --bytecode --format=esm</code>: don't embed the pre-resolved module graph
-</ParamField>
-
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -197,9 +193,9 @@ bun build <entry points>
   Prepend arguments to the standalone executable’s <code>execArgv</code>
 </ParamField>
 
-<ParamField path="--compile-jit-policy" type="number" default="8">
-  Scale JIT tier-up thresholds by this until the executable's first output, input or idle; <code>1</code> starts in the
-  normal JIT policy
+<ParamField path="--compile-jit-policy" type="number" default="1">
+  Multiply JavaScriptCore's JIT tier-up thresholds by this in the executable until it calls
+  <code>Bun.unsafe.setJITPolicy(1)</code>; <code>1</code> is the normal JIT policy
 </ParamField>
 
 <ParamField path="--compile-autoload-dotenv" type="boolean" default="true">

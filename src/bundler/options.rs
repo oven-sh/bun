@@ -1335,8 +1335,6 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
-    /// `--compile --bytecode --format=esm`: embed the pre-resolved module graph (`optimize.prelinkModules`).
-    pub prelink_modules: bool,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1539,7 +1537,6 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
-            prelink_modules: self.prelink_modules,
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1788,7 +1785,6 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
-            prelink_modules: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,

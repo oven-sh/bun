@@ -1118,17 +1118,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         graph: &mut bun_standalone_graph::Graph,
     ) -> crate::Result<()> {
-        use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, RuntimeOptions};
+        use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
-        let jit_policy = match bun_core::env_var::BUN_STARTUP_JIT_DEFERRAL.get() {
-            Some(false) => 1.0,
-            Some(true) if graph.runtime_options.jit_policy <= 1.0 => {
-                RuntimeOptions::DEFAULT_JIT_POLICY
-            }
-            _ => graph.runtime_options.jit_policy,
-        };
+        let jit_policy = graph.runtime_options.jit_policy;
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
@@ -1177,7 +1171,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = unsafe { &mut *vm_ptr };
         if jit_policy > 1.0 {
             vm.jsc_vm()
-                .set_startup_jit_deferral_scale(f64::from(jit_policy), c"boot");
+                .set_startup_jit_deferral_scale(f64::from(jit_policy));
         }
 
         vm.preload = std::mem::take(&mut ctx.preloads);

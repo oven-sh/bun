@@ -256,7 +256,6 @@ impl BuildCommand {
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
         this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
-        this_transpiler.options.prelink_modules = ctx.bundler_options.prelink_modules;
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -934,14 +933,8 @@ impl BuildCommand {
                         }
                         flags
                     },
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions;
-                        RuntimeOptions {
-                            jit_policy: ctx
-                                .bundler_options
-                                .compile_jit_policy
-                                .unwrap_or(RuntimeOptions::DEFAULT_JIT_POLICY),
-                        }
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
                     },
                 ) {
                     Ok(r) => r,

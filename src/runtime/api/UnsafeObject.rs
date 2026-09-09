@@ -77,8 +77,8 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::js_number(bytes as f64))
 }
 
-/// `Bun.unsafe.setJITPolicy(scale)`: multiply JSC's tier-up thresholds by `scale`; 1 = the normal JIT policy (ends a
-/// `bun build --compile` executable's startup deferral, docs/bundler/executables.mdx "Startup optimizations").
+/// `Bun.unsafe.setJITPolicy(scale)`: multiply JSC's tier-up thresholds by `scale`; 1 = the normal JIT policy
+/// (docs/bundler/executables.mdx "JIT policy").
 #[bun_jsc::host_fn]
 fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value] = frame.arguments_as_array::<1>();
@@ -96,9 +96,7 @@ fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
             },
         ));
     }
-    global
-        .vm()
-        .set_startup_jit_deferral_scale(scale, c"Bun.unsafe.setJITPolicy");
+    global.vm().set_startup_jit_deferral_scale(scale);
     Ok(JSValue::UNDEFINED)
 }
 

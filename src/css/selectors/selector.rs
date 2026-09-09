@@ -1366,8 +1366,7 @@ pub(crate) mod serialize {
                     None,
                 );
             }
-            // A rule in a prefix pass of its own prints the parent selectors in that pass too.
-            // Otherwise they print as they did in the parent rule itself.
+            // Outside a prefix pass of its own, a rule prints its parents as they printed.
             let saved_prefix = dest.vendor_prefix;
             if ctx.as_written || saved_prefix.is_empty() {
                 dest.vendor_prefix = ctx.vendor_prefix;

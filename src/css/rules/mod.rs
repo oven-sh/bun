@@ -1190,10 +1190,9 @@ pub use crate::Location;
 pub struct StyleContext<'a> {
     pub(crate) selectors: &'a crate::selectors::SelectorList,
     pub(crate) parent: Option<&'a StyleContext<'a>>,
-    /// The printer's vendor prefix while `selectors` themselves were printed. A nested rule
-    /// without a prefix pass of its own prints them with it again when it expands `&`.
+    /// The printer's vendor prefix while `selectors` were printed, reused when `&` expands them.
     pub(crate) vendor_prefix: crate::VendorPrefix,
-    /// `selectors` print their pseudos as written, whatever pass a nested rule is in.
+    /// `selectors` print their pseudos as written, whatever prefix pass a nested rule is in.
     pub(crate) as_written: bool,
 }
 

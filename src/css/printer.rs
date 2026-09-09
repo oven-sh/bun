@@ -784,8 +784,7 @@ impl<'a> Printer<'a> {
         self.write_separated(iter, |d| d.delim(b',', false), f)
     }
 
-    /// `vendor_prefix` and `as_written` describe how `selectors` were just printed (see
-    /// `StyleContext`), so `&` in the nested rules expands to the same text.
+    /// `vendor_prefix` and `as_written`: how `selectors` were just printed, see `StyleContext`.
     pub(crate) fn with_context<C, F>(
         &mut self,
         selectors: &css::SelectorList,

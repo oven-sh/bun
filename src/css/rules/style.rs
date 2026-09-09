@@ -181,8 +181,7 @@ impl<R> StyleRule<R> {
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
-        // A rule with prefixed pseudos but no prefix pass of its own (`x:-moz-any-link, .b`)
-        // prints them as written, also inside an ancestor's pass.
+        // Prefixed pseudos but no prefix pass: print them as written, even in an ancestor's pass.
         let inherited_prefix = dest.vendor_prefix;
         let as_written = self.vendor_prefix.is_empty()
             && (!inherited_prefix.is_empty() || !self.rules.v.is_empty())

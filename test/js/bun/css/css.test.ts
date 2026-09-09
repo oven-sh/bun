@@ -5693,6 +5693,204 @@ describe("css tests", () => {
       },
     );
 
+    // A pseudo-class that a target only supports behind a vendor prefix is
+    // printed once per needed prefix, each copy with its own prefix.
+    prefix_test(
+      ".foo:any-link {color:red}",
+      `
+      .foo:-webkit-any-link {
+        color: red;
+      }
+
+      .foo:-moz-any-link {
+        color: red;
+      }
+
+      .foo:any-link {
+        color: red;
+      }
+      `,
+      {
+        chrome: 50 << 16,
+        firefox: 40 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:read-only {color:red}",
+      `
+      .foo:-moz-read-only {
+        color: red;
+      }
+
+      .foo:read-only {
+        color: red;
+      }
+      `,
+      {
+        firefox: 36 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:read-write {color:red}",
+      `
+      .foo:-moz-read-write {
+        color: red;
+      }
+
+      .foo:read-write {
+        color: red;
+      }
+      `,
+      {
+        firefox: 36 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:placeholder-shown {color:red}",
+      `
+      .foo:-moz-placeholder-shown {
+        color: red;
+      }
+
+      .foo:placeholder-shown {
+        color: red;
+      }
+      `,
+      {
+        firefox: 40 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:autofill {color:red}",
+      `
+      .foo:-webkit-autofill {
+        color: red;
+      }
+
+      .foo:autofill {
+        color: red;
+      }
+      `,
+      {
+        chrome: 103 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:placeholder-shown .bar {color:red} .foo:autofill .baz {color:red}",
+      `
+      .foo:placeholder-shown .bar {
+        color: red;
+      }
+
+      .foo:-webkit-autofill .baz {
+        color: red;
+      }
+
+      .foo:autofill .baz {
+        color: red;
+      }
+      `,
+      {
+        chrome: 103 << 16,
+      },
+    );
+    prefix_test(
+      ".foo:placeholder-shown .bar,.foo:autofill .baz{color:red}",
+      `
+      :-webkit-any(.foo:placeholder-shown .bar, .foo:-webkit-autofill .baz) {
+        color: red;
+      }
+
+      :is(.foo:placeholder-shown .bar, .foo:autofill .baz) {
+        color: red;
+      }
+      `,
+      {
+        chrome: 103 << 16,
+      },
+    );
+    // Targets that support the unprefixed form print it once.
+    prefix_test(
+      ".foo:any-link {color:red}",
+      `
+      .foo:any-link {
+        color: red;
+      }
+      `,
+      {
+        chrome: 87 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+      },
+    );
+    // With nesting compiled away, a nested rule that runs its own prefix passes
+    // leaves the printer outside any pass. A sibling printed after it carries
+    // the parent's whole prefix set and must print the unprefixed name.
+    prefix_test(
+      ".a:fullscreen { color: red; & .b:autofill { color: green } & .c { color: blue } }",
+      `
+      .a:-webkit-full-screen {
+        color: red;
+      }
+
+      .a:-webkit-full-screen .c {
+        color: #00f;
+      }
+
+      .a:fullscreen {
+        color: red;
+      }
+
+      .a:-webkit-full-screen .b:-webkit-autofill {
+        color: green;
+      }
+
+      .a:fullscreen .b:autofill {
+        color: green;
+      }
+
+      .a:fullscreen .c {
+        color: #00f;
+      }
+      `,
+      {
+        chrome: 87 << 16,
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".a::file-selector-button { color: red; &:is(:hover, :focus-visible) { color: green } &:active { color: blue } }",
+      `
+      .a::-webkit-file-upload-button {
+        color: red;
+      }
+
+      .a::-webkit-file-upload-button:active {
+        color: #00f;
+      }
+
+      .a::file-selector-button {
+        color: red;
+      }
+
+      .a::-webkit-file-upload-button:-webkit-any(:hover, :focus-visible) {
+        color: green;
+      }
+
+      .a::file-selector-button:is(:hover, :focus-visible) {
+        color: green;
+      }
+
+      .a::file-selector-button:active {
+        color: #00f;
+      }
+      `,
+      {
+        chrome: 87 << 16,
+        safari: 14 << 16,
+      },
+    );
+
     minify_test(".foo::cue {color: red}", ".foo::cue{color:red}");
     minify_test(".foo::cue-region {color: red}", ".foo::cue-region{color:red}");
     minify_test(".foo::cue(b) {color: red}", ".foo::cue(b){color:red}");

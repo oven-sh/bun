@@ -73,18 +73,6 @@ impl ErrorCategory {
             _ => ErrorSeverity::Error,
         }
     }
-
-    /// The severity to use in logged output, matching the TS compiler's
-    /// `getRuleForCategory()`. This may differ from the internal `severity()`
-    /// used for panicThreshold logic. In particular, `PreserveManualMemo` is
-    /// `Warning` internally (so it doesn't trigger panicThreshold throws) but
-    /// `Error` in logged output (matching TS behavior).
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            ErrorCategory::PreserveManualMemo => ErrorSeverity::Error,
-            _ => self.severity(),
-        }
-    }
 }
 
 /// Suggestion operations for auto-fixes
@@ -170,10 +158,6 @@ impl CompilerDiagnostic {
         self.category.severity()
     }
 
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
-    }
-
     pub fn with_detail(mut self, detail: CompilerDiagnosticDetail) -> Self {
         self.details.push(detail);
         self
@@ -246,10 +230,6 @@ impl CompilerErrorDetail {
 
     pub fn severity(&self) -> ErrorSeverity {
         self.category.severity()
-    }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
     }
 }
 

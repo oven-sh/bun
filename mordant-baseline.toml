@@ -192,7 +192,7 @@
 "unused_pub:src/sys/copy_file.rs" = 1
 "unused_pub:src/sys/dir.rs" = 1
 "unused_pub:src/sys/file.rs" = 3
-"unused_pub:src/sys/lib.rs" = 42
+"unused_pub:src/sys/lib.rs" = 43
 "unused_pub:src/threading/WaitGroup.rs" = 3
 "unused_pub:src/uws/lib.rs" = 2
 "unused_pub:src/uws_sys/App.rs" = 4

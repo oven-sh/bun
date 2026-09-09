@@ -160,11 +160,6 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        /// # Safety
-        /// `url` is a heap `WTF::URL` nothing else frees.
-        pub unsafe fn from_raw(url: NonNull<URL>) -> Self {
-            Self(url)
-        }
     }
 
     impl core::ops::Deref for Parsed {

@@ -2,7 +2,7 @@
 // from the embedded bytecode cache must still be fully usable by the debugger, by
 // Function.prototype introspection, by the sampling profiler and by heap snapshots,
 // including functions that have never been called when the tool first looks at them.
-import { spawn, type Socket, type Subprocess } from "bun";
+import { spawn, type Subprocess } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -310,7 +310,12 @@ async function expectPausedInNeverCalledFunction(session: Session, callFrames: a
   const viaInspector = await session.send("Runtime.evaluate", {
     expression: `(({ named, neverCalledUntilAsked }) => JSON.stringify({ name: named.name, length: named.length, self: neverCalledUntilAsked.name, src: neverCalledUntilAsked.toString().includes("debugger;") }))(globalThis.fns)`,
   });
-  expect(JSON.parse(viaInspector.result.value)).toEqual({ name: "named", length: 0, self: "neverCalledUntilAsked", src: true });
+  expect(JSON.parse(viaInspector.result.value)).toEqual({
+    name: "named",
+    length: 0,
+    self: "neverCalledUntilAsked",
+    src: true,
+  });
 
   // Runtime.getProperties on a never-called function object.
   const fn = await session.send("Runtime.evaluate", { expression: "globalThis.fns.named" });

@@ -561,6 +561,162 @@ describe("Bun.Terminal", () => {
     });
   });
 
+  describe("pause and resume", () => {
+    test("paused starts false and toggles", async () => {
+      await using terminal = new Bun.Terminal({});
+
+      expect(terminal.paused).toBe(false);
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+      terminal.pause(); // Second pause is idempotent
+      expect(terminal.paused).toBe(true);
+      terminal.resume();
+      expect(terminal.paused).toBe(false);
+      terminal.resume(); // Second resume is idempotent
+      expect(terminal.paused).toBe(false);
+    });
+
+    test("pause and resume on a closed terminal are no-ops", async () => {
+      const terminal = new Bun.Terminal({});
+
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+      terminal.close();
+      expect(terminal.paused).toBe(false);
+      terminal.pause();
+      terminal.resume();
+      expect(terminal.paused).toBe(false);
+    });
+
+    test("pause stops data delivery and resume restarts it", async () => {
+      let chunks = 0;
+      const { promise: firstChunk, resolve: resolveFirstChunk } = Promise.withResolvers<void>();
+
+      await using terminal = new Bun.Terminal({
+        data(term, data) {
+          chunks += 1;
+          resolveFirstChunk();
+        },
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "while (true) { console.log('0123456789abcdef'); }"],
+        env: bunEnv,
+        terminal,
+      });
+
+      try {
+        // Wait for the first chunk instead of sleeping for an arbitrary duration.
+        await firstChunk;
+
+        terminal.pause();
+        expect(terminal.paused).toBe(true);
+
+        // Bounded poll: no new chunks may arrive while paused because the
+        // runtime stops reading the PTY master.
+        const frozen = chunks;
+        const quietDeadline = Date.now() + 500;
+        while (Date.now() < quietDeadline) {
+          await Bun.sleep(50);
+          expect(chunks).toBe(frozen);
+        }
+
+        terminal.resume();
+        expect(terminal.paused).toBe(false);
+
+        // Wait for delivery to restart, with a deadline generous enough for
+        // debug+ASAN builds.
+        const growthDeadline = Date.now() + 10_000;
+        while (chunks <= frozen && Date.now() < growthDeadline) {
+          await Bun.sleep(25);
+        }
+        expect(chunks).toBeGreaterThan(frozen);
+      } finally {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      }
+    });
+
+    test("pause can be called from inside the data callback", async () => {
+      let chunks = 0;
+      const { promise: paused, resolve: resolvePaused } = Promise.withResolvers<void>();
+
+      await using terminal = new Bun.Terminal({
+        data(term, data) {
+          chunks += 1;
+          term.pause();
+          resolvePaused();
+        },
+      });
+
+      // ConPTY has no line-discipline echo without a child process, so echo
+      // through a stdin->stdout passthrough child instead of a raw write.
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        env: bunEnv,
+        terminal,
+      });
+
+      try {
+        terminal.write("hello from test\n");
+        await paused;
+
+        expect(terminal.paused).toBe(true);
+        expect(chunks).toBeGreaterThan(0);
+        terminal.resume();
+        expect(terminal.paused).toBe(false);
+      } finally {
+        proc.kill();
+        await proc.exited;
+      }
+    });
+
+    test("close after pause still finishes (exit fires)", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let exitCode: number | null = null;
+
+      const terminal = new Bun.Terminal({
+        exit(term, code) {
+          exitCode = code;
+          resolve();
+        },
+      });
+
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+      terminal.close();
+      expect(terminal.closed).toBe(true);
+
+      // On Windows close() waits for EOF with the reader left open; a paused
+      // reader must be resumed so EOF (and the exit callback) still arrives
+      // instead of hanging the event loop on the leaked reader ref.
+      await promise;
+
+      expect(exitCode).toBe(0);
+      expect(terminal.paused).toBe(false);
+    });
+
+    test("asyncDispose after pause resolves and closes", async () => {
+      let exited = false;
+
+      const terminal = new Bun.Terminal({
+        exit() {
+          exited = true;
+        },
+      });
+
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+
+      await terminal[Symbol.asyncDispose]();
+
+      expect(terminal.closed).toBe(true);
+      expect(terminal.paused).toBe(false);
+      // Dispose suppresses the exit callback like an unpaused dispose does.
+      expect(exited).toBe(false);
+    });
+  });
+
   // ConPTY has no line discipline echo without a child process, so termios-echo
   // tests are POSIX-only.
   describe.concurrent.todoIf(isWindows)("data callback", () => {

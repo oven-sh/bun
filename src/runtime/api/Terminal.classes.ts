@@ -32,6 +32,14 @@ export default [
         fn: "doUnref",
         length: 0,
       },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
       close: {
         fn: "close",
         length: 0,
@@ -42,6 +50,9 @@ export default [
       },
       closed: {
         getter: "getClosed",
+      },
+      paused: {
+        getter: "getPaused",
       },
       inputFlags: {
         getter: "getInputFlags",

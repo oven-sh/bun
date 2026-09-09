@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { copyFileSync, cpSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,126 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// The tests below replace the DIRECTORY that holds an imported module. On
+// Linux and macOS the watches on that directory and on the files in it are
+// inode watches, so after the replacement they observe the old directory (or
+// nothing). `--hot` has to reload with the new contents and re-arm the
+// watches, or every later save under the new directory is invisible.
+function hotDirFixture() {
+  const dir = tempDir("hot-dir-replaced", {
+    "app.mjs": `import { V } from "./lib/dep.js";\nconsole.log("[dep] " + V);\n`,
+    "lib/dep.js": `export const V = "a0";\n`,
+  });
+  const root = String(dir);
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "app.mjs"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const waiter = (stream: ReadableStream<Uint8Array>, name: string) => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    // Resolves once `needle` has been printed after everything seen so far.
+    return async (needle: string) => {
+      const from = output.length;
+      while (!output.slice(from).includes(needle)) {
+        const { value: chunk, done } = await reader.read();
+        if (done)
+          throw new Error(
+            `--hot exited while waiting for ${JSON.stringify(needle)} on ${name}: ${JSON.stringify(output)}`,
+          );
+        output += decoder.decode(chunk, { stream: true });
+      }
+    };
+  };
+  const nextStdout = waiter(runner.stdout, "stdout");
+  const nextStderr = waiter(runner.stderr, "stderr");
+  const next = (value: string) => nextStdout(`[dep] ${value}\n`);
+  const writeDep = (where: string, value: string) =>
+    writeFileSync(join(root, where, "dep.js"), `export const V = "${value}";\n`);
+  return {
+    root,
+    runner,
+    next,
+    nextStderr,
+    writeDep,
+    // A later in-place save and a later atomic save (write temp + rename over)
+    // in the replaced directory must both still reload.
+    async expectLaterSavesReload(prefix: string) {
+      writeDep("lib", `${prefix}1`);
+      await next(`${prefix}1`);
+      writeFileSync(join(root, "lib", ".dep.js.tmp"), `export const V = "${prefix}2";\n`);
+      renameSync(join(root, "lib", ".dep.js.tmp"), join(root, "lib", "dep.js"));
+      await next(`${prefix}2`);
+    },
+    [Symbol.dispose]() {
+      runner.kill(9);
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+it(
+  "should hot reload when the directory of an import is renamed over, and keep watching it",
+  async () => {
+    using hot = hotDirFixture();
+    await hot.next("a0");
+
+    // mv lib lib.old && mv lib.new lib
+    mkdirSync(join(hot.root, "lib.new"));
+    hot.writeDep("lib.new", "b0");
+    renameSync(join(hot.root, "lib"), join(hot.root, "lib.old"));
+    renameSync(join(hot.root, "lib.new"), join(hot.root, "lib"));
+    await hot.next("b0");
+
+    await hot.expectLaterSavesReload("b");
+  },
+  timeout,
+);
+
+it(
+  "should hot reload when the directory of an import is removed and created again, and keep watching it",
+  async () => {
+    using hot = hotDirFixture();
+    await hot.next("a0");
+
+    // The removal reloads once and that reload fails to resolve `./lib/dep.js`;
+    // the error goes to stderr and is expected.
+    rmSync(join(hot.root, "lib"), { recursive: true, force: true });
+    // Recreate it with the module already inside, the way a checkout or a
+    // copy of a prepared tree does.
+    mkdirSync(join(hot.root, "lib.new"));
+    hot.writeDep("lib.new", "c0");
+    renameSync(join(hot.root, "lib.new"), join(hot.root, "lib"));
+    await hot.next("c0");
+
+    await hot.expectLaterSavesReload("c");
+  },
+  timeout,
+);
+
+it(
+  "should hot reload when the directory of an import is renamed away and back",
+  async () => {
+    using hot = hotDirFixture();
+    await hot.next("a0");
+
+    renameSync(join(hot.root, "lib"), join(hot.root, "lib.away"));
+    // The moved file is still watched (same inode), so saving it reloads, and
+    // that reload cannot resolve `./lib/dep.js` while the directory is away.
+    hot.writeDep("lib.away", "d0");
+    await hot.nextStderr(`Cannot find module './lib/dep.js'`);
+    // Moving the directory back has to recover from that on its own.
+    renameSync(join(hot.root, "lib.away"), join(hot.root, "lib"));
+    await hot.next("d0");
+
+    await hot.expectLaterSavesReload("d");
+  },
+  timeout,
 );

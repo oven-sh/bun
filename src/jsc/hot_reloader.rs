@@ -1070,6 +1070,48 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
+                        // A directory below this one may have been replaced: renamed over
+                        // (`mv lib lib.old && mv lib.new lib`), or removed and created
+                        // again. Every watch at or below it is on the old inode, so no
+                        // later save under it would fire, and each reload's `add_file`
+                        // would keep matching the stale entries by hash. The watcher
+                        // evicts that subtree; reload what was loaded from it.
+                        {
+                            let mut stale_dirs: Vec<Box<[u8]>> = Vec::new();
+                            let mut stale_files: usize = 0;
+                            // SAFETY: see the File-arm `remove_at_index` call above;
+                            // this only queues evictions.
+                            unsafe {
+                                (*ctx).remove_entries_under_replaced_dirs(
+                                    event,
+                                    changed_files,
+                                    &mut |dir| stale_dirs.push(Box::from(dir)),
+                                    &mut |path, hash| {
+                                        record_changed_path(path);
+                                        current_task.append(hash);
+                                        stale_files += 1;
+                                    },
+                                )
+                            };
+                            for dir in &stale_dirs {
+                                let _ = self.ctx_mut().bust_dir_cache(dir);
+                                if self.verbose {
+                                    Self::debug(format_args!(
+                                        "Dir replaced: {}",
+                                        bstr::BStr::new(bun_paths::resolve_path::relative(
+                                            fs.top_level_dir,
+                                            dir,
+                                        ))
+                                    ));
+                                }
+                            }
+                            if !stale_dirs.is_empty() && stale_files == 0 {
+                                // The modules under it were evicted when they disappeared;
+                                // reload so that they resolve under the new directory.
+                                current_task.append(current_hash);
+                            }
+                        }
+
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over
                         // the entrypoint replaces that inode, so the kernel drops the

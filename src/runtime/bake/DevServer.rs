@@ -5826,10 +5826,23 @@ impl DevServer {
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
-                        let _ = changed_files;
                         // SAFETY: see `ev_ptr` above; call-scoped borrow.
                         unsafe { &mut *ev_ptr }.append_dir(file_path, None);
                     }
+
+                    // A directory below this one that was replaced (renamed over,
+                    // or removed and created again) leaves every watch at or below
+                    // it on the old inode. The watcher evicts that subtree; hand its
+                    // files to the incremental graph as changed so the next bundle
+                    // happens and re-arms them, and its directories to the resolver
+                    // cache bust.
+                    self.bun_watcher.remove_entries_under_replaced_dirs(
+                        event,
+                        changed_files,
+                        // SAFETY: see `ev_ptr` above; call-scoped borrows.
+                        &mut |dir| unsafe { &mut *ev_ptr }.append_dir(dir, None),
+                        &mut |path, _| unsafe { &mut *ev_ptr }.append_file(path),
+                    );
                 }
             }
         }

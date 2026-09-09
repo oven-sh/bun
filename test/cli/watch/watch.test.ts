@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -465,3 +465,36 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// The directory holding an import is replaced by another directory of the
+// same name (`mv lib lib.old && mv lib.new lib`). On Linux and macOS the
+// watches below it are inode watches on the old directory, so without
+// treating the replacement as a change the process keeps running the old
+// module and never sees a save under the new directory again.
+it("--watch reruns when the directory of an import is renamed over", async () => {
+  using dir = tempDir("watch-dir-replaced", {
+    "app.js": `import { V } from "./lib/dep.js";\nconsole.log("[dep] " + V);\nsetInterval(() => {}, 1000);\n`,
+    "lib/dep.js": `export const V = "a0";\n`,
+    "lib.new/dep.js": `export const V = "b0";\n`,
+  });
+  const root = String(dir);
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "app.js"],
+    cwd: root,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const { waitFor } = stdoutWaiter(watchee);
+
+  await waitFor("[dep] a0\n");
+  renameSync(join(root, "lib"), join(root, "lib.old"));
+  renameSync(join(root, "lib.new"), join(root, "lib"));
+  await waitFor("[dep] b0\n");
+
+  // The rerun process watches the new directory: a later save in it reruns too.
+  writeFileSync(join(root, "lib", "dep.js"), `export const V = "b1";\n`);
+  await waitFor("[dep] b1\n");
+}, 30000);

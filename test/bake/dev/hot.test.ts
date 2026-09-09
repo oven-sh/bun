@@ -527,6 +527,51 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
     }
   },
 });
+devTest("directory of an imported module replaced by another directory", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { V } from "./lib/dep";
+      console.log(V);
+      import.meta.hot.accept();
+    `,
+    "lib/dep.ts": `
+      export const V = "a0";
+    `,
+    "lib.new/dep.ts": `
+      export const V = "b0";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a0");
+
+    // `mv lib lib.old && mv lib.new lib`. On Linux and macOS the watches on
+    // `lib/` and `lib/dep.ts` are inode watches on the old directory, so the
+    // dev server has to treat the moved-in directory as a change to every
+    // module below it and watch the new directory from then on.
+    {
+      await using _wait = await dev.batchChanges();
+      renameSync(dev.join("lib"), dev.join("lib.old"));
+      renameSync(dev.join("lib.new"), dev.join("lib"));
+    }
+    await c.expectMessage("b0");
+
+    // A later in-place save under the new directory is seen...
+    await dev.write("lib/dep.ts", `export const V = "b1";\n`);
+    await c.expectMessage("b1");
+
+    // ...and so is a later atomic save (write temp + rename over).
+    {
+      await using _wait = await dev.batchChanges();
+      writeFileSync(dev.join("lib/.dep.ts.tmp"), `export const V = "b2";\n`);
+      renameSync(dev.join("lib/.dep.ts.tmp"), dev.join("lib/dep.ts"));
+    }
+    await c.expectMessage("b2");
+  },
+});
 devTest("hot update frames are not delivered to application websocket topics", {
   files: {
     "index.html": emptyHtmlFile({

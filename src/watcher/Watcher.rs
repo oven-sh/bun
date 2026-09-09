@@ -227,6 +227,23 @@ impl Watcher {
         }
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
+        // kqueue: a directory entry is registered for NOTE_WRITE | NOTE_RENAME |
+        // NOTE_DELETE, and the latter two (`Op::RENAME` / `Op::DELETE`) are
+        // about the directory's own vnode: its path no longer names it.
+        // Remember that, so that once the path exists again
+        // `remove_replaced_descendants` treats the directory as replaced even
+        // if the same inode was moved back. (inotify reports a child's
+        // deletion on the directory watch with the same op, so this is
+        // kqueue-only; inotify names the entry that reappears instead.)
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        for event in events.iter() {
+            let i = event.index as usize;
+            if event.op.intersects(Op::DELETE | Op::RENAME)
+                && self.watchlist.items_kind().get(i) == Some(&WatchItemKind::Directory)
+            {
+                self.watchlist.items_displaced_mut()[i] = true;
+            }
+        }
         WatcherTrace::write_events(&self.watchlist, events, changed);
         (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
     }
@@ -408,6 +425,10 @@ impl Watcher {
         let fds = slice.items_fd();
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
+        // Watch registrations of evicted directory entries, released after the
+        // second pass once it is known that no surviving entry shares them.
+        #[cfg(not(windows))]
+        let mut evicted_dir_watches: Vec<EvictedDirWatch> = Vec::new();
 
         for &item in &self.evict_list[0..evict_list_i] {
             // catch duplicates, since the list is sorted, duplicates will appear right after each other
@@ -421,10 +442,25 @@ impl Watcher {
 
             #[cfg(not(windows))]
             {
-                // on mac and linux we can just close the file descriptor
-                // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
-                if fds[item as usize].is_valid() {
-                    let _ = bun_sys::close(fds[item as usize]);
+                let kind = slice.items_kind()[item as usize];
+                let mut fd = fds[item as usize];
+                // A file's watch dies with its descriptor: the inode is already
+                // unlinked or replaced when a file is evicted, and inotify/kqueue
+                // drop the registration once the last reference goes. A directory
+                // fd that is not the watcher's (see `WatchItem::owns_fd`) stays
+                // open, so its registration is dropped explicitly below.
+                if fd.is_valid()
+                    && (kind == WatchItemKind::File || slice.items_owns_fd()[item as usize])
+                {
+                    let _ = bun_sys::close(fd);
+                    fd = Fd::INVALID;
+                }
+                if kind == WatchItemKind::Directory {
+                    evicted_dir_watches.push(EvictedDirWatch {
+                        fd,
+                        #[cfg(any(target_os = "linux", target_os = "android"))]
+                        eventlist_index: slice.items_eventlist_index()[item as usize],
+                    });
                 }
             }
             last_item = item;
@@ -458,6 +494,48 @@ impl Watcher {
         }
 
         self.evict_list_i = 0;
+
+        #[cfg(not(windows))]
+        for evicted in evicted_dir_watches {
+            self.release_directory_watch(evicted);
+        }
+    }
+
+    /// Drops the kernel registration of an evicted directory entry. Two
+    /// entries can share one (the same directory added with and without a
+    /// trailing slash hashes differently but is one inode, and kqueue keys
+    /// registrations by fd): when a surviving entry does, the registration is
+    /// kept, and on kqueue re-pointed at the survivor's index.
+    #[cfg(not(windows))]
+    fn release_directory_watch(&mut self, evicted: EvictedDirWatch) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let shared = self
+                .watchlist
+                .items_eventlist_index()
+                .contains(&evicted.eventlist_index);
+            if !shared {
+                self.platform.unwatch(evicted.eventlist_index);
+            }
+            let _ = evicted.fd;
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            // Closed in `flush_evictions` (the watcher owned it): the vnode
+            // filter went with it.
+            if !evicted.fd.is_valid() {
+                return;
+            }
+            let survivor = self
+                .watchlist
+                .items_fd()
+                .iter()
+                .position(|fd| *fd == evicted.fd);
+            match survivor {
+                Some(index) => self.add_file_descriptor_to_kqueue_without_checks(evicted.fd, index),
+                None => self.remove_file_descriptor_from_kqueue(evicted.fd),
+            }
+        }
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
@@ -508,6 +586,20 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
+        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+    }
+
+    /// Undo `add_file_descriptor_to_kqueue_without_checks` for `fd` while
+    /// leaving the descriptor open. Does not propagate kevent errors (the
+    /// registration may already be gone if the vnode was revoked).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn remove_file_descriptor_from_kqueue(&mut self, fd: Fd) {
+        use libc::{EV_DELETE, EVFILT_VNODE, kevent as KEvent};
+
+        let mut event: KEvent = bun_core::ffi::zeroed();
+        event.flags = EV_DELETE as _;
+        event.filter = EVFILT_VNODE as _;
+        event.ident = usize::try_from(fd.native()).expect("int cast");
         let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
     }
 
@@ -577,8 +669,11 @@ impl Watcher {
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
+            owns_fd: true,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            displaced: false,
         });
         Ok(FdOwnership::Watcher)
     }
@@ -661,8 +756,11 @@ impl Watcher {
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
+            owns_fd: !stored_fd.is_valid(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            displaced: false,
         });
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
     }
@@ -925,17 +1023,204 @@ impl Watcher {
 
         debug_assert!(index != NO_WATCH_ITEM);
 
-        self.evict_list[self.evict_list_i as usize] = index;
-        self.evict_list_i += 1;
+        self.queue_eviction(index);
 
         if kind == WatchItemKind::Directory {
             for &parent in parents {
                 if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
+                    self.queue_eviction(parent as WatchItemIndex);
                 }
             }
         }
+    }
+
+    /// Returns `false` when `evict_list` is full; the entry then stays in the
+    /// watchlist until a later `flush_evictions` makes room.
+    fn queue_eviction(&mut self, index: WatchItemIndex) -> bool {
+        let i = self.evict_list_i as usize;
+        if i >= self.evict_list.len() {
+            return false;
+        }
+        self.evict_list[i] = index;
+        self.evict_list_i += 1;
+        true
+    }
+
+    /// Directory-event hook for `WatcherContext::on_file_update`: detects that a
+    /// directory *below* the one `event` is for was replaced, and queues the
+    /// eviction (see `flush_evictions`) of every watchlist entry at or below
+    /// the replaced path.
+    ///
+    /// A directory that is renamed over (`mv lib lib.old && mv lib.new lib`),
+    /// or removed and created again, is a new inode at the same path. inotify
+    /// and kqueue watch inodes, so every registration at or below that path
+    /// keeps observing the old tree (or nothing), and `add_file` /
+    /// `add_directory` would keep matching the stale entries by path hash
+    /// instead of watching the new ones. With the entries evicted, the reload
+    /// the caller schedules re-arms fresh watches.
+    ///
+    /// inotify names the created or moved-in entries (`names`), so each
+    /// `<dir>/<name>` that is a prefix of watched paths is a replaced subtree.
+    /// kqueue has no names: on a write to the directory, every watched
+    /// directory below it is compared by inode instead (see
+    /// `remove_replaced_descendants`). Windows matches events by path and
+    /// needs none of this.
+    ///
+    /// `stale_dir` receives each directory path whose resolver caches are now
+    /// wrong (the replaced path itself and every evicted directory entry, no
+    /// trailing slash); `stale_file` each evicted file entry with its hash.
+    /// Same contract as `remove_at_index::<false>`: the caller holds
+    /// `self.mutex`. Returns the number of entries queued.
+    pub fn remove_entries_under_replaced_dirs(
+        &mut self,
+        event: &WatchEvent,
+        names: &[ChangedFilePath],
+        stale_dir: &mut dyn FnMut(&[u8]),
+        stale_file: &mut dyn FnMut(&[u8], HashType),
+    ) -> usize {
+        let mut each = |kind: WatchItemKind, path: &[u8], hash: HashType| match kind {
+            WatchItemKind::Directory => stale_dir(strings::trim_right(path, &[b'/'])),
+            WatchItemKind::File => stale_file(path, hash),
+        };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            if !event.op.intersects(Op::CREATE | Op::MOVE_TO) {
+                return 0;
+            }
+            let slice = self.watchlist.slice();
+            let Some(dir) = slice.items_file_path().get(event.index as usize) else {
+                return 0;
+            };
+            let dir = strings::trim_right(dir, &[b'/']);
+            let mut child = bun_paths::path_buffer_pool::get();
+            let mut queued = 0;
+            for name in event.names(names).iter().flatten() {
+                let name = name.as_bytes();
+                let len = dir.len() + 1 + name.len();
+                if name.is_empty() || len > child.len() {
+                    continue;
+                }
+                child[..dir.len()].copy_from_slice(dir);
+                child[dir.len()] = b'/';
+                child[dir.len() + 1..len].copy_from_slice(name);
+                let evicted = self.remove_path_and_descendants(&child[..len], &mut each);
+                if evicted > 0 {
+                    // Reported even when the path itself is not an entry: the
+                    // resolver caches intermediate directories it never watches.
+                    (each)(WatchItemKind::Directory, &child[..len], 0);
+                    queued += evicted;
+                }
+            }
+            queued
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            let _ = names;
+            if !event.op.contains(Op::WRITE) {
+                return 0;
+            }
+            self.remove_replaced_descendants(event.index, &mut each)
+        }
+        #[cfg(windows)]
+        {
+            let _ = (event, names, &mut each);
+            0
+        }
+    }
+
+    /// Queues eviction of every entry whose path is `dir_path` or lies below
+    /// it, skipping entries already queued, and reports each one to `each`.
+    #[cfg(not(windows))]
+    fn remove_path_and_descendants(
+        &mut self,
+        dir_path: &[u8],
+        each: &mut dyn FnMut(WatchItemKind, &[u8], HashType),
+    ) -> usize {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+
+        let slice = self.watchlist.slice();
+        let paths = slice.items_file_path();
+        let kinds = slice.items_kind();
+        let hashes = slice.items_hash();
+        let mut queued = 0;
+        for i in 0..slice.len() {
+            if is_parent_or_equal(dir_path, &paths[i]) == ParentEqual::Unrelated
+                || self.evict_list[..self.evict_list_i as usize].contains(&(i as WatchItemIndex))
+            {
+                continue;
+            }
+            if !self.queue_eviction(i as WatchItemIndex) {
+                break;
+            }
+            each(kinds[i], &paths[i], hashes[i]);
+            queued += 1;
+        }
+        queued
+    }
+
+    /// kqueue reports only that *something* in the directory at `parent`
+    /// changed. Finds every watched directory below it whose path now names a
+    /// different inode than the one its fd holds (or names anything again
+    /// once its vnode was `displaced`), and evicts that subtree through
+    /// `remove_path_and_descendants`. A directory whose path does not exist at
+    /// the moment is left alone: the parent receives another write event when
+    /// something reappears under that name.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn remove_replaced_descendants(
+        &mut self,
+        parent: WatchItemIndex,
+        each: &mut dyn FnMut(WatchItemKind, &[u8], HashType),
+    ) -> usize {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+
+        let slice = self.watchlist.slice();
+        let paths = slice.items_file_path();
+        let kinds = slice.items_kind();
+        let fds = slice.items_fd();
+        let Some(parent_path) = paths.get(parent as usize) else {
+            return 0;
+        };
+
+        let mut replaced: Vec<&[u8]> = Vec::new();
+        let mut zbuf = bun_paths::path_buffer_pool::get();
+        for i in 0..slice.len() {
+            if kinds[i] != WatchItemKind::Directory || !fds[i].is_valid() {
+                continue;
+            }
+            let path: &[u8] = &paths[i];
+            if is_parent_or_equal(parent_path, path) != ParentEqual::Parent
+                || path.len() >= zbuf.len()
+                || replaced
+                    .iter()
+                    .any(|r| is_parent_or_equal(r, path) != ParentEqual::Unrelated)
+            {
+                continue;
+            }
+            zbuf[..path.len()].copy_from_slice(path);
+            zbuf[path.len()] = 0;
+            let z = ZStr::from_buf(&zbuf[..], path.len());
+            let Ok(by_path) = bun_sys::stat(z) else {
+                continue;
+            };
+            if !slice.items_displaced()[i] {
+                let Ok(by_fd) = bun_sys::fstat(fds[i]) else {
+                    continue;
+                };
+                if by_path.st_ino == by_fd.st_ino && by_path.st_dev == by_fd.st_dev {
+                    continue;
+                }
+            }
+            // A replaced ancestor's eviction covers this one.
+            replaced.retain(|r| is_parent_or_equal(path, r) == ParentEqual::Unrelated);
+            replaced.push(path);
+        }
+        drop(zbuf);
+
+        let mut queued = 0;
+        for path in replaced {
+            queued += self.remove_path_and_descendants(path, each);
+        }
+        queued
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
@@ -1051,14 +1336,34 @@ pub struct WatchItem {
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,
+    /// Whether `flush_evictions` may close `fd`. Files: always (`add_file`
+    /// hands the descriptor over, see [`FdOwnership`]). Directories: only when
+    /// the watcher opened it itself; otherwise it is the resolver's cached
+    /// directory handle, or the dev server's, and theirs to close.
+    pub owns_fd: bool,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
+    /// kqueue: this directory's vnode reported NOTE_RENAME or NOTE_DELETE, so
+    /// `file_path` no longer names it. See `dispatch_file_updates` and
+    /// `remove_replaced_descendants`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub displaced: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WatchItemKind {
     File,
     Directory,
+}
+
+/// What `flush_evictions` needs to drop the kernel registration of an evicted
+/// directory entry after the entry itself is gone from the watchlist.
+#[cfg(not(windows))]
+struct EvictedDirWatch {
+    /// `Fd::INVALID` when `flush_evictions` closed it.
+    fd: Fd,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    eventlist_index: platform::EventListIndex,
 }
 
 /// Who owns the `fd` passed to [`Watcher::add_file`] after it returns.
@@ -1085,8 +1390,13 @@ pub trait WatchItemColumns {
     fn items_fd_mut(&mut self) -> &mut [Fd];
     fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
+    fn items_owns_fd(&self) -> &[bool];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced(&self) -> &[bool];
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced_mut(&mut self) -> &mut [bool];
 }
 
 impl WatchItemColumns for WatchList {
@@ -1108,9 +1418,20 @@ impl WatchItemColumns for WatchList {
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
+    fn items_owns_fd(&self) -> &[bool] {
+        self.items::<"owns_fd", bool>()
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced(&self) -> &[bool] {
+        self.items::<"displaced", bool>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced_mut(&mut self) -> &mut [bool] {
+        self.items_mut::<"displaced", bool>()
     }
 }
 
@@ -1133,8 +1454,19 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
+    fn items_owns_fd(&self) -> &[bool] {
+        self.items::<"owns_fd", bool>()
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced(&self) -> &[bool] {
+        self.items::<"displaced", bool>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_displaced_mut(&mut self) -> &mut [bool] {
+        self.items_mut::<"displaced", bool>()
     }
 }

@@ -266,23 +266,19 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-/// Returns the vendor prefix passes that `StyleRule::to_css` needs to print the
-/// given selectors: one pass per extra prefix that a component picked up from
-/// the browser targets (`downlevel_selectors`) or from an equivalent rule that
-/// was merged into this one (`merge_prefixes`), plus one pass in which every
-/// prefixable component prints as written (see `VendorPrefix::canonical`). For
-/// selectors with no extra prefixes, that pass is their explicit prefix, if they
-/// use one, so that parent selectors substituted for `&` print their matching
-/// variant.
+/// The vendor prefix passes that `StyleRule::to_css` prints these selectors in:
+/// each prefix a component has besides the one it is written with (added by
+/// `downlevel_selectors` or `merge_prefixes`), plus one pass as written. For
+/// selectors with an explicit prefix and nothing extra that pass is the explicit
+/// prefix, so that parent selectors substituted for `&` print the same variant.
 pub(crate) fn prefix_passes(selectors: &[Selector]) -> VendorPrefix {
     let mut sets = Vec::new();
     prefix_sets(selectors, &mut sets);
     passes_for(&sets)
 }
 
-/// The set of prefixes of each prefixable component in `selectors`, in the
-/// order that `is_equivalent` and `merge_prefixes` pair them up. An `:is()`
-/// counts as an unprefixed `:-webkit-any()`.
+/// The prefix set of each prefixable component, in the order `is_equivalent` and
+/// `merge_prefixes` pair components up. An `:is()` counts as unprefixed.
 fn prefix_sets(selectors: &[Selector], sets: &mut Vec<VendorPrefix>) {
     for selector in selectors {
         for component in selector.components.iter() {
@@ -359,16 +355,12 @@ fn printed_variants(sets: &[VendorPrefix]) -> Vec<Vec<VendorPrefix>> {
         .collect()
 }
 
-/// Merges the vendor prefixes of `src` into `dst`, which must be equivalent to it
-/// (see `is_equivalent`), so that `dst` also prints the variants `src` prints.
-/// Returns false, and leaves `dst` as it is, if the merged selectors would print
-/// a variant that neither `dst` nor `src` prints, or would lose one, e.g. for
-/// `.a:-moz-read-only::placeholder` and `.a:read-only::-moz-placeholder`.
-///
-/// With browser targets, a rule with no explicit prefixes also absorbs every
-/// equivalent rule: a component with an unprefixed variant keeps exactly the
-/// prefixes that the targets need (`Targets::prefixes`), so explicitly prefixed
-/// copies of the rule fold into the variants printed for the targets.
+/// ORs the prefix set of each prefixable component of `src` into its pair in
+/// `dst` (the two are `is_equivalent`) if the result prints exactly the variants
+/// that `dst` and `src` print, else returns false and leaves `dst` alone (as for
+/// `.a:-moz-read-only::placeholder` and `.a:read-only::-moz-placeholder`). With
+/// browser targets, a rule without explicit prefixes absorbs any equivalent rule,
+/// and `Targets::prefixes` then keeps only the prefixes the targets need.
 pub(crate) fn merge_prefixes(dst: &mut [Selector], src: &[Selector], targets: &Targets) -> bool {
     let mut dst_sets = Vec::new();
     let mut src_sets = Vec::new();
@@ -493,9 +485,8 @@ fn is_prefixes(selectors: &[Selector], targets: &Targets) -> VendorPrefix {
     }
 }
 
-/// `Targets::prefixes` for an `:is()` / `:-webkit-any()` whose set of prefixes is
-/// `prefixes`: with browser targets, one that has an unprefixed variant gets
-/// exactly the prefixes the targets need.
+/// `Targets::prefixes` for `:is()` / `:-webkit-any()`: with browser targets, a
+/// set with an unprefixed variant becomes exactly what the targets need.
 fn any_prefixes(prefixes: VendorPrefix, selectors: &[Selector], targets: &Targets) -> VendorPrefix {
     if prefixes.contains(VendorPrefix::NONE) && targets.should_compile_selectors() {
         is_prefixes(selectors, targets)
@@ -815,10 +806,9 @@ fn is_selector_unused(
 pub(crate) mod serialize {
     use super::*;
 
-    /// The prefix to write for a component whose set of prefixes is `prefixes`:
-    /// the printer's current vendor prefix pass if the component has that
-    /// variant, otherwise the component as written (lightningcss writes it
-    /// unprefixed instead, which prints selectors that the source never had).
+    /// The prefix to print a component with: the current pass if the component
+    /// has that prefix, else the one it is written with (lightningcss prints it
+    /// unprefixed instead, which adds selectors the source never had).
     fn pass_prefix(dest: &Printer, prefixes: VendorPrefix) -> VendorPrefix {
         let pass = dest.vendor_prefix & prefixes;
         if pass.is_empty() {
@@ -1122,9 +1112,7 @@ pub(crate) mod serialize {
                             return serialize_selector(&selectors[0], dest, context, false);
                         }
 
-                        // An `:is()` that needs `:-webkit-any()` / `:-moz-any()` passes
-                        // for the targets was converted to `Component::Any` by
-                        // `downlevel_selectors`.
+                        // One that needs `:-webkit-any()` is a `Component::Any` by now.
                         dest.write_str(b":is(")?;
                     }
                     Component::Negation(_) => {

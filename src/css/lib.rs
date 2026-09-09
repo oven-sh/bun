@@ -268,9 +268,8 @@ impl VendorPrefix {
         self.bits()
     }
 
-    /// The prefix that a selector component with this set of prefixes is written
-    /// with outside of a matching vendor prefix pass: unprefixed if it has an
-    /// unprefixed variant, otherwise the last of its prefixes in `FIELDS` order.
+    /// The prefix a selector component with these prefixes is written with: none
+    /// if it has an unprefixed variant, else the last of them in `FIELDS` order.
     #[inline]
     pub(crate) fn canonical(self) -> VendorPrefix {
         if self.is_empty() || self.contains(VendorPrefix::NONE) {

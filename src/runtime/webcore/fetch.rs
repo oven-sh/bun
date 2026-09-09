@@ -60,6 +60,7 @@ use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
+    ResponseType,
 };
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
@@ -177,6 +178,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         Body::new(BodyValue::Blob(blob)),
         url,
         false,
+        ResponseType::Basic,
     )));
 
     // Ownership of the boxed Response is transferred to the JS GC via
@@ -509,24 +511,24 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    if url_str.starts_with_ascii(b"data:") {
-        return Ok(data_url_response(url_str, global_this));
+    // A fetch never uses the fragment, and `Response.url` excludes it: https://fetch.spec.whatwg.org/#dom-response-url
+    let href = bun_url::href_from_string_without_fragment(&url_str);
+    drop(url_str);
+    if href.tag() == BunStringTag::Dead {
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("fetch() URL is invalid"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
-    // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
-    // borrow it.
-    let owned_url = match ZigURL::from_string(&url_str) {
-        Ok(u) => u,
-        Err(_) => {
-            let err = ctx.to_type_error(
-                jsc::ErrorCode::INVALID_URL,
-                format_args!("fetch() URL is invalid"),
-            );
-            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-        }
-    };
-    let mut url_proxy_buffer = owned_url.into_href().into_vec();
+    if href.starts_with_ascii(b"data:") {
+        return Ok(data_url_response(href, global_this));
+    }
+
+    // Move the href into `url_proxy_buffer` and re-parse `url` to borrow it.
+    let mut url_proxy_buffer = href.to_owned_slice();
+    drop(href);
     let mut url = parse_url_detached!(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
@@ -1320,6 +1322,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
             false,
+            ResponseType::Basic,
         )));
 
         // Ownership of the boxed Response transfers to the JS GC; see
@@ -1862,6 +1865,7 @@ impl<'a> S3StreamWrapper<'a> {
                     Body::new(BodyValue::Empty),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
+                    ResponseType::Basic,
                 ));
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
                 // ownership transfers to JSC.
@@ -1884,6 +1888,7 @@ impl<'a> S3StreamWrapper<'a> {
                     })),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
+                    ResponseType::Basic,
                 ));
 
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;

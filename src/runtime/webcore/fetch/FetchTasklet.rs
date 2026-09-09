@@ -29,7 +29,7 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
+use crate::webcore::response::{HeadersRef, ResponseType};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
@@ -1789,6 +1789,7 @@ impl FetchTasklet {
             Body::new(body),
             url,
             redirected,
+            ResponseType::Basic,
         )
     }
 

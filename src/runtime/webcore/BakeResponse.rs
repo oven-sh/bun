@@ -203,6 +203,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
         BunString::EMPTY,
         false,
+        crate::webcore::ResponseType::Default,
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.

@@ -28,6 +28,7 @@ import type { AddressInfo } from "net";
 import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
+import { pathToFileURL } from "url";
 import { gzipSync } from "zlib";
 
 const tmp_dir = tmpdirSync();
@@ -1386,6 +1387,142 @@ describe("Response", () => {
       expect(Response.error().type).toBe("error");
       expect(Response.error().ok).toBe(false);
       expect(Response.error().status).toBe(0);
+    });
+  });
+  describe("Response.type", () => {
+    it("is 'default' for constructed responses", () => {
+      expect(new Response("hi").type).toBe("default");
+      expect(new Response(null, { status: 404 }).type).toBe("default");
+      // 101 is an accepted status and is not a network error.
+      expect(new Response(null, { status: 101 }).type).toBe("default");
+    });
+
+    it("is 'basic' for fetch responses", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/redirect") return Response.redirect("/", 302);
+          return new Response("hi");
+        },
+      });
+
+      const response = await fetch(server.url);
+      const cloned = response.clone();
+      expect(response.type).toBe("basic");
+      expect(cloned.type).toBe("basic");
+      expect(await Promise.all([response.text(), cloned.text()])).toEqual(["hi", "hi"]);
+
+      const followed = await fetch(new URL("/redirect", server.url));
+      expect(followed.type).toBe("basic");
+      expect(followed.redirected).toBe(true);
+      await followed.text();
+
+      const manual = await fetch(new URL("/redirect", server.url), { redirect: "manual" });
+      expect(manual.type).toBe("basic");
+      expect(manual.status).toBe(302);
+      await manual.text();
+    });
+
+    it("is 'basic' for data:, blob: and file: fetch responses", async () => {
+      const dataResponse = await fetch("data:text/plain,hello");
+      expect(dataResponse.type).toBe("basic");
+      expect(await dataResponse.text()).toBe("hello");
+
+      const objectURL = URL.createObjectURL(new Blob(["hello"]));
+      try {
+        const blobResponse = await fetch(objectURL);
+        expect(blobResponse.type).toBe("basic");
+        expect(await blobResponse.text()).toBe("hello");
+      } finally {
+        URL.revokeObjectURL(objectURL);
+      }
+
+      const fileResponse = await fetch(pathToFileURL(import.meta.path));
+      expect(fileResponse.type).toBe("basic");
+      expect((await fileResponse.text()).length).toBeGreaterThan(0);
+    });
+  });
+  describe("Response.url excludes the fragment", () => {
+    it("for http: urls, including redirects", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/redirect") {
+            return new Response(null, { status: 302, headers: { Location: "/target#section" } });
+          }
+          return new Response("hi");
+        },
+      });
+      const origin = server.url.origin;
+
+      const withFragment = await fetch(`${origin}/p?q=1#frag`);
+      expect(withFragment.url).toBe(`${origin}/p?q=1`);
+      expect(withFragment.clone().url).toBe(`${origin}/p?q=1`);
+      await withFragment.text();
+
+      // Only the first "#" delimits the fragment, and a percent-encoded one is
+      // part of the path.
+      const manyHashes = await fetch(`${origin}/p%23a#b#c`);
+      expect(manyHashes.url).toBe(`${origin}/p%23a`);
+      await manyHashes.text();
+
+      const emptyFragment = await fetch(`${origin}/p#`);
+      expect(emptyFragment.url).toBe(`${origin}/p`);
+      await emptyFragment.text();
+
+      // A fragment on the redirect's Location is excluded too.
+      const redirected = await fetch(`${origin}/redirect#frag`);
+      expect(redirected.url).toBe(`${origin}/target`);
+      expect(redirected.redirected).toBe(true);
+      await redirected.text();
+
+      const fromRequest = await fetch(new Request(`${origin}/p#frag`));
+      expect(fromRequest.url).toBe(`${origin}/p`);
+      await fromRequest.text();
+    });
+
+    it("for data: urls, and from the data itself", async () => {
+      const response = await fetch("data:text/plain,hello#frag");
+      expect(response.url).toBe("data:text/plain,hello");
+      expect(await response.text()).toBe("hello");
+
+      expect(await fetch("data:text/plain,hello#").then(r => r.text())).toBe("hello");
+      // A percent-encoded "#" is part of the data, not a fragment delimiter.
+      expect(await fetch("data:text/plain,a%23b#frag").then(r => r.text())).toBe("a#b");
+      expect(await fetch("data:text/plain;base64,aGVsbG8=#frag").then(r => r.text())).toBe("hello");
+
+      // Non-ASCII data is percent-encoded in the url and decoded in the body, as in Node.
+      const nonAscii = await fetch("data:text/plain,\u{1F600}#frag");
+      expect(nonAscii.url).toBe("data:text/plain,%F0%9F%98%80");
+      expect(await nonAscii.text()).toBe("\u{1F600}");
+    });
+
+    it("for blob: urls, which still resolve", async () => {
+      const objectURL = URL.createObjectURL(new Blob(["hello"]));
+      try {
+        const response = await fetch(`${objectURL}#frag`);
+        expect(response.status).toBe(200);
+        expect(response.url).toBe(objectURL);
+        expect(await response.text()).toBe("hello");
+      } finally {
+        URL.revokeObjectURL(objectURL);
+      }
+
+      await expect(fetch("blob:00000000-0000-0000-0000-000000000000#frag")).rejects.toThrow(
+        "Failed to resolve blob:00000000-0000-0000-0000-000000000000",
+      );
+    });
+
+    it("for file: urls", async () => {
+      const response = await fetch(`${pathToFileURL(import.meta.path)}#frag`);
+      expect(response.url).toBe(String(pathToFileURL(import.meta.path)));
+      expect((await response.text()).length).toBeGreaterThan(0);
+    });
+
+    it("but constructed responses have no url", () => {
+      expect(new Response("hi").url).toBe("");
+      expect(Response.error().url).toBe("");
+      expect(Response.redirect("https://example.com/a#b").url).toBe("");
     });
   });
   it("clone", async () => {

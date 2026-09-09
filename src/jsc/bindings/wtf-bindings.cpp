@@ -7,6 +7,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/ParseInt.h>
 #include <atomic>
 #include <cassert>
 
@@ -227,6 +228,12 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
 extern "C" double WTF__parseDouble(const Latin1Character* string, size_t length, size_t* position)
 {
     return WTF::parseDouble({ string, length }, *position);
+}
+
+// bun_core::fmt::parse_power_of_two_radix_digits. The same function JSC's lexer and parseInt use.
+extern "C" double JSC__parsePowerOfTwoRadixDigits(const Latin1Character* digits, size_t length, int radix)
+{
+    return JSC::parseIntOverflow(std::span<const Latin1Character> { digits, length }, radix);
 }
 
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,

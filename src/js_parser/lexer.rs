@@ -3138,9 +3138,13 @@ impl<'a> Lexer<'a> {
             }
 
             let is_big_integer_literal = self.code_point == 0x6E && !has_dot_or_exponent;
+            // From 2^53 up the additions above round, possibly more than once.
+            let is_rounded = !is_big_integer_literal
+                && !is_invalid_legacy_octal_literal
+                && self.number >= 9007199254740992.0;
 
             // Slow path: do we need to re-scan the input as text?
-            if is_big_integer_literal || is_invalid_legacy_octal_literal {
+            if is_big_integer_literal || is_invalid_legacy_octal_literal || is_rounded {
                 let mut text = self.raw();
 
                 // Can't use a leading zero for bigint literals;
@@ -3178,6 +3182,12 @@ impl<'a> Lexer<'a> {
                             )?;
                         }
                     }
+                } else {
+                    let prefix_len = if self.is_legacy_octal_literal { 1 } else { 2 }; // "0" or "0x"
+                    self.number = bun_core::fmt::parse_power_of_two_radix_digits(
+                        &text[prefix_len..],
+                        base as u32,
+                    );
                 }
             }
         } else {

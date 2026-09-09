@@ -1138,6 +1138,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     return Err(crate::Error::SyntaxError);
                 }
             }
+        } else if value >= 9007199254740992.0 {
+            // From 2^53 up the additions above round, possibly more than once.
+            let digits = &t[prefix_len..i];
+            value = if last_underscore_end == usize::MAX {
+                bun_core::fmt::parse_power_of_two_radix_digits(digits, radix)
+            } else {
+                let digits: Vec<u8> = digits.iter().copied().filter(|&c| c != b'_').collect();
+                bun_core::fmt::parse_power_of_two_radix_digits(&digits, radix)
+            };
         }
         Ok((value, i))
     }

@@ -1021,10 +1021,25 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
 
 // `WTF__parseDouble` — WebKit's JS-semantics double parser (Latin-1 input,
 // reports prefix length). Declared here (not via `bun_string`) so tier-0
-// callers can parse floats with no UTF-8 validation. Link-time symbol
+// callers can parse floats with no UTF-8 validation. Link-time symbols
 // provided by `src/jsc/bindings/wtf-bindings.cpp`.
 unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
+    fn JSC__parsePowerOfTwoRadixDigits(digits: *const u8, length: usize, radix: i32) -> f64;
+}
+
+/// The nearest `f64` to the integer that `digits` (digits only: no prefix, sign
+/// or `_`) spell in radix 2, 4, 8, 16 or 32, as JSC's `parseInt` computes it.
+/// Summing `value * radix + digit` in an `f64` instead is inexact past 2^53.
+pub fn parse_power_of_two_radix_digits(digits: &[u8], radix: u32) -> f64 {
+    debug_assert!(matches!(radix, 2 | 4 | 8 | 16 | 32));
+    debug_assert!(
+        digits.iter().all(|&c| (c as char).is_digit(radix)),
+        "not base-{radix} digits: {:?}",
+        bstr::BStr::new(digits)
+    );
+    // SAFETY: `digits` is a valid slice; JSC reads exactly `length` Latin-1 bytes.
+    unsafe { JSC__parsePowerOfTwoRadixDigits(digits.as_ptr(), digits.len(), radix as i32) }
 }
 
 /// Full-match parse of `s` as an `f64`.

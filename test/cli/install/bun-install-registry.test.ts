@@ -10092,6 +10092,106 @@ describe("manifest cache temporary files", () => {
   });
 });
 
+// Every `bun install` on a machine shares one cache directory. Installs that
+// extract the same package at the same time each rename their own copy into the
+// cache under the same folder name. Windows cannot rename a directory over an
+// existing one, and the install whose rename came second used to move the first
+// one's entry out of the cache, delete it, and wait before moving its own copy
+// in. The first install, still reading that entry, failed with ENOENT or EBADF.
+describe("concurrent installs that share a cache directory", () => {
+  const installs = 6;
+  const version = "1.0.0";
+
+  function packageTarball(name: string) {
+    return new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name, version }),
+        "package/index.js": "module.exports = 1;\n",
+      },
+      { compress: "gzip" },
+    ).bytes();
+  }
+
+  async function writeProjects(files: (i: number) => Record<string, string | Uint8Array>) {
+    const projects = Array.from({ length: installs }, (_, i) => join(packageDir, `project-${i}`));
+    for (const [i, cwd] of projects.entries()) {
+      mkdirSync(cwd);
+      await Promise.all(Object.entries(files(i)).map(([file, contents]) => write(join(cwd, file), contents)));
+    }
+    return projects;
+  }
+
+  async function installAll(projects: string[], name: string) {
+    const cacheDir = join(packageDir, "shared-cache");
+    const results = await Promise.all(
+      projects.map(async cwd => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          errors: err.split(/\r?\n/).filter(line => /error|ENOENT|EBADF/i.test(line)),
+          installed: out.includes(`+ ${name}@`),
+          exitCode,
+        };
+      }),
+    );
+    expect(results).toEqual(Array(installs).fill({ errors: [], installed: true, exitCode: 0 }));
+    for (const cwd of projects) {
+      expect(await file(join(cwd, "node_modules", name, "package.json")).json()).toEqual({ name, version });
+    }
+  }
+
+  test("all get the same npm package", async () => {
+    const name = "shared-cache-npm-package";
+    const tarballPath = `/${name}-${version}.tgz`;
+    const tarball = await packageTarball(name);
+    // Hold every tarball response until all installs have asked for it, so
+    // they extract and move into the cache at the same time.
+    let asked = 0;
+    const { promise: allAsked, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === tarballPath) {
+          if (++asked === installs) release();
+          await allAsked;
+          return new Response(tarball);
+        }
+        if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+        return Response.json({
+          name,
+          "dist-tags": { latest: version },
+          versions: { [version]: { name, version, dist: { tarball: `${origin}${tarballPath}` } } },
+        });
+      },
+    });
+    const projects = await writeProjects(() => ({
+      "package.json": JSON.stringify({ name: "app", dependencies: { [name]: version } }),
+      "bunfig.toml": `[install]\nregistry = "${server.url.href}"\n`,
+    }));
+    await installAll(projects, name);
+  });
+
+  test("all get the same local tarball", async () => {
+    const name = "shared-cache-local-tarball";
+    const tarball = await packageTarball(name);
+    // The cache folder of a local tarball is named after the path in
+    // package.json, so the same relative path is the same cache entry.
+    const projects = await writeProjects(() => ({
+      "package.json": JSON.stringify({ name: "app", dependencies: { [name]: `./${name}.tgz` } }),
+      [`${name}.tgz`]: tarball,
+    }));
+    await installAll(projects, name);
+  });
+});
+
 describe("manifest conditional requests", () => {
   type ManifestRequest = {
     accept: string | null;

@@ -185,6 +185,51 @@ pub(crate) fn uses_streaming_extraction() -> bool {
 }
 
 impl ExtractTarball {
+    /// The cache already has an entry where ours should go. Decides whether to
+    /// keep it and drop the copy we just extracted, or to replace it.
+    ///
+    /// An npm `name@version` and a GitHub commit extract to the same files every
+    /// time, so a complete entry is kept. A tarball URL or path can serve new
+    /// content under the same cache key: an entry older than this process can be
+    /// stale and is replaced. A newer one came from a concurrent `bun install` of
+    /// the same tarball and is kept.
+    #[cfg(windows)]
+    fn keep_existing_cache_entry(&self, folder_name: &ZStr) -> bool {
+        match self.resolution.tag {
+            ResolutionTag::Npm | ResolutionTag::Github => directories::is_package_in_cache_at(
+                self.cache_dir,
+                folder_name,
+                self.resolution.tag,
+            ),
+            _ => {
+                let process_start_ns = bun_core::start_time();
+                if process_start_ns <= 0 {
+                    return false;
+                }
+                let Ok(existing) = sys::open_dir_at_windows_a(
+                    self.cache_dir,
+                    folder_name.as_bytes(),
+                    sys::WindowsOpenDirOptions {
+                        iterable: false,
+                        ..Default::default()
+                    },
+                ) else {
+                    return false;
+                };
+                let stat = sys::fstat(existing);
+                let _ = sys::close(existing);
+                let Ok(stat) = stat else {
+                    return false;
+                };
+                // A rename keeps the creation time, so this is when the other process
+                // created its temporary extraction directory.
+                let created_ns =
+                    i128::from(stat.birthtim.sec) * 1_000_000_000 + i128::from(stat.birthtim.nsec);
+                created_ns >= process_start_ns
+            }
+        }
+    }
+
     /// Derive the display name and a filesystem-safe basename for this
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
@@ -533,10 +578,6 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
-                // transient when a concurrent process (another `bun install`
-                // sharing the cache, AV, the Search Indexer) is closing its
-                // handle to the destination. Back off briefly between retries.
                 const MAX_RETRIES: u32 = 4;
                 let mut retries: u32 = 0;
                 let mut path2_buf = bun_paths::w_path_buffer_pool::get();
@@ -549,7 +590,27 @@ impl ExtractTarball {
 
                 let path_to_use = path2;
 
-                loop {
+                let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
+                folder_name_z_buf[0..folder_name.len()].copy_from_slice(folder_name);
+                folder_name_z_buf[folder_name.len()] = 0;
+                let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+
+                // Old entries renamed out of the way. They are deleted once ours is in
+                // place, so the name in the cache is only missing between two renames.
+                let mut moved_aside: u32 = 0;
+                let mut aside_buf = bun_paths::path_buffer_pool::get();
+                let aside_name = |buf: &mut PathBuffer, n: u32| -> usize {
+                    let mut cursor = &mut buf[..];
+                    // `tmpname` is far shorter than a path buffer; this cannot run out.
+                    let _ = std::io::Write::write_fmt(
+                        &mut cursor,
+                        format_args!("{}.{}.old\0", bun_fmt::s(tmpname.as_bytes()), n),
+                    );
+                    let remaining = cursor.len();
+                    buf.len() - remaining - 1
+                };
+
+                let move_err: Option<bun_sys::Error> = loop {
                     let dir_to_move = match sys::open_dir_at_windows_a(
                         self.temp_dir,
                         tmpname.as_bytes(),
@@ -560,102 +621,88 @@ impl ExtractTarball {
                         },
                     ) {
                         Ok(d) => d,
-                        Err(err) => {
-                            // i guess we just
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "moving \"{}\" to cache dir failed\n{}\n From: {}\n   To: {}",
-                                    bun_fmt::s(name),
-                                    err,
-                                    bun_fmt::s(tmpname.as_bytes()),
-                                    bun_fmt::s(folder_name),
-                                ),
-                            );
-                            return Err(crate::Error::InstallFailed);
-                        }
+                        Err(err) => break Some(err),
                     };
 
-                    match bun_sys::windows::move_opened_file_at(
+                    let moved = bun_sys::windows::move_opened_file_at(
                         dir_to_move,
                         Fd::from_std_dir(cache_dir),
                         path_to_use,
                         true,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            if retries < MAX_RETRIES {
-                                match err.get_errno() {
-                                    sys::Errno::NOTEMPTY
-                                    | sys::Errno::PERM
-                                    | sys::Errno::BUSY
-                                    | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
-                                        let _ = sys::close(dir_to_move);
+                    );
+                    let _ = sys::close(dir_to_move);
+                    let err = match moved {
+                        bun_sys::Result::Ok(_) => break None,
+                        bun_sys::Result::Err(err) => err,
+                    };
 
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = bun_paths::path_buffer_pool::get();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = bun_paths::path_buffer_pool::get();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
-                                        }
-                                        retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
-                                        std::thread::sleep(std::time::Duration::from_millis(
-                                            10u64 << (retries - 1),
-                                        ));
-                                        continue;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            let _ = sys::close(dir_to_move);
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
-                                    bun_fmt::s(name),
-                                    err,
-                                    bun_fmt::s(tmpname.as_bytes()),
-                                    bun_fmt::s(folder_name),
-                                ),
-                            );
-                            return Err(crate::Error::InstallFailed);
+                    // NTFS cannot rename a directory over an existing one, even with
+                    // FILE_RENAME_REPLACE_IF_EXISTS: the destination is already there.
+                    let destination_exists = matches!(
+                        err.get_errno(),
+                        sys::Errno::EXIST | sys::Errno::NOTEMPTY | sys::Errno::PERM
+                    );
+                    // SHARING_VIOLATION: a handle without FILE_SHARE_DELETE is open on
+                    // the source or the destination (another `bun install` copying out
+                    // of it, AV, the Search Indexer). It goes away when that handle closes.
+                    let busy = err.get_errno() == sys::Errno::BUSY;
+
+                    if retries >= MAX_RETRIES || !(destination_exists || busy) {
+                        break Some(err);
+                    }
+                    retries += 1;
+
+                    if destination_exists {
+                        if self.keep_existing_cache_entry(folder_name_z) {
+                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                            break None;
                         }
-                        bun_sys::Result::Ok(_) => {
-                            let _ = sys::close(dir_to_move);
+
+                        let aside_len = aside_name(&mut aside_buf, moved_aside);
+                        let aside = ZStr::from_buf(&aside_buf, aside_len);
+                        match sys::renameat(
+                            Fd::from_std_dir(cache_dir),
+                            folder_name_z,
+                            Fd::from_std_dir(tmpdir),
+                            aside,
+                        ) {
+                            bun_sys::Result::Ok(_) => {
+                                moved_aside += 1;
+                                continue;
+                            }
+                            // Another process moved it out of the way first.
+                            bun_sys::Result::Err(e) if e.get_errno() == sys::Errno::NOENT => {
+                                continue;
+                            }
+                            bun_sys::Result::Err(_) => {}
                         }
                     }
 
-                    break;
+                    // 10ms, 20ms, 40ms, 80ms: long enough for a concurrent close to
+                    // land, short enough to not slow a real failure noticeably.
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        10u64 << (retries - 1),
+                    ));
+                };
+
+                for n in 0..moved_aside {
+                    let aside_len = aside_name(&mut aside_buf, n);
+                    let _ = tmpdir.delete_tree(&aside_buf[..aside_len]);
+                }
+
+                if let Some(err) = move_err {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "moving \"{}\" to cache dir failed\n{}\n  From: {}\n    To: {}",
+                            bun_fmt::s(name),
+                            err,
+                            bun_fmt::s(tmpname.as_bytes()),
+                            bun_fmt::s(folder_name),
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
                 }
             }
             #[cfg(not(windows))]

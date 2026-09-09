@@ -208,6 +208,17 @@ pub(crate) fn scan_imports_and_exports(
                 }
             }
 
+            // See `html_started_async_scripts`: such a page's async scripts run
+            // inside `__esm` wrappers so that each one starts at its tag without
+            // holding back the scripts after it.
+            let html_starts_async_scripts = col_ref!(loaders)[id] == Loader::Html
+                && LinkerContext::html_started_async_scripts(
+                    col_ref!(import_records_list)[id].as_slice(),
+                    col_ref!(loaders),
+                    col_ref!(flags),
+                )
+                .is_some();
+
             for (import_record_index, record) in col_ref!(import_records_list)[id]
                 .as_slice()
                 .iter()
@@ -224,6 +235,14 @@ pub(crate) fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                if html_starts_async_scripts
+                    && record.kind == ImportKind::Stmt
+                    && other_kind == ExportsKind::Esm
+                    && col_ref!(flags)[other_file].is_async_or_has_async_dependency
+                {
+                    col!(flags)[other_file].wrap = WrapKind::Esm;
+                }
 
                 // Union, per importee, of the export names its importers can
                 // observe: named static imports contribute their aliases, a
@@ -1054,6 +1073,24 @@ pub(crate) fn scan_imports_and_exports(
                         source_index,
                         Index::part(entry_point_part_index),
                         b"__toCommonJS",
+                        1,
+                    )?;
+                }
+
+                // An HTML page that started several async scripts settles them with
+                // one "await __promiseAll([...])" (`generate_entry_point_tail_js`).
+                if is_html
+                    && LinkerContext::html_started_async_scripts(
+                        col_ref!(import_records_list)[id].as_slice(),
+                        col_ref!(loaders),
+                        col_ref!(flags),
+                    )
+                    .is_some_and(|started| started >= 2)
+                {
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(entry_point_part_index),
+                        b"__promiseAll",
                         1,
                     )?;
                 }

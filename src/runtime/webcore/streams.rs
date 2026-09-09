@@ -1792,7 +1792,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.end_from_js(&global_this).map(|_| ())
     }
 
-    /// The source failed (`close(error)`, an errored pump): end the body unflushed so the owner can truncate it.
+    /// The source failed (`close(error)`, an errored pump): drop what is buffered and finish the sink; the owner closes the response as incomplete.
     pub(crate) fn fail(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
@@ -1800,22 +1800,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return;
         }
 
-        if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(None);
-            self.mark_done();
-            self.finalize();
-            return;
-        }
-
-        self.requested_end = true;
-        let readable_len = self.readable_slice().len();
-        self.end_len = readable_len;
-
-        if readable_len == 0 {
-            self.source.close(None);
-            self.mark_done();
-            self.finalize();
-        }
+        self.buffer.clear();
+        self.offset = 0;
+        self.source.close(None);
+        self.mark_done();
+        self.finalize();
     }
 
     pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -2000,7 +1989,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
-            // Sends a tail parked by `fail()`; that `res.end()` sets `ended_response`.
             let _ = self.flush_no_wait();
             self.set_done();
 

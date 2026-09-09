@@ -760,8 +760,13 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
         return result;
     }
     // A sync pull() that called close(error): the owner hears it the way it hears an async one.
-    if (JSValue failed = sinkController->m_failReason.get())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, failed));
+    if (JSValue failed = sinkController->m_failReason.get()) {
+        auto* rejected = promiseRejectedWith(globalObject, failed);
+        RETURN_IF_EXCEPTION(scope, {});
+        // Every caller is a native sink owner that reads the promise's state instead of attaching a reaction.
+        markPromiseAsHandled(vm, rejected);
+        return rejected;
+    }
     if (stream->m_state == ReadableStreamState::Readable) {
         auto* closePromise = JSPromise::create(vm, globalObject->promiseStructure());
         sinkController->m_closePromise.set(vm, sinkController, closePromise);

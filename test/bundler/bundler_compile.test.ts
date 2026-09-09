@@ -517,6 +517,92 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
   });
+  // An entry point with a data loader is embedded under a `.js` name too (`data.json` -> `data.js`). The executable
+  // records the source spelling of such an entry point, so that spelling resolves to the module; the spelling is
+  // exact (`./UP.JSON`, not `./UP.json`). A `file` entry point's chunk is only a stub over the embedded asset
+  // (`export default "/$bunfs/root/blob-<hash>.bin"`), so its source spelling stays unresolved.
+  itBundled("compile/DynamicImportEmbeddedDataEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        for (const f of ["./data.json", "./note.txt", "./conf.toml", "./blob.bin", "./UP.JSON"]) rmSync(f, { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
+        const outcome = async (spec: string) => {
+          try {
+            return (await import(spec)).default;
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        console.log(require(s("./data.json")).b, (await import(s("./data.json"))).default.a);
+        console.log((await import(s("./note.txt"))).default, require(s("./note.txt")).default);
+        console.log((await import(s("./conf.toml"))).y.z, require(s("./conf.toml")).default.x);
+        const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
+        console.log(require.resolve(s("./data.json")) === root + "data.js", Bun.resolveSync("./data.json", import.meta.dir) === root + "data.js");
+        console.log((await outcome(s("./UP.JSON"))).up, await outcome(s("./UP.json")), await outcome(s("./nope.json")));
+        console.log(await outcome(s("./blob.bin")), (await outcome(s("./blob.js"))).startsWith(root));
+      `,
+      "/data.json": `{ "a": 1, "b": "two" }`,
+      "/note.txt": `hello text`,
+      "/conf.toml": `x = 1\n[y]\nz = "w"\n`,
+      "/blob.bin": `blob bytes`,
+      "/UP.JSON": `{ "up": true }`,
+    },
+    entryPointsRaw: ["./entry.ts", "./data.json", "./note.txt", "./conf.toml", "./blob.bin", "./UP.JSON"],
+    outfile: "dist/out",
+    run: {
+      stdout: "two 1\nhello text hello text\nw 1\ntrue true\ntrue ResolveMessage ResolveMessage\nResolveMessage true\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+  // With `--entry-naming` the chunk name is not the source name with `.js` swapped in, so only the recorded source
+  // spelling finds the module: `data.json` -> `data-<hash>.js`, `sub/inner.ts` -> `inner-<hash>.js` (no `[dir]`).
+  // A spelling two entry points share (`a/dup.json` and `b/dup.json` both land at the root) is ambiguous: neither
+  // gets it, and it still resolves against the cwd instead.
+  itBundled("compile/EmbeddedResolveEntryNaming", {
+    backend: "cli",
+    compile: true,
+    entryNaming: "[name]-[hash].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./data.json", { force: true });
+        for (const dir of ["./sub", "./a", "./b"]) rmSync(dir, { recursive: true, force: true });
+        const s = (x: string) => x;
+        const outcome = async (spec: string) => {
+          try {
+            return (await import(spec)).default;
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        console.log((await outcome(s("./dup.json"))).from);
+        process.chdir(tmpdir());
+        console.log((await outcome(s("./data.json"))).a, await outcome(s("./inner.ts")), require(s("./inner.ts")).default);
+        console.log(await outcome(s("./sub/inner.ts")), await outcome(s("./inner")), await outcome(s("./dup.json")));
+      `,
+      "/data.json": `{ "a": 1 }`,
+      "/sub/inner.ts": `export default "inner" as string;`,
+      "/a/dup.json": `{ "from": "a" }`,
+      "/b/dup.json": `{ "from": "b" }`,
+    },
+    runtimeFiles: {
+      "/dup.json": `{ "from": "cwd" }`,
+    },
+    entryPointsRaw: ["./entry.ts", "./data.json", "./sub/inner.ts", "./a/dup.json", "./b/dup.json"],
+    outfile: "dist/out",
+    run: {
+      stdout: "cwd\n1 inner inner\nResolveMessage ResolveMessage ResolveMessage\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   // Nested embedded entry points, from the entry and from inside the subdirectory (`../`), by every spelling.
   itBundled("compile/EmbeddedResolveNested", {
     backend: "cli",
@@ -555,7 +641,8 @@ describe("bundler", () => {
     run: { stdout: "inner\ninner\ninner\nsibling,top\ntop,top,sibling\n", file: "dist/out", setCwd: true },
   });
   // What resolves where: an embedded module wins over a file of the same name in the cwd; a relative specifier that
-  // is not embedded still resolves against the cwd; the resolved name of an embedded module is the graph's own.
+  // is not embedded still resolves against the cwd (a `config.json` there is not captured by an embedded `config.ts`);
+  // the resolved name of an embedded module is the graph's own.
   itBundled("compile/EmbeddedResolvePrecedence", {
     backend: "cli",
     compile: true,
@@ -564,6 +651,7 @@ describe("bundler", () => {
         const s = (x: string) => x;
         console.log(require(s("./both.js")).default);
         console.log(require(s("./disk-only.js")).default);
+        console.log(require(s("./config.json")).from, require(s("./config.ts")).default);
         const w1 = new Worker("./both.js");
         console.log(await new Promise(r => { w1.onmessage = e => r(e.data); w1.onerror = e => r("error: " + e.message); }));
         w1.terminate();
@@ -575,16 +663,19 @@ describe("bundler", () => {
         console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out");
       `,
       "/both.js": `export default "both:embedded"; if (!Bun.isMainThread) postMessage("both:embedded worker");`,
+      "/config.ts": `export default "config:embedded" as string;`,
     },
     runtimeFiles: {
       "/both.js": `export default "both:disk"; if (!Bun.isMainThread) postMessage("both:disk worker");`,
       "/disk-only.js": `export default "disk-only";`,
       "/disk-only-worker.js": `postMessage("disk-only worker");`,
+      "/config.json": `{ "from": "disk" }`,
     },
-    entryPointsRaw: ["./entry.ts", "./both.js"],
+    entryPointsRaw: ["./entry.ts", "./both.js", "./config.ts"],
     outfile: "dist/out",
     run: {
-      stdout: "both:embedded\ndisk-only\nboth:embedded worker\ndisk-only worker\ntrue true\ntrue\n",
+      stdout:
+        "both:embedded\ndisk-only\ndisk config:embedded\nboth:embedded worker\ndisk-only worker\ntrue true\ntrue\n",
       file: "dist/out",
       setCwd: true,
     },

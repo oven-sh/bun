@@ -469,7 +469,7 @@ registry = http://localhost:${registry.port}/
         `warn: Encountered an error while reading .npmrc:`,
         ``,
         `3 | //localhost:<port>/:_auth=**************`,
-        `${" ".repeat("3 | ".length + key.length)}^`,
+        `${Buffer.alloc("3 | ".length + key.length, " ").toString()}^`,
         `error: invalid _auth value, expected base64 encoded "<username>:<password>", received an empty string`,
         `    at .npmrc:3:${key.length + 1}`,
         `Resolving dependencies`,

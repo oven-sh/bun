@@ -1713,11 +1713,9 @@ describe("close() under transport backpressure sends the buffered tail", () => {
     ["from a later task", true],
   ] as const;
 
-  test.each(modes)("over http/1.1, close() %s", async (_mode, later) => {
-    const state = newState();
-    using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response(body(state, later)) });
-
-    const socket = net.connect(server.port, "127.0.0.1");
+  // A raw client that stops reading until the source has closed, then decodes the chunked body.
+  async function readPausedH1(port: number, state: State) {
+    const socket = net.connect(port, "127.0.0.1");
     const chunks: Buffer[] = [];
     const done = Promise.withResolvers<void>();
     socket.on("error", done.reject);
@@ -1753,12 +1751,59 @@ describe("close() under transport backpressure sends the buffered tail", () => {
       rest = rest.subarray(lineEnd + 2 + size + 2);
     }
     const decoded = Buffer.concat(payload);
-    expect({
+    return {
       terminated,
       trailing: rest.length,
       length: decoded.length,
       end: decoded.subarray(-8).toString("latin1"),
-    }).toEqual({ terminated: true, trailing: 0, length: state.bigBytes + 4, end: "xxxxtail" });
+    };
+  }
+
+  test.each(modes)("over http/1.1, close() %s", async (_mode, later) => {
+    const state = newState();
+    using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response(body(state, later)) });
+    expect(await readPausedH1(server.port, state)).toEqual({
+      terminated: true,
+      trailing: 0,
+      length: state.bigBytes + 4,
+      end: "xxxxtail",
+    });
+  });
+
+  // end() used to replace a parked flush(true) promise: the first one stayed protect()ed for the life of the VM and never settled.
+  test("over http/1.1, end() while a flush(true) is parked on the same drain settles both", async () => {
+    const state = newState();
+    const flushed = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c: any) {
+              for (;;) {
+                const wrote = c.write(big);
+                state.bigBytes += big.length;
+                if (wrote instanceof Promise) break;
+                if (state.bigBytes >= 512 * 1024 * 1024) throw new Error("no backpressure after 512 MB");
+              }
+              const parked = c.flush(true);
+              c.write("tail");
+              const ended = c.end();
+              state.closed.resolve();
+              flushed.resolve(await Promise.all([parked, ended]).then(() => 1));
+            },
+          } as any),
+        ),
+    });
+    expect(await readPausedH1(server.port, state)).toEqual({
+      terminated: true,
+      trailing: 0,
+      length: state.bigBytes + 4,
+      end: "xxxxtail",
+    });
+    expect(await flushed.promise).toBe(1);
   });
 
   // Over h2 the backpressure is the stream's flow-control window: the client

@@ -1107,6 +1107,39 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(exitCode).toBe(0);
     });
 
+    // close(error) fails the sink from inside FileSink's own close path, which re-enters the controller before the
+    // C++ caller passes the reason along. The stream must still end Errored with that reason, not Closed.
+    it.each([
+      ["inside a sync pull()", c => (c.write("a"), c.close(new Error("boom")))],
+      ["inside an async pull() after a flush", async c => (c.write("a"), await c.flush(), c.close(new Error("boom")))],
+      ["from a later task on a kept controller", null],
+    ])("close(error) %s errors the direct stream it came from", async (_where, pull) => {
+      using dir = tempDir("bun-write-direct-close-error-state", {});
+      let kept;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull: pull ?? (c => ((kept = c), c.write("a"))),
+      });
+      const written = Bun.write(join(String(dir), "out.txt"), stream);
+      if (!pull) {
+        await new Promise(resolve => setImmediate(resolve));
+        kept.close(new Error("boom"));
+      }
+      expect(
+        await written.then(
+          () => "resolved",
+          e => "rejected: " + e.message,
+        ),
+      ).toBe("rejected: boom");
+      // directStreamOnClose released the sink's lock, so the terminal state is observable through a reader.
+      expect(
+        await stream.getReader().closed.then(
+          () => "closed",
+          e => "errored: " + e.message,
+        ),
+      ).toBe("errored: boom");
+    });
+
     it("a stream whose source fails rejects with that error", async () => {
       using dir = tempDir("bun-write-stream-reject", {});
       const nextTask = () => new Promise(resolve => setImmediate(resolve));

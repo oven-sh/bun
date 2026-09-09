@@ -768,9 +768,9 @@ describe("Bun.Terminal", () => {
     });
 
     // Input the child never read can never drain once the last slave fd is
-    // gone, because a pty master answers EAGAIN instead of EPIPE. The writer
-    // used to wait for that drain forever, which kept the wrapper (and the
-    // callbacks it roots) alive with its three pty fds for the rest of the
+    // gone, because a Linux pty master answers EAGAIN instead of EPIPE. The
+    // writer used to wait for that drain forever, which kept the wrapper (and
+    // the callbacks it roots) alive with its three pty fds for the rest of the
     // process, and kept its poll re-arming on a permanent POLLHUP. PTY EOF now
     // ends the writer and closes the reader, so `exit` is the last callback,
     // a later write() is dropped instead of queued, and the wrapper becomes
@@ -778,7 +778,11 @@ describe("Bun.Terminal", () => {
     // (the line discipline stops accepting once its line buffer is full) and
     // one unterminated line (the kernel keeps discarding it, so an unfixed
     // build delivers late echo and a late `drain` after `exit`).
-    test.skipIf(isWindows)("terminal is released after the child exits with input it never read", async () => {
+    // Linux-only: macOS fails the same write with EIO, which the writer
+    // reports as an error and which closes the whole terminal, so the queue
+    // never gets stuck and a post-EOF write throws there instead. The code
+    // under test is shared.
+    test.skipIf(!isLinux)("terminal is released after the child exits with input it never read", async () => {
       const childSrc = /* js */ `
         const { readdirSync } = require("node:fs");
         const openFds = () => readdirSync("/dev/fd").length;

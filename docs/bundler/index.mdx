@@ -361,7 +361,7 @@ Depending on the target, Bun applies different module resolution rules and optim
   does not.
 </Card>
 
-<Card title="bun" icon="server">
+<Card title="bun" icon="bun">
 For bundles that run in the Bun runtime. In many cases, it isn't necessary to bundle server-side code; you can directly execute the source code without modification. However, bundling your server code can reduce startup times and improve running performance. Use this target for full-stack applications with build-time HTML imports, where server and client code are bundled together.
 
 All bundles generated with `target: "bun"` are marked with a `// @bun` pragma, which tells the Bun runtime that there's no need to re-transpile the file before execution.

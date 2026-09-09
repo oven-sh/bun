@@ -182,17 +182,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
-// Closed before anything read from or locked it. ReadableStream{Default,Byte}ControllerClose
-// only moves the stream to Closed once the queue is empty, so such a stream never yields a byte.
+// Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
 extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     return stream && stream->m_state == ReadableStreamState::Closed && !stream->m_disturbed && !isReadableStreamLocked(stream);
 }
 
-// A fetch Body consumer took this stream's contents (through a Bun.readableStreamTo* pump or
-// fast path that has already started, or by lifting the native source's bytes directly). The
-// spec reader for that is never released: keep the stream disturbed and locked from here on.
+// A Body consumer took this stream's contents; its spec reader is never released.
 extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

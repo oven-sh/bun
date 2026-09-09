@@ -371,8 +371,8 @@ impl PendingValue {
     }
 
     /// [`Self::to_any_blob`] for `clone()`: the stream is the wrapper's cached
-    /// `.body` when there is one, and it is detached afterwards so a reference
-    /// the caller still holds reads as locked, the state a tee leaves it in.
+    /// `.body` when there is one. `to_any_blob` leaves a reference the caller
+    /// still holds reading as locked, the state a tee leaves it in.
     fn take_blob_from_unread_stream(
         &mut self,
         global: &JSGlobalObject,
@@ -393,7 +393,6 @@ impl PendingValue {
             }
         }
         let blob = stream.to_any_blob(global)?;
-        stream.force_detach(global);
         self.readable.deinit();
         Some(blob)
     }
@@ -437,8 +436,7 @@ impl PendingValue {
                     };
                     self.readable.deinit();
                     if promise.is_ok() {
-                        // The consumer has its reader (or already finished); from here on the
-                        // stream belongs to this body read even after that reader is released.
+                        // The consumer holds its reader now; keep the lock once it lets go.
                         readable.mark_consumed_as_body(global_this);
                     }
                     // The ReadableStream within is expected to keep this Promise alive.
@@ -745,11 +743,7 @@ impl Value {
         }
     }
 
-    /// [`Self::to_blob_if_possible`] for an upload: a payload that is already
-    /// in memory behind an unread stream is lifted out so it goes out with a
-    /// Content-Length, but a file-backed stream keeps streaming, since its
-    /// length may not be knowable up front (FIFO, device) and reading it
-    /// belongs off this thread.
+    /// [`Self::to_blob_if_possible`], except a file-backed stream keeps streaming (a FIFO has no length).
     pub(crate) fn to_blob_if_in_memory(&mut self) {
         let Value::Locked(locked) = self else {
             return;
@@ -800,8 +794,7 @@ impl Value {
     pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding();
 
-        // Once handed out, the stream *is* the body: `.body` returns it again,
-        // `bodyUsed` follows it, and every reader goes through it.
+        // From here on the stream is the body: `.body`, `bodyUsed` and every reader go through it.
         let stream = match self {
             Value::Used => return ReadableStream::used(global_this),
             Value::Null => return Ok(JSValue::NULL),
@@ -1049,9 +1042,7 @@ impl Value {
                 )));
             }
 
-            // The stream object itself becomes the body, whatever backs it. A
-            // native-backed one is still lifted back into a blob, but only when
-            // something consumes the body (`to_blob_if_possible`).
+            // Adopt the stream whatever backs it; `to_blob_if_possible` lifts a native payload out later.
             return Ok(Value::from_readable_stream_without_lock_check(
                 readable,
                 global_this,
@@ -2235,9 +2226,7 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
         .reject()
 }
 
-/// A body whose stream is disturbed or locked is "unusable" and every reader
-/// rejects with a TypeError before touching it.
-/// <https://fetch.spec.whatwg.org/#body-unusable>
+/// <https://fetch.spec.whatwg.org/#body-unusable>: a disturbed or locked stream rejects every reader.
 fn handle_body_stream_unusable(
     readable: &ReadableStream,
     global_object: &JSGlobalObject,

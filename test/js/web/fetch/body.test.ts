@@ -1760,6 +1760,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     const server = net.createServer(socket => {
       let head = "";
       socket.setEncoding("latin1");
+      socket.on("error", () => socket.destroy());
       socket.on("data", chunk => {
         if (head.includes("\r\n\r\n")) return;
         head += chunk;
@@ -1821,13 +1822,14 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
       },
     });
     for (const path of ["/string", "/blob", "/empty"]) {
-      const { promise, resolve } = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
       let raw = "";
       const socket = net.connect(server.port, "127.0.0.1", () =>
         socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
       );
       socket.setEncoding("latin1");
       socket.on("data", chunk => (raw += chunk));
+      socket.on("error", reject);
       socket.on("close", () => resolve(raw));
       const response = await promise;
       const expected = path === "/empty" ? "" : "payload";

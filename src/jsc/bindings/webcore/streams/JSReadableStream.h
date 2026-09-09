@@ -57,10 +57,7 @@ public:
     // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
     // isReadableStreamLocked() check.
     bool m_lockedWithoutReader : 1 { false };
-    // Bun: a fetch Body consumer (text()/json()/blob()/..., or a native path that took the
-    // source's bytes directly) drained this stream. The reader the spec acquires for that is
-    // never released, so unlike m_lockedWithoutReader nothing clears this. Folded into
-    // nativeHandleDetached(), and through it into every isReadableStreamLocked() check.
+    // Bun: a Body consumer drained this stream. Its spec reader is never released: never cleared.
     bool m_consumedAsBody : 1 { false };
     // Set by jsFunctionTransferToNativeReadableStream.
     bool m_transferred : 1 { false };
@@ -118,8 +115,7 @@ public:
             return {};
         return m_nativePtr.get(); // may be empty
     }
-    // The native handle must not be started or handed out any more: it moved to a node:stream
-    // Readable, a Body consumer already took its bytes, or it was detached outright.
+    // Transferred to a node:stream Readable, drained as a Body, or detached: the handle is off limits.
     bool nativeHandleDetached() const
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);

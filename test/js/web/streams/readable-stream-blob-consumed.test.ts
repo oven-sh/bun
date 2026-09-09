@@ -18,6 +18,6 @@ test("ReadableStream.blob() after body consumed does not crash", async () => {
   } catch (e: any) {
     expect(e).toBeInstanceOf(TypeError);
     expect(e.code).toBe("ERR_INVALID_STATE");
-    expect(e.message).toContain("locked");
+    expect(e.message).toContain("already been used");
   }
 });

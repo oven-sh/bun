@@ -632,6 +632,19 @@ static JSObject* createAlreadyUsedError(JSGlobalObject* globalObject)
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream has already been used"_s);
 }
 
+// Locked is checked before disturbed, except that a stream a Body consumer drained is both and
+// reports what happened to it rather than the lock it left behind. nullptr: usable.
+static JSObject* unusableStreamError(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+{
+    if (stream->m_consumedAsBody)
+        return createAlreadyUsedError(globalObject);
+    if (isReadableStreamLocked(stream))
+        return createLockedError(globalObject);
+    if (stream->m_disturbed)
+        return createAlreadyUsedError(globalObject);
+    return nullptr;
+}
+
 // The one shared `BunTextAccumulator` write arm (createTextStream.write, RSI:1411-1441).
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* owner, BunTextAccumulator& accumulator, JSValue chunk)
 {
@@ -1103,10 +1116,8 @@ JSValue readableStreamToText(JSGlobalObject* globalObject, WebCore::JSReadableSt
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, readableStreamToTextDirect(globalObject, stream));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).textPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1120,10 +1131,8 @@ JSValue readableStreamToArray(JSGlobalObject* globalObject, WebCore::JSReadableS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, readableStreamToArrayDirect(globalObject, stream));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     RELEASE_AND_RETURN(scope, readableStreamIntoArray(globalObject, stream));
 }
 
@@ -1197,10 +1206,8 @@ JSValue readableStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSRea
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, consumeDirectStreamToArrayBuffer(globalObject, stream, /* asUint8Array */ false));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).arrayBufferPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1216,10 +1223,8 @@ JSValue readableStreamToBytes(JSGlobalObject* globalObject, WebCore::JSReadableS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_bunMode == BunStreamMode::DirectPending)
         RELEASE_AND_RETURN(scope, consumeDirectStreamToArrayBuffer(globalObject, stream, /* asUint8Array */ true));
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).bytesPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1233,10 +1238,8 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).jsonPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1269,10 +1272,8 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     if (fastPath)
@@ -1294,10 +1295,8 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
-    if (stream->m_disturbed)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
     JSValue blobResult = readableStreamToBlob(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);

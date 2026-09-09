@@ -191,10 +191,7 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole body out of a stream nothing has read from yet, so the
-    /// caller can skip the stream machinery. On success the stream is spent:
-    /// its native source is cancelled and the JS object reads as a consumed
-    /// body (disturbed and locked) from then on.
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -234,12 +231,10 @@ impl ReadableStream {
                 // we can avoid streaming it and convert it to a Blob
                 bytes.to_any_blob()?
             }
-            // A stream that closed before anything read from it never yields a byte.
+            // A stream that closed before anything read from it never yields a byte; give back the
+            // store-less empty Blob that `new Response(new Blob([]))` holds.
             Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
-                webcore::blob::Any::InternalBlob(webcore::InternalBlob {
-                    bytes: Vec::new(),
-                    was_string: false,
-                })
+                webcore::blob::Any::Blob(Blob::init_empty(global_this))
             }
             Source::JavaScript | Source::Invalid => return None,
         };
@@ -299,10 +294,7 @@ impl ReadableStream {
         result
     }
 
-    /// A Body consumer (`text()`/`json()`/`blob()`/..., or a native path that
-    /// took the source's bytes via [`Self::to_any_blob`]) owns this stream now.
-    /// The fetch spec never releases the reader it acquires for that, so the
-    /// stream stays disturbed and locked for good.
+    /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
     pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
         ReadableStream__markConsumedAsBody(self.value, global_object);
     }
@@ -414,8 +406,7 @@ impl ReadableStream {
         ReadableStream__isLocked(self.value, global_object)
     }
 
-    /// Fetch's "body is unusable": its stream is disturbed or locked.
-    /// <https://fetch.spec.whatwg.org/#body-unusable>
+    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
     pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
         self.is_disturbed(global_object) || self.is_locked(global_object)
     }

@@ -3758,7 +3758,7 @@ where
         // For plain in-memory bodies this runs synchronously from
         // render() before any backpressure gap, so the Response is
         // always live here. File / stream bodies that call this after
-        // an async hop keep the Response rooted via response_protected.
+        // an async hop keep the Response rooted via `response_root`.
         let response: &mut Response = self.response_mut().unwrap();
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();

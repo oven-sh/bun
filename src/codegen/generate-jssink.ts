@@ -723,6 +723,9 @@ void JS${controllerName}::detach(JSC::JSValue reason) {
         clearReadableStream();
         return;
     }
+    // A sink whose close re-enters here (FileSink's on_close runs inside close(error)) detaches before closeWithReason passes the reason; m_failReason already has it.
+    if (!reason)
+        reason = m_failReason.get();
     Bun::WebStreams::sinkControllerOnClose(this->globalObject(), this, reason ? reason : JSC::jsUndefined(), /* sinkClosed */ false);
 }
 `;

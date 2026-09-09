@@ -9316,8 +9316,11 @@ declare module "bun" {
      * call's `path`/`argv`/`dataStore.directory` win; subsequent views reuse
      * the same Chrome instance via `Target.createTarget`.
      *
-     * Default flags: `--remote-debugging-pipe --headless --no-first-run
-     * --no-default-browser-check --disable-gpu --user-data-dir=<temp>`.
+     * Default flags: `--user-data-dir=<temp> --remote-debugging-pipe --headless
+     * --no-first-run --no-default-browser-check --disable-gpu --disable-extensions
+     * --disable-background-networking --disable-background-timer-throttling
+     * --disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+     * --disable-ipc-flooding-protection --no-startup-window --do-not-de-elevate`.
      */
     type Backend =
       | "webkit"

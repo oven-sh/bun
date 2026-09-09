@@ -4,6 +4,7 @@ use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::number::parse_non_negative;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
 use crate::generics::{CssEql, DeepClone};
 use crate::properties::{Property, PropertyId};
@@ -285,9 +286,10 @@ pub struct ExplicitBackgroundSize {
 
 impl BackgroundSize {
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
+        let parse_length = |i: &mut Parser| parse_non_negative(i, LengthPercentageOrAuto::parse);
+        if let Ok(width) = input.try_parse(parse_length) {
             let height = input
-                .try_parse(LengthPercentageOrAuto::parse)
+                .try_parse(parse_length)
                 .unwrap_or(LengthPercentageOrAuto::Auto);
             return Ok(BackgroundSize::Explicit(ExplicitBackgroundSize {
                 width,

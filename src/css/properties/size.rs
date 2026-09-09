@@ -10,6 +10,7 @@ use crate::properties::{Property, PropertyId, PropertyIdTag};
 use css::logical::PropertyCategory;
 
 use css::css_values::length::LengthPercentage;
+use css::css_values::number::parse_non_negative;
 use css::css_values::ratio::Ratio;
 
 use css::DeclarationList;
@@ -110,7 +111,7 @@ impl Size {
             return Ok(Size::FitContentFunction(v));
         }
 
-        let lp = input.try_parse(LengthPercentage::parse)?;
+        let lp = input.try_parse(parse_length)?;
         Ok(Size::LengthPercentage(lp))
     }
 
@@ -244,7 +245,7 @@ impl MaxSize {
             return Ok(MaxSize::FitContentFunction(v));
         }
 
-        match input.try_parse(LengthPercentage::parse) {
+        match input.try_parse(parse_length) {
             Ok(v) => Ok(MaxSize::LengthPercentage(v)),
             Err(e) => Err(e),
         }
@@ -379,9 +380,14 @@ impl AspectRatio {
     }
 }
 
+/// `<length-percentage [0,∞]>`
+fn parse_length(input: &mut css::Parser) -> css::Result<LengthPercentage> {
+    parse_non_negative(input, LengthPercentage::parse)
+}
+
 fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
     input.expect_function_matching(b"fit-content")?;
-    input.parse_nested_block(LengthPercentage::parse)
+    input.parse_nested_block(parse_length)
 }
 
 bitflags::bitflags! {

@@ -798,10 +798,12 @@ enum VariantShape<'a> {
         ident: &'a syn::Ident,
         keyword: String,
     },
-    /// `Foo(Payload)` — single unnamed field
+    /// `Foo(Payload)` — single unnamed field. `#[css(non_negative)]` parses the
+    /// payload with `values::number::parse_non_negative` (a `[0,∞]` range).
     Payload {
         ident: &'a syn::Ident,
         ty: &'a syn::Type,
+        non_negative: bool,
     },
     /// `Foo { f1, f2, … }` — inline struct payload; the printer is the field
     /// sequence (see [`gen_field_seq_to_css`]).
@@ -822,6 +824,7 @@ fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
             Fields::Unnamed(fs) if fs.unnamed.len() == 1 => out.push(VariantShape::Payload {
                 ident: &v.ident,
                 ty: &fs.unnamed.first().unwrap().ty,
+                non_negative: has_css_flag(&v.attrs, "non_negative"),
             }),
             Fields::Named(fs) => out.push(VariantShape::NamedFields {
                 ident: &v.ident,
@@ -1043,12 +1046,16 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // tried in declaration-block order: split into the two contiguous groups
     // and emit whichever is declared first, first.
     let mut units: Vec<(&syn::Ident, String)> = Vec::new();
-    let mut payloads: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
+    let mut payloads: Vec<(&syn::Ident, &syn::Type, bool)> = Vec::new();
     let units_first = matches!(shapes.first(), Some(VariantShape::Unit { .. }));
     for s in &shapes {
         match s {
             VariantShape::Unit { ident, keyword } => units.push((ident, keyword.clone())),
-            VariantShape::Payload { ident, ty } => payloads.push((ident, ty)),
+            VariantShape::Payload {
+                ident,
+                ty,
+                non_negative,
+            } => payloads.push((ident, ty, *non_negative)),
             VariantShape::NamedFields { ident, .. } => {
                 // The derive only dispatches on void variants and payload
                 // types that themselves expose `parse`; inline named-field
@@ -1101,21 +1108,31 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
             return quote! {};
         }
         let last = payloads.len() - 1;
-        let stmts = payloads.iter().enumerate().map(|(i, (ident, ty))| {
-            if terminal && i == last {
-                quote! {
-                    return <#ty>::parse(__input).map(#name::#ident);
-                }
-            } else {
-                quote! {
-                    if let ::core::result::Result::Ok(__v) =
-                        __input.try_parse(<#ty>::parse)
-                    {
-                        return ::core::result::Result::Ok(#name::#ident(__v));
+        let stmts = payloads
+            .iter()
+            .enumerate()
+            .map(|(i, (ident, ty, non_negative))| {
+                let parser = if *non_negative {
+                    quote! {
+                        |__p: &mut ::bun_css::css_parser::Parser<'_>| {
+                            ::bun_css::css_values::number::parse_non_negative(__p, <#ty>::parse)
+                        }
+                    }
+                } else {
+                    quote! { <#ty>::parse }
+                };
+                if terminal && i == last {
+                    quote! {
+                        return (#parser)(__input).map(#name::#ident);
+                    }
+                } else {
+                    quote! {
+                        if let ::core::result::Result::Ok(__v) = __input.try_parse(#parser) {
+                            return ::core::result::Result::Ok(#name::#ident(__v));
+                        }
                     }
                 }
-            }
-        });
+            });
         quote! { #(#stmts)* }
     };
 

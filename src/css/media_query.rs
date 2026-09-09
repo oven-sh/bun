@@ -1121,6 +1121,11 @@ impl MediaFeatureValue {
         if expected_type == MediaFeatureType::Unknown || vt == MediaFeatureType::Unknown {
             return true;
         }
+        // `(min-width: 600)` is well-formed and never matches. It is kept as written
+        // rather than failing the build.
+        if expected_type == MediaFeatureType::Length && vt == MediaFeatureType::Number {
+            return true;
+        }
         expected_type == vt
     }
 

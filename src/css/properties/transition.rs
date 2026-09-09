@@ -13,7 +13,9 @@ use crate::css_properties::PropertyId;
 use crate::css_properties::masking;
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::CustomIdent;
+use crate::css_values::number::{ClampNegative as _, peek_number_literal};
 use crate::css_values::time::Time;
+use crate::error::ParserError;
 
 use crate::VendorPrefix;
 use crate::compat;
@@ -52,8 +54,14 @@ impl Transition {
 
         loop {
             if duration.is_none() {
+                // The first <time> is the duration (`<time [0,∞]>`). A negative literal
+                // there makes the transition invalid rather than being the delay.
+                let negative = peek_number_literal(parser).is_some_and(|v| v < 0.0);
                 if let Ok(value) = parser.try_parse(Time::parse) {
-                    duration = Some(value);
+                    if negative {
+                        return Err(parser.new_custom_error(ParserError::invalid_value));
+                    }
+                    duration = Some(value.clamp_negative());
                     continue;
                 }
             }

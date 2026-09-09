@@ -171,7 +171,7 @@ describe("css tests", () => {
   width: calc(infinity * -1px);
   height: infinity;
 }`,
-      indoc`.rounded-full{width:-3.40282e38px;height:infinity;border-radius:3.40282e38px}`,
+      indoc`.rounded-full{width:0;height:infinity;border-radius:3.40282e38px}`,
     );
 
     // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
@@ -207,7 +207,7 @@ describe("css tests", () => {
     // compared with the center after the maximum has replaced it.
     minify_test(`a { width: clamp(20px, 15px, 10px) }`, `a{width:20px}`);
     minify_test(`a { width: clamp(30px, 100px, 20px) }`, `a{width:30px}`);
-    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:-10px}`);
+    minify_test(`a { left: clamp(-10px, 100px, -30px) }`, `a{left:-10px}`);
     // A lower bound that cannot be compared at parse time is kept, whether or not the center
     // was above the maximum.
     minify_test(`a { width: clamp(10vw, 5px, 20px) }`, `a{width:max(10vw,5px)}`);
@@ -228,8 +228,8 @@ describe("css tests", () => {
     minify_test(`a { width: calc(100% - 2 - 1 + 5vh - 10vh) }`, `a{width:calc(100% - 2 - 1 - 5vh)}`); // ideally 100% - 3 + 5vh
     minify_test(
       `a { width: calc(10 - 4 - 100% - 2 - 4 - 300% - 8vh + 3ic) }`,
-      `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
-    ); // ideally -400% - 8vh + 3ic
+      `a{width:calc(10 - 4 - 100% - 2 - 4 - 300% - 8vh + 3ic)}`,
+    );
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
   describe("a value that does not parse keeps the declaration before it", () => {
@@ -279,6 +279,131 @@ describe("css tests", () => {
       `a { border-top-left-radius: 1px; border-top-left-radius: var(--r) }`,
       `a{border-top-left-radius:1px;border-top-left-radius:var(--r)}`,
     );
+  });
+  describe("invalid values are not merged or repaired", () => {
+    // Browsers drop a declaration whose value is out of the property's range or of the wrong
+    // type, so the declaration before it applies. The minifier must neither let such a value
+    // replace the earlier one nor print it in a form that browsers accept.
+    describe("negative literals where the range is [0,∞]", () => {
+      for (const property of [
+        "width",
+        "min-height",
+        "max-width",
+        "block-size",
+        "padding-left",
+        "padding-inline-start",
+        "padding",
+        "padding-block",
+        "border-top-width",
+        "border-width",
+        "border-radius",
+        "border-top-left-radius",
+        "gap",
+        "row-gap",
+        "font-size",
+        "flex-basis",
+        "background-size",
+      ]) {
+        minify_test(`a { ${property}: 1px; ${property}: -1px }`, `a{${property}:1px;${property}:-1px}`);
+        minify_test(`a { ${property}: 1px; ${property}: -1% }`, `a{${property}:1px;${property}:-1%}`);
+      }
+      minify_test(`a { padding: 1px; padding: 0 -1px }`, `a{padding:1px;padding:0 -1px}`);
+      minify_test(`a { border-radius: 1px; border-radius: 1px / -1px }`, `a{border-radius:1px;border-radius:1px/-1px}`);
+      minify_test(`a { width: 1px; width: fit-content(-1px) }`, `a{width:1px;width:fit-content(-1px)}`);
+      minify_test(`a { border: 1px solid red; border: -1px solid red }`, `a{border:1px solid red;border:-1px solid red}`);
+      minify_test(`a { flex-grow: 1; flex-grow: -1 }`, `a{flex-grow:1;flex-grow:-1}`);
+      minify_test(`a { flex-shrink: 1; flex-shrink: -1 }`, `a{flex-shrink:1;flex-shrink:-1}`);
+      minify_test(`a { flex: 2; flex: -1 }`, `a{flex:2;flex:-1}`);
+      minify_test(`a { flex: 2; flex: 1 -1 }`, `a{flex:2;flex:1 -1}`);
+      minify_test(`a { flex: 2; flex: 1 1 -1px }`, `a{flex:2;flex:1 1 -1px}`);
+      minify_test(`a { font-weight: bold; font-weight: 1001 }`, `a{font-weight:700;font-weight:1001}`);
+      minify_test(`a { font-weight: bold; font-weight: 0 }`, `a{font-weight:700;font-weight:0}`);
+      minify_test(`a { font-weight: bold; font-weight: 0.5 }`, `a{font-weight:700;font-weight:.5}`);
+      minify_test(`a { font-weight: bold; font-weight: 1000 }`, `a{font-weight:1000}`);
+      minify_test(`a { font-weight: bold; font-weight: 1 }`, `a{font-weight:1}`);
+      minify_test(`a { font: bold 12px serif; font: 1001 12px serif }`, `a{font:700 12px serif;font:1001 12px serif}`);
+      minify_test(`a { font: 12px serif; font: -1px serif }`, `a{font:12px serif;font:-1px serif}`);
+      minify_test(`a { font-stretch: 50%; font-stretch: -1% }`, `a{font-stretch:50%;font-stretch:-1%}`);
+      minify_test(`a { line-height: 2; line-height: -1 }`, `a{line-height:2;line-height:-1}`);
+      minify_test(`a { line-height: 2; line-height: -1px }`, `a{line-height:2;line-height:-1px}`);
+      minify_test(
+        `a { box-shadow: 0 0 1px red; box-shadow: 0 0 -1px red }`,
+        `a{box-shadow:0 0 1px red;box-shadow:0 0 -1px red}`,
+      );
+      minify_test(
+        `a { text-shadow: 0 0 1px red; text-shadow: 0 0 -1px red }`,
+        `a{text-shadow:0 0 1px red;text-shadow:0 0 -1px red}`,
+      );
+      minify_test(
+        `a { transition-duration: 1s; transition-duration: -1s }`,
+        `a{transition-duration:1s;transition-duration:-1s}`,
+      );
+      minify_test(
+        `a { transition-duration: 1s; transition-duration: 1s, -1ms }`,
+        `a{transition-duration:1s;transition-duration:1s,-1ms}`,
+      );
+      minify_test(`a { transition: all 1s; transition: all -1s }`, `a{transition:all 1s;transition:all -1s}`);
+      minify_test(`a { transition: all 1s; transition: all -1s 2s }`, `a{transition:all 1s;transition:all -1s 2s}`);
+      // Negative values are in range here.
+      minify_test(`a { margin: 1px; margin: -1px }`, `a{margin:-1px}`);
+      minify_test(`a { inset: 1px; inset: -1px }`, `a{inset:-1px}`);
+      minify_test(`a { box-shadow: 0 0 1px red; box-shadow: -1px -1px 0 -1px red }`, `a{box-shadow:-1px -1px 0 -1px red}`);
+      minify_test(`a { transition-delay: 1s; transition-delay: -1s }`, `a{transition-delay:-1s}`);
+      minify_test(`a { transition: all 1s; transition: all 1s -1s }`, `a{transition:all 1s -1s}`);
+      minify_test(`a { width: 1px; width: -0px }`, `a{width:0}`);
+    });
+
+    describe("a math function is not range-checked, its value is clamped", () => {
+      minify_test(`a { width: 1px; width: calc(10px - 20px) }`, `a{width:0}`);
+      minify_test(`a { padding: 8px; padding: calc(8px - 12px) }`, `a{padding:0}`);
+      minify_test(`a { padding: 8px; padding: 1px calc(10% - 20%) }`, `a{padding:1px 0%}`);
+      minify_test(`a { border-width: calc(1px - 2px) }`, `a{border-width:0}`);
+      minify_test(`a { font-size: max(-2px, -1em) }`, `a{font-size:max(-2px,-1em)}`);
+      minify_test(`a { flex-grow: calc(1 - 2) }`, `a{flex-grow:0}`);
+      minify_test(`a { line-height: calc(1 - 2) }`, `a{line-height:0}`);
+      minify_test(`a { font-weight: calc(200 * 10) }`, `a{font-weight:1000}`);
+      minify_test(`a { font-weight: calc(200 - 300) }`, `a{font-weight:1}`);
+      minify_test(`a { transition-duration: calc(1s - 2s) }`, `a{transition-duration:0s}`);
+      minify_test(`a { box-shadow: 0 0 calc(1px - 2px) red }`, `a{box-shadow:0 0 red}`);
+      minify_test(`a { margin: calc(10px - 20px) }`, `a{margin:-10px}`);
+    });
+
+    describe("a number is not a length", () => {
+      minify_test(`a { width: 100px; width: calc(0) }`, `a{width:100px;width:calc(0)}`);
+      minify_test(`a { width: 100px; width: calc(2 * 5) }`, `a{width:100px;width:calc(2*5)}`);
+      minify_test(`a { width: 100px; width: min(0, 1) }`, `a{width:100px;width:min(0,1)}`);
+      minify_test(`a { margin: 1px; margin: calc(0) }`, `a{margin:1px;margin:calc(0)}`);
+      minify_test(`a { border-width: 1px; border-width: calc(1) }`, `a{border-width:1px;border-width:calc(1)}`);
+      minify_test(`a { width: 100px; width: 10 }`, `a{width:100px;width:10}`);
+      minify_test(`a { margin: 4px; margin-top: 10 }`, `a{margin:4px;margin-top:10}`);
+      minify_test(`a { top: 1px; top: 10 }`, `a{top:1px;top:10}`);
+      minify_test(`a { font-size: 12px; font-size: 10 }`, `a{font-size:12px;font-size:10}`);
+      minify_test(`a { border-width: 1px; border-width: 2 }`, `a{border-width:1px;border-width:2}`);
+      minify_test(
+        `a { transform: rotate(10deg); transform: translate(10) }`,
+        `a{transform:rotate(10deg);transform:translate(10)}`,
+      );
+      minify_test(`a { translate: 1px; translate: 10 20 }`, `a{translate:1px;translate:10 20}`);
+      // A length media feature compared with a number never matches. It is kept as written.
+      minify_test(`@media (min-width: 600) { a { color: red } }`, `@media (width>=600){a{color:red}}`);
+      minify_test(`@media (400 <= width <= 600px) { a { color: red } }`, `@media (400<=width<=600px){a{color:red}}`);
+      // Numbers and unit-less zero lengths still parse.
+      minify_test(`@media (min-width: 0) { a { color: red } }`, `@media (width>=0){a{color:red}}`);
+      minify_test(`a { width: 100px; width: calc(2 * 5px) }`, `a{width:10px}`);
+      minify_test(`a { width: 100px; width: 0 }`, `a{width:0}`);
+      minify_test(`a { line-height: 1; line-height: calc(2) }`, `a{line-height:2}`);
+      minify_test(`a { flex: 2; flex: 1 1 0 }`, `a{flex:1 1 0}`);
+      minify_test(`a { transform: rotate(10deg); transform: translate(0) }`, `a{transform:translate(0)}`);
+    });
+
+    describe("a number with an exponent or a fraction is not an integer", () => {
+      minify_test(`a { order: 1; order: 1e1 }`, `a{order:1;order:10.0}`);
+      minify_test(`a { order: 3; order: 2.0 }`, `a{order:3;order:2.0}`);
+      minify_test(`a { z-index: 1; z-index: 1e1 }`, `a{z-index:1;z-index:10.0}`);
+      minify_test(`a { --x: 2.0 }`, `a{--x:2.0}`);
+      minify_test(`a { order: 3; order: 2 }`, `a{order:2}`);
+      minify_test(`a { --x: 2.5 }`, `a{--x:2.5}`);
+    });
   });
   describe("border_spacing", () => {
     minify_test(

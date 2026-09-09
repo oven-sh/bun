@@ -7,6 +7,7 @@ use crate::PropertyHandlerContext;
 use crate::VendorPrefix;
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::length::LengthPercentage;
+use crate::css_values::number::parse_non_negative;
 use crate::css_values::rect::Rect;
 use crate::css_values::size::Size2D;
 use bun_alloc::ArenaVecExt as _;
@@ -45,10 +46,11 @@ impl BorderRadius {
     }
 
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let parse_length = |i: &mut css::Parser| parse_non_negative(i, LengthPercentage::parse);
+        let widths = Rect::<LengthPercentage>::parse_with(input, parse_length)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
+            Rect::<LengthPercentage>::parse_with(input, parse_length)?
         } else {
             // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.

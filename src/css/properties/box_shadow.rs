@@ -7,6 +7,7 @@ use crate::css_properties::Property;
 use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::Length;
+use crate::css_values::number::{ClampNegative as _, peek_number_literal};
 use crate::generics::{CssEql, DeepClone, IsCompatible};
 use crate::prefixes::Feature;
 use bun_alloc::Arena;
@@ -78,7 +79,14 @@ impl BoxShadow {
                 let value = input.try_parse(|p: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(p)?;
                     let vertical = Length::parse(p)?;
-                    let blur = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
+                    // A third length is the blur radius (`<length [0,∞]>`). A negative
+                    // literal there makes the shadow invalid rather than being the spread.
+                    if peek_number_literal(p).is_some_and(|v| v < 0.0) {
+                        return Err(p.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    let blur = p
+                        .try_parse(Length::parse)
+                        .map_or_else(|_| Length::zero(), |v| v.clamp_negative());
                     let spread = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     Ok(Lengths {
                         x: horizontal,

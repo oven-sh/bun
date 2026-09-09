@@ -4,6 +4,7 @@ use crate::PrintErr;
 use crate::Printer;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::LengthValue as Length;
+use crate::css_values::number::peek_number_literal;
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
@@ -31,6 +32,11 @@ impl TextShadow {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(i)?;
                     let vertical = Length::parse(i)?;
+                    // A third length is the blur radius (`<length [0,∞]>`). A negative
+                    // literal there makes the shadow invalid rather than being the spread.
+                    if peek_number_literal(i).is_some_and(|v| v < 0.0) {
+                        return Err(i.new_custom_error(css::ParserError::invalid_value));
+                    }
                     let blur = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     let spread = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     Ok((horizontal, vertical, blur, spread))

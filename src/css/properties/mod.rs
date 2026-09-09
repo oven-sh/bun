@@ -27,9 +27,18 @@
 // submodules without `#[macro_export]`.
 macro_rules! impl_rect_shorthand {
     ($T:ident, $V:ty) => {
+        impl_rect_shorthand!(@with $T, $V, <$V>::parse);
+    };
+    // Each side is `<$V [0,∞]>`.
+    ($T:ident, $V:ty, non_negative) => {
+        impl_rect_shorthand!(@with $T, $V, |i: &mut $crate::css_parser::Parser| {
+            $crate::css_values::number::parse_non_negative(i, <$V>::parse)
+        });
+    };
+    (@with $T:ident, $V:ty, $parse:expr) => {
         impl $T {
             pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
-                let r = $crate::css_values::rect::Rect::<$V>::parse(input)?;
+                let r = $crate::css_values::rect::Rect::<$V>::parse_with(input, $parse)?;
                 Ok(Self {
                     top: r.top,
                     right: r.right,
@@ -62,7 +71,7 @@ macro_rules! define_rect_shorthand {
         right: $right_id:ident,
         bottom: $bottom_id:ident,
         left: $left_id:ident
-        $(, fallbacks)?
+        $(, $range:ident)?
     ) => {
         $(#[$meta])*
         #[derive(Clone, PartialEq)]
@@ -74,15 +83,27 @@ macro_rules! define_rect_shorthand {
         }
 
         // parse/to_css via `Rect<V>`.
-        impl_rect_shorthand!($name, $inner);
+        impl_rect_shorthand!($name, $inner $(, $range)?);
     };
 }
 
 macro_rules! impl_size_shorthand {
     ($T:ident, $V:ty, $start:ident, $end:ident) => {
+        impl_size_shorthand!(@with $T, $V, $start, $end, <$V>::parse);
+    };
+    // Both sides are `<$V [0,∞]>`.
+    ($T:ident, $V:ty, $start:ident, $end:ident, non_negative) => {
+        impl_size_shorthand!(
+            @with $T, $V, $start, $end,
+            |i: &mut $crate::css_parser::Parser| {
+                $crate::css_values::number::parse_non_negative(i, <$V>::parse)
+            }
+        );
+    };
+    (@with $T:ident, $V:ty, $start:ident, $end:ident, $parse:expr) => {
         impl $T {
             pub fn parse(input: &mut $crate::css_parser::Parser) -> $crate::Result<Self> {
-                let s = $crate::css_values::size::Size2D::<$V>::parse(input)?;
+                let s = $crate::css_values::size::Size2D::<$V>::parse_with(input, $parse)?;
                 Ok(Self {
                     $start: s.a,
                     $end: s.b,

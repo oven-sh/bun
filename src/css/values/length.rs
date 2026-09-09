@@ -4,7 +4,7 @@ use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
-use crate::values::number::CSSNumber;
+use crate::values::number::{CSSNumber, ClampNegative};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
@@ -55,6 +55,34 @@ impl LengthPercentageOrAuto {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             _ => true,
+        }
+    }
+}
+
+impl ClampNegative for LengthPercentageOrAuto {
+    fn clamp_negative(self) -> Self {
+        match self {
+            Self::Auto => Self::Auto,
+            Self::Length(l) => Self::Length(l.clamp_negative()),
+        }
+    }
+}
+
+impl ClampNegative for LengthValue {
+    fn clamp_negative(self) -> Self {
+        if self.value() < 0.0 {
+            self.map_value(|_| 0.0)
+        } else {
+            self
+        }
+    }
+}
+
+impl ClampNegative for Length {
+    fn clamp_negative(self) -> Self {
+        match self {
+            Self::Value(v) => Self::Value(v.clamp_negative()),
+            Self::Calc(c) => Self::Calc(c),
         }
     }
 }
@@ -274,7 +302,8 @@ impl LengthValue {
                     return Ok(v);
                 }
             }
-            Token::Number(num) => return Ok(Self::Px(num.value)),
+            // Outside quirks mode only `0` may be written without a unit.
+            Token::Number(num) if num.value == 0.0 => return Ok(Self::Px(num.value)),
             _ => {}
         }
         Err(location.new_unexpected_token_error(token))
@@ -414,12 +443,14 @@ impl Length {
     }
 
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
-        if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
+        match input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+            Ok(Calc::Value(v)) => return Ok(*v),
+            Ok(calc) if calc.resolves_to_number() => {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
         let len = LengthValue::parse(input)?;

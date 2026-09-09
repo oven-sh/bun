@@ -113,6 +113,34 @@ pub enum Calc<V> {
     Function(Box<MathFunction<V>>),
 }
 
+impl<V> Calc<V> {
+    /// Whether this expression resolves to a `<number>` rather than to a `V`, which
+    /// makes it invalid where a dimension or a percentage is required: there is no
+    /// unit-less zero inside a math function. The operands of a sum and the
+    /// arguments of `min()`, `max()` and `hypot()` have one type, so the first one
+    /// decides.
+    pub(crate) fn resolves_to_number(&self) -> bool {
+        match self {
+            Calc::Value(_) => false,
+            Calc::Number(_) => true,
+            Calc::Sum { left, .. } => left.resolves_to_number(),
+            Calc::Product { expression, .. } => expression.resolves_to_number(),
+            Calc::Function(f) => match &**f {
+                MathFunction::Sign(_) => true,
+                MathFunction::Calc(c)
+                | MathFunction::Abs(c)
+                | MathFunction::Clamp { min: c, .. }
+                | MathFunction::Round { value: c, .. }
+                | MathFunction::Rem { dividend: c, .. }
+                | MathFunction::Mod { dividend: c, .. } => c.resolves_to_number(),
+                MathFunction::Min(args) | MathFunction::Max(args) | MathFunction::Hypot(args) => {
+                    args.first().is_some_and(|c| c.resolves_to_number())
+                }
+            },
+        }
+    }
+}
+
 // ───────────────────────────── CalcValue trait ─────────────────────────────
 // Every type that can appear inside `Calc<V>` implements this.
 //

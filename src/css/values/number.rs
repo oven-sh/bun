@@ -1,9 +1,69 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, Parser, ParserError, PrintErr, Printer};
+use crate::css_parser::{CssResult, Parser, ParserError, ParserOptions, PrintErr, Printer, Token};
+use crate::generics::{Parse, ParseWithOptions};
 use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 
 pub type CSSNumber = f32;
+
+/// The value of the next token if it is a `<number>`, `<percentage>` or
+/// `<dimension>` literal, without consuming it.
+pub(crate) fn peek_number_literal(input: &mut Parser) -> Option<CSSNumber> {
+    let start = input.state();
+    let value = match input.next() {
+        Ok(Token::Number(num)) => Some(num.value),
+        Ok(Token::Dimension(dim)) => Some(dim.num.value),
+        Ok(Token::Percentage { unit_value, .. }) => Some(*unit_value),
+        _ => None,
+    };
+    input.reset(&start);
+    value
+}
+
+/// A numeric value whose property grammar carries a `[0,∞]` range
+/// (`<length-percentage [0,∞]>`, `<number [0,∞]>`, `<time [0,∞]>`, ...).
+///
+/// Range restrictions apply to literals only: a negative literal makes the
+/// declaration invalid, while a math function is never range-checked at parse
+/// time and its result is clamped to the range instead
+/// (https://drafts.csswg.org/css-values-4/#calc-range).
+pub(crate) trait ClampNegative: Sized {
+    /// Clamps a fully resolved negative value to zero. Unresolved math is left
+    /// for the browser to clamp.
+    fn clamp_negative(self) -> Self;
+}
+
+impl ClampNegative for CSSNumber {
+    fn clamp_negative(self) -> Self {
+        if self < 0.0 { 0.0 } else { self }
+    }
+}
+
+/// Parses a value with a `[0,∞]` range. See [ClampNegative].
+pub(crate) fn parse_non_negative<T: ClampNegative>(
+    input: &mut Parser,
+    parse: impl FnOnce(&mut Parser) -> CssResult<T>,
+) -> CssResult<T> {
+    if peek_number_literal(input).is_some_and(|v| v < 0.0) {
+        return Err(input.new_custom_error(ParserError::invalid_value));
+    }
+    parse(input).map(T::clamp_negative)
+}
+
+/// Parse-only wrapper that applies [parse_non_negative] to `T`, for use inside
+/// generic containers (`SmallList`, `parse_value`).
+pub struct NonNegative<T>(pub T);
+
+impl<T: Parse + ClampNegative> Parse for NonNegative<T> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        parse_non_negative(input, T::parse).map(NonNegative)
+    }
+}
+impl<T: Parse + ClampNegative> ParseWithOptions for NonNegative<T> {
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
+    }
+}
 
 pub struct CSSNumberFns;
 

@@ -660,20 +660,25 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
 // spawn child processes: they start first and run during it.
 const repeatedPastOneMiB = (chunk: Uint8Array) =>
   Buffer.concat(Array.from({ length: Math.ceil((1024 * 1024) / chunk.length) }, () => chunk));
-for (const { name, input } of [
-  { name: "small", input: new TextEncoder().encode("Hello, World!") },
-  { name: "medium", input: readFileSync(path.join(__dirname, "..", "..", "..", "bun.lock")) },
+for (const { name, input, levelChangesTheResult } of [
+  // 13 bytes are stored raw at any level.
+  { name: "small", input: new TextEncoder().encode("Hello, World!"), levelChangesTheResult: false },
+  // Every level above 1 compresses this much text smaller than level 1 does, so a smaller frame shows
+  // that `level` reached the encoder.
+  {
+    name: "medium",
+    input: readFileSync(path.join(__dirname, "..", "..", "..", "bun.lock")),
+    levelChangesTheResult: true,
+  },
   {
     name: "large",
     input: repeatedPastOneMiB(
       readFileSync(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.rs")),
     ),
+    levelChangesTheResult: true,
   },
 ]) {
   describe.concurrent(name + " (" + input.length + " bytes)", () => {
-    // Every level above 1 compresses this much text smaller than level 1 does (the 13-byte input is
-    // stored raw at any level), so a smaller frame shows that `level` reached the encoder.
-    const levelChangesTheResult = input.length >= 64 * 1024;
     const levelOneLength = zstdCompressSync(input, { level: 1 }).length;
 
     for (let level = 1; level <= 22; level++) {

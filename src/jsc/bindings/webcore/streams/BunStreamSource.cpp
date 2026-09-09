@@ -21,11 +21,11 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
-#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -164,10 +164,17 @@ static constexpr size_t nativeSourceMinChunkSize = 64 * 1024;
 static constexpr size_t nativeSourceDefaultChunkSize = 256 * 1024;
 static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
 
-// Shared bound-convention wrapper: see createStreamsBoundHandler (WebStreamsMisc.cpp).
-static inline JSBoundFunction* createBoundHandler(JSGlobalObject* globalObject, JSFunction* target, JSCell* context)
+// The native source wrapper's `closeAdapter` slot: what `NewSource::on_close` (ReadableStream.rs) notifies, and the GC edge that keeps the adapter alive for it.
+static void setNativeSourceCloseAdapter(JSC::VM& vm, JSObject* handle, JSValue adapter)
 {
-    return createStreamsBoundHandler(globalObject, target, context);
+    if (auto* source = dynamicDowncast<WebCore::JSBytesInternalReadableStreamSource>(handle))
+        source->m_closeAdapter.set(vm, source, adapter);
+    else if (auto* source = dynamicDowncast<WebCore::JSFileInternalReadableStreamSource>(handle))
+        source->m_closeAdapter.set(vm, source, adapter);
+    else if (auto* source = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(handle))
+        source->m_closeAdapter.set(vm, source, adapter);
+    else
+        ASSERT_NOT_REACHED();
 }
 
 // object.<name>(...args) with a real [[Get]], as the replaced builtins did.
@@ -259,22 +266,15 @@ static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNative
     return flag.toBoolean(globalObject);
 }
 
-// Terminal severing: the handle edge, the pending view, and the handle's callback slots.
+// Terminal severing: the handle edge, the pending view, and the handle's closeAdapter slot.
 static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* handle = adapter->handle();
     adapter->clearHandle(vm);
     adapter->clearPendingView(vm);
-    if (!handle)
-        return;
-    PutPropertySlot onCloseSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), jsUndefined(), onCloseSlot);
-    RETURN_IF_EXCEPTION(scope, );
-    PutPropertySlot onDrainSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), jsUndefined(), onDrainSlot);
-    RELEASE_AND_RETURN(scope, );
+    if (handle)
+        setNativeSourceCloseAdapter(vm, handle, jsUndefined());
 }
 
 // The queued callClose job body (run from its own microtask, which reports what this throws):
@@ -474,16 +474,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     if (!drainValue.isUndefined())
         adapter->setDrainValue(vm, drainValue);
 
-    auto* onCloseBound = createBoundHandler(globalObject, runtime->boundOnNativeSourceClose(), adapter);
-    RETURN_IF_EXCEPTION(scope, );
-    auto* onDrainBound = createBoundHandler(globalObject, runtime->boundOnNativeSourceDrain(), adapter);
-    RETURN_IF_EXCEPTION(scope, );
-    PutPropertySlot onCloseSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), onCloseBound, onCloseSlot);
-    RETURN_IF_EXCEPTION(scope, );
-    PutPropertySlot onDrainSlot(handle, false);
-    handle->methodTable()->put(handle, globalObject, builtinNames(vm).onDrainPublicName(), onDrainBound, onDrainSlot);
-    RETURN_IF_EXCEPTION(scope, );
+    setNativeSourceCloseAdapter(vm, handle, adapter);
 
     auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::Native;
@@ -626,21 +617,7 @@ JSPromise* cancelPendingNativeSource(JSGlobalObject* globalObject, JSReadableStr
     });
 }
 
-// The [bound-convention] onDrain body: a dead consumer drops the chunk.
-static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue chunk)
-{
-    auto* controller = adapter->controller();
-    if (!controller)
-        return;
-    if (adapter->m_textMode) {
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
-            nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, view->span(), /* flush */ false);
-        return;
-    }
-    readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-}
-
-// The [bound-convention] native-initiated onClose body.
+// The native handle closed (Bun__NativeStreamSourceAdapter__onClose, run from its microtask).
 static void nativeSourceOnClose(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     adapter->m_closed = true;
@@ -1349,26 +1326,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadStreamIntoSinkRejected, (JSGl
     return JSValue::encode(jsUndefined());
 }
 
-// [bound-convention]: handler(contextCell, ...callArgs).
-
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOnNativeSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativeSourceHandleClosedMicrotask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(0));
+    auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(1));
     Bun::WebStreams::nativeSourceOnClose(globalObject, adapter);
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOnNativeSourceDrain, (JSGlobalObject * globalObject, CallFrame* callFrame))
+extern "C" void Bun__NativeStreamSourceAdapter__onClose(JSGlobalObject* globalObject, JSC::EncodedJSValue adapter)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(callFrame->argument(0));
-    Bun::WebStreams::nativeSourceOnDrain(globalObject, adapter, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    // Deferred: the native side may report close from inside a pull() or off any JS frame.
+    Bun::WebStreams::queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceHandleClosedMicrotask(), jsUndefined(), JSValue::decode(adapter));
 }
 
 // [reaction-convention] pull() runs once for a native sink: its promise resolving without close()/end() ends the sink (a no-op once detached).

@@ -147,6 +147,8 @@ unsafe extern "C" {
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
+    /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
+    safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
@@ -774,14 +776,10 @@ pub trait SourceContext: Sized {
     fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_set_cached`
-    fn js_on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_get_cached`
-    fn js_on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_set_cached`
-    fn js_on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_get_cached`
-    fn js_on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_set_cached`
+    fn js_close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_get_cached`
+    fn js_close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     /// `js_${NAME}InternalReadableStreamSource::owner_set_cached`
     fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
@@ -842,7 +840,7 @@ pub trait SourceContext: Sized {
 // type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
 // The toJS/fromJS/fromJSDirect aliases are wired
 // manually below; cached-property accessors (pendingPromiseSetCached,
-// onDrainCallback{Get,Set}Cached) are emitted by the .classes.ts generator.
+// closeAdapter{Get,Set}Cached) are emitted by the .classes.ts generator.
 //
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
 // [`ReadableStream::from_js`] casts that straight to `*mut C`.
@@ -854,11 +852,6 @@ pub struct NewSource<C: SourceContext> {
     pub cancelled: bool,
     pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
-    pub close_handler: Option<fn(Option<*mut c_void>)>,
-    /// Borrowed opaque context for native `close_handler`s (never
-    /// owned/freed here). The JS path stores
-    /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
-    pub close_ctx: Option<NonNull<c_void>>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
     pub producer: Cell<streams::SourceHandle>,
@@ -872,7 +865,7 @@ pub struct NewSource<C: SourceContext> {
     /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
-    /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
+    /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
     /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
@@ -892,8 +885,6 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             cancelled: false,
             ref_count: 1,
             pending_err: None,
-            close_handler: None,
-            close_ctx: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
@@ -911,10 +902,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
@@ -944,32 +933,18 @@ macro_rules! source_context_codegen {
             $crate::generated_classes::$gen::pending_promise_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_set_cached(
+        fn js_close_adapter_set_cached(
             this: $crate::webcore::jsc::JSValue,
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::on_drain_callback_set_cached(this, global, value)
+            $crate::generated_classes::$gen::close_adapter_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_get_cached(
+        fn js_close_adapter_get_cached(
             this: $crate::webcore::jsc::JSValue,
         ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_drain_callback_get_cached(this)
-        }
-        #[inline]
-        fn js_on_close_callback_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
-        ) {
-            $crate::generated_classes::$gen::on_close_callback_set_cached(this, global, value)
-        }
-        #[inline]
-        fn js_on_close_callback_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_close_callback_get_cached(this)
+            $crate::generated_classes::$gen::close_adapter_get_cached(this)
         }
         #[inline]
         fn js_owner_set_cached(
@@ -1003,17 +978,11 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_pending_promise_set_cached(this, global, value)
     }
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_drain_callback_set_cached(this, global, value)
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_close_adapter_set_cached(this, global, value)
     }
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_drain_callback_get_cached(this)
-    }
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_close_callback_set_cached(this, global, value)
-    }
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_close_callback_get_cached(this)
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue> {
+        C::js_close_adapter_get_cached(this)
     }
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_owner_set_cached(this, global, value)
@@ -1121,53 +1090,36 @@ impl<C: SourceContext> NewSource<C> {
         p.close(None);
     }
 
+    /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
     pub fn on_close(&mut self) {
         if self.cancelled {
             return;
         }
-        if let Some(close) = self.close_handler.take() {
-            // Identity check against the *exact* fn pointer stored by `set_on_close_from_js`, so the
-            // JS path receives `self` (not `close_ctx`, which is unset on that path).
-            if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
-            } else {
-                close(self.close_ctx.map(|p| p.as_ptr()));
-            }
-        }
-    }
-
-    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Stored *directly* in
-    /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
-    /// identity check above matches.
-    fn on_js_close(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        // Reached from `FileReader::on_reader_done` off the event loop. While
-        // the across-read ref is held (`increment_count` upgraded to Strong),
-        // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
-        // already finalized, `try_get()` is `None` and there is no callback.
-        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+        // A finalized wrapper reads `None` here (see `this_jsvalue`), so a close after GC is a no-op.
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
-        let global_this = this.global_this();
-        if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
-            if !cb.is_undefined() {
-                global_this.queue_microtask(cb, &[]);
-            }
+        let Some(adapter) = <Self as NewSourceCodegen>::close_adapter_get_cached(this_jsvalue)
+        else {
+            return;
+        };
+        if !adapter.is_cell() {
+            return;
         }
-        <Self as NewSourceCodegen>::on_close_callback_set_cached(
+        let global_this = self.global_this();
+        <Self as NewSourceCodegen>::close_adapter_set_cached(
             this_jsvalue,
             global_this,
             JSValue::UNDEFINED,
         );
+        Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
     }
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
-        // `on_js_close`, reached from `on_reader_done` off the event loop with
+        // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
             // SAFETY: `self` is live for the call.
@@ -1404,96 +1356,6 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.cancel();
         Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_close_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        // Store the handler by *identity* — `NewSource::on_close` compares the
-        // stored fn pointer against `on_js_close` to decide whether to pass
-        // `self` (JS path) or `close_ctx` (native path).
-        self.close_handler = Some(Self::on_js_close);
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        if value.is_undefined() {
-            if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-                <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                    this_jsvalue,
-                    global_object,
-                    JSValue::UNDEFINED,
-                );
-            }
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onclose",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                cb,
-            );
-        }
-        Ok(())
-    }
-
-    pub fn set_on_drain_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
-            return Ok(());
-        };
-
-        if value.is_undefined() {
-            <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onDrain",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        <Self as NewSourceCodegen>::on_drain_callback_set_cached(this_jsvalue, global_object, cb);
-        Ok(())
-    }
-
-    pub fn get_on_close_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            if let Some(val) =
-                <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue)
-            {
-                return val;
-            }
-        }
-        JSValue::UNDEFINED
-    }
-
-    pub fn get_on_drain_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        self.this_jsvalue
-            .try_get()
-            .and_then(<Self as NewSourceCodegen>::on_drain_callback_get_cached)
-            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub fn update_ref_from_js(

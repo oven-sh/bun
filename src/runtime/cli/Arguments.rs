@@ -2255,16 +2255,13 @@ fn parse_build_command_options(
             Output::err_generic("--compile-jit-policy requires --compile", ());
             Global::crash();
         }
-        match core::str::from_utf8(jit_policy)
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-        {
+        match strings::str_utf8(jit_policy).and_then(|s| s.parse::<f32>().ok()) {
             Some(scale) if scale.is_finite() && scale >= 1.0 => {
                 ctx.bundler_options.compile_jit_policy = scale;
             }
             _ => {
                 Output::err_generic(
-                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number >= 1",
+                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number \\>= 1",
                     format_args!("{}", BStr::new(jit_policy)),
                 );
                 Global::exit(1);

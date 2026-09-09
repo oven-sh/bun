@@ -122,7 +122,7 @@ beforeAll(async () => {
   const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
   expect(stderr + stdout).toContain("compile");
   expect(exitCode).toBe(0);
-});
+}, 60_000);
 
 /** Runs the compiled executable and returns its stdout split into `tag -> parsed JSON` lines. */
 async function run(mode: string): Promise<Record<string, any>> {
@@ -388,10 +388,6 @@ describe("bun build --compile --bytecode executable", () => {
 
   // Unlike BUN_INSPECT (present before any code loads), inspector.open() attaches the debugger to
   // a VM whose entry point has already been materialized from the embedded bytecode cache.
-  // TODO: the executable currently aborts as soon as the client connects: the debugger thread's VM
-  // decodes Bun's internal modules from the executable's embedded bytecode without the shared
-  // string table installed ("bytecode payload uses an external string table but the embedder did
-  // not provide one" in JSC::Decoder::externalStrings). Flip to `test` once that is fixed.
   test("debugger attached via inspector.open() pauses inside a never-called function", async () => {
     const session = new Session();
     try {

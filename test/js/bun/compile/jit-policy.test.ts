@@ -102,7 +102,7 @@ describe("compile jitPolicy", () => {
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(stderr).toContain("--compile-jit-policy");
+    expect(stderr).toContain('Invalid value for --compile-jit-policy: "0.5". Must be a number >= 1');
     expect(exitCode).toBe(1);
   });
 

@@ -1483,10 +1483,8 @@ pub(crate) fn to_bytes(
         let graph_module_count = output_files
             .iter()
             .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
-            .and_then(|f| f.value.as_slice().get(12..16))
-            .map_or(0, |count| {
-                u32::from_le_bytes(count.try_into().unwrap()) as usize
-            });
+            .and_then(|f| bun_bundler::prelinked_module_graph::module_count(f.value.as_slice()))
+            .map_or(0, |count| count as usize);
         if module_to_file.len() != graph_module_count || module_to_file.contains(&u32::MAX) {
             module_to_file.clear();
         }

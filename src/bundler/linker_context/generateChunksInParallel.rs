@@ -659,10 +659,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             };
             let table_ids = table_ids.next().expect("one per chunk with module_info");
-            if prelinked_graph
-                .as_ref()
-                .is_some_and(|(_, chunk_indices)| chunk_indices.contains(&(chunk_index as u32)))
-            {
+            if prelinked_graph.as_ref().is_some_and(|(_, chunk_indices)| {
+                chunk_indices.binary_search(&(chunk_index as u32)).is_ok()
+            }) {
                 // Keeps the chunk's (empty) module_info output slot so output-file indices stay dense.
                 js.module_info_bytes = Some(Box::default());
                 continue;

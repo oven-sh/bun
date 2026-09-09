@@ -117,6 +117,16 @@ pub struct ModuleInput<'a> {
     pub table_ids: &'a [u32],
 }
 
+/// The module count in a serialized graph's header; `None` if `bytes` is not a graph of this `VERSION`.
+pub fn module_count(bytes: &[u8]) -> Option<u32> {
+    let word = |i: usize| {
+        Some(u32::from_le_bytes(
+            bytes.get(i * 4..i * 4 + 4)?.try_into().ok()?,
+        ))
+    };
+    (word(0)? == MAGIC && word(1)? == VERSION).then_some(word(3)?)
+}
+
 /// Serializes the graph for `modules` (graph module `i` is `modules[i]`). `string_table` gives a string's runtime slot
 /// (`EncoderStringTable::slotFor`); name hashes are `WTF::StringImpl::hash()`. Must run before `strings` is serialized
 /// (module keys are interned into it). `None` if the graph does not fit the format; the caller then keeps per-module
@@ -484,7 +494,7 @@ impl Resolver<'_> {
                         (Resolution::Namespace { module: target }, false)
                     } else {
                         match self.resolve_step(target, export.local_or_import) {
-                            // The specification falls back to this module's star exports here.
+                            // JSC (resolveExportImpl's IndirectFallback) falls back to this module's star exports here.
                             (Resolution::NotFound, tainted) if !m.star_exports.is_empty() => {
                                 (Resolution::Unresolved, tainted)
                             }

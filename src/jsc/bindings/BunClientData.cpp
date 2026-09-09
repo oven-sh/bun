@@ -288,13 +288,16 @@ extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t
 JSC::PrelinkedModuleGraph* JSVMClientData::prelinkedModuleGraph(JSC::VM& vm)
 {
     if (!m_prelinkedModuleGraphChecked) [[unlikely]] {
+        if (!m_decoderStringTable)
+            return nullptr; // not installed (yet): a later call may still build the graph
         m_prelinkedModuleGraphChecked = true;
         const uint8_t* blob = nullptr;
         size_t blobLength = 0;
         const uint8_t* slotTable = nullptr;
         size_t slotTableLength = 0;
-        if (m_decoderStringTable && Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
+        if (Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
             // ModuleInfoSlotTable: u32 count, then `count` u32 slots (4-byte aligned in the mapped section).
+            ASSERT(!(reinterpret_cast<uintptr_t>(slotTable) % alignof(uint32_t)));
             uint32_t count = 0;
             memcpy(&count, slotTable, sizeof(count));
             if (count <= (slotTableLength - sizeof(uint32_t)) / sizeof(uint32_t))

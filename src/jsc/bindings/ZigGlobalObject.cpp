@@ -849,10 +849,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // outer import() is mid-load, or the module is EvaluatingAsync from a
         // prior import), removing it would force a second evaluation and a
         // second namespace object once that outer load completes.
-        if (!entryExistedBefore) {
-            WTF::Locker locker { loader->cellLock() };
-            loader->removeEntry(key);
-        }
+        if (!entryExistedBefore)
+            loader->removeEntry(key); // takes the loader's cellLock itself
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
     }
@@ -3853,6 +3851,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                         }
                         JSModuleRecord* dependency = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), key, source->sourceCode(), graph, request.moduleIndex);
                         entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
+                        RETURN_IF_EXCEPTION(scope, void());
                         entry->provideModule(vm, dependency);
                         loader->setPrelinkedRecord(vm, request.moduleIndex, dependency);
                         created.append(dependency);
@@ -3895,6 +3894,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                         continue;
                     }
                     entry = loader->ensureRegistered(globalObject, key, ScriptFetchParameters::Type::JavaScript);
+                    RETURN_IF_EXCEPTION(scope, void());
                     entry->provideModule(vm, builtin);
                     entry->markLoaded(); // a synthetic record requests nothing
                     target = builtin;
@@ -4106,6 +4106,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
             if (!loader->getRegisteredMayBeNull(rootKey, ScriptFetchParameters::Type::JavaScript) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
                 JSModuleRecord* rootRecord = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), rootKey, rootSource->sourceCode(), *graph, rootIndex);
                 auto* rootEntry = loader->ensureRegistered(globalObject, rootKey, ScriptFetchParameters::Type::JavaScript);
+                RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
                 rootEntry->provideModule(vm, rootRecord);
                 loader->setPrelinkedRecord(vm, rootIndex, rootRecord);
                 registerPrelinkedSubgraph(globalObject, loader, *graph, rootRecord, rootEntry);

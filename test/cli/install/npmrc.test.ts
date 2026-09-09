@@ -1,171 +1,305 @@
-import { write } from "bun";
+import { file } from "bun";
+import { iniInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
-import { join } from "path";
-const { iniInternals } = require("bun:internal-for-testing");
+import { realpathSync } from "fs";
+import { VerdaccioRegistry, bunEnv, bunExe, isIPv6, normalizeBunSnapshot, tempDir } from "harness";
+import { basename, dirname, join } from "path";
+
 const { loadNpmrc } = iniInternals;
 
-var registry = new VerdaccioRegistry();
+const registry = new VerdaccioRegistry();
+const registryUrl = registry.registryUrl();
+
+// verdaccio serves `@needs-auth/*` to authenticated users only. `generateUser()` and `createTestDir()` rewrite
+// verdaccio's htpasswd file, so the one user every credential case logs in as is created here, before the
+// concurrent cases start, and no case calls `createTestDir()`.
+const user = { name: "bilbo_swaggins", password: "verysecure", token: "" };
+const base64 = (s: string) => Buffer.from(s).toString("base64");
 
 beforeAll(async () => {
   await registry.start();
+  user.token = await registry.generateUser(user.name, user.password);
 });
 
 afterAll(() => {
   registry.stop();
 });
 
-describe("npmrc", async () => {
-  const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
+/**
+ * The env for one spawned bun: its own install cache and its own (empty unless the case writes one) user config
+ * dir under `<dir>/home`. CI exports a per-file BUN_INSTALL_CACHE_DIR, which wins over every config file, and with
+ * a shared cache a case can install another case's download without asking (or authenticating with) the registry.
+ * A value of `undefined` in `extra` removes the variable.
+ */
+function envFor(dir: string, extra: Record<string, string | undefined> = {}) {
+  const home = join(dir, "home");
+  const env: Record<string, string | undefined> = {
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: home,
+    ...extra,
+  };
+  for (const key in env) if (env[key] === undefined) delete env[key];
+  return env;
+}
 
+async function bun(args: string[], cwd: string, env: Record<string, string | undefined> = envFor(cwd)) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function normalize(output: string, dir: string) {
+  return normalizeBunSnapshot(output, dir).replaceAll(`localhost:${registry.port}`, "localhost:<port>");
+}
+
+/** `bun install` in `dir` with stdout and stderr normalized for snapshots. */
+async function install(dir: string, opts: { args?: string[]; env?: Record<string, string | undefined> } = {}) {
+  const { stdout, stderr, exitCode } = await bun(["install", ...(opts.args ?? [])], dir, opts.env);
+  return { stdout: normalize(stdout, dir), stderr: normalize(stderr, dir), exitCode };
+}
+
+/** `<name>@<version>` → tarball url for every package in bun.lock. The url shows which registry served the package. */
+async function lockfileTarballs(dir: string) {
+  const lock = Bun.JSONC.parse(await file(join(dir, "bun.lock")).text()) as {
+    packages: Record<string, [id: string, tarball: string, ...rest: unknown[]]>;
+  };
+  return Object.fromEntries(Object.values(lock.packages).map(([id, tarball]) => [id, tarball]));
+}
+
+/** the tarball urls verdaccio hands out for the fixture packages these cases install */
+const tarballUrl = {
+  "no-deps": `${registryUrl}no-deps/-/no-deps-1.0.0.tgz`,
+  "@types/no-deps": `${registryUrl}@types/no-deps/-/no-deps-1.0.0.tgz`,
+  "@needs-auth/test-pkg": `${registryUrl}@needs-auth/test-pkg/-/test-pkg-1.0.0.tgz`,
+};
+
+/** What `loadNpmrc` returns for a file that configures nothing. */
+const npmrcDefaults = {
+  default_registry_url: "https://registry.npmjs.org/",
+  default_registry_token: "",
+  default_registry_username: "",
+  default_registry_password: "",
+  default_registry_email: "",
+};
+
+describe.concurrent("npmrc", () => {
   it("should convert to utf8 if BOM", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await Promise.all([
-      write(join(packageDir, ".npmrc"), Buffer.from(`\ufeff\ncache=hi!`, "utf16le")),
-      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" })),
-      rm(join(packageDir, "bunfig.toml"), { force: true }),
-    ]);
-
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
-    const { stdout, stderr, exited } = Bun.spawn({
-      cmd: [bunExe(), "pm", "cache"],
-      cwd: packageDir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
+    using dir = tempDir("npmrc-bom", {
+      ".npmrc": Buffer.from(`\ufeff\ncache=hi!`, "utf16le"),
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
-    env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
 
-    const out = await stdout.text();
-    const err = await stderr.text();
-    console.log({ out, err });
-    expect(err).toBeEmpty();
-    expect(out.endsWith("hi!")).toBeTrue();
-
-    expect(await exited).toBe(0);
+    // BUN_INSTALL_CACHE_DIR would win over `cache`
+    const { stdout, stderr, exitCode } = await bun(
+      ["pm", "cache"],
+      String(dir),
+      envFor(String(dir), { BUN_INSTALL_CACHE_DIR: undefined }),
+    );
+    expect(stderr).toBe("");
+    const printed = stdout.trim();
+    expect(basename(printed)).toBe("hi!");
+    expect(realpathSync(dirname(printed))).toBe(realpathSync(String(dir)));
+    expect(exitCode).toBe(0);
   });
 
   it("works with empty file", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    using dir = tempDir("npmrc-empty", {
+      ".npmrc": "",
+      "package.json": JSON.stringify({ name: "foo", dependencies: {} }),
+    });
 
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toMatchInlineSnapshot(`"No packages! Deleted empty lockfile"`);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+       done"
+    `);
+    expect(exitCode).toBe(0);
 
-    const ini = /* ini */ ``;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {},
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+    expect(loadNpmrc("")).toEqual(npmrcDefaults);
   });
 
   it("sets default registry", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    using dir = tempDir("npmrc-default-registry", {
+      ".npmrc": `\nregistry = http://localhost:${registry.port}/\n`,
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+    });
 
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [4]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-    const ini = /* ini */ `
-registry = http://localhost:${registry.port}/
-`;
+      + no-deps@1.0.0 (v2.0.0 available)
 
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+      1 package installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({ "no-deps@1.0.0": tarballUrl["no-deps"] });
+    expect(exitCode).toBe(0);
   });
 
   it("sets scoped registry", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    using dir = tempDir("npmrc-scoped-registry", {
+      ".npmrc": `\n  @types:registry=http://localhost:${registry.port}/\n  `,
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "@types/no-deps": "1.0.0" } }),
+    });
 
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [4]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-    const ini = /* ini */ `
-  @types:registry=http://localhost:${registry.port}/
-  `;
+      + @types/no-deps@1.0.0 (v2.0.0 available)
 
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+      1 package installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({ "@types/no-deps@1.0.0": tarballUrl["@types/no-deps"] });
+    expect(exitCode).toBe(0);
   });
 
   it("works with home config", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    using dir = tempDir("npmrc-home-config", {
+      "home/.npmrc": `\n  registry=http://localhost:${registry.port}/\n  `,
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+    });
 
-    console.log("package dir", packageDir);
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+    // envFor() points $XDG_CONFIG_HOME, $HOME and %USERPROFILE% at <dir>/home
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [4]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
+      + no-deps@1.0.0 (v2.0.0 available)
 
-    const ini = /* ini */ `
-  registry=http://localhost:${registry.port}/
-  `;
-
-    await Bun.$`echo ${ini} > ${homeDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
+      1 package installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({ "no-deps@1.0.0": tarballUrl["no-deps"] });
+    expect(exitCode).toBe(0);
   });
 
   it("works with two configs", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
+    using dir = tempDir("npmrc-two-configs", {
+      ".npmrc": `\n  @types:registry=http://localhost:${registry.port}/\n  `,
+      "home/.npmrc": `\n    registry = http://localhost:${registry.port}/\n    `,
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0", "@types/no-deps": "1.0.0" },
+      }),
+    });
 
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [8]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
 
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${registry.port}/
+      + @types/no-deps@1.0.0 (v2.0.0 available)
+      + no-deps@1.0.0 (v2.0.0 available)
+
+      2 packages installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({
+      "no-deps@1.0.0": tarballUrl["no-deps"],
+      "@types/no-deps@1.0.0": tarballUrl["@types/no-deps"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("package config overrides home config", async () => {
+    // the home config routes @types to a registry that must never be asked
+    using homeRegistry = recordingRegistry("127.0.0.1");
+    using dir = tempDir("npmrc-package-overrides-home", {
+      ".npmrc": `\n  @types:registry=http://localhost:${registry.port}/\n  `,
+      "home/.npmrc": `@types:registry=http://127.0.0.1:${homeRegistry.port}/`,
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "@types/no-deps": "1.0.0" } }),
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(homeRegistry.requests).toEqual([]);
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [4]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + @types/no-deps@1.0.0 (v2.0.0 available)
+
+      1 package installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({ "@types/no-deps@1.0.0": tarballUrl["@types/no-deps"] });
+    expect(exitCode).toBe(0);
+  });
+
+  it("default registry from env variable", () => {
+    const ini = /* ini */ `
+registry=\${LOL}
   `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
 
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ `
-    registry = http://localhost:${registry.port}/
-    `;
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
+    const result = loadNpmrc(ini, { LOL: `http://localhost:${registry.port}/` });
 
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@types/no-deps": "1.0.0",
+    expect(result).toEqual({ ...npmrcDefaults, default_registry_url: `http://localhost:${registry.port}/` });
+  });
+
+  it("default registry from env variable 2", () => {
+    const ini = /* ini */ `
+registry=http://localhost:\${PORT}/
+  `;
+
+    const result = loadNpmrc(ini, { ...bunEnv, PORT: `${registry.port}` });
+
+    expect(result).toEqual({ ...npmrcDefaults, default_registry_url: `http://localhost:${registry.port}/` });
+  });
+
+  // `_auth` and `_password` are base64 encoded in the file and come back decoded
+  const encoded = (option: string, value: string) =>
+    option === "_auth" || option === "_password" ? base64(value) : value;
+  const defaultRegistryOptions = (values: Record<string, string>, expected: Partial<typeof npmrcDefaults>) => ({
+    name: Object.entries(values)
+      .map(([option, value]) => `${option} = ${value}`)
+      .join(" "),
+    ini: `\n${Object.entries(values)
+      .map(([option, value]) => `//registry.npmjs.org/:${option}=${encoded(option, value)}`)
+      .join("\n")}\n`,
+    expected: { ...npmrcDefaults, ...expected },
+  });
+
+  it.each([
+    defaultRegistryOptions({ _authToken: "skibidi" }, { default_registry_token: "skibidi" }),
+    defaultRegistryOptions(
+      { username: "zorp", _password: "skibidi" },
+      { default_registry_username: "zorp", default_registry_password: "skibidi" },
+    ),
+    defaultRegistryOptions({ email: "user@example.com" }, { default_registry_email: "user@example.com" }),
+    defaultRegistryOptions(
+      { username: "testuser", _password: "testpass", email: "test@example.com" },
+      {
+        default_registry_username: "testuser",
+        default_registry_password: "testpass",
+        default_registry_email: "test@example.com",
       },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
+    ),
+  ])("$name", ({ ini, expected }) => {
+    expect(loadNpmrc(ini)).toEqual(expected);
   });
 
   describe("user .npmrc lookup", () => {
@@ -174,352 +308,180 @@ registry = http://localhost:${registry.port}/
 
     // `publish --dry-run` never contacts the registry, but it still requires a token
     // for it and prints which registry it picked up, so it shows which .npmrc was read.
-    // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
-    // is removed here and each case passes back exactly the value it is testing.
-    async function publishDryRun(dir: string, envOverride: Record<string, string>) {
-      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
-      delete spawnEnv.XDG_CONFIG_HOME;
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "publish", "--dry-run"],
-        cwd: join(dir, "pkg"),
-        env: { ...spawnEnv, ...envOverride },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
+    // envFor() sets $HOME and %USERPROFILE% to <dir>/home, each case picks its own $XDG_CONFIG_HOME.
+    async function publishDryRun(dir: string, XDG_CONFIG_HOME: string | undefined) {
+      const { stdout, stderr, exitCode } = await bun(
+        ["publish", "--dry-run"],
+        join(dir, "pkg"),
+        envFor(dir, { XDG_CONFIG_HOME }),
+      );
+      return { registry: stdout.match(/^Registry: (.*)$/m)?.[1], stderr, exitCode };
     }
 
-    const usesRegistry = (port: number) => ({
-      stdout: expect.stringContaining(`Registry: http://localhost:${port}/\n`),
-      stderr: expect.not.stringContaining("missing authentication"),
-      exitCode: 0,
-    });
+    const usesRegistry = (port: number) => ({ registry: `http://localhost:${port}/`, stderr: "", exitCode: 0 });
 
-    it.concurrent("uses $XDG_CONFIG_HOME/.npmrc when it exists", async () => {
+    it("uses $XDG_CONFIG_HOME/.npmrc when it exists", async () => {
       using dir = tempDir("npmrc-xdg", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.npmrc": npmrc(2) });
-      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      const result = await publishDryRun(String(dir), join(String(dir), "xdg"));
       expect(result).toEqual(usesRegistry(2));
     });
 
     // https://github.com/oven-sh/bun/issues/24124: GitHub Actions exports
     // XDG_CONFIG_HOME=~/.config, while `npm login` writes ~/.npmrc.
-    it.concurrent("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has no .npmrc", async () => {
+    it("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has no .npmrc", async () => {
       using dir = tempDir("npmrc-xdg-without-npmrc", { ...pkg, "home/.npmrc": npmrc(1), "xdg/.keep": "" });
-      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      const result = await publishDryRun(String(dir), join(String(dir), "xdg"));
       expect(result).toEqual(usesRegistry(1));
     });
 
-    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is unset", async () => {
+    it("uses $HOME/.npmrc when $XDG_CONFIG_HOME is unset", async () => {
       using dir = tempDir("npmrc-xdg-unset", { ...pkg, "home/.npmrc": npmrc(1) });
-      const result = await publishDryRun(String(dir), {});
+      const result = await publishDryRun(String(dir), undefined);
       expect(result).toEqual(usesRegistry(1));
     });
 
-    it.concurrent("uses $HOME/.npmrc when $XDG_CONFIG_HOME is empty", async () => {
+    it("uses $HOME/.npmrc when $XDG_CONFIG_HOME is empty", async () => {
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
-      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
+      const result = await publishDryRun(String(dir), "");
       expect(result).toEqual(usesRegistry(1));
     });
-  });
 
-  it("package config overrides home config", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    console.log("package dir", packageDir);
-    const packageIni = /* ini */ `
-  @types:registry=http://localhost:${registry.port}/
-  `;
-    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
-
-    const homeDir = `${packageDir}/home_dir`;
-    await Bun.$`mkdir -p ${homeDir}`;
-    console.log("home dir", homeDir);
-    const homeIni = /* ini */ "@types:registry=https://registry.npmjs.org/";
-    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
-
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
-  });
-
-  it("default registry from env variable", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    const ini = /* ini */ `
-registry=\${LOL}
-  `;
-
-    const result = loadNpmrc(ini, { LOL: `http://localhost:${registry.port}/` });
-
-    expect(result.default_registry_url).toBe(`http://localhost:${registry.port}/`);
-  });
-
-  it("default registry from env variable 2", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
-registry=http://localhost:\${PORT}/
-  `;
-
-    const result = loadNpmrc(ini, { ...env, PORT: registry.port });
-
-    expect(result.default_registry_url).toEqual(`http://localhost:${registry.port}/`);
-  });
-
-  async function makeTest(
-    options: [option: string, value: string][],
-    check: (result: {
-      default_registry_url: string;
-      default_registry_token: string;
-      default_registry_username: string;
-      default_registry_password: string;
-      default_registry_email: string;
-    }) => void,
-  ) {
-    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
-    test(optionName.join(" "), async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const iniInner = await Promise.all(
-        options.map(async ([option, value]) => {
-          let finalValue = value;
-          finalValue = isBase64Encoded(option) ? Buffer.from(finalValue).toString("base64") : finalValue;
-          return `//registry.npmjs.org/:${option}=${finalValue}`;
-        }),
-      );
-
-      const ini = /* ini */ `
-${iniInner.join("\n")}
-`;
-
-      await Bun.$`echo ${JSON.stringify({
-        name: "hello",
-        main: "index.js",
-        version: "1.0.0",
-        dependencies: {
-          "is-even": "1.0.0",
-        },
-      })} > package.json`.cwd(packageDir);
-
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-
-      const result = loadNpmrc(ini);
-
-      check(result);
+    it("fails without a user .npmrc, which is what makes the cases above meaningful", async () => {
+      using dir = tempDir("npmrc-xdg-none", { ...pkg, "home/.keep": "", "xdg/.keep": "" });
+      const result = await publishDryRun(String(dir), join(String(dir), "xdg"));
+      expect(result).toEqual({
+        registry: undefined,
+        stderr: "error: missing authentication (run `bunx npm login`)\n",
+        exitCode: 1,
+      });
     });
-  }
-
-  await makeTest([["_authToken", "skibidi"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_token).toEqual("skibidi");
   });
 
-  await makeTest(
-    [
-      ["username", "zorp"],
-      ["_password", "skibidi"],
-    ],
-    result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-      expect(result.default_registry_username).toEqual("zorp");
-      expect(result.default_registry_password).toEqual("skibidi");
-    },
-  );
+  // verdaccio answers 401 for `@needs-auth/*` without valid credentials, and every case starts with a cold cache,
+  // so an installed `@needs-auth/test-pkg` means the registry accepted the credentials from the .npmrc. A cold
+  // install counts 4 tasks per package: download and parse of the manifest, download and extraction of the tarball.
+  const authenticatedInstall = (loadsDotEnv = false) => ({
+    stderr:
+      (loadsDotEnv ? '".env"\n' : "") +
+      "Resolving dependencies\nResolved, downloaded and extracted [4]\nSaved lockfile",
+    stdout: "bun install <version> (<revision>)\n\n+ @needs-auth/test-pkg@1.0.0\n\n1 package installed",
+    tarballs: { "@needs-auth/test-pkg@1.0.0": tarballUrl["@needs-auth/test-pkg"] },
+    exitCode: 0,
+  });
+  const needsAuthPackageJson = JSON.stringify({
+    name: "hi",
+    version: "1.0.0",
+    dependencies: { "@needs-auth/test-pkg": "1.0.0" },
+  });
+
+  async function installNeedsAuth(dir: string, env?: Record<string, string | undefined>) {
+    const { stdout, stderr, exitCode } = await install(dir, { env: envFor(dir, env) });
+    const tarballs = exitCode === 0 ? await lockfileTarballs(dir) : {};
+    return { stderr, stdout, tarballs, exitCode };
+  }
 
   it("authentication works", async () => {
-    const { packageDir, packageJson } = await registry.createTestDir();
-
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-    const ini = /* ini */ `
+    using dir = tempDir("npmrc-auth", {
+      ".npmrc": `
 registry = http://localhost:${registry.port}/
 @needs-auth:registry=http://localhost:${registry.port}/
-//localhost:${registry.port}/:_authToken=${await registry.generateUser("bilbo_swaggins", "verysecure")}
-`;
-
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "hi",
-      main: "index.js",
-      version: "1.0.0",
-      dependencies: {
-        "no-deps": "1.0.0",
-        "@needs-auth/test-pkg": "1.0.0",
-      },
-      "publishConfig": {
-        "registry": `http://localhost:${registry.port}`,
-      },
-    })} > package.json`.cwd(packageDir);
-
-    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
-  });
-
-  type EnvMap =
-    | Omit<
-        {
-          [key: string]: string;
-        },
-        "dotEnv"
-      >
-    | { dotEnv?: Record<string, string> };
-
-  function registryConfigOptionTest(
-    name: string,
-    _opts: Record<string, string> | (() => Promise<Record<string, string>>),
-    _env?: EnvMap | (() => Promise<EnvMap>),
-    check?: (stdout: string, stderr: string) => void,
-  ) {
-    it(`sets scoped registry option: ${name}`, async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-
-      console.log("PACKAGE DIR", packageDir);
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const { dotEnv, ...restOfEnv } = _env
-        ? typeof _env === "function"
-          ? await _env()
-          : _env
-        : { dotEnv: undefined };
-      const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
-      const dotEnvInner = dotEnv
-        ? Object.entries(dotEnv)
-            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
-            .join("\n")
-        : "";
-
-      const ini = `
-registry = http://localhost:${registry.port}/
-${Object.keys(opts)
-  .map(
-    k =>
-      `//localhost:${registry.port}/:${k}=${isBase64Encoded(k) && !opts[k].includes("${") ? Buffer.from(opts[k]).toString("base64") : opts[k]}`,
-  )
-  .join("\n")}
-`;
-
-      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
-      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-      await Bun.$`echo ${JSON.stringify({
+//localhost:${registry.port}/:_authToken=${user.token}
+`,
+      "package.json": JSON.stringify({
         name: "hi",
-        main: "index.js",
         version: "1.0.0",
-        dependencies: {
-          "@needs-auth/test-pkg": "1.0.0",
-        },
-        "publishConfig": {
-          "registry": `http://localhost:${registry.port}`,
-        },
-      })} > package.json`.cwd(packageDir);
-
-      const { stdout, stderr } = await Bun.$`${bunExe()} install`
-        .env({ ...env, ...restOfEnv })
-        .cwd(packageDir)
-        .throws(check === undefined);
-
-      if (check) check(stdout.toString(), stderr.toString());
+        dependencies: { "no-deps": "1.0.0", "@needs-auth/test-pkg": "1.0.0" },
+      }),
     });
-  }
 
-  registryConfigOptionTest("_authToken", async () => ({
-    "_authToken": await registry.generateUser("bilbo_baggins", "verysecure"),
-  }));
-  registryConfigOptionTest(
-    "_authToken with env variable value",
-    async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
-    async () => ({ SUPER_SECRET_TOKEN: await registry.generateUser("bilbo_baggins420", "verysecure") }),
-  );
-  registryConfigOptionTest("username and password", async () => {
-    await registry.generateUser("gandalf429", "verysecure");
-    return { username: "gandalf429", _password: "verysecure" };
-  });
-  registryConfigOptionTest(
-    "username and password with env variable password",
-    async () => {
-      await registry.generateUser("gandalf422", "verysecure");
-      return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      SUPER_SECRET_PASSWORD: Buffer.from("verysecure").toString("base64"),
-    },
-  );
-  registryConfigOptionTest(
-    "username and password with .env variable password",
-    async () => {
-      await registry.generateUser("gandalf421", "verysecure");
-      return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
-    },
-    {
-      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
-    },
-  );
-
-  registryConfigOptionTest("_auth", async () => {
-    await registry.generateUser("linus", "verysecure");
-    const _auth = "linus:verysecure";
-    return { _auth };
+    expect(await installNeedsAuth(String(dir))).toEqual({
+      stderr: "Resolving dependencies\nResolved, downloaded and extracted [8]\nSaved lockfile",
+      stdout:
+        "bun install <version> (<revision>)\n\n" +
+        "+ @needs-auth/test-pkg@1.0.0\n+ no-deps@1.0.0 (v2.0.0 available)\n\n2 packages installed",
+      tarballs: {
+        "no-deps@1.0.0": tarballUrl["no-deps"],
+        "@needs-auth/test-pkg@1.0.0": tarballUrl["@needs-auth/test-pkg"],
+      },
+      exitCode: 0,
+    });
   });
 
-  registryConfigOptionTest(
-    "_auth from .env variable",
-    async () => {
-      await registry.generateUser("zack", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
+  // Each case authenticates as `user` through a different set of options keyed to the default registry. `${...}`
+  // references are expanded from the process environment (`env`) or from a .env file next to package.json (`dotEnv`).
+  it.each<{
+    name: string;
+    options: () => Record<string, string>;
+    env?: () => Record<string, string>;
+    dotEnv?: () => Record<string, string>;
+  }>([
+    { name: "_authToken", options: () => ({ _authToken: user.token }) },
+    {
+      name: "_authToken with env variable value",
+      options: () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
+      env: () => ({ SUPER_SECRET_TOKEN: user.token }),
+    },
+    { name: "username and password", options: () => ({ username: user.name, _password: base64(user.password) }) },
+    {
+      name: "username and password with env variable password",
+      options: () => ({ username: user.name, _password: "${SUPER_SECRET_PASSWORD}" }),
+      env: () => ({ SUPER_SECRET_PASSWORD: base64(user.password) }),
     },
     {
-      dotEnv: { SECRET_AUTH: "zack:verysecure" },
+      name: "username and password with .env variable password",
+      options: () => ({ username: user.name, _password: "${SUPER_SECRET_PASSWORD}" }),
+      dotEnv: () => ({ SUPER_SECRET_PASSWORD: base64(user.password) }),
     },
-  );
-
-  registryConfigOptionTest(
-    "_auth from .env variable with no value",
-    async () => {
-      await registry.generateUser("zack420", "verysecure");
-      return { _auth: "${SECRET_AUTH}" };
-    },
+    { name: "_auth", options: () => ({ _auth: base64(`${user.name}:${user.password}`) }) },
     {
-      dotEnv: { SECRET_AUTH: "" },
+      name: "_auth from .env variable",
+      options: () => ({ _auth: "${SECRET_AUTH}" }),
+      dotEnv: () => ({ SECRET_AUTH: base64(`${user.name}:${user.password}`) }),
     },
-    (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
-    },
-  );
+  ])("sets scoped registry option: $name", async ({ options, env, dotEnv }) => {
+    const lines = (vars: Record<string, string>, prefix = "") =>
+      Object.entries(vars)
+        .map(([key, value]) => `${prefix}${key}=${value}`)
+        .join("\n");
+    using dir = tempDir("npmrc-registry-option", {
+      ".npmrc": `\nregistry = http://localhost:${registry.port}/\n${lines(options(), `//localhost:${registry.port}/:`)}\n`,
+      "package.json": needsAuthPackageJson,
+      ...(dotEnv ? { ".env": lines(dotEnv()) + "\n" } : {}),
+    });
 
-  await makeTest([["email", "user@example.com"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_email).toEqual("user@example.com");
+    expect(await installNeedsAuth(String(dir), env?.())).toEqual(authenticatedInstall(dotEnv !== undefined));
   });
 
-  await makeTest(
-    [
-      ["username", "testuser"],
-      ["_password", "testpass"],
-      ["email", "test@example.com"],
-    ],
-    result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-      expect(result.default_registry_username).toEqual("testuser");
-      expect(result.default_registry_password).toEqual("testpass");
-      expect(result.default_registry_email).toEqual("test@example.com");
-    },
-  );
+  it("sets scoped registry option: _auth from .env variable with no value", async () => {
+    const key = `//localhost:${registry.port}/:_auth=`;
+    using dir = tempDir("npmrc-registry-option-empty", {
+      ".npmrc": `\nregistry = http://localhost:${registry.port}/\n${key}\${SECRET_AUTH}\n`,
+      "package.json": needsAuthPackageJson,
+      ".env": "SECRET_AUTH=\n",
+    });
+
+    // The empty `_auth` is reported (with the value masked) and dropped, so the request carries no credentials
+    // and verdaccio refuses it. The error location moves with the number of digits in the port.
+    const { stderr, stdout, tarballs, exitCode } = await installNeedsAuth(String(dir));
+    expect(stderr).toBe(
+      [
+        `".env"`,
+        `warn: Encountered an error while reading .npmrc:`,
+        ``,
+        `3 | //localhost:<port>/:_auth=**************`,
+        `${" ".repeat("3 | ".length + key.length)}^`,
+        `error: invalid _auth value, expected base64 encoded "<username>:<password>", received an empty string`,
+        `    at .npmrc:3:${key.length + 1}`,
+        `Resolving dependencies`,
+        `Resolved, downloaded and extracted [1]`,
+        `error: GET http://localhost:<port>/@needs-auth%2ftest-pkg - 401`,
+        `error: @needs-auth/test-pkg@1.0.0 failed to resolve`,
+      ].join("\n"),
+    );
+    expect(stdout).toBe(`bun install <version> (<revision>)`);
+    expect(tarballs).toEqual({});
+    expect(exitCode).toBe(1);
+  });
 
   test("applies auth tokens to default registry correctly - same host different paths", () => {
     // Regression test for https://github.com/oven-sh/bun/issues/26350
@@ -531,9 +493,11 @@ registry=https://somehost.com/org1/npm/registry/
 //somehost.com/org2/npm/registry/:_authToken=jwt2
 //somehost.com/org3/npm/registry/:_authToken=jwt3
 `;
-    const result = loadNpmrc(ini);
-    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
-    expect(result.default_registry_token).toBe("jwt1");
+    expect(loadNpmrc(ini)).toEqual({
+      ...npmrcDefaults,
+      default_registry_url: "https://somehost.com/org1/npm/registry/",
+      default_registry_token: "jwt1",
+    });
   });
 
   test("auth token not applied when paths don't match - same host", () => {
@@ -544,10 +508,11 @@ registry=https://somehost.com/org1/npm/registry/
 registry=https://somehost.com/org1/npm/registry/
 //somehost.com/org2/npm/registry/:_authToken=jwt2
 `;
-    const result = loadNpmrc(ini);
-    expect(result.default_registry_url).toEqual("https://somehost.com/org1/npm/registry/");
-    // Should be empty since there's no matching token for /org1/npm/registry/
-    expect(result.default_registry_token).toBe("");
+    // the token stays empty since there's no matching token for /org1/npm/registry/
+    expect(loadNpmrc(ini)).toEqual({
+      ...npmrcDefaults,
+      default_registry_url: "https://somehost.com/org1/npm/registry/",
+    });
   });
 
   describe("credentials keyed to a bracketed IPv6 host", () => {
@@ -562,33 +527,29 @@ registry=https://somehost.com/org1/npm/registry/
     ])("_authToken is applied: %s", (_, registryUrl, key) => {
       const result = loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=v6-token\n`);
       expect(result).toEqual({
+        ...npmrcDefaults,
         default_registry_url: registryUrl,
         default_registry_token: "v6-token",
-        default_registry_username: "",
-        default_registry_password: "",
-        default_registry_email: "",
       });
     });
 
     test("username, _password and _auth are applied", () => {
-      const password = Buffer.from("v6-password").toString("base64");
+      const password = base64("v6-password");
       expect(
         loadNpmrc(`registry=http://[::1]:4873/\n//[::1]:4873/:username=v6-user\n//[::1]:4873/:_password=${password}\n`),
       ).toEqual({
+        ...npmrcDefaults,
         default_registry_url: "http://[::1]:4873/",
-        default_registry_token: "",
         default_registry_username: "v6-user",
         default_registry_password: "v6-password",
-        default_registry_email: "",
       });
 
-      const auth = Buffer.from("v6-user:v6-password").toString("base64");
+      const auth = base64("v6-user:v6-password");
       expect(loadNpmrc(`registry=http://[::1]:4873/\n//[::1]:4873/:_auth=${auth}\n`)).toEqual({
+        ...npmrcDefaults,
         default_registry_url: "http://[::1]:4873/",
-        default_registry_token: "",
         default_registry_username: "v6-user",
         default_registry_password: "v6-password",
-        default_registry_email: "",
       });
     });
 
@@ -598,8 +559,7 @@ registry=https://somehost.com/org1/npm/registry/
       ["a different path", "//[::1]:4873/other/"],
     ])("a key for %s is not applied", (_, key) => {
       const result = loadNpmrc(`registry=http://[::1]:4873/\n${key}:_authToken=v6-token\n`);
-      expect(result.default_registry_url).toBe("http://[::1]:4873/");
-      expect(result.default_registry_token).toBe("");
+      expect(result).toEqual({ ...npmrcDefaults, default_registry_url: "http://[::1]:4873/" });
     });
   });
 
@@ -610,23 +570,41 @@ registry=https://somehost.com/org1/npm/registry/
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: { ...env, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("_password is not valid base64");
-    expect(stderr).toContain("_password=" + Buffer.alloc(secret.length, "*").toString());
+    const { stdout, stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain(secret);
+    expect(stderr).toMatchInlineSnapshot(`
+      "warn: Encountered an error while reading .npmrc:
+
+      1 | //registry.npmjs.org/:_password=************
+                                          ^
+      error: _password is not valid base64
+          at .npmrc:1:33
+      No packages! Deleted empty lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+       done"
+    `);
     expect(exitCode).toBe(0);
   });
 });
 
-describe("scoped registry routing", () => {
+/** A registry that records what reaches it: `<METHOD> <path>` plus the authorization header. */
+function recordingRegistry(hostname: string, respond: (url: URL) => Response | undefined = () => undefined) {
+  const requests: { request: string; authorization: string | null }[] = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname,
+    fetch(req) {
+      const url = new URL(req.url);
+      requests.push({ request: `${req.method} ${url.pathname}`, authorization: req.headers.get("authorization") });
+      return respond(url) ?? Response.json({ error: "not found" }, { status: 404 });
+    },
+  });
+  return { port: server.port, requests, [Symbol.dispose]: () => void server.stop(true) };
+}
+
+describe.concurrent("scoped registry routing", () => {
   // A request for a @scope package must be sent only to that scope's configured
   // registry with that scope's token. The registry map was keyed by a bare
   // Wyhash11 hash of the scope name, so a different scope whose name hashed to
@@ -638,36 +616,10 @@ describe("scoped registry routing", () => {
     const scopeA = "cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbaaaaaaaa8k0b-p2s";
     const scopeB = "cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbbbbbbbbb8k0b-p2s";
 
-    type Req = { path: string; auth: string | null };
-    const reqsA: Req[] = [];
-    const reqsB: Req[] = [];
-    const notFound = () =>
-      new Response(JSON.stringify({ error: "not found" }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      });
-
-    await using serverA = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
-        return notFound();
-      },
-    });
-    await using serverB = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        reqsB.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
-        return notFound();
-      },
-    });
-
-    const portA = serverA.port;
-    const portB = serverB.port;
-    const urlA = `http://127.0.0.1:${portA}/`;
-    const urlB = `http://127.0.0.1:${portB}/`;
+    using registryA = recordingRegistry("127.0.0.1");
+    using registryB = recordingRegistry("127.0.0.1");
+    const urlA = `http://127.0.0.1:${registryA.port}/`;
+    const urlB = `http://127.0.0.1:${registryB.port}/`;
 
     // scopeA is declared first, so scopeB's colliding entry overwrites it in the
     // hash-keyed registry map. The default registry also points at A so that a
@@ -676,9 +628,9 @@ describe("scoped registry routing", () => {
       ".npmrc":
         `registry=${urlA}\n` +
         `@${scopeA}:registry=${urlA}\n` +
-        `//127.0.0.1:${portA}/:_authToken=scope-A-SECRET-token\n` +
+        `//127.0.0.1:${registryA.port}/:_authToken=scope-A-SECRET-token\n` +
         `@${scopeB}:registry=${urlB}\n` +
-        `//127.0.0.1:${portB}/:_authToken=scope-B-SECRET-token\n`,
+        `//127.0.0.1:${registryB.port}/:_authToken=scope-B-SECRET-token\n`,
       "package.json": JSON.stringify({
         name: "victim",
         version: "0.0.0",
@@ -686,69 +638,53 @@ describe("scoped registry routing", () => {
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--no-cache"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    // The install fails (probe does not exist); we only care where it asked.
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).not.toBe(0);
+    const { stdout, stderr, exitCode } = await install(String(dir), { args: ["--no-cache"] });
 
     // scopeB's registry must never see the @scopeA/probe request, and must
     // never be handed scopeB's secret token for it.
-    expect(reqsB).toEqual([]);
-    // The request must have been attempted against scopeA's own registry.
-    expect(reqsA.some(r => r.path.includes("probe"))).toBe(true);
+    expect(registryB.requests).toEqual([]);
+    // The request must have been attempted against scopeA's own registry, with scopeA's token.
+    expect(registryA.requests).toEqual([
+      { request: `GET /@${scopeA}%2fprobe`, authorization: "Bearer scope-A-SECRET-token" },
+    ]);
+    // The install fails (probe does not exist); we only care where it asked.
+    expect(stderr.replaceAll(`127.0.0.1:${registryA.port}`, "127.0.0.1:<port-a>")).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [1]
+      error: GET http://127.0.0.1:<port-a>/@cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbaaaaaaaa8k0b-p2s%2fprobe - 404
+      error: @cuxk74rj1jlebf5o-cigmevrqk5-74swpkgcollapkgcollbaaaaaaaa8k0b-p2s/probe@^1.0.0 failed to resolve"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
   });
 });
 
-describe("--registry override", () => {
+describe.concurrent("--registry override", () => {
   test("does not send the token configured for the previous registry host to the --registry host", async () => {
     const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
 
-    type Req = { path: string; auth: string | null };
-    const reqsA: Req[] = [];
-    const reqsB: Req[] = [];
-
-    await using serverA = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
-        return new Response("not found", { status: 404 });
-      },
-    });
-    await using serverB = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        const url = new URL(req.url);
-        reqsB.push({ path: url.pathname, auth: req.headers.get("authorization") });
-        if (url.pathname.endsWith(".tgz")) return new Response(Bun.file(tgz));
-        if (url.pathname === "/no-deps") {
-          return Response.json({
-            name: "no-deps",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "no-deps",
-                version: "1.0.0",
-                dist: { tarball: `http://127.0.0.1:${serverB.port}/no-deps/-/no-deps-1.0.0.tgz` },
-              },
+    using registryA = recordingRegistry("127.0.0.1");
+    using registryB = recordingRegistry("127.0.0.1", url => {
+      if (url.pathname.endsWith(".tgz")) return new Response(file(tgz));
+      if (url.pathname === "/no-deps") {
+        return Response.json({
+          name: "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dist: { tarball: `${url.origin}/no-deps/-/no-deps-1.0.0.tgz` },
             },
-          });
-        }
-        return new Response("not found", { status: 404 });
-      },
+          },
+        });
+      }
     });
 
     using dir = tempDir("npmrc-registry-override", {
       ".npmrc":
-        `registry=http://127.0.0.1:${serverA.port}/\n` +
-        `//127.0.0.1:${serverA.port}/:_authToken=first-host-SECRET-token\n`,
+        `registry=http://127.0.0.1:${registryA.port}/\n` +
+        `//127.0.0.1:${registryA.port}/:_authToken=first-host-SECRET-token\n`,
       "package.json": JSON.stringify({
         name: "app",
         version: "1.0.0",
@@ -756,35 +692,37 @@ describe("--registry override", () => {
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--registry", `http://127.0.0.1:${serverB.port}/`],
-      cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout, stderr, exitCode } = await install(String(dir), {
+      args: ["--registry", `http://127.0.0.1:${registryB.port}/`],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(reqsA).toEqual([]);
-    expect(reqsB.length).toBeGreaterThan(0);
-    expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => null));
-    expect(stdout).toContain("+ no-deps@1.0.0");
+    expect(registryA.requests).toEqual([]);
+    expect(registryB.requests).toEqual([
+      { request: "GET /no-deps", authorization: null },
+      { request: "GET /no-deps/-/no-deps-1.0.0.tgz", authorization: null },
+    ]);
+    expect(stderr).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [4]
+      Saved lockfile"
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + no-deps@1.0.0
+
+      1 package installed"
+    `);
+    expect(await lockfileTarballs(String(dir))).toEqual({
+      "no-deps@1.0.0": `http://127.0.0.1:${registryB.port}/no-deps/-/no-deps-1.0.0.tgz`,
+    });
     expect(exitCode).toBe(0);
   });
 });
 
 describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
-  test("sends the token keyed to //[::1]:port/ to the default and the scoped registry", async () => {
-    type Req = { path: string; auth: string | null };
-    const reqs: Req[] = [];
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "::1",
-      fetch(req) {
-        reqs.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
-        return new Response("not found", { status: 404 });
-      },
-    });
+  test.concurrent("sends the token keyed to //[::1]:port/ to the default and the scoped registry", async () => {
+    using server = recordingRegistry("::1");
     const url = `http://[::1]:${server.port}/`;
 
     using dir = tempDir("npmrc-ipv6-registry", {
@@ -796,21 +734,31 @@ describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--no-cache"],
-      cwd: String(dir),
+    const { stdout, stderr, exitCode } = await install(String(dir), {
+      args: ["--no-cache"],
       // An ambient proxy would intercept the requests to the local registry.
-      env: { ...env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
-      stdout: "pipe",
-      stderr: "pipe",
+      env: envFor(String(dir), { http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" }),
     });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(reqs.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
-      { path: "/@v6%2fno-deps", auth: "Bearer v6-SECRET-token" },
-      { path: "/no-deps", auth: "Bearer v6-SECRET-token" },
+    expect(server.requests.toSorted((a, b) => a.request.localeCompare(b.request))).toEqual([
+      { request: "GET /@v6%2fno-deps", authorization: "Bearer v6-SECRET-token" },
+      { request: "GET /no-deps", authorization: "Bearer v6-SECRET-token" },
     ]);
-    // The registry answers 404 to both manifest requests, so the install itself fails.
-    expect(exitCode).not.toBe(0);
+    // The registry answers 404 to both manifest requests, so the install itself fails. The two 404 lines print in
+    // the order the responses arrive.
+    expect(
+      stderr
+        .replaceAll(`[::1]:${server.port}`, "[::1]:<port>")
+        .split("\n")
+        .filter(line => line.startsWith("error:"))
+        .sort(),
+    ).toEqual([
+      "error: @v6/no-deps@1.0.0 failed to resolve",
+      "error: GET http://[::1]:<port>/@v6%2fno-deps - 404",
+      "error: GET http://[::1]:<port>/no-deps - 404",
+      "error: no-deps@1.0.0 failed to resolve",
+    ]);
+    expect(stdout).toBe("bun install <version> (<revision>)");
+    expect(exitCode).toBe(1);
   });
 });

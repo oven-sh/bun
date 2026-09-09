@@ -1419,14 +1419,15 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
 });
 
 // After `clone()` the body points at a tee branch instead of the native byte
-// stream. When the peer goes away mid-body, a read parked on either branch must
-// reject like a read on an un-cloned body does. The original's branch used to be
-// cancelled instead of errored, so its reader ended with `{ done: true }` on a
-// truncated body.
-describe("clone() of a body whose peer disconnects mid-stream", () => {
+// stream. When the body fails mid-stream, a read parked on either branch must
+// reject with the error a read on an un-cloned body gets. The original's branch
+// used to be cancelled instead of errored, so its reader ended with
+// `{ done: true }` on a truncated body.
+describe("clone() of a body that fails mid-stream", () => {
   const announced = 64 * 1024;
   const sent = 16 * 1024;
   const payload = Buffer.alloc(sent, "a");
+  const chunkedPayload = Buffer.concat([Buffer.from(sent.toString(16) + "\r\n"), payload, Buffer.from("\r\n")]);
 
   async function drain(body: ReadableStream<Uint8Array>, onBytes: (received: number) => void) {
     const reader = body.getReader();
@@ -1443,40 +1444,70 @@ describe("clone() of a body whose peer disconnects mid-stream", () => {
     }
   }
 
-  test.each(["original", "clone"] as const)(
-    "Bun.serve: a reader on the %s request rejects instead of ending early",
-    async side => {
-      const partial = Promise.withResolvers<void>();
-      const result = Promise.withResolvers<Awaited<ReturnType<typeof drain>>>();
-      await using server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        async fetch(req) {
-          const clone = req.clone();
-          const body = (side === "original" ? req : clone).body!;
-          result.resolve(await drain(body, received => received >= sent && partial.resolve()));
-          return new Response("k");
-        },
-      });
-      const client = net.connect(server.port, "127.0.0.1");
+  // POST a first body part to a handler that clones the request and drains one
+  // side. Once the handler holds those bytes, `fail(client)` breaks the body.
+  async function serveUpload(
+    side: "original" | "clone",
+    opts: { framing: string; firstPart: Buffer; maxRequestBodySize?: number; fail(client: net.Socket): void },
+  ) {
+    const partial = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<Awaited<ReturnType<typeof drain>>>();
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      maxRequestBodySize: opts.maxRequestBodySize,
+      async fetch(req) {
+        const clone = req.clone();
+        const body = (side === "original" ? req : clone).body!;
+        result.resolve(await drain(body, received => received >= sent && partial.resolve()));
+        return new Response("k");
+      },
+    });
+    const client = net.connect(server.port, "127.0.0.1");
+    try {
       client.on("error", () => {});
-      client.write(
-        `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\nContent-Length: ${announced}\r\n\r\n`,
-      );
-      client.write(payload);
-      // The handler holds every byte that was sent; now the client goes away.
+      client.write(`POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`);
+      client.write(opts.firstPart);
       await partial.promise;
+      opts.fail(client);
+      return await result.promise;
+    } finally {
       client.destroy();
-      expect(await result.promise).toEqual({
+    }
+  }
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when the client disconnects",
+    async side => {
+      const result = await serveUpload(side, {
+        framing: `Content-Length: ${announced}`,
+        firstPart: payload,
+        fail: client => client.destroy(),
+      });
+      expect(result).toEqual({ received: sent, outcome: "rejected", error: "AbortError: The connection was closed." });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when a chunked body outgrows maxRequestBodySize",
+    async side => {
+      const result = await serveUpload(side, {
+        // No Content-Length, so only the streamed byte count can enforce the cap.
+        framing: "Transfer-Encoding: chunked",
+        firstPart: chunkedPayload,
+        maxRequestBodySize: sent + 1024,
+        fail: client => client.write(chunkedPayload),
+      });
+      expect(result).toEqual({
         received: sent,
         outcome: "rejected",
-        error: "AbortError: The connection was closed.",
+        error: "Error: Request body exceeded maxRequestBodySize",
       });
     },
   );
 
   test.each(["original", "clone"] as const)(
-    "fetch(): a reader on the %s response rejects instead of ending early",
+    "fetch(): a reader on the %s response rejects when the server disconnects",
     async side => {
       const hangup = Promise.withResolvers<void>();
       const server = net.createServer(socket => {

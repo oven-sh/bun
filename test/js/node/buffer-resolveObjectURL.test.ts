@@ -59,13 +59,13 @@ test("buffer.resolveObjectURL ignores the URL fragment", async () => {
 
   for (const url of [id + "#frag", id + "#", id + "#frag?not-a-query", id + "#frag\n"]) {
     const resolved = resolveObjectURL(url);
-    expect(resolved).toBeInstanceOf(Blob);
-    expect(await resolved!.text()).toBe("hello");
+    expect(resolved, JSON.stringify(url)).toBeInstanceOf(Blob);
+    expect(await resolved!.text(), JSON.stringify(url)).toBe("hello");
   }
 
   // A different scheme, path or query is a different URL.
   for (const url of [uuid, "file:" + uuid, id + "/", id + "?query", id + "?query#frag", id + "?"]) {
-    expect(resolveObjectURL(url)).toBeUndefined();
+    expect(resolveObjectURL(url), JSON.stringify(url)).toBeUndefined();
   }
 
   URL.revokeObjectURL(id);
@@ -79,7 +79,7 @@ test("URL.revokeObjectURL only revokes an exact match", async () => {
 
   for (const url of [id + "#frag", id + "#", id + "?query", id + "/"]) {
     URL.revokeObjectURL(url);
-    expect(await resolveObjectURL(id)?.text()).toBe("hello");
+    expect(await resolveObjectURL(id)?.text(), `revokeObjectURL(${JSON.stringify(url)})`).toBe("hello");
   }
 
   URL.revokeObjectURL(id);

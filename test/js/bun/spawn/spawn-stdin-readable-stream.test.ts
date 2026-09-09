@@ -1157,4 +1157,112 @@ describe("spawn stdin ReadableStream", () => {
     expect(writerDone).toBe(true);
     expect(exitCode).toBe(0);
   });
+
+  // Same backpressure, but with a writer that trickles: one 4 KB piece per
+  // millisecond, so the parent's read cycles end in EAGAIN rather than with a
+  // full scratch buffer. A reader that has stopped pulling must still stop
+  // reading the socket at the source's highwater mark. Before #42038 the read
+  // loop re-armed the poll on every EAGAIN regardless, so a trickling child was
+  // never pushed back and its output was buffered in the parent without bound.
+  test.skipIf(isWindows)("an idle stdout reader pushes back on a trickling writer", async () => {
+    const chunkSize = 4 * 1024;
+    const chunkCount = 512; // 2 MB, well above the socket buffer plus the 16 KB highwater mark
+
+    // Reports on stderr how many pieces stdout.write() has taken so far, and
+    // "done" once all of them are out. Every 32-bit word of the payload holds
+    // its own index so the parent can check order.
+    const writer = `
+      let i = 0;
+      function piece() {
+        const buf = Buffer.allocUnsafe(${chunkSize});
+        const words = new Uint32Array(buf.buffer, buf.byteOffset, ${chunkSize / 4});
+        for (let w = 0; w < words.length; w++) words[w] = i * ${chunkSize / 4} + w;
+        return buf;
+      }
+      function pump() {
+        if (i >= ${chunkCount}) {
+          process.stderr.write("done\\n");
+          return;
+        }
+        const ok = process.stdout.write(piece());
+        i++;
+        process.stderr.write(i + "\\n");
+        if (!ok) process.stdout.once("drain", () => setTimeout(pump, 1));
+        else setTimeout(pump, 1);
+      }
+      pump();
+    `;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", writer],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    let progress = 0;
+    let writerDone = false;
+    const stderrDrain = (async () => {
+      let buf = "";
+      for await (const c of proc.stderr) {
+        buf += Buffer.from(c).toString();
+        const lines = buf.split("\n");
+        buf = lines.pop()!;
+        for (const line of lines) {
+          if (line === "done") writerDone = true;
+          else if (line) progress = parseInt(line);
+        }
+      }
+    })();
+
+    let received = 0;
+    let inOrder = true;
+    const verify = (value: Uint8Array) => {
+      const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+      const end = received + value.byteLength;
+      for (let pos = (received + 3) & ~3; pos + 4 <= end; pos += 4096) {
+        if (view.getUint32(pos - received, true) !== pos / 4) inOrder = false;
+      }
+      received = end;
+    };
+
+    const reader = proc.stdout.getReader();
+    const first = await reader.read();
+    verify(first.value!);
+
+    // The reader is idle from here on. Wait until the writer either finishes
+    // (nothing pushed back) or stops making progress (blocked on a full
+    // socket, waiting for 'drain').
+    let last = -1;
+    let unchanged = 0;
+    while (!writerDone && unchanged < 30) {
+      await Bun.sleep(10);
+      if (progress === last) {
+        unchanged++;
+      } else {
+        unchanged = 0;
+        last = progress;
+      }
+    }
+    const progressWhileIdle = progress;
+    const doneWhileIdle = writerDone;
+
+    // Resume: every byte arrives, in order.
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      verify(value);
+    }
+    await stderrDrain;
+    const exitCode = await proc.exited;
+
+    expect(doneWhileIdle).toBe(false);
+    expect(progressWhileIdle).toBeGreaterThan(0);
+    expect(progressWhileIdle).toBeLessThan(chunkCount);
+    expect(received).toBe(chunkSize * chunkCount);
+    expect(inOrder).toBe(true);
+    expect(writerDone).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 });

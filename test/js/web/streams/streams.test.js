@@ -476,6 +476,36 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   expect(status).toBe(0);
 });
 
+// A reader that stops pulling must stop the FIFO from being read once the
+// source has buffered its highwater mark (16 KB), so the pipe fills and the
+// writer is pushed back. Before #42038 the read loop re-armed the poll whenever
+// a read cycle ended in EAGAIN, even though the source had asked it to stop, so
+// every later write woke it again and was buffered without bound.
+it.skipIf(isWindows)("Bun.file(fifo).stream() stops reading a pipe its consumer is not reading", async () => {
+  using dir = tempDir("file-stream-fifo-backpressure", {});
+  const fifoPath = join(String(dir), "fifo");
+  mkfifo(fifoPath, 0o666);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "file-stream-fifo-backpressure-fixture.js"), fifoPath],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  // The pipe stayed full while the reader was idle: it took the highwater mark
+  // plus roughly one pipe buffer, not the whole 2 MB payload.
+  expect(result.acceptedWhileIdle).toBeLessThan(1024 * 1024);
+  expect(result.blocked).toBe(true);
+  // Reading again delivers every byte, in order.
+  expect(result.received).toBe(result.total);
+  expect(result.inOrder).toBe(true);
+  expect(result.first).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+});
+
 it("exists globally", () => {
   expect(typeof ReadableStream).toBe("function");
   expect(typeof ReadableStreamBYOBReader).toBe("function");

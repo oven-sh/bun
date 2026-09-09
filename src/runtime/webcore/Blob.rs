@@ -1565,82 +1565,15 @@ impl BlobExt for Blob {
             }
         };
 
-        // `pipe_stream` takes its own refs.
-        if let Some(promise) =
-            // SAFETY: sole owner so far; `&mut` scoped to the call.
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
-        {
-            return Ok(promise);
-        }
-
-        let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
-            global_this,
-            readable_stream.value,
-            file_sink.as_non_null(),
-        );
-
-        assignment_result.ensure_still_alive();
-
-        if let Some(err) = assignment_result.to_error() {
+        // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
+        let mut readable_stream = readable_stream;
+        // SAFETY: sole owner so far; `&mut` scoped to the call.
+        let result =
+            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, global_this) };
+        if let Some(err) = result.to_error() {
             return Ok(JSPromise::rejected_promise(global_this, err).to_js());
         }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            global_this.bun_vm().as_mut().drain_microtasks();
-
-            assignment_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
-                            promise: jsc::JSPromiseStrong::init(global_this),
-                            readable_stream_ref:
-                                webcore::readable_stream::ReadableStreamStrong::init(
-                                    readable_stream,
-                                    global_this,
-                                ),
-                            sink: file_sink,
-                        }));
-                        // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
-                        let promise_value = unsafe { (*wrapper).promise.value() };
-                        assignment_result.then(
-                            global_this,
-                            wrapper.cast::<c_void>(),
-                            on_file_stream_resolve_request_stream_shim,
-                            on_file_stream_reject_request_stream_shim,
-                        );
-                        return Ok(promise_value);
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        let written = file_sink.stream_bytes.get().unwrap_or(0);
-                        readable_stream.done();
-                        return Ok(JSPromise::resolved_promise_value(
-                            global_this,
-                            JSValue::js_number(written as f64),
-                        ));
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        readable_stream.cancel(global_this)?;
-                        promise.set_handled(global_this.vm());
-                        return Ok(JSPromise::rejected_promise(
-                            global_this,
-                            promise.result(global_this.vm()),
-                        )
-                        .to_js());
-                    }
-                }
-            } else {
-                readable_stream.cancel(global_this)?;
-                return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
-            }
-        }
-        let written = file_sink.stream_bytes.get().unwrap_or(0);
-
-        Ok(JSPromise::resolved_promise_value(
-            global_this,
-            JSValue::js_number(written as f64),
-        ))
+        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -5707,95 +5640,6 @@ impl Drop for S3BlobDownloadTask {
 // ──────────────────────────────────────────────────────────────────────────
 // doWrite / doUnlink / getExists
 // ──────────────────────────────────────────────────────────────────────────
-
-// ──────────────────────────────────────────────────────────────────────────
-// FileStreamWrapper / pipeReadableStreamToBlob
-// ──────────────────────────────────────────────────────────────────────────
-
-struct FileStreamWrapper {
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    pub sink: RefPtr<webcore::FileSink>,
-}
-
-pub(crate) fn on_file_stream_resolve_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-    if let Some(stream) = strong.get() {
-        stream.done();
-    }
-    let written = this.sink.stream_bytes.get().unwrap_or(0);
-    this.promise
-        .resolve(global_this, JSValue::js_number(written as f64))?;
-    Ok(JSValue::UNDEFINED)
-}
-
-pub(crate) fn on_file_stream_reject_request_stream(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    // Take ownership via Box so Drop runs `sink.deref()`
-    // and frees the wrapper.
-    // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
-    // through `then()` from the resolve path; we are the sole consumer here.
-    let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
-    };
-    let err = args[0];
-
-    let strong = core::mem::take(&mut this.readable_stream_ref);
-
-    this.promise.reject(global_this, Ok(err))?;
-
-    if let Some(stream) = strong.get() {
-        stream.cancel(global_this)?;
-    }
-    Ok(JSValue::UNDEFINED)
-}
-
-// C-ABI shims for `JSValue::then`. The Rust-side
-// host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
-// Exported under the legacy symbol names so C++ (`BunPromiseInlines.h`) links
-// the same symbol it does today.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
-    unsafe fn on_file_stream_resolve_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
-    unsafe fn on_file_stream_reject_request_stream_shim(
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global, callframe) =
-            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
-        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
-    }
-}
-
-// the local `AnyPromiseResultExt` shim was removed —
-// `bun_jsc::AnyPromise::result` is an inherent method (and `JSInternalPromise`
-// is a transparent alias for `JSPromise`), so the `.result(vm)` call below
-// resolves directly upstream.
 
 // ──────────────────────────────────────────────────────────────────────────
 // getSliceFrom / getSlice / type/name/lastModified/size getters

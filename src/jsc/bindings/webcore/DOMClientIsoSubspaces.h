@@ -120,7 +120,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamController { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamSource { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativeStreamSourceAdapter { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForDirectSinkCloseState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForAsyncIteratorSourceOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForReadStreamIntoSinkOperation { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunStandaloneTextSink { nullptr };

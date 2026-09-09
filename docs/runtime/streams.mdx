@@ -64,11 +64,20 @@ const stream = new ReadableStream({
   pull(controller) {
     controller.write("hello");
     controller.write("world");
+    controller.close();
   },
 });
 ```
 
 When using a direct `ReadableStream`, the destination handles all chunk queueing. The destination receives the bytes you pass to `controller.write()`. When the stream is read from JavaScript, Bun buffers the writes and delivers them as `Uint8Array` chunks (strings are UTF-8 encoded).
+
+### Ending the stream
+
+Call `controller.close()` (or `controller.end()`) once everything is written. Every destination flushes what it has buffered and finishes at that point.
+
+A destination that takes the whole stream (a `Response` or `Request` body, `Bun.serve`, `fetch`, `Bun.write`, `Bun.spawn` stdin, `.text()`, `.bytes()`, `Bun.readableStreamToText()`, and so on) calls `pull()` once. If that `pull()` returns a promise, the stream also ends when the promise resolves, as if `pull()` had called `controller.close()` last. If the promise rejects, the destination fails with that error. A `pull()` that returns without a promise and without closing keeps the stream open until something calls `controller.close()`.
+
+A reader (`getReader()`, `for await`, `pipeTo()`, `pipeThrough()`, `tee()`) treats `pull()` as a request for more data instead: it calls `pull()` again for each read until the stream is closed, like a default `ReadableStream` does.
 
 ### Handling backpressure
 

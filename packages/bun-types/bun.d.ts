@@ -579,6 +579,17 @@ declare module "bun" {
 
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
+    /**
+     * Write the stream's data with `controller.write()` and finish with
+     * `controller.close()`.
+     *
+     * A destination that consumes the whole stream (a `Response` body,
+     * `Bun.serve`, `Bun.write`, `Bun.spawn` stdin, `.text()`, ...) calls
+     * `pull()` once. If it returns a promise, the stream also ends when that
+     * promise resolves, and fails if it rejects. A reader (`getReader()`,
+     * `for await`, `pipeTo()`) calls `pull()` again for each read until the
+     * stream is closed.
+     */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }

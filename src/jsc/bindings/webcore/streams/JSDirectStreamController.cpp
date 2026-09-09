@@ -1024,6 +1024,13 @@ static void directPullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSDir
     controller->onFlush(globalObject);
     controller->m_pullInFlight = false;
     RETURN_IF_EXCEPTION(scope, );
+    if (controller->m_closeOnPullSettled) {
+        controller->m_pullAgain = false;
+        stream = controller->m_stream.get();
+        if (!controller->m_closed && stream && stream->m_state == ReadableStreamState::Readable)
+            controller->onClose(globalObject, jsUndefined());
+        RELEASE_AND_RETURN(scope, );
+    }
     bool pullAgain = takeDirectPullAgain(controller);
     // Edge-triggered (m_pullAgain) AND level-checked (a consumer is waiting), the spec's
     // ShouldCallPull equivalent; loop so a synchronous re-pull chains to the next consumer.

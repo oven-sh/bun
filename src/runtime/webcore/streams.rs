@@ -2120,9 +2120,9 @@ pub struct NetworkSink {
     pub global_this: Option<BackRef<JSGlobalObject>>,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
-    /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
+    /// parks on `controller.flush(true)` (not the sink's onReady) on backpressure.
     /// Resolved by `on_writable`. The `readStreamIntoSink` pump no longer calls
-    /// `flush()` — it resumes via `source.ready()` → `m_onPull` — so no promise
+    /// `flush()` — it resumes via `source.ready()` → the sink's onReady — so no promise
     /// is allocated on that path.
     pub(crate) flush_promise: JSPromiseStrong,
     /// Backpressure promise returned from `write()` to a JS controller;

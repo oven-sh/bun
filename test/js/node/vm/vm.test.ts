@@ -1319,11 +1319,6 @@ describe("DONT_CONTEXTIFY", () => {
 });
 
 describe("defineProperty errors use vm-realm global", () => {
-  // When Object.defineProperty(this, ...) throws inside a vm context (e.g. redefining
-  // a non-configurable property on the sandbox), the TypeError must be created with
-  // the vm-realm global, not the host-realm global that the sandbox object belongs to.
-  // Otherwise `err.constructor.constructor('return process')()` leaks the host realm.
-
   test("data descriptor on sandbox-only property", () => {
     const sandbox = {};
     Object.defineProperty(sandbox, "locked", { value: 1, writable: false, configurable: false });
@@ -1344,10 +1339,8 @@ describe("defineProperty errors use vm-realm global", () => {
     );
 
     expect(result.isVmRealmTypeError).toBe(true);
-    // err.constructor.constructor must be the vm-realm Function, not the host-realm Function.
     expect(result.hostFunction === Function).toBe(false);
     expect(typeof result.hostFunction).toBe("function");
-    // Evaluating in the vm realm: `process` must not be defined.
     expect(result.hostFunction("return typeof process")()).toBe("undefined");
   });
 
@@ -1376,9 +1369,7 @@ describe("defineProperty errors use vm-realm global", () => {
   });
 
   test("data descriptor on a property not on the sandbox (non-extensible sandbox)", () => {
-    // Reaches the fall-through defineOwnProperty call where the property is not
-    // already on the sandbox. A non-extensible sandbox makes JSC throw from that
-    // call; the error must be created in the vm realm.
+    // preventExtensions makes the define of a new key throw from the sandbox itself.
     const sandbox = {};
     Object.preventExtensions(sandbox);
     createContext(sandbox);

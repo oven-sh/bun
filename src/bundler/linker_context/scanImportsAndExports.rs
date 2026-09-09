@@ -1252,11 +1252,9 @@ pub(crate) fn scan_imports_and_exports(
                             // code should see "__esModule". This is an extremely complex
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
-                            //
-                            // An ES module that exports the name `module.exports` chose
-                            // what `require()` returns, as in Node.js and `bun run`.
                             if kind == ImportKind::Require {
                                 let mut record_flags = ImportRecordFlags::WRAP_WITH_TO_COMMONJS;
+                                // Node's `require(esm)` interop export decides the result instead.
                                 if col_ref!(resolved_exports)[other_id].contains(b"module.exports")
                                 {
                                     record_flags |=

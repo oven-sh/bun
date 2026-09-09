@@ -859,9 +859,7 @@ class AsyncImportError extends Error {
   }
 }
 
-/** See `runtime.js`'s `__toCommonJS`. This omits the cache. An ES module that
- * exports the name `module.exports` chose what `require()` returns, once that
- * export is set. */
+/** See `runtime.js`'s `__toCommonJS` (with `useModuleExports`). This omits the cache. */
 function toCommonJS(from: any) {
   var desc,
     moduleExports,

@@ -2871,8 +2871,6 @@ pub(crate) mod __gated_printer {
                         }
                         self.print_symbol(meta.exports_ref);
                         if wrap_with_to_cjs {
-                            // `__toCommonJS(exports_foo, 1)` returns the module's
-                            // `module.exports` export instead of the namespace copy.
                             if record
                                 .flags
                                 .contains(ImportRecordFlags::REQUIRE_MODULE_EXPORTS_EXPORT)

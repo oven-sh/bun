@@ -66,10 +66,11 @@ describe("Web Crypto", () => {
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual(["4000000: true 32", "4: true 32"]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`["4000000: true 32","4: true 32"]`);
     expect(exitCode).toBe(0);
   });
 

@@ -53,9 +53,10 @@ public:
 
 protected:
     // Yes when native code owes the guarded cell a settlement (DeferredPromise): the cell is a GC
-    // root until it is settled or cleared. That keeps a ShadowRealm or node:vm global that script
-    // no longer references alive until the operation started in it completes. No (DOMPromise):
-    // the cell is only visited through its global object, for as long as that global is reachable.
+    // root until it is settled or cleared. That keeps a global that script no longer references
+    // (a dropped ShadowRealm, a retired `bun test --isolate` global) alive until the operation
+    // started in it completes. No (DOMPromise): the cell is only visited through its global
+    // object, for as long as that global is reachable.
     enum class HasPendingActivity : bool { No,
         Yes };
     DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&, HasPendingActivity);

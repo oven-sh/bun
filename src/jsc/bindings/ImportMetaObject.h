@@ -28,8 +28,10 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
 
-    /// `key` is a module registry key or a CommonJS filename: the absolute path of the
-    /// module as the resolver produced it, with the `?query` of the import (if any) appended.
+    /// `key` is a module registry key or a CommonJS filename. For a file that is its absolute
+    /// path as the resolver produced it, with the `?query` of the import (if any) appended, and
+    /// that JSString becomes `import.meta.path` as is. Any other key (one with a query, a plugin's
+    /// virtual module id, `data:`, `blob:`, `vm:module(n)`) goes through a `file:` URL round trip.
     ///
     /// Caveats of that format: the `?` is not a literal `?` in a file name but the start of
     /// the query string, and nothing is URL encoded despite that. So a module with a `?` in

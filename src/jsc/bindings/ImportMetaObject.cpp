@@ -70,7 +70,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 }
 
 // True when URL::fileURLWithFileSystemPath(path).fileSystemPath() gives back `path` unchanged, which
-// is the case for what the resolver produces: an absolute path in the platform's own syntax.
+// is the case for what the resolver produces: a normalized absolute path in the platform's own syntax.
 static bool isFileSystemPathInURLForm(const WTF::String& path)
 {
 #if OS(WINDOWS)
@@ -78,9 +78,15 @@ static bool isFileSystemPathInURLForm(const WTF::String& path)
     // `B:/~BUN/root/...`), and a UNC or rooted path takes a different shape.
     if (path.length() < 3 || !isASCIIAlpha(path[0]) || path[1] != ':' || path[2] != '\\')
         return false;
-    return path.find('/') == notFound;
+    if (path.find('/') != notFound)
+        return false;
+    // The URL parser collapses `.` and `..` segments.
+    return !path.contains("\\.\\"_s) && !path.contains("\\..\\"_s) && !path.endsWith("\\."_s) && !path.endsWith("\\.."_s);
 #else
-    return path.startsWith('/');
+    if (!path.startsWith('/'))
+        return false;
+    // The URL parser collapses `.` and `..` segments.
+    return !path.contains("/./"_s) && !path.contains("/../"_s) && !path.endsWith("/."_s) && !path.endsWith("/.."_s);
 #endif
 }
 

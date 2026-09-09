@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Readable } from "node:stream";
-import { request, fetch as undiciFetch } from "undici";
+// These tests cover Bun's undici shim. A bare "undici" import resolves to the
+// installed package (test/node_modules has one), so go through the
+// "next/dist/compiled/undici" alias, which always maps to the shim.
+import { request, fetch as undiciFetch } from "next/dist/compiled/undici";
 
 import { createServer } from "../../../http-test-server";
 

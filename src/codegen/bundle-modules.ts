@@ -354,6 +354,8 @@ function idToEnumName(id: string) {
 
 function idToPublicSpecifierOrEnumName(id: string) {
   if (id === "internal-for-testing.ts") return "bun:internal-for-testing"; // not in the `bun/` folder because it's added conditionally
+  // The undici shim only stands in for the npm package (HardcodedModule.rs `Alias::fallback`), so its key is not the package name.
+  if (id === "thirdparty/undici.js") return "internal:undici";
   id = id.replace(/\.[mc]?[tj]s$/, "");
   if (id.startsWith("node/")) {
     return "node:" + id.slice(5).replaceAll(".", "/");

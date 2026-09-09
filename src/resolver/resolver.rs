@@ -1358,8 +1358,28 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
-        let mut tmp =
-            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        // Probe without auto-install; the builtin stands in when nothing is installed.
+        let fallback = HardcodedAlias::fallback(import_path, self.opts.target);
+        let mut tmp = self.resolve_without_symlinks(
+            source_dir_normalized,
+            import_path,
+            kind,
+            if fallback.is_some() {
+                GlobalCache::disable
+            } else {
+                global_cache
+            },
+        );
+        if let Some(fallback) = fallback {
+            if matches!(tmp, ResultUnion::NotFound) {
+                let _ = self.flush_debug_logs(FlushMode::Success);
+                self.extension_order = original_order;
+                return ResultUnion::Success(Self::external_builtin(
+                    fallback.path.as_bytes(),
+                    kind,
+                ));
+            }
+        }
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1449,6 +1469,21 @@ impl<'a> Resolver<'a> {
         // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
         self.extension_order = original_order;
         ret
+    }
+
+    /// An external result that rewrites the import to the builtin `path`.
+    fn external_builtin(path: &'static [u8], kind: ast::ImportKind) -> Result {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(path),
+                secondary: None,
+            },
+            module_type: options::ModuleType::Cjs,
+            primary_side_effects_data: SideEffects::NoSideEffectsPureData,
+            flags: ResultFlags::IS_EXTERNAL | ResultFlags::REWRITE_IMPORT_PATH,
+            ..Default::default()
+        }
     }
 
     pub fn resolve(
@@ -5022,14 +5057,34 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            return self.load_node_modules(
+            // As in `resolve_and_auto_install`: probe without auto-install, then fall back.
+            let fallback = HardcodedAlias::fallback(&esm_resolution.path, self.opts.target);
+            let status = self.load_node_modules(
                 &esm_resolution.path,
                 kind,
                 dir_info,
-                global_cache,
+                if fallback.is_some() {
+                    GlobalCache::disable
+                } else {
+                    global_cache
+                },
                 true,
                 out,
             );
+            if let Some(fallback) = fallback {
+                if matches!(status, MatchStatus::NotFound) {
+                    *out = MatchResult {
+                        path_pair: PathPair {
+                            primary: Fs::Path::init(fallback.path.as_bytes()),
+                            secondary: None,
+                        },
+                        is_external: true,
+                        ..Default::default()
+                    };
+                    return MatchStatus::Success;
+                }
+            }
+            return status;
         }
 
         self.handle_esm_resolution(

@@ -6,7 +6,9 @@ import { bunEnv, bunExe } from "harness";
 // Runs in a child process. Calls every bun:ffi entry point with arguments that
 // are safe when FFI is enabled (nothing is dlopen'd, compiled C is never run)
 // and reports, per entry, "ok", the error code, or the error message. The raw
-// `native.dlopen` returns its error instead of throwing it.
+// `native.dlopen` returns its error instead of throwing it. The address is
+// taken once up front (0 when ptr() itself is disabled) so that every probe
+// reaches its own entry point instead of failing inside its argument list.
 // `report` receives the JSON string.
 const probeWith = (report: string) => /* js */ `
   const ffi = require("bun:ffi");
@@ -19,22 +21,24 @@ const probeWith = (report: string) => /* js */ `
       return describeError(e);
     }
   };
-  const bytes = new Uint8Array(8);
-  const address = () => ffi.ptr(bytes);
+  const bytes = new Uint8Array([104, 105, 0, 0, 0, 0, 0, 0]);
+  let address = 0;
+  const ptr = attempt(() => { address = ffi.ptr(bytes); });
   ${report}(JSON.stringify({
     BunFFI: typeof Bun.FFI,
     dlopen: attempt(() => ffi.dlopen("/does-not-exist-" + process.pid + "." + ffi.suffix, { f: { args: [], returns: "int" } })),
     nativeDlopen: attempt(() => ffi.native.dlopen("/does-not-exist-" + process.pid + "." + ffi.suffix, { f: { args: [], returns: "int" } })),
     cc: attempt(() => ffi.cc({ source: "does-not-exist.c", symbols: {} })),
     JSCallback: attempt(() => new ffi.JSCallback(() => {}, { args: [], returns: "void" }).close()),
-    CFunction: attempt(() => ffi.CFunction({ ptr: address(), args: [], returns: "void" })),
-    linkSymbols: attempt(() => ffi.linkSymbols({ f: { ptr: address(), args: [], returns: "void" } })),
+    CFunction: attempt(() => ffi.CFunction({ ptr: address, args: [], returns: "void" })),
+    linkSymbols: attempt(() => ffi.linkSymbols({ f: { ptr: address, args: [], returns: "void" } })),
     viewSource: attempt(() => ffi.viewSource({ f: { args: [], returns: "int" } }, false)),
-    ptr: attempt(() => address()),
-    read: attempt(() => ffi.read.u8(address(), 0)),
-    toBuffer: attempt(() => ffi.toBuffer(address(), 0, 8)),
-    toArrayBuffer: attempt(() => ffi.toArrayBuffer(address(), 0, 8)),
-    CString: attempt(() => new ffi.CString(ffi.ptr(Buffer.from("hi\\0")))),
+    ptr,
+    read: attempt(() => ffi.read.u8(address, 0)),
+    toBuffer: attempt(() => ffi.toBuffer(address, 0, 8)),
+    toArrayBuffer: attempt(() => ffi.toArrayBuffer(address, 0, 8)),
+    CString: attempt(() => String(new ffi.CString(address))),
+    CStringCall: attempt(() => String(ffi.CString(address))),
     FFIType: typeof ffi.FFIType.int,
     suffix: typeof ffi.suffix,
   }));
@@ -55,6 +59,7 @@ const enabled = {
   toBuffer: "ok",
   toArrayBuffer: "ok",
   CString: "ok",
+  CStringCall: "ok",
   FFIType: "number",
   suffix: "string",
 };
@@ -73,6 +78,7 @@ const disabled = {
   toBuffer: "ERR_FFI_DISABLED",
   toArrayBuffer: "ERR_FFI_DISABLED",
   CString: "ERR_FFI_DISABLED",
+  CStringCall: "ERR_FFI_DISABLED",
   // Plain constants stay available.
   FFIType: "number",
   suffix: "string",

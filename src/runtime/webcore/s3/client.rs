@@ -555,11 +555,14 @@ pub(crate) fn writable_stream(
 
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
-    let sink = unsafe { &mut *response_stream };
+    let sink = unsafe { &*response_stream };
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
     debug_assert!(sink.source.is_dead());
-    Ok(sink.to_js(global_this))
+    Ok(NetworkSink::to_js(
+        core::ptr::NonNull::new(response_stream).expect("heap allocation"),
+        global_this,
+    ))
 }
 
 #[derive(bun_ptr::CellRefCounted)]

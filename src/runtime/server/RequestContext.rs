@@ -2130,6 +2130,10 @@ where
         this.sink.set(Some(response_stream_ptr));
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
+        // `JSSink<T>` is `repr(transparent)` over `T`: same address, root provenance.
+        response_stream.sink.root.set(Some(
+            response_stream_ptr.cast::<ResponseStream<SSL_ENABLED>>(),
+        ));
 
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
@@ -3307,8 +3311,9 @@ where
                 // `do_render_with_body_locked`.
                 this.ref_();
                 this.flags.set_has_marked_pending(true);
-                lock.on_receive_value =
-                    Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
+                lock.on_receive_value = Some(Body::ReceiveValue::Ctx(|ctx, value| {
+                    Self::do_render_with_body_locked(ctx, value)
+                }));
                 lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
 
                 return;

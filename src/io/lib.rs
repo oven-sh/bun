@@ -471,6 +471,9 @@ pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
+#[cfg(windows)]
+#[path = "uv_fs_request.rs"]
+pub mod uv_fs;
 #[path = "write.rs"]
 pub mod write;
 
@@ -927,10 +930,23 @@ impl IoRequestLoop {
     /// async-signal-safe `waker`. This is the *only* cross-thread entry
     /// point — every other `IoRequestLoop` method is IO-thread-only.
     pub fn schedule(request: &mut Request) {
+        // SAFETY: exclusively borrowed, so live and nobody else's until popped.
+        unsafe { Self::schedule_raw(core::ptr::NonNull::from(request)) }
+    }
+
+    /// [`schedule`](Self::schedule) without forming a `&mut Request`.
+    ///
+    /// # Safety
+    /// `request` is live and not queued, and no other thread uses it until
+    /// the io thread pops it.
+    pub unsafe fn schedule_raw(request: core::ptr::NonNull<Request>) {
         Self::ensure_init();
-        debug_assert!(!request.scheduled);
-        request.scheduled = true;
-        let request = core::ptr::NonNull::from(request);
+        // SAFETY: fn contract.
+        unsafe {
+            let scheduled = &raw mut (*request.as_ptr()).scheduled;
+            debug_assert!(!*scheduled);
+            *scheduled = true;
+        }
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. `get_unchecked` (no owner assert) and a
         // pointer cast of the `repr(transparent)` `MaybeUninit` (not
@@ -983,51 +999,74 @@ impl IoRequestLoop {
                     if request_ptr.is_null() {
                         break;
                     }
-                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
-                    request.scheduled = false;
-                    match (request.callback)(request) {
-                        Action::Readable(readable) => {
-                            match readable.poll.register_for_epoll(
+                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`;
+                    // `callback` was installed by the request's owner for it.
+                    let action = unsafe {
+                        let request = &mut *request_ptr;
+                        request.scheduled = false;
+                        (request.callback)(request)
+                    };
+                    match action {
+                        Action::Readable(mut readable) => {
+                            let (tag, fd) = (readable.tag, readable.fd);
+                            match readable.poll().register_for_epoll(
                                 Flags::PollReadable,
-                                readable.tag,
+                                tag,
                                 watcher_fd,
                                 true,
-                                readable.fd,
+                                fd,
                             ) {
                                 Err(err) => {
-                                    (readable.on_error)(readable.ctx, &err);
+                                    // SAFETY: `poll` is the `io_poll` field of the
+                                    // live owner `tag` names (the `Action` contract).
+                                    unsafe {
+                                        __bun_io_pollable_on_io_error(
+                                            readable.tag,
+                                            readable.poll,
+                                            &err,
+                                        )
+                                    };
                                 }
                                 Ok(()) => {}
                             }
                         }
-                        Action::Writable(writable) => {
-                            match writable.poll.register_for_epoll(
+                        Action::Writable(mut writable) => {
+                            let (tag, fd) = (writable.tag, writable.fd);
+                            match writable.poll().register_for_epoll(
                                 Flags::PollWritable,
-                                writable.tag,
+                                tag,
                                 watcher_fd,
                                 true,
-                                writable.fd,
+                                fd,
                             ) {
                                 Err(err) => {
-                                    (writable.on_error)(writable.ctx, &err);
+                                    // SAFETY: as the readable arm.
+                                    unsafe {
+                                        __bun_io_pollable_on_io_error(
+                                            writable.tag,
+                                            writable.poll,
+                                            &err,
+                                        )
+                                    };
                                 }
                                 Ok(()) => {}
                             }
                         }
-                        Action::Close(close) => {
+                        Action::Close(mut close) => {
+                            let fd = close.fd;
                             log!(
-                                "close({}, registered={})",
-                                close.fd,
-                                close.poll.flags.contains(Flags::Registered)
+                                "close({}, was_ever_registered={})",
+                                fd,
+                                close.poll().flags.contains(Flags::WasEverRegistered)
                             );
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.
                             // This state can happen if polling for readable/writable previously failed.
-                            if close.poll.flags.contains(Flags::WasEverRegistered) {
-                                close.poll.unregister_with_fd(watcher_fd, close.fd);
+                            if close.poll().flags.contains(Flags::WasEverRegistered) {
+                                close.poll().unregister_with_fd(watcher_fd, fd);
                             }
-                            (close.on_done)(close.ctx);
+                            // SAFETY: as the readable arm.
+                            unsafe { __bun_io_pollable_on_closed(close.tag, close.poll) };
                         }
                     }
                 }
@@ -1123,41 +1162,50 @@ impl IoRequestLoop {
                     if request_ptr.is_null() {
                         break;
                     }
-                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
-                    let request = unsafe { &mut *request_ptr };
-                    request.scheduled = false;
-                    match (request.callback)(request) {
-                        Action::Readable(readable) => {
+                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`;
+                    // `callback` was installed by the request's owner for it.
+                    let action = unsafe {
+                        let request = &mut *request_ptr;
+                        request.scheduled = false;
+                        (request.callback)(request)
+                    };
+                    match action {
+                        Action::Readable(mut readable) => {
+                            let (tag, fd) = (readable.tag, readable.fd);
                             Poll::apply_kqueue(
                                 ApplyAction::Readable,
-                                readable.tag,
-                                readable.poll,
-                                readable.fd,
+                                tag,
+                                readable.poll(),
+                                fd,
                                 add_one(&mut events_list),
                             );
                         }
-                        Action::Writable(writable) => {
+                        Action::Writable(mut writable) => {
+                            let (tag, fd) = (writable.tag, writable.fd);
                             Poll::apply_kqueue(
                                 ApplyAction::Writable,
-                                writable.tag,
-                                writable.poll,
-                                writable.fd,
+                                tag,
+                                writable.poll(),
+                                fd,
                                 add_one(&mut events_list),
                             );
                         }
-                        Action::Close(close) => {
-                            if close.poll.flags.contains(Flags::PollReadable)
-                                || close.poll.flags.contains(Flags::PollWritable)
+                        Action::Close(mut close) => {
+                            let (tag, fd) = (close.tag, close.fd);
+                            if close.poll().flags.contains(Flags::PollReadable)
+                                || close.poll().flags.contains(Flags::PollWritable)
                             {
                                 Poll::apply_kqueue(
                                     ApplyAction::Cancel,
-                                    close.tag,
-                                    close.poll,
-                                    close.fd,
+                                    tag,
+                                    close.poll(),
+                                    fd,
                                     add_one(&mut events_list),
                                 );
                             }
-                            (close.on_done)(close.ctx);
+                            // SAFETY: `poll` is the `io_poll` field of the live
+                            // owner `tag` names (the `Action` contract).
+                            unsafe { __bun_io_pollable_on_closed(close.tag, close.poll) };
                         }
                     }
                 }
@@ -1202,15 +1250,21 @@ impl IoRequestLoop {
 
 // ─── Request ──────────────────────────────────────────────────────────────────
 
+/// What the io thread runs when it pops a [`Request`]: decides the [`Action`]
+/// for the request's owner. Only the io thread calls it, on a request that
+/// owner scheduled; every callback recovers the owner from the request's
+/// address, so it must never be invoked on a free-standing `Request`.
+pub type RequestCallback = for<'a> unsafe fn(&'a mut Request) -> Action<'a>;
+
 pub struct Request {
     pub next: bun_threading::Link<Request>,
-    pub callback: for<'a> fn(&'a mut Request) -> Action<'a>,
+    pub callback: RequestCallback,
     pub scheduled: bool,
 }
 
 impl Request {
     #[inline]
-    pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
+    pub const fn new(callback: RequestCallback) -> Self {
         Self {
             next: bun_threading::Link::new(),
             callback,
@@ -1228,7 +1282,7 @@ impl Request {
     /// followed by a full fence (matches the existing pattern in
     /// `webcore::blob::{read_file,write_file}`).
     #[inline]
-    pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
+    pub fn store_callback_seq_cst(&mut self, cb: RequestCallback) {
         // SAFETY: `callback` is a plain pointer-sized field on `self`;
         // volatile write prevents the compiler from reordering or eliding it.
         unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
@@ -1270,18 +1324,175 @@ pub unsafe trait IntrusiveIoRequest: Sized {
     }
 }
 
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
+/// Implements [`IntrusiveIoRequest`] for a struct that embeds an `io:
+/// `[`ParkedRequest`] field whose request is the intrusive one. Brings
 /// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
 /// `fn(&mut Request) -> Action` trampolines.
 #[macro_export]
 macro_rules! intrusive_io_request {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
+    ($ty:ty, parked $field:ident) => {
+        ::bun_core::intrusive_field!($ty, $field: $crate::ParkedRequest);
+        // SAFETY: `IO_REQUEST_OFFSET` is the offset of the `Request` inside
+        // that `ParkedRequest`.
         unsafe impl $crate::IntrusiveIoRequest for $ty {
-            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            const IO_REQUEST_OFFSET: usize =
+                <$ty as ::bun_core::IntrusiveField<$crate::ParkedRequest>>::OFFSET
+                    + $crate::ParkedRequest::REQUEST_OFFSET;
         }
     };
+}
+
+/// An [`IntrusiveIoRequest`] owner that handles its own request on the io
+/// thread. [`io_request_callback`] is the [`RequestCallback`] that recovers
+/// the owner and calls this.
+pub trait IoRequestHandler: IntrusiveIoRequest {
+    /// io thread: the owner's request was just popped (`scheduled` is already
+    /// cleared). Nothing else touches the owner while it is queued or here.
+    fn on_io_request(&mut self) -> Action<'_>;
+}
+
+/// The [`RequestCallback`] for a `T` that handles its own request.
+pub const fn io_request_callback<T: IoRequestHandler + 'static>() -> RequestCallback {
+    /// # Safety
+    /// [`RequestCallback`] contract: `request` is the intrusive request of a
+    /// live `T` that scheduled it, and nothing else touches that `T` now.
+    unsafe fn run<T: IoRequestHandler + 'static>(request: &mut Request) -> Action<'_> {
+        // SAFETY: fn contract — `request` is embedded in a live, unaliased `T`.
+        let owner: &mut T = unsafe { &mut *T::from_io_request(core::ptr::from_mut(request)) };
+        owner.on_io_request()
+    }
+    run::<T>
+}
+
+// ─── ParkedRequest ────────────────────────────────────────────────────────────
+
+/// The io [`Request`] of a job that may park on the io loop waiting for a
+/// pipe/tty/socket to become ready — the one wait a `Bun.file` read or
+/// write can be stuck on indefinitely, and so the one its VM's stop phase
+/// must be able to end ([`cancel`](Self::cancel)) — together with who
+/// currently owns that job. All ownership transitions are compare-exchanges
+/// on one byte, so the JS thread's cancel, the io thread's arm/fire, and the
+/// pool thread's park agree on who completes the job, exactly once.
+/// Cancellation is sticky: once cancelled the job never parks again.
+pub struct ParkedRequest {
+    state: core::sync::atomic::AtomicU8,
+    /// Reached through `&mut self` by whichever thread the state says owns
+    /// the job, and through `&self` only by [`cancel`](Self::cancel) when the
+    /// state says nobody does.
+    request: core::cell::UnsafeCell<Request>,
+}
+
+mod parked {
+    /// A pool thread has it (running, or about to).
+    pub(super) const IDLE: u8 = 0;
+    /// Its wait request is queued for the io thread, not yet processed.
+    pub(super) const PARKED: u8 = 1;
+    /// The io thread registered its poll; readiness sends it back to the pool.
+    pub(super) const ARMED: u8 = 2;
+    /// Cancelled while parked/armed: the io thread closes it out.
+    pub(super) const CANCELLED: u8 = 3;
+    /// Cancelled while a pool thread had it: that thread fails it at its next
+    /// attempt to park.
+    pub(super) const DOOMED: u8 = 4;
+}
+
+impl ParkedRequest {
+    #[doc(hidden)]
+    pub const REQUEST_OFFSET: usize = core::mem::offset_of!(ParkedRequest, request);
+
+    pub const fn new(callback: RequestCallback) -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(parked::IDLE),
+            request: core::cell::UnsafeCell::new(Request::new(callback)),
+        }
+    }
+
+    /// The request, for the thread that currently owns the job.
+    #[inline]
+    pub fn request(&mut self) -> &mut Request {
+        self.request.get_mut()
+    }
+
+    /// Pool thread, before queuing the wait request: `false` ⇒ cancelled
+    /// already — fail the operation instead of parking.
+    pub fn park(&self) -> bool {
+        self.state
+            .compare_exchange(
+                parked::IDLE,
+                parked::PARKED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+
+    /// io thread, processing the wait request: `true` ⇒ register the poll;
+    /// `false` ⇒ cancelled meanwhile — close it out instead.
+    pub fn arm(&self) -> bool {
+        let r = self.state.compare_exchange(
+            parked::PARKED,
+            parked::ARMED,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+        debug_assert!(
+            matches!(r, Ok(_) | Err(parked::CANCELLED)),
+            "io wait request processed while not parked ({r:?})"
+        );
+        r.is_ok()
+    }
+
+    /// io thread, the poll fired or errored: `true` ⇒ hand back to the
+    /// pool; `false` ⇒ cancelled meanwhile — do nothing, the re-queued
+    /// wait request closes it out.
+    pub fn fire(&self) -> bool {
+        self.state
+            .compare_exchange(
+                parked::ARMED,
+                parked::IDLE,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+
+    /// JS thread (the VM's stop phase): cancel, whichever thread has the job.
+    /// If the poll was registered, re-queues the wait request so the io
+    /// thread sees the cancellation (it is not queued, and no other thread
+    /// queues it once cancelled). Otherwise there is nothing more to do here:
+    /// the still-queued wait request will see the flag, or the pool thread
+    /// that has the job fails it when it next tries to park (or just
+    /// finishes).
+    pub fn cancel(&self) {
+        loop {
+            let cur = self.state.load(Ordering::SeqCst);
+            let next = match cur {
+                parked::IDLE => parked::DOOMED,
+                parked::PARKED | parked::ARMED => parked::CANCELLED,
+                _ => return,
+            };
+            if self
+                .state
+                .compare_exchange(cur, next, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                if cur == parked::ARMED {
+                    // SAFETY: ARMED ⇒ the io thread popped the request and, past
+                    // `arm()`, only registers the poll and never uses the
+                    // request again (its handler may still be returning); the
+                    // pool thread gave the job up in `park`; so it is live, not
+                    // queued, and — having won the exchange to CANCELLED — ours
+                    // to queue. No `&mut Request` is formed over the handler's.
+                    unsafe {
+                        IoRequestLoop::schedule_raw(core::ptr::NonNull::new_unchecked(
+                            self.request.get(),
+                        ))
+                    };
+                }
+                return;
+            }
+        }
+    }
 }
 
 /// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
@@ -1344,23 +1555,70 @@ pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 pub enum Action<'a> {
     Readable(FileAction<'a>),
     Writable(FileAction<'a>),
-    Close(CloseAction<'a>),
+    Close(FileAction<'a>),
 }
 
+/// `poll` is the owner's embedded [`Poll`] (projected from the owner's own
+/// pointer, so the dispatch arms can recover the whole owner from it) and
+/// `tag` names the owner's type — both from [`PollOwner`]; readiness, a
+/// registration error and the completed close are reported back through
+/// `__bun_io_pollable_on_{ready,io_error,closed}(tag, poll)`.
+#[cfg_attr(windows, allow(dead_code))] // read by the (POSIX) io loop
 pub struct FileAction<'a> {
-    pub fd: Fd,
-    pub poll: &'a mut Poll,
-    pub ctx: *mut (),
-    pub tag: PollableTag,
-    pub on_error: fn(*mut (), &sys::Error),
+    pub(crate) fd: Fd,
+    pub(crate) poll: *mut Poll,
+    pub(crate) tag: PollableTag,
+    _owner: core::marker::PhantomData<&'a mut Poll>,
 }
 
-pub struct CloseAction<'a> {
-    pub fd: Fd,
-    pub poll: &'a mut Poll,
-    pub ctx: *mut (),
-    pub tag: PollableTag,
-    pub on_done: fn(*mut ()),
+impl<'a> FileAction<'a> {
+    /// Act on `fd` on behalf of `owner`.
+    #[inline]
+    pub fn new<T: PollOwner>(owner: &'a mut T, fd: Fd) -> Self {
+        // SAFETY: in-bounds projection to the `Poll` field of a live `T`.
+        let poll = unsafe { T::field_of(core::ptr::from_mut(owner)) };
+        FileAction {
+            fd,
+            poll,
+            tag: T::TAG,
+            _owner: core::marker::PhantomData,
+        }
+    }
+
+    /// io thread: the owner's poll, for (un)registering it.
+    #[cfg(not(windows))]
+    #[inline]
+    fn poll(&mut self) -> &mut Poll {
+        // SAFETY: `new` borrowed the owner exclusively for `'a`; this is its
+        // `Poll` field.
+        unsafe { &mut *self.poll }
+    }
+}
+
+/// A type embedding the [`Poll`] the io loop registers for it (its
+/// [`IntrusiveField<Poll>`](bun_core::IntrusiveField)), and the tag under which
+/// the loop reports back. Implement via [`poll_owner!`].
+///
+/// # Safety
+/// The `__bun_io_pollable_on_*` dispatch arms for `TAG` must recover exactly a
+/// `Self` from that field (`<Self as IntrusiveField<Poll>>::from_field_ptr`),
+/// and nothing else may register that `Poll` under another tag.
+pub unsafe trait PollOwner: bun_core::IntrusiveField<Poll> {
+    const TAG: PollableTag;
+}
+
+/// Implements [`PollOwner`] (and `IntrusiveField<Poll>`) for `$ty` whose
+/// `$field: Poll` the dispatch arms for `PollableTag::$tag` recover it from.
+#[macro_export]
+macro_rules! poll_owner {
+    ($ty:ty, $field:ident, $tag:ident) => {
+        ::bun_core::intrusive_field!($ty, $field: $crate::Poll);
+        // SAFETY: `bun_runtime::dispatch::__bun_io_pollable_on_*` recover a
+        // `$ty` from its `IntrusiveField<Poll>` under `PollableTag::$tag`.
+        unsafe impl $crate::PollOwner for $ty {
+            const TAG: $crate::PollableTag = $crate::PollableTag::$tag;
+        }
+    };
 }
 
 // ─── Pollable ─────────────────────────────────────────────────────────────────
@@ -1452,8 +1710,6 @@ impl Default for Poll {
     }
 }
 
-pub type Tag = PollableTag;
-
 unsafe extern "Rust" {
     /// Hot-path dispatch for `Pollable` owners. The concrete owners
     /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
@@ -1463,6 +1719,8 @@ unsafe extern "Rust" {
     /// Cold path — only Bun.write / Bun.file().text() reach this.
     fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
     fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
+    /// io thread: an [`Action::Close`] for the owner was carried out.
+    fn __bun_io_pollable_on_closed(tag: PollableTag, poll: *mut Poll);
 }
 
 #[derive(enumset::EnumSetType)]

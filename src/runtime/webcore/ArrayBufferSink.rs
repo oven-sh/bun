@@ -66,16 +66,16 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    // In-place init (JSSink m_ctx slot) — codegen calls this on a
-    // pre-allocated slot.
-    pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        this.write(ArrayBufferSink {
+    /// The sink a new `JSArrayBufferSink` wrapper owns; its `finalize`
+    /// [`destroy`](Self::destroy)s it.
+    pub(crate) fn construct() -> core::ptr::NonNull<Self> {
+        bun_core::heap::into_raw_nn(Box::new(ArrayBufferSink {
             bytes: Vec::<u8>::default(),
             done: false,
             source: SourceHandle::default(),
             streaming: false,
             as_uint8array: false,
-        });
+        }))
     }
 
     pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
@@ -168,13 +168,13 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
+    fn finalize(this: bun_ptr::ThisPtr<Self>) {
         // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `js_construct` allocated for it alone; nothing uses it afterwards.
-        unsafe { Self::destroy(this) };
+        // `construct` allocated for it alone; nothing uses it afterwards.
+        unsafe { Self::destroy(this.as_ptr()) };
     }
-    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
-        Self::construct(this);
+    fn construct() -> core::ptr::NonNull<Self> {
+        Self::construct()
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {

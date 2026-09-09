@@ -333,7 +333,7 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
 // SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed).
 // `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the field offset is
 // unchanged. Every `JSValkeyClient` method this reaches is `&self`.
-bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; fn mut parent_ptr; }
+bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; fn mut parent_ptr; fn shared parent_const; }
 
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
@@ -1555,10 +1555,17 @@ impl HasAutoFlusher for ValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
+    #[inline]
+    fn auto_flush_ctx(&self) -> *mut Self {
+        // The owning `JSValkeyClient.client` cell, so `on_auto_flush` writes
+        // through the allocation's pointer rather than one derived from `&self`.
+        self.parent_const().client.as_ptr()
+    }
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
-        // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
-        // microtasks), so no aliasing across the call.
+        // SAFETY: `this` is `JSValkeyClient.client.as_ptr()` (`auto_flush_ctx`),
+        // registered while connected and unregistered before the client is
+        // dropped; `DeferredTaskQueue::run` is single-threaded (drained on the
+        // JS thread after microtasks), so no other borrow is live across the call.
         unsafe { (*this).on_auto_flush() }
     }
 }

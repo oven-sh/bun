@@ -415,12 +415,26 @@ impl WritablePending {
     }
 }
 
+/// A parked write taken out of its [`WritablePending`] slot, ready to settle.
+pub(crate) struct WritableSettlement {
+    result: Writable,
+    strong: JSPromiseStrong,
+    global: BackRef<JSGlobalObject>,
+}
+
+impl WritableSettlement {
+    /// See [`Pending::run`] for what happens to an exception the settle leaves.
+    pub(crate) fn run(mut self) {
+        Writable::fulfill_promise(self.result, self.strong.swap(), &self.global);
+    }
+}
+
 impl WritablePending {
-    /// Settle the parked write (see [`Pending::run`] for what happens to an
-    /// exception the settle leaves).
-    pub(crate) fn run(&mut self) {
+    /// Mark the parked write settled and hand back what settles its promise,
+    /// for callers that must not hold a borrow of `self` while it does.
+    pub(crate) fn take_settlement(&mut self) -> Option<WritableSettlement> {
         if self.state != PendingState::Pending {
-            return;
+            return None;
         }
         self.state = PendingState::Used;
         // `consumed` belongs to the operation being settled here; the next one
@@ -428,12 +442,20 @@ impl WritablePending {
         self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
-            WritableFuture::Promise { mut strong, global } => Writable::fulfill_promise(
-                core::mem::replace(&mut self.result, Writable::Done),
-                strong.swap(),
-                &global,
-            ),
-            WritableFuture::None => {}
+            WritableFuture::Promise { strong, global } => Some(WritableSettlement {
+                result: core::mem::replace(&mut self.result, Writable::Done),
+                strong,
+                global,
+            }),
+            WritableFuture::None => None,
+        }
+    }
+
+    /// Settle the parked write (see [`Pending::run`] for what happens to an
+    /// exception the settle leaves).
+    pub(crate) fn run(&mut self) {
+        if let Some(settlement) = self.take_settlement() {
+            settlement.run();
         }
     }
 }
@@ -1050,6 +1072,9 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub ctx: Option<*mut c_void>,
 
     pub(crate) auto_flusher: AutoFlusher,
+    /// The allocation's root pointer (what C++ holds as `m_sinkPtr`), set by
+    /// the owner right after boxing; the auto-flush callback writes through it.
+    pub(crate) root: core::cell::Cell<Option<NonNull<Self>>>,
 }
 
 impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
@@ -1075,6 +1100,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
+            root: core::cell::Cell::new(None),
         }
     }
 }
@@ -2068,11 +2094,11 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
+    fn finalize(this: bun_ptr::ThisPtr<Self>) {
         // SAFETY: trait contract — `this` is live, and only the RequestContext's
         // `destroy` frees it (never the inherent `finalize`), so the `&mut`
         // scoped to this call stays valid throughout.
-        unsafe { (*this).finalize() }
+        unsafe { (*this.as_ptr()).finalize() }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
@@ -2493,8 +2519,9 @@ impl NetworkSink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
+    /// `this` is the allocation root; the wrapper's `finalize` releases it.
+    pub fn to_js(this: core::ptr::NonNull<Self>, global_this: &JSGlobalObject) -> JSValue {
+        NetworkSinkJSSink::create_object(global_this, this, 0)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2518,11 +2545,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
+    fn finalize(this: bun_ptr::ThisPtr<Self>) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
-            (*this).finalize();
-            Self::release_writer_holder(this);
+            (*this.as_ptr()).finalize();
+            Self::release_writer_holder(this.as_ptr());
         }
     }
     unsafe fn close_with_error(

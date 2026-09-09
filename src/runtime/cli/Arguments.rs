@@ -2668,8 +2668,7 @@ fn parse_build_command_options(
     }
 }
 
-/// `--no-bundle` never runs the linker: reject flags that need its output,
-/// warn about flags it would merely have consulted.
+/// `--no-bundle` never runs the linker: reject flags that need it, warn about the rest.
 #[cold]
 #[inline(never)]
 fn check_no_bundle_flags(args: &clap::Args<clap::Help>) {

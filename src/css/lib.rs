@@ -268,6 +268,17 @@ impl VendorPrefix {
         self.bits()
     }
 
+    /// The prefix that a selector component with this set of prefixes is written
+    /// with outside of a matching vendor prefix pass: unprefixed if it has an
+    /// unprefixed variant, otherwise the last of its prefixes in `FIELDS` order.
+    #[inline]
+    pub(crate) fn canonical(self) -> VendorPrefix {
+        if self.is_empty() || self.contains(VendorPrefix::NONE) {
+            return VendorPrefix::NONE;
+        }
+        VendorPrefix::from_bits_retain(1 << (u8::BITS - 1 - self.bits().leading_zeros()))
+    }
+
     /// Detects a leading vendor prefix on `name` (case-insensitive, ASCII) and
     /// returns it together with the slice that follows the prefix.
     ///

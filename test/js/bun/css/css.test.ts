@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  Browsers,
   cssTest,
   indoc,
   minify_error_test_with_options,
@@ -135,6 +136,8 @@ describe("css tests", () => {
   });
 
   describe("pseudo-class edge case", () => {
+    // `::file-selector-button` needs a `-webkit-` pass for these targets. The
+    // explicit `:-moz-any()` stays as written in both passes.
     cssTest(
       indoc`[type="file"]::file-selector-button:-moz-any() {
       --pico-background-color: var(--pico-primary-hover-background);
@@ -142,13 +145,13 @@ describe("css tests", () => {
       --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
       --pico-color: var(--pico-primary-inverse);
     }`,
-      indoc`[type="file"]::-webkit-file-upload-button:-webkit-any() {
+      indoc`[type="file"]::-webkit-file-upload-button:-moz-any() {
       --pico-background-color: var(--pico-primary-hover-background);
       --pico-border-color: var(--pico-primary-hover-border);
       --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
       --pico-color: var(--pico-primary-inverse);
     }
-    [type="file"]::file-selector-button:is() {
+    [type="file"]::file-selector-button:-moz-any() {
       --pico-background-color: var(--pico-primary-hover-background);
       --pico-border-color: var(--pico-primary-hover-border);
       --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 #0000);
@@ -164,24 +167,211 @@ describe("css tests", () => {
     );
   });
 
-  describe("vendor prefixed pseudo classes", () => {
-    // chrome <= 109 needs :-webkit-autofill.
-    minify_prefix_test(".a:autofill{color:red}", ".a:-webkit-autofill{color:red}.a:autofill{color:red}", {
-      chrome: 103 << 16,
+  describe("explicitly vendor prefixed selectors", () => {
+    // A selector component that the author wrote with a vendor prefix keeps
+    // that prefix. Only unprefixed components get extra prefixed variants (from
+    // the browser targets), and a rule only gets an unprefixed variant of a
+    // prefixed component when an equivalent unprefixed rule is merged into it.
+    //
+    // Every case also runs as the first of two `@media` rules with the same
+    // query: the minifier appends the rules of the second to the first and
+    // minifies the first again, so its style rules go through `update_prefix`
+    // and rule merging a second time and must come out the same.
+    const again = (source: string) => `@media print{${source}}@media print{.zz{--zz:1}}`;
+    const again_expected = (expected: string) => `@media print{${expected}.zz{--zz:1}}`;
+    function minify_test_again(source: string, expected: string) {
+      minify_test(source, expected);
+      minify_test(again(source), again_expected(expected));
+    }
+    function minify_prefix_test_again(source: string, expected: string, targets: Browsers) {
+      minify_prefix_test(source, expected, targets);
+      minify_prefix_test(again(source), again_expected(expected), targets);
+    }
+
+    describe("print once, as written, without targets", () => {
+      minify_test_again("input:-moz-read-only::placeholder{color:red}", "input:-moz-read-only::placeholder{color:red}");
+      minify_test_again(".a:read-only:-moz-read-only{color:red}", ".a:read-only:-moz-read-only{color:red}");
+      minify_test_again(".a:-moz-read-only .b::selection{color:red}", ".a:-moz-read-only .b::selection{color:red}");
+      minify_test_again(".a:fullscreen:-moz-read-only{color:red}", ".a:fullscreen:-moz-read-only{color:red}");
+      minify_test_again(".a:not(:-moz-read-only){color:red}", ".a:not(:-moz-read-only){color:red}");
+      minify_test_again(
+        ".p::placeholder,.p::-moz-placeholder{color:red}",
+        ".p::placeholder,.p::-moz-placeholder{color:red}",
+      );
+      minify_test_again(".b:read-only,.a:-moz-read-only{color:red}", ".b:read-only,.a:-moz-read-only{color:red}");
+      minify_test_again(
+        ".a:placeholder-shown .x,.b:-webkit-autofill .y{color:red}",
+        ".a:placeholder-shown .x,.b:-webkit-autofill .y{color:red}",
+      );
+      minify_test_again(".a:is(.x,.y):-webkit-autofill{color:red}", ".a:is(.x,.y):-webkit-autofill{color:red}");
+      minify_test_again(
+        ".a:-webkit-any(.x,.y)::placeholder{color:red}",
+        ".a:-webkit-any(.x,.y)::placeholder{color:red}",
+      );
+      minify_test_again(
+        ".a:-webkit-autofill:-moz-read-only{color:red}",
+        ".a:-webkit-autofill:-moz-read-only{color:red}",
+      );
+      // Nested in a rule that safari 8 needs a `-webkit-` and an unprefixed
+      // pass for, with nesting compiled away: the nested selector mixes two
+      // explicit prefixes, so it has no passes of its own and is printed in
+      // each pass of its parent.
+      minify_prefix_test(
+        ":fullscreen{.a:-webkit-autofill:-moz-read-only{color:red}}",
+        ":-webkit-full-screen .a:-webkit-autofill:-moz-read-only{color:red}:fullscreen .a:-webkit-autofill:-moz-read-only{color:red}",
+        { safari: 8 << 16 },
+      );
+      // A nested rule with only an explicit prefix is printed once, in the
+      // pass of its prefix.
+      minify_prefix_test(
+        ":fullscreen{.a::-webkit-input-placeholder{color:red}}",
+        ":-webkit-full-screen .a::-webkit-input-placeholder{color:red}",
+        { safari: 8 << 16 },
+      );
     });
-    minify_prefix_test(
-      ".a:placeholder-shown .b:autofill{color:red}",
-      ".a:placeholder-shown .b:-webkit-autofill{color:red}.a:placeholder-shown .b:autofill{color:red}",
-      { chrome: 103 << 16 },
-    );
-    minify_prefix_test(".a:read-only{color:red}", ".a:-moz-read-only{color:red}.a:read-only{color:red}", {
-      firefox: 50 << 16,
+
+    describe("unprefixed components still get the prefixes the targets need", () => {
+      // https://caniuse.com/css-placeholder: firefox 19-50 needs ::-moz-placeholder.
+      minify_prefix_test_again(
+        "input:-moz-read-only::placeholder{color:red}",
+        "input:-moz-read-only::-moz-placeholder{color:red}input:-moz-read-only::placeholder{color:red}",
+        { firefox: 30 << 16 },
+      );
+      // chrome <= 109 needs :-webkit-autofill.
+      minify_prefix_test_again(".a:autofill{color:red}", ".a:-webkit-autofill{color:red}.a:autofill{color:red}", {
+        chrome: 103 << 16,
+      });
+      minify_prefix_test_again(
+        ".a:placeholder-shown .b:autofill{color:red}",
+        ".a:placeholder-shown .b:-webkit-autofill{color:red}.a:placeholder-shown .b:autofill{color:red}",
+        { chrome: 103 << 16 },
+      );
+      minify_prefix_test_again(".a:read-only{color:red}", ".a:-moz-read-only{color:red}.a:read-only{color:red}", {
+        firefox: 50 << 16,
+      });
+      minify_prefix_test_again(
+        ".a:any-link{color:red}",
+        ".a:-webkit-any-link{color:red}.a:-moz-any-link{color:red}.a:any-link{color:red}",
+        { chrome: 40 << 16, firefox: 30 << 16 },
+      );
+      // `:is()` is supported by chrome 103, so the `-webkit-` pass for
+      // `:autofill` does not turn it into `:-webkit-any()`, which only accepts
+      // compound selectors.
+      minify_prefix_test_again(
+        ".x:is(.a .b,.c):autofill{color:red}",
+        ".x:is(.a .b,.c):-webkit-autofill{color:red}.x:is(.a .b,.c):autofill{color:red}",
+        { chrome: 103 << 16 },
+      );
+      // chrome <= 87 has `:-webkit-any()` but not `:is()`.
+      minify_prefix_test_again(
+        ".x:is(.a,.b):autofill{color:red}",
+        ".x:-webkit-any(.a,.b):-webkit-autofill{color:red}.x:is(.a,.b):autofill{color:red}",
+        { chrome: 80 << 16 },
+      );
+      minify_prefix_test_again(".x:is(.a,.b){color:red}", ".x:-webkit-any(.a,.b){color:red}.x:is(.a,.b){color:red}", {
+        chrome: 80 << 16,
+      });
+      minify_prefix_test_again(
+        ".x:not(.a,.b){color:red}",
+        ".x:not(:-webkit-any(.a,.b)){color:red}.x:not(:is(.a,.b)){color:red}",
+        { safari: 8 << 16 },
+      );
+      minify_prefix_test_again(
+        ".x:lang(en,fr){color:red}",
+        ".x:-webkit-any(:lang(en),:lang(fr)){color:red}.x:-moz-any(:lang(en),:lang(fr)){color:red}.x:is(:lang(en),:lang(fr)){color:red}",
+        { safari: 11 << 16, firefox: 50 << 16 },
+      );
     });
-    minify_prefix_test(
-      ".a:any-link{color:red}",
-      ".a:-webkit-any-link{color:red}.a:-moz-any-link{color:red}.a:any-link{color:red}",
-      { chrome: 40 << 16, firefox: 30 << 16 },
-    );
+
+    describe("merging equivalent rules keeps every variant that was written", () => {
+      minify_test_again(
+        ".a:-moz-read-only{color:red}.a:read-only{color:red}",
+        ".a:-moz-read-only{color:red}.a:read-only{color:red}",
+      );
+      minify_test_again(
+        ".a:read-only{color:red}.a:-moz-read-only{color:red}",
+        ".a:-moz-read-only{color:red}.a:read-only{color:red}",
+      );
+      minify_test_again(
+        ".a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}",
+        ".a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}",
+      );
+      minify_test_again(
+        ".a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}.a::placeholder{color:red}",
+        ".a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}.a::placeholder{color:red}",
+      );
+      minify_test_again(
+        ".a::placeholder{color:red}.a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}",
+        ".a::-webkit-input-placeholder{color:red}.a::-moz-placeholder{color:red}.a::placeholder{color:red}",
+      );
+      minify_test_again(
+        ".a:-moz-read-only::placeholder{color:red}.a:read-only::placeholder{color:red}",
+        ".a:-moz-read-only::placeholder{color:red}.a:read-only::placeholder{color:red}",
+      );
+      minify_test_again(
+        ".x:-webkit-autofill::-webkit-input-placeholder{color:red}.x:-webkit-autofill::-moz-placeholder{color:red}",
+        ".x:-webkit-autofill::-webkit-input-placeholder{color:red}.x:-webkit-autofill::-moz-placeholder{color:red}",
+      );
+      minify_test_again(
+        ".a:-webkit-any(.b,.c):after{color:red}.a:is(.b,.c):after{color:red}",
+        ".a:-webkit-any(.b,.c):after{color:red}.a:is(.b,.c):after{color:red}",
+      );
+      minify_test_again(
+        ".a:is(.b,.c):after{color:red}.a:-webkit-any(.b,.c):after{color:red}",
+        ".a:-webkit-any(.b,.c):after{color:red}.a:is(.b,.c):after{color:red}",
+      );
+      // The output of a prefix pass merges back into the rule it came from.
+      minify_prefix_test_again(
+        ".a:placeholder-shown .b:-webkit-autofill{color:red}.a:placeholder-shown .b:autofill{color:red}",
+        ".a:placeholder-shown .b:-webkit-autofill{color:red}.a:placeholder-shown .b:autofill{color:red}",
+        { chrome: 103 << 16 },
+      );
+      minify_prefix_test_again(
+        ".x:-webkit-any(.a,.b){color:red}.x:is(.a,.b){color:red}",
+        ".x:-webkit-any(.a,.b){color:red}.x:is(.a,.b){color:red}",
+        { chrome: 80 << 16 },
+      );
+      // Two rules whose prefixes differ in two places the other way around are
+      // not variants of one rule: merging them would print
+      // `.a:-moz-read-only::-moz-placeholder` and `.a:read-only::placeholder`
+      // instead.
+      minify_test_again(
+        ".a:-moz-read-only::placeholder{color:red}.a:read-only::-moz-placeholder{color:red}",
+        ".a:-moz-read-only::placeholder{color:red}.a:read-only::-moz-placeholder{color:red}",
+      );
+    });
+
+    describe("merging drops a prefix that the targets do not need, in either order", () => {
+      minify_prefix_test_again(".a:-moz-read-only{color:red}.a:read-only{color:red}", ".a:read-only{color:red}", {
+        firefox: 100 << 16,
+      });
+      minify_prefix_test_again(".a:read-only{color:red}.a:-moz-read-only{color:red}", ".a:read-only{color:red}", {
+        firefox: 100 << 16,
+      });
+      minify_prefix_test_again(
+        ".a:read-only{color:red}.a:-moz-read-only{color:red}",
+        ".a:-moz-read-only{color:red}.a:read-only{color:red}",
+        { firefox: 50 << 16 },
+      );
+      // With targets, a rule written without prefixes absorbs an equivalent
+      // prefixed rule even when that rule is not one of its variants: the
+      // targets decide which variants it prints.
+      minify_prefix_test_again(
+        ".a:read-only::placeholder{color:red}.a:-moz-read-only::placeholder{color:red}",
+        ".a:read-only::-webkit-input-placeholder{color:red}.a:-moz-read-only::-moz-placeholder{color:red}.a:read-only::placeholder{color:red}",
+        { chrome: 40 << 16, firefox: 30 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:is(.b,.c):after{color:red}.a:-webkit-any(.b,.c):after{color:red}",
+        ".a:is(.b,.c):after{color:red}",
+        { safari: 16 << 16 },
+      );
+      minify_prefix_test_again(
+        ".a:is(.b,.c):after{color:red}.a:-webkit-any(.b,.c):after{color:red}",
+        ".a:-webkit-any(.b,.c):after{color:red}.a:is(.b,.c):after{color:red}",
+        { safari: 12 << 16 },
+      );
+    });
   });
 
   describe("calc edge case", () => {

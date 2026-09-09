@@ -1072,20 +1072,30 @@ impl PseudoClass {
         }
     }
 
-    pub(crate) fn get_necessary_prefixes(
+    /// The vendor prefixes of a prefixable pseudo class, with the feature that
+    /// decides which prefixes the browser targets need.
+    pub(crate) fn prefix_mut(
         &mut self,
-        targets: &css::targets::Targets,
-    ) -> css::VendorPrefix {
+    ) -> Option<(&mut css::VendorPrefix, css::prefixes::Feature)> {
         use PseudoClass as P;
         use css::prefixes::Feature as F;
-        let (p, feature): (&mut css::VendorPrefix, F) = match self {
+        Some(match self {
             P::Fullscreen(p) => (p, F::PseudoClassFullscreen),
             P::AnyLink(p) => (p, F::PseudoClassAnyLink),
             P::ReadOnly(p) => (p, F::PseudoClassReadOnly),
             P::ReadWrite(p) => (p, F::PseudoClassReadWrite),
             P::PlaceholderShown(p) => (p, F::PseudoClassPlaceholderShown),
             P::Autofill(p) => (p, F::PseudoClassAutofill),
-            _ => return css::VendorPrefix::empty(),
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
+        let Some((p, feature)) = self.prefix_mut() else {
+            return css::VendorPrefix::empty();
         };
         *p = targets.prefixes(*p, feature);
         *p
@@ -3015,18 +3025,28 @@ impl PseudoElement {
         self.clone()
     }
 
-    pub(crate) fn get_necessary_prefixes(
+    /// The vendor prefixes of a prefixable pseudo element, with the feature
+    /// that decides which prefixes the browser targets need.
+    pub(crate) fn prefix_mut(
         &mut self,
-        targets: &css::targets::Targets,
-    ) -> css::VendorPrefix {
+    ) -> Option<(&mut css::VendorPrefix, css::prefixes::Feature)> {
         use PseudoElement as PE;
         use css::prefixes::Feature as F;
-        let (p, feature): (&mut css::VendorPrefix, F) = match self {
+        Some(match self {
             PE::Selection(p) => (p, F::PseudoElementSelection),
             PE::Placeholder(p) => (p, F::PseudoElementPlaceholder),
             PE::Backdrop(p) => (p, F::PseudoElementBackdrop),
             PE::FileSelectorButton(p) => (p, F::PseudoElementFileSelectorButton),
-            _ => return css::VendorPrefix::empty(),
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn get_necessary_prefixes(
+        &mut self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
+        let Some((p, feature)) = self.prefix_mut() else {
+            return css::VendorPrefix::empty();
         };
         *p = targets.prefixes(*p, feature);
         *p

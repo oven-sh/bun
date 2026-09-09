@@ -14,7 +14,8 @@ use crate::{PrintErr, Printer, VendorPrefix};
 pub struct StyleRule<R> {
     /// The selectors for the style rule.
     pub(crate) selectors: selector::parser::SelectorList,
-    /// A vendor prefix override, used during selector printing.
+    /// The vendor prefix passes to print this rule with (see
+    /// `selector::prefix_passes`), or empty to print it once as written.
     pub(crate) vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
     pub(crate) declarations: DeclarationBlock<'static>,
@@ -62,6 +63,9 @@ impl<R> StyleRule<R> {
                 self.selectors.v.slice_mut(),
                 context.targets,
             );
+        }
+        if !self.vendor_prefix.is_empty() {
+            self.vendor_prefix = selector::prefix_passes(self.selectors.v.slice());
         }
     }
 

@@ -123,66 +123,62 @@ test("bun build --target=browser does not blow up on deeply nested prefixed sele
 // Regression for a CSS-minifier output bomb found by fuzzing: a ~1.5 KB input
 // minified to ~884 MB (≈577,000× amplification), a DoS vector.
 //
-// When a rule's selector list mixes a vendor-prefixed pseudo-class
-// (`:-webkit-autofill`) with an unprefixed one (`:placeholder-shown`),
-// `get_prefix` sets two prefix bits and `StyleRule::to_css` serializes the
-// whole rule once per bit. Each pass re-serializes the rule's nested rules, so
-// nesting such rules repeats the inner subtree once per prefix at every level
-// — (prefix count)^depth. The earlier fix (PR #31270) deduplicated this only
-// when nesting was compiled away for browser targets; with no targets (or
-// nesting-capable targets) nesting is preserved, `&` is printed literally, and
-// every ancestor prefix pass genuinely needs its own copy of the body, so the
-// output cannot be collapsed. The minifier now bounds the total bytes emitted
-// by those duplicate prefix passes and errors out instead of allocating
-// gigabytes.
-
-const VENDOR_PREFIX_LIMIT_ERROR = "Maximum vendor-prefix expansion exceeded";
+// A rule whose selector list mixes an explicitly prefixed pseudo-class
+// (`:-webkit-autofill`) with an unprefixed one (`:placeholder-shown`) used to
+// be printed once per prefix: `get_prefix` set two prefix bits, and the second
+// pass rewrote `:-webkit-autofill` to an `:autofill` the source never had. With
+// no targets (or nesting-capable targets) nesting is preserved, every pass
+// re-serialized the nested rules too, and nesting such rules grew the output by
+// 2^depth. An explicitly prefixed component is now printed as written and adds
+// no pass of its own, so these rules print once per level.
 
 // `depth` nested copies of a rule whose selector list mixes a prefixed pseudo
-// (`:-webkit-autofill`, prefix bit) with an unprefixed one
-// (`:placeholder-shown`, NONE bit), innermost holding `color: red`.
+// (`:-webkit-autofill`) with an unprefixed one (`:placeholder-shown`),
+// innermost holding `color: red`.
 function nestedMixedPrefix(depth: number): string {
   return ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(depth) + "color: red;\n" + "}\n".repeat(depth);
 }
 
-test("deeply nested mixed vendor-prefix rules error instead of exploding with no targets", () => {
-  // Each level doubles the number of printed rule copies, so without a bound
-  // this is ~2^depth copies of the leaf — hundreds of MB by the mid-teens.
-  // The bound turns it into a thrown error.
-  expect(() => minifyTest(nestedMixedPrefix(20), "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+// The minified `nestedMixedPrefix(depth)`: each level once, nested levels with
+// an explicit `&`. `wrap` wraps each selector list in `:is()`, which the
+// minifier does for targets that support `:is()` but not every selector in the
+// list (`:-webkit-autofill` counts as unsupported).
+function nestedMixedPrefixOutput(depth: number, wrap = (list: string) => list): string {
+  const outer = wrap(".a:placeholder-shown .x,.b:-webkit-autofill .y") + "{";
+  const nested = wrap("& .a:placeholder-shown .x,& .b:-webkit-autofill .y") + "{";
+  return outer + nested.repeat(depth - 1) + "color:red" + "}".repeat(depth);
+}
+
+test("nested rules that mix a prefixed and an unprefixed pseudo-class print once per level", () => {
+  expect(minifyTest(nestedMixedPrefix(2), "")).toBe(
+    ".a:placeholder-shown .x,.b:-webkit-autofill .y{& .a:placeholder-shown .x,& .b:-webkit-autofill .y{color:red}}",
+  );
+  // ~2^20 copies of the leaf before the fix (bounded by an error since #31642).
+  expect(minifyTest(nestedMixedPrefix(20), "")).toBe(nestedMixedPrefixOutput(20));
 });
 
-test("the fuzzer reproduction shape errors instead of amplifying", () => {
+test("the fuzzer reproduction shape prints once per level", () => {
   // The fuzzer's shape: unclosed nested rules (the CSS parser closes them at
-  // EOF). 884 MB of output on the original 1.5 KB input; now a thrown error.
+  // EOF). 884 MB of output on the original 1.5 KB input.
   const src = ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(20) + "color: red;";
-  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  expect(minifyTest(src, "")).toBe(nestedMixedPrefixOutput(20));
 });
 
-test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
-  // Modern targets preserve nesting (no de-nesting), so the same per-prefix
-  // re-serialization of the body applies and must be bounded too.
-  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+test("nesting-capable targets print mixed-prefix nested rules once per level", () => {
+  // Modern targets preserve nesting (no de-nesting) and need no prefixes here.
+  expect(minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toBe(
+    nestedMixedPrefixOutput(20, list => `:is(${list})`),
+  );
 });
 
-test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
-  // Below the limit, the rule is still emitted once per prefix variant — the
-  // expansion is correct and necessary, just bounded.
-  const output = minifyTest(nestedMixedPrefix(2), "");
-  expect(output).toContain(":-webkit-autofill");
-  expect(output).toContain(":autofill");
-  expect(output).toContain("color:red");
-  expect(output.length).toBeLessThan(10_000);
-});
-
-test("deeply nested single-prefix rules stay linear and do not trip the bound", () => {
-  // A single selector with one vendor prefix (no mixing with an unprefixed
-  // selector) sets one prefix bit, so the rule is serialized once per level —
-  // linear, not multiplicative. This must not hit the bound.
+test("deeply nested single-prefix rules stay linear", () => {
+  // A single selector with one explicit vendor prefix is serialized once per
+  // level.
   const src = ".b:-webkit-autofill .y {\n".repeat(40) + "color: red;\n" + "}\n".repeat(40);
   const output = minifyTest(src, "");
-  expect(output).toContain("color:red");
-  expect(output.length).toBeLessThan(10_000);
+  expect(output).toBe(
+    ".b:-webkit-autofill .y{" + "& .b:-webkit-autofill .y{".repeat(39) + "color:red" + "}".repeat(40),
+  );
 });
 
 test("a large flat stylesheet of fanning-out rules does not trip the bound", () => {
@@ -192,12 +188,13 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
   // the byte budget, but only a few dozen bytes per rule, so the total stays
   // far under the cap without nesting to compound it. Old targets downlevel a
   // single `::placeholder` into four prefix variants (`-webkit-input-`,
-  // `-moz-`, `-ms-input-`, unprefixed); 20_000 such rules charge ~3 duplicate
-  // passes of a tiny declaration each (a few MB total), well under the 64 MB
+  // `-moz-`, `-ms-input-`, unprefixed); 10_000 such rules charge ~3 duplicate
+  // passes of a tiny declaration each (~1.3 MB total), well under the 64 MB
   // byte limit. Distinct declarations keep the rules from being merged. This
-  // stays linear instead of throwing.
+  // stays linear instead of throwing. (10_000 keeps a debug build under the
+  // default per-test timeout.)
   const oldTargets = { safari: 8 << 16, firefox: 20 << 16, chrome: 30 << 16, edge: 12 << 16 };
-  const count = 20_000;
+  const count = 10_000;
   let src = "";
   for (let i = 0; i < count; i++) src += `input.c${i}::placeholder{--v${i}:1}`;
   const output = minifyTest(src, "", oldTargets);
@@ -206,36 +203,22 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
   expect(output.split("::-webkit-input-placeholder").length - 1).toBe(count);
 });
 
-test("leaf rules nested under a fanning-out ancestor are bounded", () => {
-  // The amplification is driven by the whole nested body re-serialized once per
-  // ancestor prefix, so it must be bounded by the *output* emitted under a
-  // fan-out — not by whether each nested rule fans out on its own. Each nesting
-  // level is a two-prefix rule holding K plain leaf siblings plus one recursive
-  // child; the leaves never fan out themselves but are duplicated
-  // (prefix count)^depth times. A ~1.4 KB input expands past 9 MB here unless
-  // those duplicated leaves count against the bound; it becomes a thrown error.
-  const K = 1;
-  const depth = 15;
-  const leaves = Array.from(
-    { length: K },
-    (_, i) => `.x${i}:placeholder-shown,.y${i}:-webkit-autofill{--v${i}:1}`,
-  ).join("");
+test("the body of a nested mixed-prefix rule is printed once per level", () => {
+  // Sibling leaf rules and declarations under each level were re-serialized
+  // once per ancestor prefix pass too: ~1.4 KB and ~1.8 KB of input printed
+  // 9 MB and tens of MB.
   const level = ".a:placeholder-shown,.b:-webkit-autofill{";
-  const src = (level + leaves).repeat(depth) + "}".repeat(depth);
-  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
-});
+  const nestedLevel = "& .a:placeholder-shown,& .b:-webkit-autofill{";
 
-test("a large declaration block under a fanning-out ancestor is bounded", () => {
-  // The duplicated payload need not be nested rules: a fan-out pass also
-  // re-serializes the rule's own declarations. Each nesting level is a
-  // two-prefix rule whose body is one large custom-property declaration plus a
-  // recursive child, so the declaration bytes are duplicated (prefix count)^depth
-  // times — ~1.8 KB of input emits tens of MB. Counting only nested rules would
-  // miss this (the declaration is not a rule); bounding the emitted bytes of
-  // each duplicate pass catches it.
-  const depth = 16;
-  const payload = `--p:${Buffer.alloc(64, "a").toString()};`;
-  const level = ".a:placeholder-shown,.b:-webkit-autofill{";
-  const src = (level + payload).repeat(depth) + "}".repeat(depth);
-  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  const depth = 15;
+  const leaf = ".x0:placeholder-shown,.y0:-webkit-autofill{--v0:1}";
+  const nestedLeaf = "& .x0:placeholder-shown,& .y0:-webkit-autofill{--v0:1}";
+  expect(minifyTest((level + leaf).repeat(depth) + "}".repeat(depth), "")).toBe(
+    level + (nestedLeaf + nestedLevel).repeat(depth - 1) + nestedLeaf + "}".repeat(depth),
+  );
+
+  const payload = `--p:${Buffer.alloc(64, "a").toString()}`;
+  expect(minifyTest((level + payload + ";").repeat(depth) + "}".repeat(depth), "")).toBe(
+    level + (payload + ";" + nestedLevel).repeat(depth - 1) + payload + "}".repeat(depth),
+  );
 });

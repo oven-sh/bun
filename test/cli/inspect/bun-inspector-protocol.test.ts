@@ -262,3 +262,78 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
     ]),
   );
 });
+
+// Found by fuzzing bun's inspector. A non-numeric sourceID made
+// Runtime.getRuntimeTypesForVariablesAtOffsets abort the inspectee, because
+// JavaScriptCore parsed the id with parseInteger<uintptr_t>(sourceID).value()
+// and .value() on a failed parse throws bad_optional_access, which aborts with
+// exceptions off. The fix (oven-sh/WebKit#576) uses value_or(0), so an unknown
+// source reports isValid: false instead of crashing.
+test("Runtime.getRuntimeTypesForVariablesAtOffsets does not abort on a non-numeric sourceID", async () => {
+  using dir = tempDir("inspector-type-profiler", {
+    "entry.mjs": `setInterval(() => {}, 60_000);`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const { promise: inspectorUrl, resolve: foundUrl, reject: noUrl } = Promise.withResolvers<URL>();
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const line = stderr
+        .split("\n")
+        .slice(0, -1)
+        .find(line => line.trim().startsWith("ws://"));
+      if (line) {
+        foundUrl(new URL(line.trim()));
+        return;
+      }
+    }
+    noUrl(new Error(`No inspector URL in stderr:\n${stderr}`));
+  })().catch(error => noUrl(error instanceof Error ? error : new Error(String(error))));
+
+  const ws = new WebSocket(await inspectorUrl);
+
+  // If the inspectee aborts, the socket closes before the response arrives. Turn
+  // that into a fast, descriptive failure instead of a timeout.
+  const { promise: failed, reject: fail } = Promise.withResolvers<never>();
+  failed.catch(() => {});
+  ws.addEventListener("close", event => fail(new Error(`inspectee socket closed (${event.code})`)));
+  proc.exited.then(code => fail(new Error(`inspectee exited (${code ?? proc.signalCode})`)));
+
+  const responseWaiters = new Map<number, (response: any) => void>();
+  ws.addEventListener("message", ({ data }) => {
+    const message = JSON.parse(String(data));
+    if (typeof message.id === "number") responseWaiters.get(message.id)?.(message);
+  });
+
+  let nextId = 1;
+  function request(method: string, params: Record<string, unknown> = {}): Promise<any> {
+    const id = nextId++;
+    ws.send(JSON.stringify({ id, method, params }));
+    return Promise.race([new Promise<any>(resolve => responseWaiters.set(id, resolve)), failed]);
+  }
+
+  try {
+    await Promise.race([new Promise<void>(resolve => ws.addEventListener("open", () => resolve())), failed]);
+
+    await request("Runtime.enableTypeProfiler");
+    const response = await request("Runtime.getRuntimeTypesForVariablesAtOffsets", {
+      locations: [{ typeInformationDescriptor: 1, sourceID: "a", divot: 10 }],
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({ types: [{ isValid: false }] });
+    expect(proc.signalCode).toBeNull();
+  } finally {
+    ws.close();
+  }
+});

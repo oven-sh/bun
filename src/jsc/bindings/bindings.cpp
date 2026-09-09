@@ -5407,7 +5407,7 @@ restart:
                 // Mark visited so a same-named prototype property (visited
                 // when this recurses into the prototype's structure) doesn't
                 // leak through the shadow.
-                visitedProperties.append(Identifier::fromUid(vm, prop));
+                visitedProperties.add(prop);
                 return true;
             }
 
@@ -5518,7 +5518,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    visitedProperties.append(property);
+                    visitedProperties.add(property.impl());
                     continue;
                 }
 

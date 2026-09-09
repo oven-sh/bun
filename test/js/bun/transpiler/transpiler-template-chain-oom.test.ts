@@ -7,7 +7,8 @@ import { bunEnv, bunExe } from "harness";
 
 test("long template literal `+` chain does not blow up memory with target: bun", async () => {
   const fixture = /* js */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = () =>
+      (process.platform === "darwin" ? Bun.unsafe.memoryFootprint?.() : undefined) ?? process.memoryUsage.rss();
     const n = 4096;
     const input = "capture(" + Array(n).fill("\`a\${x}b\`").join(" + ") + ");";
     const expected = "capture(\`" + Array(n).fill("a\${x}b").join("") + "\`);\\n";
@@ -28,14 +29,14 @@ test("long template literal `+` chain does not blow up memory with target: bun",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+  expect({ stdout: stdout.trim(), stderr }).toMatchObject({
     stdout: expect.stringMatching(/^\{"delta_mb":/),
-    exitCode: 0,
   });
   const { delta_mb } = JSON.parse(stdout);
   // Before the fix: ~525 MB in release for n=4096. After: under 10 MB in
   // release, ~10 MB in debug+ASAN.
   expect(delta_mb).toBeLessThan(100);
+  expect(exitCode).toBe(0);
 });
 
 test("template literal folding output is unchanged", () => {

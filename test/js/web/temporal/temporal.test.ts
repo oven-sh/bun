@@ -87,9 +87,9 @@ describe("Temporal core operations", () => {
   });
 });
 
-// Month differences in the calendars whose months follow the moon. JSC counts the months from the
-// day span and confirms the count with one ICU month addition, so the cost of until()/since() does
-// not grow with the span (a chinese century used to take a second, two millennia tens of seconds).
+// Month differences in the lunisolar calendars (chinese, dangi, hebrew). JSC counts the months from
+// the day span and confirms the count with one ICU month addition, so the cost of until()/since()
+// does not grow with the span (a chinese century used to take a second, two millennia tens of seconds).
 describe("Temporal lunar-calendar month arithmetic over long spans", () => {
   function expectRoundTrip(one: Temporal.PlainDate, two: Temporal.PlainDate, months: number) {
     const until = one.until(two, { largestUnit: "months" });
@@ -121,22 +121,54 @@ describe("Temporal lunar-calendar month arithmetic over long spans", () => {
     });
   });
 
-  // 235 hebrew months are exactly 19 years. ICU 75+ mis-adds 229 or more months forward from
-  // Adar..Elul of a common year; JSC routes around it.
+  // 235 hebrew months are exactly 19 years. ICU 75+ lands one month late when a forward add from
+  // Adar..Elul of a common year carries past a whole 19-year cycle into Tishri..Adar I (223 or more
+  // months from Elul, 229 or more from Adar); JSC adds the whole cycles as years and leaves ICU a
+  // remainder of at most 222.
   describe("hebrew", () => {
-    const nisan5720 = Temporal.PlainDate.from({ calendar: "hebrew", year: 5720, monthCode: "M07", day: 25 });
+    const common5720 = (monthCode: string, day = 25) =>
+      Temporal.PlainDate.from({ calendar: "hebrew", year: 5720, monthCode, day });
+    const nisan5720 = common5720("M07");
 
     test.each([
-      [229, "5739 M01 25"],
-      [235, "5739 M07 25"],
-      [463, "5757 M12 25"],
-      [464, "5758 M01 25"],
-      [2351, "5910 M08 25"],
-    ] as const)("5720 Nisan 25 + %d months is %s", (months, expected) => {
-      expect(nisan5720.inLeapYear).toBe(false);
-      const sum = nisan5720.add({ months });
+      ["M07", 229, "5739 M01 25"],
+      ["M07", 235, "5739 M07 25"],
+      ["M07", 463, "5757 M12 25"],
+      ["M07", 464, "5758 M01 25"],
+      ["M07", 2351, "5910 M08 25"],
+      // Elul reaches the ICU bug first: 222 is the largest count ICU still gets whole, 223 and 458
+      // the smallest ones split into one and two cycles, 457 the largest remainder (222) left to ICU.
+      ["M12", 222, "5738 M11 25"],
+      ["M12", 223, "5738 M12 25"],
+      ["M12", 228, "5739 M05 25"],
+      ["M12", 457, "5757 M11 25"],
+      ["M12", 458, "5757 M12 25"],
+      // Adar is the earliest month the ICU bug affects.
+      ["M06", 229, "5738 M12 25"],
+      ["M06", 464, "5757 M12 25"],
+    ] as const)("5720 %s 25 + %d months is %s", (monthCode, months, expected) => {
+      const start = common5720(monthCode);
+      expect(start.inLeapYear).toBe(false);
+      const sum = start.add({ months });
       expect(`${sum.year} ${sum.monthCode} ${sum.day}`).toBe(expected);
-      expect(sum.subtract({ months }).equals(nisan5720)).toBe(true);
+      expect(sum.subtract({ months }).equals(start)).toBe(true);
+      expect(start.until(sum, { largestUnit: "months" }).months).toBe(months);
+    });
+
+    test("day 30 across the 19-year step", () => {
+      // Kislev 30 5715 + 38 years is Kislev 5753, which has 29 days; the day comes from the start
+      // date again once the remaining months land in Nisan (30 days).
+      const kislev30 = Temporal.PlainDate.from({ calendar: "hebrew", year: 5715, monthCode: "M03", day: 30 });
+      expect(kislev30.day).toBe(30);
+      const nisan5752 = kislev30.add({ months: 462 });
+      expect(`${nisan5752.year} ${nisan5752.monthCode} ${nisan5752.day}`).toBe("5752 M07 30");
+      expect(kislev30.until(nisan5752, { largestUnit: "months" }).toString()).toBe("P462M");
+      // Av 30 + 224 months is Elul, which has 29 days.
+      const av30 = common5720("M11", 30);
+      const elul5738 = av30.add({ months: 224 });
+      expect(`${elul5738.year} ${elul5738.monthCode} ${elul5738.day}`).toBe("5738 M12 29");
+      expect(() => av30.add({ months: 224 }, { overflow: "reject" })).toThrow(RangeError);
+      expect(av30.until(elul5738, { largestUnit: "months" }).toString()).toBe("P223M29D");
     });
 
     test("counting more than 19 years of months", () => {
@@ -152,7 +184,8 @@ describe("Temporal lunar-calendar month arithmetic over long spans", () => {
     });
   });
 
-  // Twelve lunar months to every year, so whole years are a closed form for the shared month tail.
+  // islamic-* still probes one ICU month step per month on this WebKit (oven-sh/WebKit#598 moves it to
+  // a fixed twelve-months-a-year closed form), so the span here stays short; kept as a cross-check.
   describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"] as const)("%s", calendar => {
     test("two centuries of months", () => {
       const one = Temporal.PlainDate.from({ calendar, year: 1300, monthCode: "M01", day: 1 });

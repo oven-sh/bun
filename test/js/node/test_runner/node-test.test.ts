@@ -48,26 +48,26 @@ const hooksReport = [
   "(pass) execution order > describe 1 > describe 2 > test 3",
 ];
 
-// Every test in here spawns its own child process over read-only fixtures.
+// Every test in here spawns its own `bun test` child over read-only fixtures.
 describe.concurrent("node:test", () => {
   test("should run basic tests", async () => {
-    const { report, summary, exitCode } = await runTests(["01-harness.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["01-harness.js"]);
     expect(report).toEqual(harnessReport);
     expect(summary).toEqual({ pass: 32, fail: 0, tests: 32, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run hooks in the right order", async () => {
-    const { stdoutLines, report, summary, exitCode } = await runTests(["02-hooks.js"]);
+    const { stdoutLines, report, summary, exitCode, stderr } = await runTests(["02-hooks.js"]);
     // The fixture's last after() prints every hook and test it recorded, in order.
     expect(stdoutLines).toEqual(hookOrder.node);
     expect(report).toEqual(hooksReport);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run tests with different variations", async () => {
-    const { report, summary, exitCode } = await runTests(["03-test-variations.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["03-test-variations.js"]);
     expect(report).toEqual([
       "03-test-variations.js:",
       "(pass) <anonymous>",
@@ -84,11 +84,11 @@ describe.concurrent("node:test", () => {
       "(todo) todo test with options",
     ]);
     expect(summary).toEqual({ pass: 8, skip: 2, todo: 2, fail: 0, tests: 12, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run async tests", async () => {
-    const { report, summary, exitCode } = await runTests(["04-async-tests.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["04-async-tests.js"]);
     expect(report).toEqual([
       "04-async-tests.js:",
       "(pass) test with an async function",
@@ -97,19 +97,19 @@ describe.concurrent("node:test", () => {
       "(pass) nested tests > nested test with an async function that delays",
     ]);
     expect(summary).toEqual({ pass: 4, fail: 0, tests: 4, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run all tests from multiple files", async () => {
-    const { stdoutLines, report, summary, exitCode } = await runTests(["01-harness.js", "02-hooks.js"]);
+    const { stdoutLines, report, summary, exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
     expect(stdoutLines).toEqual(hookOrder.node);
     expect(report).toEqual([...harnessReport, ...hooksReport]);
     expect(summary).toEqual({ pass: 35, fail: 0, tests: 35, files: 2 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
-    const { stdoutLines, report, summary, exitCode } = await runTests(["05-test-in-test.js"]);
+    const { stdoutLines, report, summary, exitCode, stderr } = await runTests(["05-test-in-test.js"]);
     // Printed from a t.after() hook, so this also proves the hook ran.
     expect(stdoutLines).toEqual(["subtest order: awaited, unawaited, inner"]);
     expect(report).toEqual([
@@ -118,11 +118,11 @@ describe.concurrent("node:test", () => {
       "(pass) test() and describe() called inside a running test become subtests",
     ]);
     expect(summary).toEqual({ pass: 2, fail: 0, tests: 2, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run before hooks created on a running test once and validate hook options", async () => {
-    const { report, summary, exitCode } = await runTests(["06-hook-semantics.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["06-hook-semantics.js"]);
     expect(report).toEqual([
       "06-hook-semantics.js:",
       "(pass) t.before() registered on a running test runs exactly once",
@@ -131,11 +131,11 @@ describe.concurrent("node:test", () => {
       "(pass) mock once registries never call user-patched Map.prototype methods",
     ]);
     expect(summary).toEqual({ pass: 4, fail: 0, tests: 4, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should fail tests whose hooks, bodies, or inline suite callbacks fail", async () => {
-    const { stdoutLines, report, summary, exitCode } = await runTests(["07-failing-hooks.js"]);
+    const { stdoutLines, report, summary, exitCode, stderr } = await runTests(["07-failing-hooks.js"]);
     // The subtest after the failing before hook must not run its body (Node).
     expect(stdoutLines).toEqual(["SUB_BODY_RAN=false"]);
     // Each (fail) line is preceded by the error(s) that failed it.
@@ -166,18 +166,18 @@ describe.concurrent("node:test", () => {
       "(fail) a subtest created after its parent before hook failed does not run",
     ]);
     expect(summary).toEqual({ pass: 0, fail: 10, tests: 10, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should support done callbacks in tests and hooks", async () => {
-    const { report, summary, exitCode } = await runTests(["10-done-callbacks.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(report).toEqual([
       "10-done-callbacks.js:",
       "(pass) file-level hooks with done callbacks ran first",
       "(pass) t.beforeEach with a done callback applies to subtests",
     ]);
     expect(summary).toEqual({ pass: 2, fail: 0, tests: 2, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   const runtimeTodoReport = [
@@ -190,27 +190,27 @@ describe.concurrent("node:test", () => {
   ];
 
   test("should count runtime t.todo()/t.skip() as todo/skip and keep runner timers real under mock timers", async () => {
-    const { report, summary, exitCode } = await runTests(["12-runtime-todo-and-mock-timers.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["12-runtime-todo-and-mock-timers.js"]);
     expect(report).toEqual(runtimeTodoReport);
     expect(summary).toEqual({ pass: 3, skip: 1, todo: 1, fail: 0, tests: 5, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should count runtime t.todo()/t.skip() as todo/skip under --concurrent too", async () => {
     // markCurrentResult's microtask-drain fallback could not name a sequence
     // inside a concurrent group, so the skip/todo mark was dropped and both
     // tests were reported as pass.
-    const { report, summary, exitCode } = await runTests(["12-runtime-todo-and-mock-timers.js"], {
-      args: ["--concurrent"],
-    });
+    const { report, summary, exitCode, stderr } = await runTests(["12-runtime-todo-and-mock-timers.js"], {}, [
+      "--concurrent",
+    ]);
     // --concurrent reports tests in completion order.
     expect(report.toSorted()).toEqual(runtimeTodoReport.toSorted());
     expect(summary).toEqual({ pass: 3, skip: 1, todo: 1, fail: 0, tests: 5, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should run todo bodies under --todo instead of registering an empty function", async () => {
-    const { report, summary, exitCode } = await runTests(["13-todo-bodies.js"], { args: ["--todo"] });
+    const { report, summary, exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
     // The errors prove that both todo bodies ran.
     expect(report).toEqual([
       "13-todo-bodies.js:",
@@ -221,24 +221,22 @@ describe.concurrent("node:test", () => {
       "(pass) sibling test still passes",
     ]);
     expect(summary).toEqual({ pass: 1, todo: 2, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should forward Infinity and finite timeouts so they override the runner default", async () => {
-    const { report, summary, exitCode } = await runTests(["11-timeout-overrides.js"], {
-      args: ["--timeout", "100"],
-    });
+    const { report, summary, exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "100"]);
     expect(report).toEqual([
       "11-timeout-overrides.js:",
       "(pass) an Infinity timeout overrides the runner default",
       "(pass) a finite timeout larger than the runner default is honored",
     ]);
     expect(summary).toEqual({ pass: 2, fail: 0, tests: 2, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
-    const { report, summary, exitCode } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(report).toEqual([
       "14-root-hooks-a.js:",
       "(pass) file A runs its own file-level beforeEach and sees its own registrations",
@@ -248,12 +246,12 @@ describe.concurrent("node:test", () => {
       "(pass) module-scope registrations from this file survive and capture the true original",
     ]);
     expect(summary).toEqual({ pass: 4, fail: 0, tests: 4, files: 2 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should treat only as a no-op instead of using bun:test's CI-banned only()", async () => {
     // bun:test's only() only throws when CI is set; pin the precondition.
-    const { report, summary, exitCode } = await runTests(["08-only-no-op.js"], { env: { CI: "1" } });
+    const { report, summary, exitCode, stderr } = await runTests(["08-only-no-op.js"], { CI: "1" });
     expect(report).toEqual([
       "08-only-no-op.js:",
       "(pass) only-marked test runs",
@@ -262,11 +260,11 @@ describe.concurrent("node:test", () => {
       "(pass) only is a no-op without --test-only",
     ]);
     expect(summary).toEqual({ pass: 4, fail: 0, tests: 4, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should serialize inline suites and await async describe callbacks like node", async () => {
-    const { report, summary, exitCode } = await runTests(["09-inline-suites.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["09-inline-suites.js"]);
     expect(report).toEqual([
       "09-inline-suites.js:",
       "(pass) inline suite children run after previously scheduled subtests",
@@ -274,11 +272,11 @@ describe.concurrent("node:test", () => {
       "(pass) early inline-suite child waits for the async describe callback to settle",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should expose the body outcome to afterEach and workerId to the context", async () => {
-    const { report, summary, exitCode } = await runTests(["15-outcome-in-hooks.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["15-outcome-in-hooks.js"]);
     expect(report).toEqual([
       "15-outcome-in-hooks.js:",
       "(pass) afterEach sees passed=true, error=null for a passing subtest",
@@ -286,11 +284,11 @@ describe.concurrent("node:test", () => {
       "(pass) workerId reads NODE_TEST_WORKER_ID",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should capture plan at first t.assert access and resolve subtests started after their parent finished", async () => {
-    const { report, summary, exitCode } = await runTests(["16-plan-and-late-subtest.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["16-plan-and-late-subtest.js"]);
     expect(report).toEqual([
       "16-plan-and-late-subtest.js:",
       "(todo) plan capture at first t.assert access > assert-before-plan",
@@ -298,31 +296,31 @@ describe.concurrent("node:test", () => {
       "(pass) late subtest after parent finished",
     ]);
     expect(summary).toEqual({ pass: 2, todo: 1, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should bound plan({wait:true}) by the test's own timeout instead of hanging", async () => {
-    const { report, summary, exitCode } = await runTests(["16b-plan-wait-timeout.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["16b-plan-wait-timeout.js"]);
     expect(report).toEqual([
       "16b-plan-wait-timeout.js:",
       "error: test timed out after 100ms",
       "(fail) wait:true bounded by test timeout",
     ]);
     expect(summary).toEqual({ pass: 0, fail: 1, tests: 1, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should fail the parent when a t.test() that fulfills plan({wait}) throws", async () => {
-    const { report, summary, exitCode } = await runTests(["24-plan-wait-late-subtest.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["24-plan-wait-late-subtest.js"]);
     // "1 subtest failed" is makeTestFailure's message for the parent, "boom"
     // is the subtest's own error.
     expect(report).toEqual(["24-plan-wait-late-subtest.js:", "error: 1 subtest failed", "error: boom", "(fail) p"]);
     expect(summary).toEqual({ pass: 0, fail: 1, tests: 1, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should treat a failing expectFailure test as a pass", async () => {
-    const { report, summary, exitCode } = await runTests(["25-expect-failure.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["25-expect-failure.js"]);
     expect(report).toEqual([
       "25-expect-failure.js:",
       "(pass) a failing body is the expected outcome",
@@ -331,60 +329,61 @@ describe.concurrent("node:test", () => {
       "(pass) an object may carry both label and match",
     ]);
     expect(summary).toEqual({ pass: 4, fail: 0, tests: 4, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should fail an expectFailure test that passes", async () => {
-    const { report, summary, exitCode } = await runTests(["27-expect-failure-but-passes.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["27-expect-failure-but-passes.js"]);
     expect(report).toEqual([
       "27-expect-failure-but-passes.js:",
       "error: test was expected to fail but passed",
       "(fail) passes unexpectedly",
     ]);
     expect(summary).toEqual({ pass: 0, fail: 1, tests: 1, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should fail an expectFailure test whose error does not match the validator", async () => {
-    const { report, summary, exitCode } = await runTests(["29-expect-failure-mismatch.js"]);
-    // The second error is the thrown one, echoed as the `actual` of the
-    // validator's AssertionError.
+    const { report, summary, exitCode, stderr } = await runTests(["29-expect-failure-mismatch.js"]);
+    // The validator's AssertionError follows, and its `actual` echoes the
+    // thrown error.
     expect(report).toEqual([
       "29-expect-failure-mismatch.js:",
       "error: The test failed, but the error did not match the expected validation",
+      "AssertionError: The input did not match the regular expression /expected message/. Input:",
       "error: a different message entirely",
       "(fail) the thrown error does not satisfy the validator",
     ]);
     expect(summary).toEqual({ pass: 0, fail: 1, tests: 1, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should inherit expectFailure into subtests", async () => {
     // Matches node v26.3.0: the subtest inherits the expectation and passes, so
     // the parent is the one that fails for not failing.
-    const { report, summary, exitCode } = await runTests(["28-expect-failure-inherited.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["28-expect-failure-inherited.js"]);
     expect(report).toEqual([
       "28-expect-failure-inherited.js:",
       "error: test was expected to fail but passed",
       "(fail) expectFailure is inherited by subtests",
     ]);
     expect(summary).toEqual({ pass: 0, fail: 1, tests: 1, files: 1 });
-    expect(exitCode).toBe(1);
+    expect(exitCode, stderr).toBe(1);
   });
 
   test("should not run a skipped suite's callback", async () => {
-    const { stdoutLines, report, summary, exitCode } = await runTests(["26-skipped-suite-body.js"]);
+    const { stdoutLines, report, summary, exitCode, stderr } = await runTests(["26-skipped-suite-body.js"]);
     // Neither the { skip: true } body nor the { skip: true, todo: true } body
     // may print ({ skip, todo } is a skip in Node). A todo suite's callback does run.
     expect(stdoutLines).toEqual(["[suite body ran: pending-only]"]);
     expect(report).toEqual(["26-skipped-suite-body.js:", "(pass) sanity"]);
     expect(summary).toEqual({ pass: 1, fail: 0, tests: 1, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
     // ESM entry: --rerun-each currently only re-evaluates ESM entry files.
-    const { report, summary, exitCode } = await runTests(["17-rerun-mock-reset.mjs"], { args: ["--rerun-each=3"] });
+    const { report, summary, exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);
     expect(report).toEqual([
       "17-rerun-mock-reset.mjs: (run #1)",
       "(pass) module-scope mock.method captured the real original across reruns",
@@ -394,11 +393,11 @@ describe.concurrent("node:test", () => {
       "(pass) module-scope mock.method captured the real original across reruns",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should keep node's zero-delay mock interval semantics", async () => {
-    const { report, summary, exitCode } = await runTests(["18-mock-timers-interval-zero.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["18-mock-timers-interval-zero.js"]);
     expect(report).toEqual([
       "18-mock-timers-interval-zero.js:",
       "(pass) setInterval(fn, 0) re-fires within one tick until cleared",
@@ -406,11 +405,11 @@ describe.concurrent("node:test", () => {
       "(pass) setTimeout(fn, 0) still fires once on tick(0)",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should apply the plan option before beforeEach so a hook cannot snapshot a null plan", async () => {
-    const { report, summary, exitCode } = await runTests(["19-plan-option-order.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["19-plan-option-order.js"]);
     expect(report).toEqual([
       "19-plan-option-order.js:",
       "(pass) the plan option survives a beforeEach that touches t.assert",
@@ -418,33 +417,33 @@ describe.concurrent("node:test", () => {
       "(pass) a zero plan option installs no plan",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should enforce a hook-level signal and install t.assert.ok separately", async () => {
-    const { report, summary, exitCode } = await runTests(["20-hook-signal-and-assert-ok.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["20-hook-signal-and-assert-ok.js"]);
     expect(report).toEqual([
       "20-hook-signal-and-assert-ok.js:",
       "(pass) a hook-level signal aborts the hook and fails the owning subtest",
       "(pass) t.assert.ok is installed separately and still counts toward the plan",
     ]);
     expect(summary).toEqual({ pass: 2, fail: 0, tests: 2, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should let a registered ok assertion override the built-in one", async () => {
-    const { report, summary, exitCode } = await runTests(["21-register-ok.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["21-register-ok.js"]);
     expect(report).toEqual([
       "21-register-ok.js:",
       "(pass) a registered ok overrides the built-in one",
       "(pass) a registered ok still counts toward the plan",
     ]);
     expect(summary).toEqual({ pass: 2, fail: 0, tests: 2, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should gate a nested inline subtest on every ancestor suite's before hooks", async () => {
-    const { report, summary, exitCode } = await runTests(["22-nested-suite-before.js"]);
+    const { report, summary, exitCode, stderr } = await runTests(["22-nested-suite-before.js"]);
     expect(report).toEqual([
       "22-nested-suite-before.js:",
       "(pass) a nested test is gated on the outer suite's async before hook",
@@ -452,13 +451,14 @@ describe.concurrent("node:test", () => {
       "(pass) an outer suite's throwing before hook fails the test without running x",
     ]);
     expect(summary).toEqual({ pass: 3, fail: 0, tests: 3, files: 1 });
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   });
 
   test("should resolve the promise of a test that a name pattern filters out", async () => {
-    const { report, summary, exitCode } = await runTests(["23-filtered-test-promise.js"], {
-      args: ["-t", "should resolve"],
-    });
+    const { report, summary, exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, [
+      "-t",
+      "should resolve",
+    ]);
     // If that promise never settled, the awaiting test would time out and
     // `report` would carry the timeout error and a (fail) line instead.
     expect(report).toEqual([
@@ -466,47 +466,23 @@ describe.concurrent("node:test", () => {
       "(pass) should resolve the promise of a name-pattern-filtered test",
     ]);
     expect(summary).toEqual({ pass: 1, "filtered out": 1, fail: 0, tests: 1, files: 1 });
-    expect(exitCode).toBe(0);
-  });
-
-  test("mock.property/mock.method survive a polluted Object.prototype", async () => {
-    // The defineProperty descriptors must carry __proto__:null so an inherited
-    // `value` on Object.prototype does not turn the accessor descriptor into a
-    // TypeError (nodejs/node lib/internal/test_runner/mock/mock.js does this).
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          Object.prototype.value = 1;
-          const { mock } = require("node:test");
-          const obj = { x: 1, get p() { return 5; } };
-          mock.property(obj, "x");
-          mock.getter(obj, "p");
-          console.log("ok");
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+    expect(exitCode, stderr).toBe(0);
   });
 });
 
 /**
- * Runs `bun test` over the given fixtures in one child process and parses what
- * it printed into the parts that do not depend on timings or source locations:
+ * Runs `bun test` over the given fixtures in one child process. Next to the raw
+ * `stdout`/`stderr` it returns the parts of them that do not depend on timings
+ * or source locations:
  *
  * - `stdoutLines`: what the fixtures themselves printed.
- * - `report`: each file header, `error: ...` message and `(pass|fail|skip|todo)`
- *   result line from stderr, in order. An error precedes the result it failed.
+ * - `report`: each file header, `error: ...` / `SomeError: ...` message,
+ *   unhandled-error banner and `(pass|fail|skip|todo)` result line from stderr,
+ *   in order. An error precedes the result it failed.
  * - `summary`: the pass/skip/todo/fail/error counters bun printed at the end,
  *   keyed by their label, plus the totals from `Ran N tests across M files`.
  */
-async function runTests(filenames: string[], options: { args?: string[]; env?: Record<string, string> } = {}) {
-  const { args = [], env = {} } = options;
+async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args, ...filenames.map(filename => join(fixturesDir, filename))],
     // Keeps the file headers bun prints down to the bare fixture name, and
@@ -522,7 +498,11 @@ async function runTests(filenames: string[], options: { args?: string[]; env?: R
 
   const report: string[] = [];
   for (const line of stderr.split(/\r?\n/)) {
-    if (/^[\w.-]+\.m?js:( \(run #\d+\))?$/.test(line) || line.startsWith("error: ")) {
+    if (
+      /^[\w.-]+\.m?js:( \(run #\d+\))?$/.test(line) ||
+      /^([A-Z]\w*)?[Ee]rror: /.test(line) ||
+      line.startsWith("# Unhandled error")
+    ) {
       report.push(line);
     } else if (/^\((pass|fail|skip|todo)\) /.test(line)) {
       report.push(line.replace(/\s\[[\d.]+\s?m?s\]$/, ""));
@@ -539,7 +519,7 @@ async function runTests(filenames: string[], options: { args?: string[]; env?: R
     summary.files = Number(ran[2]);
   }
 
-  return { exitCode, stdoutLines, report, summary };
+  return { exitCode, stdout, stderr, stdoutLines, report, summary };
 }
 
 describe("node:test mock", () => {
@@ -694,4 +674,28 @@ test("the call record is pushed after the implementation runs, like node", () =>
   expect(inside).toBe(0);
   expect(f.mock.callCount()).toBe(1);
   mock.reset();
+});
+
+test("mock.property/mock.method survive a polluted Object.prototype", async () => {
+  // The defineProperty descriptors must carry __proto__:null so an inherited
+  // `value` on Object.prototype does not turn the accessor descriptor into a
+  // TypeError (nodejs/node lib/internal/test_runner/mock/mock.js does this).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Object.prototype.value = 1;
+        const { mock } = require("node:test");
+        const obj = { x: 1, get p() { return 5; } };
+        mock.property(obj, "x");
+        mock.getter(obj, "p");
+        console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
 });

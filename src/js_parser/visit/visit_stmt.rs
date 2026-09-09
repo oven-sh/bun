@@ -2366,7 +2366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(&value) = self.ts_enum_constants.get(&result.r#ref) {
                     return Some(value);
                 }
-                ts_namespace_member_value(*self.ref_to_ts_namespace_member.get(&result.r#ref)?)
+                ts_namespace_member_value(self.ts_member_data_of_symbol(result.r#ref)?)
             }
             js_ast::ExprData::EDot(dot) => {
                 if dot.optional_chain.is_some() {
@@ -2423,7 +2423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if result.is_inside_with_scope || result.r#ref.is_empty() {
             return None;
         }
-        let mut data = *self.ref_to_ts_namespace_member.get(&result.r#ref)?;
+        let mut data = self.ts_member_data_of_symbol(result.r#ref)?;
         // The innermost member was pushed last.
         for member_name in member_names.iter().rev() {
             let js_ast::ts::Data::Namespace(map) = data else {
@@ -2435,6 +2435,94 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ts::Data::Namespace(map) => Some(map),
             _ => None,
         }
+    }
+
+    /// What `ref_` names when that is an enum, a namespace, or a member of one. A member of
+    /// another block of the same enum or namespace is reached through this block's closure
+    /// argument (see `find_symbol`), as in `handle_identifier`.
+    fn ts_member_data_of_symbol(&self, ref_: Ref) -> Option<js_ast::ts::Data> {
+        if let Some(alias) = &self.symbols[ref_.inner_index() as usize].namespace_alias {
+            let js_ast::ts::Data::Namespace(map) =
+                *self.ref_to_ts_namespace_member.get(&alias.namespace_ref)?
+            else {
+                return None;
+            };
+            return Some((*map).get(alias.alias.slice())?.data);
+        }
+        self.ref_to_ts_namespace_member.get(&ref_).copied()
+    }
+
+    /// `visit_stmts` visits the enums of a statement list ahead of its other statements, so
+    /// that their member values are known everywhere in the list. Enums nested in a namespace
+    /// of that list are only visited with the namespace, but the list can reference them too:
+    ///
+    ///   namespace NS { export enum Inner { X = 1 } }
+    ///   enum Outer { A = NS.Inner.X, B }
+    ///
+    /// `B` only gets a value if `NS.Inner.X` is known when `Outer` is visited. So compute the
+    /// value of each constant member of the enums inside the namespace from its unvisited
+    /// initializer first. The visit of those enums stores the same values again.
+    pub(crate) fn compute_enum_values_inside_namespace(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt.data {
+                StmtData::SEnum(data) => self.compute_enum_values_ahead_of_visit(stmt.loc, &data),
+                StmtData::SNamespace(namespace) => {
+                    if self.stack_check.is_safe_to_recurse() {
+                        self.compute_enum_values_inside_namespace(namespace.stmts.slice());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn compute_enum_values_ahead_of_visit(&mut self, loc: bun_ast::Loc, data: &S::Enum) {
+        // The first scope recorded for an enum statement is its own.
+        let scope = super::scopes_for_enum_at(&self.scopes_in_order_for_enum, loc)[0].scope_ref();
+        let Some(ts_namespace) = scope.ts_namespace else {
+            return;
+        };
+        let mut exported_members = ts_namespace.exported_members;
+
+        // Identifiers in an initializer resolve from inside the enum.
+        let old_scope = self.current_scope;
+        self.current_scope = scope;
+
+        let mut next_numeric_value: Option<f64> = Some(0.0);
+        for value in data.values.slice() {
+            let name: &[u8] = value.name.slice();
+            let current = (*exported_members).get(name).unwrap().data;
+            let known = match current {
+                // Computed by an earlier call.
+                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumString(_) => Some(current),
+                _ => match value.value {
+                    Some(initializer) => match self.eval_ts_constant_expression(&initializer) {
+                        Some(TSConstantValue::Number(number)) => {
+                            Some(js_ast::ts::Data::EnumNumber(number))
+                        }
+                        Some(TSConstantValue::String(str_)) => {
+                            Some(js_ast::ts::Data::EnumString(str_))
+                        }
+                        None => None,
+                    },
+                    None => next_numeric_value.map(js_ast::ts::Data::EnumNumber),
+                },
+            };
+            next_numeric_value = match known {
+                Some(js_ast::ts::Data::EnumNumber(number)) => Some(number + 1.0),
+                _ => None,
+            };
+            if let Some(known) = known
+                && matches!(current, js_ast::ts::Data::EnumProperty)
+            {
+                exported_members.get_ptr_mut(name).unwrap().data = known;
+                if value.ref_.is_valid() {
+                    self.ref_to_ts_namespace_member.insert(value.ref_, known);
+                }
+            }
+        }
+
+        self.current_scope = old_scope;
     }
 
     fn s_enum(

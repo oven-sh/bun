@@ -2231,6 +2231,100 @@ export default class {
       expect(stdout).toBe('["m2","_m2"]\n');
       expect(exitCode).toBe(0);
     });
+
+    // The enums of a statement list are visited before its other statements, so
+    // an enum nested in a namespace is visited after the enums that follow the
+    // namespace. Its constant members must still be known to them, like in tsc.
+    describe("enum initializers that reference an enum inside an earlier namespace", () => {
+      const exp = ts.expectPrinted_;
+
+      it("numeric member continues auto-increment", () => {
+        exp(
+          "namespace M { export enum Z { Q = 3 } }\nenum D { A = M.Z.Q, B }",
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["Q"] = 3] = "Q";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["A"] = 3] = "A";\n  D[D["B"] = 4] = "B";\n})(D ||= {})',
+        );
+      });
+
+      it("nested namespaces, index access, string members", () => {
+        exp(
+          'namespace A { export namespace B { export enum Z { Q = 1 << 2, S = "s" } } }\nenum D { X = A.B.Z.Q | 1, Y, Z = A.B.Z.S, W = A["B"].Z["Q"] }',
+          'var A;\n((A) => {\n  let B;\n  ((B) => {\n    let Z;\n    ((Z) => {\n      Z[Z["Q"] = 4] = "Q";\n      Z["S"] = "s";\n    })(Z = B.Z ||= {});\n  })(B = A.B ||= {});\n})(A ||= {});\nvar D;\n((D) => {\n  D[D["X"] = 5] = "X";\n  D[D["Y"] = 6] = "Y";\n  D["Z"] = "s";\n  D[D["W"] = 4] = "W";\n})(D ||= {})',
+        );
+      });
+
+      it("constant expressions over earlier members, unary operators, template literals", () => {
+        exp(
+          "namespace M { export enum Z { A = 2, N = -(A ** 3), C = ~A, T = `v${N}` } }\nenum D { N = M.Z.N, C = M.Z.C, T = M.Z.T }",
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["A"] = 2] = "A";\n    Z[Z["N"] = -8] = "N";\n    Z[Z["C"] = -3] = "C";\n    Z["T"] = "v-8";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["N"] = -8] = "N";\n  D[D["C"] = -3] = "C";\n  D["T"] = "v-8";\n})(D ||= {})',
+        );
+      });
+
+      it("an enum inside a namespace sees an enum inside a nested namespace before it", () => {
+        exp(
+          "namespace O {\n  export namespace I { export enum Z { Q = 7 } }\n  export enum D { A = I.Z.Q, B }\n}",
+          'var O;\n((O) => {\n  let I;\n  ((I) => {\n    let Z;\n    ((Z) => {\n      Z[Z["Q"] = 7] = "Q";\n    })(Z = I.Z ||= {});\n  })(I = O.I ||= {});\n  let D;\n  ((D) => {\n    D[D["A"] = 7] = "A";\n    D[D["B"] = 8] = "B";\n  })(D = O.D ||= {});\n})(O ||= {})',
+        );
+      });
+
+      it("names resolve from the scope of the nested enum", () => {
+        // The inner `G` shadows the outer one inside `M`.
+        exp(
+          "enum G { X = 1 }\nnamespace M { enum G { X = 50 } export enum Z { A = G.X, B } }\nenum D { V = M.Z.B }",
+          'var G;\n((G) => {\n  G[G["X"] = 1] = "X";\n})(G ||= {});\nvar M;\n((M) => {\n  let G;\n  ((G) => {\n    G[G["X"] = 50] = "X";\n  })(G ||= {});\n  let Z;\n  ((Z) => {\n    Z[Z["A"] = 50] = "A";\n    Z[Z["B"] = 51] = "B";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["V"] = 51] = "V";\n})(D ||= {})',
+        );
+      });
+
+      it("members that are not constant are left alone", () => {
+        exp(
+          "namespace M { export enum Z { Q = f(), R = 2, S } }\nenum D { A = M.Z.R, B = M.Z.S, C = M.Z.Q }",
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["Q"] = f()] = "Q";\n    Z[Z["R"] = 2] = "R";\n    Z[Z["S"] = 3] = "S";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["A"] = 2] = "A";\n  D[D["B"] = 3] = "B";\n  D[D["C"] = M.Z.Q] = "C";\n})(D ||= {})',
+        );
+      });
+
+      it("a namespace after the enum is not consulted", () => {
+        // tsc reports an error for a reference to an enum member declared later.
+        exp(
+          "enum D { A = M.Z.Q, B }\nnamespace M { export enum Z { Q = 3 } }",
+          'var D;\n((D) => {\n  D[D["A"] = M.Z.Q] = "A";\n  D[D["B"] = undefined] = "B";\n})(D ||= {});\nvar M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["Q"] = 3] = "Q";\n  })(Z = M.Z ||= {});\n})(M ||= {})',
+        );
+      });
+
+      it("a const declared before the namespace", () => {
+        exp(
+          "const k = 2;\nnamespace M { export enum Z { Q = k * 10, R } }\nenum D { A = M.Z.R, B }",
+          'const k = 2;\nvar M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["Q"] = 20] = "Q";\n    Z[Z["R"] = 21] = "R";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["A"] = 21] = "A";\n  D[D["B"] = 22] = "B";\n})(D ||= {})',
+        );
+      });
+
+      it("a second block of the same enum sees the members of the first", () => {
+        exp(
+          "namespace M { export enum Z { A = 1 } export enum Z { B = A + 1, C } }\nenum D { X = M.Z.C, Y }",
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["A"] = 1] = "A";\n  })(Z = M.Z ||= {});\n  ((Z) => {\n    Z[Z["B"] = 2] = "B";\n    Z[Z["C"] = 3] = "C";\n  })(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => {\n  D[D["X"] = 3] = "X";\n  D[D["Y"] = 4] = "Y";\n})(D ||= {})',
+        );
+      });
+
+      it("statements before the namespace see the values too, as with top-level enums", () => {
+        exp(
+          "export function f() {\n  return M.Z.Q;\n}\nnamespace M { export enum Z { Q = 1 } }",
+          'export function f() {\n  return 1 /* Q */;\n}\nvar M;\n((M) => {\n  let Z;\n  ((Z) => {\n    Z[Z["Q"] = 1] = "Q";\n  })(Z = M.Z ||= {});\n})(M ||= {})',
+        );
+      });
+
+      it("a folded string member is stored flat", () => {
+        // Each inlined use copies the member's node; a rope would be shared and appended to.
+        ts.expectPrintedMin_(
+          'namespace M { export enum Z { S = "a" + "b" } }\nenum D { B = M.Z.S }\nconsole.log(`${D.B}x`, `${D.B}y`, `${M.Z.S}z`);',
+          'var M;\n((M) => {\n  let Z;\n  ((Z) => Z.S = "ab")(Z = M.Z ||= {});\n})(M ||= {});\nvar D;\n((D) => D.B = "ab")(D ||= {});\nconsole.log("abx", "aby", "abz")',
+        );
+      });
+
+      it("const enum members are inlined with the computed value", () => {
+        const out = ts.parsedMin(
+          "namespace M { export const enum Z { Q = 3 } }\nconst enum D { A = M.Z.Q, B }\nconsole.log(D.B);",
+        );
+        expect(out.split("\n").at(-1)).toBe("console.log(4 /* B */)");
+      });
+    });
   });
 
   describe("exports.replace", () => {

@@ -1536,6 +1536,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         // An enum above can only see the constants declared before it.
                         StmtData::SLocal(local) => p.record_ts_enum_constants(&local),
+                        // The enums inside are visited with the namespace, after this loop.
+                        StmtData::SNamespace(namespace) => {
+                            p.compute_enum_values_inside_namespace(namespace.stmts.slice())
+                        }
                         _ => {}
                     }
                 }

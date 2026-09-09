@@ -556,6 +556,10 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
     throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
 
+  // Node acquires the reader here, so a locked stream (another reader, a tee, a
+  // Body that was already read) fails now instead of on the first _read().
+  if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+
   const nativeStream = tryTransferToNativeReadable(readableStream, options);
 
   return (

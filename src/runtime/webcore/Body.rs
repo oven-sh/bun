@@ -745,6 +745,24 @@ impl Value {
         }
     }
 
+    /// [`Self::to_blob_if_possible`] for an upload: a payload that is already
+    /// in memory behind an unread stream is lifted out so it goes out with a
+    /// Content-Length, but a file-backed stream keeps streaming, since its
+    /// length may not be knowable up front (FIFO, device) and reading it
+    /// belongs off this thread.
+    pub(crate) fn to_blob_if_in_memory(&mut self) {
+        let Value::Locked(locked) = self else {
+            return;
+        };
+        let file_backed = locked
+            .readable
+            .get()
+            .is_some_and(|r| matches!(r.ptr, webcore::readable_stream::Source::File(_)));
+        if !file_backed {
+            self.to_blob_if_possible();
+        }
+    }
+
     pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,

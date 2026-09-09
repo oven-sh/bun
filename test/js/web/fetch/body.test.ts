@@ -2,6 +2,7 @@ import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
+import { Readable } from "node:stream";
 
 const exampleServer = exampleSite("http");
 
@@ -1721,8 +1722,84 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           });
         }
       });
+
+      // A consumed body's stream is locked for every other consumer too,
+      // including the node:stream adapter's native fast path.
+      test("Readable.fromWeb() refuses a consumed body's stream", async () => {
+        for (const [, init] of sources) {
+          const owner = make(init());
+          const stream = owner.body!;
+          await owner.text();
+          expect(() => Readable.fromWeb(stream)).toThrow(
+            expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+          );
+        }
+      });
     });
   }
+
+  // A null body is not a zero-length body: nothing can use it up.
+  test("Response.redirect() and Response.error() have a null body", async () => {
+    for (const response of [Response.redirect("http://a/"), Response.error()]) {
+      expect(await response.text()).toBe("");
+      expect({
+        body: response.body,
+        bodyUsed: response.bodyUsed,
+        again: await response.text(),
+        clone: errorName(() => response.clone()),
+      }).toEqual({ body: null, bodyUsed: false, again: "", clone: "ok" });
+    }
+  });
+
+  // fetch() lifts a payload that is already in memory back out of an unread
+  // body stream and uploads it with a Content-Length; a JS stream still streams.
+  test("fetch() uploads an in-memory body behind a stream with a Content-Length", async () => {
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    const server = net.createServer(socket => {
+      let head = "";
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => {
+        if (head.includes("\r\n\r\n")) return;
+        head += chunk;
+        if (!head.includes("\r\n\r\n")) return;
+        const lower = head.slice(0, head.indexOf("\r\n\r\n")).toLowerCase();
+        const framing = lower.includes("transfer-encoding: chunked")
+          ? "chunked"
+          : (lower.match(/content-length: \d+/)?.[0] ?? "none");
+        socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${framing.length}\r\nConnection: close\r\n\r\n${framing}`);
+      });
+    });
+    server.listen(0, "127.0.0.1", onListening);
+    await listening;
+    try {
+      const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
+      const post = (body: BodyInit) => ({ method: "POST", body, duplex: "half" }) as RequestInit;
+      const touched = (body: BodyInit) => {
+        const request = new Request(url, post(body));
+        request.body;
+        return request;
+      };
+      const framing = async (input: Request | RequestInit) =>
+        (await fetch(...((input instanceof Request ? [input] : [url, input]) as [any]))).text();
+      expect({
+        responseStream: await framing(post(new Response("x").body!)),
+        requestAroundStream: await framing(new Request(url, post(new Response("xy").body!))),
+        blobStream: await framing(post(new Blob(["abcd"]).stream())),
+        touchedString: await framing(touched("xyz")),
+        touchedEmpty: await framing(touched("")),
+        jsStream: await framing(post(jsStream("q"))),
+      }).toEqual({
+        responseStream: "content-length: 1",
+        requestAroundStream: "content-length: 2",
+        blobStream: "content-length: 4",
+        touchedString: "content-length: 3",
+        touchedEmpty: "content-length: 0",
+        jsStream: "chunked",
+      });
+    } finally {
+      server.close();
+    }
+  });
 
   // The re-wrap idiom keeps the blob fast path on the wire: the server lifts
   // the payload back out of the adopted stream and frames it with a

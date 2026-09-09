@@ -1512,7 +1512,9 @@ describe("clone() of a body that fails mid-stream", () => {
     "fetch(): a reader on the %s response rejects when the server disconnects",
     async side => {
       const hangup = Promise.withResolvers<void>();
+      const accepted: net.Socket[] = [];
       const server = net.createServer(socket => {
+        accepted.push(socket);
         socket.on("error", () => {});
         socket.once("data", () => {
           socket.write(
@@ -1536,6 +1538,7 @@ describe("clone() of a body that fails mid-stream", () => {
           error: expect.stringContaining("The socket connection was closed unexpectedly"),
         });
       } finally {
+        for (const socket of accepted) socket.destroy();
         server.close();
       }
     },

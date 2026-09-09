@@ -4086,8 +4086,7 @@ where
 
                 let _exit = vm.enter_event_loop_scope();
 
-                // Reject the body first (it holds the tee branch after `req.clone()`) so
-                // endRequestStreaming() below doesn't substitute a generic ConnectionClosed.
+                // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
                 if let Some(body) = this.request_body_mut() {
                     if matches!(body, Body::Value::Locked(_)) {
                         let _ = body.to_error_instance(

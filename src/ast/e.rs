@@ -1481,9 +1481,10 @@ impl Object {
     }
 }
 
-/// Data-file parsers (JSON/JSON5/TOML/YAML) define every key as an own
-/// property, so an own `"__proto__"` string key must be marked computed:
-/// a plain `"__proto__":` key in a printed object literal sets the prototype.
+/// Flags for a string key that must define an own property (data-file parsers,
+/// the linker's `__export(exports, { ... })` object): an own `"__proto__"` key
+/// must be marked computed, because a plain `"__proto__":` key in a printed
+/// object literal sets the prototype.
 pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
     match &key.data {
         crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {

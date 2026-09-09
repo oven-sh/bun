@@ -557,16 +557,18 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
+            // SAFETY: `alias` borrows the worker arena which outlives the
+            // link pass; `E::String::data: &'static [u8]` is the arena
+            // erasure used throughout the AST.
+            let key = Expr::allocate(
+                arena,
+                E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                loc,
+            );
             properties.push(G::Property {
-                key: Some(Expr::allocate(
-                    arena,
-                    // TODO: test emoji work as expected (relevant for WASM exports)
-                    // SAFETY: `alias` borrows the worker arena which outlives the
-                    // link pass; `E::String::data: &'static [u8]` is the arena
-                    // erasure used throughout the AST.
-                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                    loc,
-                )),
+                // An export may be named `__proto__`; as a plain key that would set the literal's prototype.
+                flags: E::own_key_property_flags(&key),
+                key: Some(key),
                 value: Some(Expr::allocate(
                     arena,
                     E::Arrow {
@@ -608,13 +610,15 @@ impl LinkerContext<'_> {
                     ),
                     ..Default::default()
                 });
+                // SAFETY: as for the getter key above.
+                let key = Expr::allocate(
+                    arena,
+                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    loc,
+                );
                 setter_properties.push(G::Property {
-                    key: Some(Expr::allocate(
-                        arena,
-                        // SAFETY: as for the getter key above.
-                        E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                        loc,
-                    )),
+                    flags: E::own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(Expr::allocate(
                         arena,
                         E::Arrow {

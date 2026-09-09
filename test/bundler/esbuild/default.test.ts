@@ -403,6 +403,41 @@ describe.concurrent("bundler", () => {
       file: "/test.js",
     },
   });
+  // An export named `__proto__` is an own property of the namespace like any other. In the
+  // `__export(exports, { ... })` object a plain `__proto__:` key would set the literal's prototype
+  // instead, so the key must be printed computed.
+  itBundled("default/ExportSpecialName", {
+    files: {
+      "/entry.mjs": `export const __proto__ = 123`,
+
+      "/test.js": /* js */ `
+        const assert = require("assert");
+        const lib = require("./out.js");
+        assert.deepStrictEqual(Object.keys(lib), ["__proto__"]);
+        assert.strictEqual(lib.__proto__, 123);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`["__proto__"]: () => __proto__`);
+    },
+    run: { file: "/test.js" },
+  });
+  itBundled("default/ExportSpecialNameBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.mjs";
+        const key = (k) => k;
+        console.log(JSON.stringify(Object.keys(ns)), JSON.stringify(ns[key("__proto__")]), ns[key("a")]);
+      `,
+      "/lib.mjs": /* js */ `
+        const p = { proto: true };
+        export const a = 1;
+        export { p as __proto__ };
+      `,
+    },
+    run: { stdout: `["__proto__","a"] {"proto":true} 1` },
+  });
   itBundled("default/ExportInfiniteCycle1", {
     files: {
       "/entry.js": /* js */ `

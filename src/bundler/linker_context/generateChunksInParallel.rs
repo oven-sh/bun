@@ -1599,14 +1599,13 @@ fn append_internal_module_bytecode(
 }
 
 /// Position of each chunk in the order a `--compile` executable is expected to
-/// load it: the static import closure of the entry point the executable runs
-/// (the first server-side one, as `to_bytes` picks it) in evaluation order
-/// (post-order over each chunk's `import` statements), then the closures of
-/// the chunks only `import()` / split `require()` reach, breadth-first, then
-/// the other entry points', then anything unreachable. The standalone module
-/// graph lays the payload out by this so booting faults in one run of pages
+/// load it: the entry point's static cross-chunk imports in evaluation order,
+/// then the closures of its dynamic imports (`import()` and split `require()`
+/// chunks), breadth-first. The standalone
+/// module graph lays modules out by this so booting faults in one run of pages
 /// rather than one page per chunk scattered across the payload. Also returns
-/// how many leading positions make up that first static closure.
+/// how many of the positions make up the static closure of the entry point
+/// the executable runs: the first server-side one, as `to_bytes` picks it.
 /// `output_files[i]` is chunk `i`'s output file.
 fn chunk_load_order(
     chunks: &[Chunk],
@@ -1625,12 +1624,12 @@ fn chunk_load_order(
             })
             .map(|(i, _)| i as u32)
     };
-    let mut roots = entry_points(false).chain(entry_points(true));
-    let mut dynamic_frontier: std::collections::VecDeque<u32> = roots.next().into_iter().collect();
+    let mut dynamic_frontier: std::collections::VecDeque<u32> =
+        entry_points(false).chain(entry_points(true)).collect();
 
     let mut stack: Vec<(u32, usize)> = Vec::new();
     let mut startup_count: Option<u32> = None;
-    while let Some(root) = dynamic_frontier.pop_front().or_else(|| roots.next()) {
+    while let Some(root) = dynamic_frontier.pop_front() {
         if visited.is_set(root as usize) {
             continue;
         }

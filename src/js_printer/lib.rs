@@ -2774,11 +2774,21 @@ pub(crate) mod __gated_printer {
                 // namespace object may not exist: the result is `{}`.
                 let namespace_unused = record.flags.contains(ImportRecordFlags::NAMESPACE_UNUSED);
 
-                // Internal "import()" of async ESM
+                // Internal "import()" of async ESM:
+                // `(init_foo() || Promise.resolve().then(() => init_foo())).then(() => exports_foo)`.
+                // Called again while `init_foo` runs its first synchronous
+                // segment, `init_foo()` returns `undefined`: the retry from a
+                // microtask gets the promise of that run.
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
+                    self.print(b"(");
+                    self.print_symbol(meta.wrapper_ref);
+                    self.print(b"() || Promise.resolve()");
+                    let _ = self.print_dot_then_prefix();
                     self.print_space_before_identifier();
                     self.print_symbol(meta.wrapper_ref);
                     self.print(b"()");
+                    self.print_dot_then_suffix();
+                    self.print(b")");
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();

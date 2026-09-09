@@ -274,28 +274,21 @@ pub(crate) fn convert_stmts_for_chunk(
                             let other_source_index = record.source_index.get() as usize;
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
-                            if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
-                                stmts
-                                    .inside_wrapper_prefix
-                                    .append_non_dependency(Stmt::alloc(
-                                        S::SExpr {
-                                            value: Expr::init(
-                                                E::Call {
-                                                    target: Expr::init(
-                                                        E::Identifier {
-                                                            ref_: wrapper_ref,
-                                                            ..Default::default()
-                                                        },
-                                                        stmt.loc,
-                                                    ),
-                                                    ..Default::default()
-                                                },
-                                                stmt.loc,
-                                            ),
+                            if flag.wrap == WrapKind::Esm
+                                && wrapper_ref.is_valid()
+                                && c.graph.files_live.is_set(other_source_index)
+                            {
+                                stmts.inside_wrapper_prefix.append_dependency(
+                                    Expr::init(
+                                        E::Call {
+                                            target: Expr::init_identifier(wrapper_ref, stmt.loc),
                                             ..Default::default()
                                         },
                                         stmt.loc,
-                                    ))?;
+                                    ),
+                                    flag.is_async_or_has_async_dependency,
+                                    c.promise_ref,
+                                )?;
                             }
                         }
 

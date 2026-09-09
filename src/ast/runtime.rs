@@ -170,13 +170,12 @@ pub struct Imports {
     pub(crate) __using: Ref,
     pub(crate) __callDispose: Ref,
     pub(crate) __jsonParse: Ref,
-    pub(crate) __promiseAll: Ref,
     pub(crate) __MEMO_CACHE_SENTINEL: Ref,
     pub(crate) __EARLY_RETURN_SENTINEL: Ref,
 }
 
 impl Imports {
-    pub const ALL: [&'static [u8]; 27] = [
+    pub const ALL: [&'static [u8]; 26] = [
         b"__name",
         b"__require",
         b"__export",
@@ -201,7 +200,6 @@ impl Imports {
         b"__using",
         b"__callDispose",
         b"__jsonParse",
-        b"__promiseAll",
         b"__MEMO_CACHE_SENTINEL",
         b"__EARLY_RETURN_SENTINEL",
     ];
@@ -209,7 +207,7 @@ impl Imports {
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
     #[cfg_attr(not(test), allow(dead_code))]
-    const ALL_SORTED: [&'static [u8]; 27] = [
+    const ALL_SORTED: [&'static [u8]; 26] = [
         b"$$typeof",
         b"__EARLY_RETURN_SENTINEL",
         b"__MEMO_CACHE_SENTINEL",
@@ -231,7 +229,6 @@ impl Imports {
         b"__privateIn",
         b"__privateMethod",
         b"__privateSet",
-        b"__promiseAll",
         b"__publicField",
         b"__reExport",
         b"__require",
@@ -241,18 +238,18 @@ impl Imports {
 
     /// When generating the list of runtime imports, we sort it for determinism.
     /// This is a lookup table so we don't need to resort the strings each time
-    pub const ALL_SORTED_INDEX: [usize; 27] = [
+    pub const ALL_SORTED_INDEX: [usize; 26] = [
         15, // __name
-        24, // __require
+        23, // __require
         7,  // __export
-        23, // __reExport
+        22, // __reExport
         9,  // __exportValue
         8,  // __exportDefault
         14, // __merge
         11, // __legacyDecorateClassTS
         12, // __legacyDecorateParamTS
         13, // __legacyMetadataTS
-        22, // __publicField
+        21, // __publicField
         18, // __privateIn
         17, // __privateGet
         16, // __privateAdd
@@ -260,13 +257,12 @@ impl Imports {
         19, // __privateMethod
         6,  // __decoratorStart
         5,  // __decoratorMetadata
-        25, // __runInitializers
+        24, // __runInitializers
         4,  // __decorateElement
         0,  // $$typeof
-        26, // __using
+        25, // __using
         3,  // __callDispose
         10, // __jsonParse
-        21, // __promiseAll
         2,  // __MEMO_CACHE_SENTINEL
         1,  // __EARLY_RETURN_SENTINEL
     ];
@@ -301,9 +297,8 @@ impl Imports {
             21 => self.__using,
             22 => self.__callDispose,
             23 => self.__jsonParse,
-            24 => self.__promiseAll,
-            25 => self.__MEMO_CACHE_SENTINEL,
-            26 => self.__EARLY_RETURN_SENTINEL,
+            24 => self.__MEMO_CACHE_SENTINEL,
+            25 => self.__EARLY_RETURN_SENTINEL,
             _ => return None,
         };
         r.to_nullable()
@@ -336,9 +331,8 @@ impl Imports {
             21 => Some(&mut self.__using),
             22 => Some(&mut self.__callDispose),
             23 => Some(&mut self.__jsonParse),
-            24 => Some(&mut self.__promiseAll),
-            25 => Some(&mut self.__MEMO_CACHE_SENTINEL),
-            26 => Some(&mut self.__EARLY_RETURN_SENTINEL),
+            24 => Some(&mut self.__MEMO_CACHE_SENTINEL),
+            25 => Some(&mut self.__EARLY_RETURN_SENTINEL),
             _ => None,
         }
     }

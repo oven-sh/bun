@@ -172,7 +172,8 @@ bitflags::bitflags! {
         const CONNECTED      = 1 << 4;
         const READER_DONE    = 1 << 5;
         const WRITER_DONE    = 1 << 6;
-        /// Set once an inline-created terminal is attached to a spawn; blocks
+        /// Set once an inline-created terminal is attached to a spawn, or the
+        /// pty slave was torn down after a detached child exited; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
@@ -1791,6 +1792,13 @@ impl Terminal {
 
     fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+        // Linux reports EIO on the pty master once the last slave fd closes,
+        // where macOS reports EOF. Same lifecycle event, same exit status.
+        #[cfg(unix)]
+        if err.get_errno() == sys::E::EIO {
+            self.on_reader_finished(0);
+            return;
+        }
         // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
         self.on_reader_finished(1);
     }

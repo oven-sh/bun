@@ -51,11 +51,6 @@ bun_opaque::opaque_ffi! {
     pub struct Heap;
 }
 
-impl Heap {
-    // `p` is only address-range-tested (never dereferenced) — there is no
-    // caller precondition, so this stays safe.
-}
-
 unsafe extern "C" {
     pub fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);

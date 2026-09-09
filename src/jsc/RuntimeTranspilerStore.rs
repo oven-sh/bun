@@ -303,8 +303,7 @@ impl ImportOrder {
 
     /// Moves `key` and its imports to `position` unless an earlier path already reaches it.
     fn place(&mut self, key: ModuleKey, position: Position) {
-        // Depth-first in import order, so that each module below `key` is reached by its
-        // smallest path first and moves at most once: a later, larger path fails the test.
+        // Depth-first in import order: each module is reached by its smallest path first, so moves once.
         let mut stack = vec![(key, position)];
         while let Some((key, position)) = stack.pop() {
             let Some(node) = self.nodes.get_mut(&key) else {
@@ -321,8 +320,7 @@ impl ImportOrder {
             }
             let node = self.nodes.get(&key).unwrap();
             for (index, import) in node.imports.iter().enumerate().rev() {
-                // A module keeps pos(import) <= pos(self) ++ [index] for each of its imports,
-                // so one that does not move has nothing below it to move either.
+                // pos(import) <= pos(self) ++ [index] always holds, so an unmoved module has nothing to move below it.
                 if self
                     .nodes
                     .get(import)

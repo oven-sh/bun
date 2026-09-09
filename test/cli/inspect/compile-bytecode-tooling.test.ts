@@ -170,8 +170,12 @@ class Session {
   stdout = "";
   stderr = "";
   readonly scripts = new Map<string, any>();
+  /** Rejects once the inspectee has exited and its output has been drained. */
   readonly failed: Promise<never>;
+  /** Rejects once the inspector transport closed or errored; only inspector round trips wait on it, not output. */
+  readonly disconnected: Promise<never>;
   private fail!: (error: Error) => void;
+  private disconnect!: (error: Error) => void;
   private nextId = 1;
   private readonly responseWaiters = new Map<number, (message: any) => void>();
   private readonly eventWaiters = new Map<string, (params: any) => void>();
@@ -181,10 +185,10 @@ class Session {
   proc!: Subprocess<"pipe", "pipe", "pipe">;
 
   constructor() {
-    const { promise, reject } = Promise.withResolvers<never>();
-    this.failed = promise;
-    this.fail = reject;
-    promise.catch(() => {});
+    ({ promise: this.failed, reject: this.fail } = Promise.withResolvers<never>());
+    ({ promise: this.disconnected, reject: this.disconnect } = Promise.withResolvers<never>());
+    this.failed.catch(() => {});
+    this.disconnected.catch(() => {});
   }
 
   spawn(mode: string, env: Record<string, string | undefined>) {
@@ -230,23 +234,23 @@ class Session {
           socket.data.framer.onData(socket, bytes);
         },
         error(_, error) {
-          session.fail(error);
+          session.disconnect(error);
         },
         close() {
-          session.fail(new Error(`inspector connection closed\nstderr:\n${session.stderr}`));
+          session.disconnect(new Error(`inspector connection closed\nstderr:\n${session.stderr}`));
         },
       },
     });
-    return { port: listener.port, connected: Promise.race([promise, this.failed]), listener };
+    return { port: listener.port, connected: Promise.race([promise, this.failed, this.disconnected]), listener };
   }
 
   /** DevTools transport: we connect to the WebSocket server the inspectee started. */
   async connect(url: string) {
     const ws = new WebSocket(url);
     ws.onmessage = event => this.onMessage(String(event.data));
-    ws.onerror = () => this.fail(new Error(`inspector WebSocket error\nstderr:\n${this.stderr}`));
-    ws.onclose = event => this.fail(new Error(`inspector WebSocket closed (${event.code})\nstderr:\n${this.stderr}`));
-    await Promise.race([new Promise<void>(resolve => (ws.onopen = () => resolve())), this.failed]);
+    ws.onerror = () => this.disconnect(new Error(`inspector WebSocket error\nstderr:\n${this.stderr}`));
+    ws.onclose = event => this.disconnect(new Error(`inspector WebSocket closed (${event.code})\nstderr:\n${this.stderr}`));
+    await Promise.race([new Promise<void>(resolve => (ws.onopen = () => resolve())), this.failed, this.disconnected]);
     this.transport = { send: text => ws.send(text), close: () => ws.close() };
   }
 
@@ -265,7 +269,7 @@ class Session {
     const id = this.nextId++;
     const response = new Promise<any>(resolve => this.responseWaiters.set(id, resolve));
     this.transport!.send(JSON.stringify({ id, method, params }));
-    const message = await Promise.race([response, this.failed]);
+    const message = await Promise.race([response, this.failed, this.disconnected]);
     if (message.error) throw new Error(`${method}: ${JSON.stringify(message.error)}`);
     return message.result;
   }
@@ -276,7 +280,7 @@ class Session {
   }
 
   waitForEvent(method: string): Promise<any> {
-    return Promise.race([new Promise(resolve => this.eventWaiters.set(method, resolve)), this.failed]);
+    return Promise.race([new Promise(resolve => this.eventWaiters.set(method, resolve)), this.failed, this.disconnected]);
   }
 
   async close() {

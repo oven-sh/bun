@@ -1692,6 +1692,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullRej
     auto scope = DECLARE_THROW_SCOPE(vm);
     const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(1));
     JSValue error = callFrame->argument(0);
+    // close()/end() already settled the result; a rejection after that has nothing left to fail.
+    if (sink->m_closed)
+        return JSValue::encode(sink->capabilityPromise());
     auto* stream = sink->stream();
     if (stream) {
         stream->m_lockedWithoutReader = false;

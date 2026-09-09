@@ -11,6 +11,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, 
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -3811,3 +3812,519 @@ describe("direct stream contract", () => {
     });
   });
 });
+
+describe("direct stream edge cases", () => {
+  const later = () => new Promise(r => setImmediate(r));
+  const dec = new TextDecoder();
+  const txt = v => (typeof v === "string" ? v : dec.decode(v));
+  const tally = () => ({ pulls: 0, cancels: [], closes: [] });
+  const direct = (t, pull, extra = {}) =>
+    new ReadableStream({
+      type: "direct",
+      pull(c) {
+        t.pulls++;
+        return pull(c);
+      },
+      cancel(reason) {
+        t.cancels.push(reason);
+      },
+      ...extra,
+    });
+  const settle = p => p.then(v => ({ ok: v }), e => ({ err: e?.message ?? String(e) }));
+
+  describe("re-entrancy", () => {
+    test("cancel() hook that writes and closes the controller it was given is a no-op, not a crash", async () => {
+      let controller;
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          t.pulls++;
+          controller = c;
+          c.write("a");
+          await c.flush();
+          await new Promise(() => {}); // park forever
+        },
+        cancel(reason) {
+          t.cancels.push(reason?.message ?? reason);
+          controller.write("after-cancel");
+          controller.close();
+        },
+      });
+      const reader = rs.getReader();
+      expect(txt((await reader.read()).value)).toBe("a");
+      await reader.cancel(new Error("bye"));
+      expect({ pulls: t.pulls, cancels: t.cancels }).toEqual({ pulls: 1, cancels: ["bye"] });
+    });
+
+    test("the source's close(reason) hook throwing surfaces to the consumer and does not leave the stream half-closed", async () => {
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          t.pulls++;
+          c.write("a");
+          c.close();
+        },
+        close(reason) {
+          t.closes.push(reason);
+          throw new Error("close hook");
+        },
+      });
+      const result = await settle(Bun.readableStreamToText(rs));
+      expect({ pulls: t.pulls, closes: t.closes.length, result }).toEqual({ pulls: 1, closes: 1, result: { err: "close hook" } });
+    });
+
+    test("the source's close() hook calling controller.close() again does not recurse", async () => {
+      let controller;
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          t.pulls++;
+          controller = c;
+          c.write("a");
+          c.close();
+        },
+        close() {
+          t.closes.push(1);
+          controller.close();
+          controller.end();
+        },
+      });
+      expect({ text: await Bun.readableStreamToText(rs), pulls: t.pulls, closes: t.closes.length }).toEqual({ text: "a", pulls: 1, closes: 1 });
+    });
+
+    test("a pending flush() promise settles when close() runs before the reader drains", async () => {
+      let flushed;
+      const t = tally();
+      const rs = direct(t, c => {
+        c.write("a");
+        flushed = c.flush();
+        c.close();
+      });
+      const text = await Bun.readableStreamToText(rs);
+      expect({ text, flushed: "ok" in (await settle(Promise.resolve(flushed))) }).toEqual({ text: "a", flushed: true });
+    });
+
+    test("a pending backpressured write() settles when the consumer cancels", async () => {
+      let pendingWrite;
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        pendingWrite = c.write(new Uint8Array(256 * 1024));
+        await pendingWrite;
+        c.close();
+      });
+      const reader = rs.getReader();
+      expect(txt((await reader.read()).value)).toBe("a");
+      await later();
+      expect(pendingWrite).toBeInstanceOf(Promise);
+      await reader.cancel(new Error("gone"));
+      expect({ settled: await settle(pendingWrite), cancels: t.cancels.length }).toEqual({ settled: expect.anything(), cancels: 1 });
+    });
+  });
+
+  describe("ordering", () => {
+    test("an async pull() with no await ends after its writes are committed and before the next macrotask", async () => {
+      const events = [];
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        events.push("wrote");
+      });
+      const done = Bun.readableStreamToText(rs).then(v => events.push("text:" + v));
+      setImmediate(() => events.push("immediate"));
+      await done;
+      await later();
+      expect(events).toEqual(["wrote", "text:a", "immediate"]);
+    });
+
+    test("close() from queueMicrotask, process.nextTick, setImmediate and setTimeout(0) all deliver the same bytes", async () => {
+      const schedulers = {
+        queueMicrotask: f => queueMicrotask(f),
+        nextTick: f => process.nextTick(f),
+        setImmediate: f => setImmediate(f),
+        setTimeout0: f => setTimeout(f, 0),
+      };
+      const out = {};
+      for (const [name, schedule] of Object.entries(schedulers)) {
+        const t = tally();
+        out[name] = await Bun.readableStreamToText(
+          direct(t, c => {
+            c.write("a");
+            schedule(() => {
+              c.write("b");
+              c.close();
+            });
+          }),
+        );
+      }
+      expect(out).toEqual({ queueMicrotask: "ab", nextTick: "ab", setImmediate: "ab", setTimeout0: "ab" });
+    });
+
+    test("a pull() that rejects after close() ran is not an unhandled rejection and does not fail the consumer", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let unhandled = 0;
+          process.on("unhandledRejection", () => unhandled++);
+          const text = await new Response(new ReadableStream({
+            type: "direct",
+            async pull(c) { c.write("ok"); c.close(); await 1; throw new Error("late"); },
+          })).text();
+          await new Promise(r => setTimeout(r, 0));
+          console.log(JSON.stringify({ text, unhandled }));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ text: "ok", unhandled: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    test("cancel() rejecting is marked handled", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let unhandled = 0;
+          process.on("unhandledRejection", () => unhandled++);
+          const rs = new ReadableStream({
+            type: "direct",
+            async pull(c) { c.write("a"); await c.flush(); await new Promise(() => {}); },
+            async cancel() { throw new Error("cancel failed"); },
+          });
+          const reader = rs.getReader();
+          await reader.read();
+          await reader.cancel("bye").catch(() => {});
+          await new Promise(r => setTimeout(r, 0));
+          console.log(JSON.stringify({ unhandled }));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ unhandled: 0 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("pipes", () => {
+    test("pipeTo a WritableStream whose write() rejects on the second chunk: cancel(reason) once, the parked write settles, pipeTo rejects", async () => {
+      const t = tally();
+      let secondWrite;
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        secondWrite = c.write("two");
+        await c.flush();
+        await new Promise(() => {}); // still open when the sink fails
+      });
+      let n = 0;
+      const ws = new WritableStream({
+        write() {
+          if (++n === 2) throw new Error("sink refused");
+        },
+      });
+      const result = await settle(rs.pipeTo(ws));
+      await later();
+      expect({
+        result,
+        pulls: t.pulls,
+        cancels: t.cancels.map(e => e?.message ?? e),
+        secondWriteSettled: "ok" in (await settle(Promise.resolve(secondWrite))),
+      }).toEqual({
+        result: { err: "sink refused" },
+        pulls: 1,
+        cancels: ["sink refused"],
+        secondWriteSettled: true,
+      });
+    });
+
+    test("pipeTo with an AbortSignal aborted mid-body cancels the source once with the abort reason", async () => {
+      const t = tally();
+      const ac = new AbortController();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        ac.abort(new Error("stop"));
+        await later();
+        c.write("two");
+        c.close();
+      });
+      const chunks = [];
+      const result = await settle(rs.pipeTo(new WritableStream({ write: v => void chunks.push(txt(v)) }), { signal: ac.signal }));
+      await later();
+      expect({ result, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e), chunks }).toEqual({
+        result: { err: "stop" },
+        pulls: 1,
+        cancels: ["stop"],
+        chunks: ["one"],
+      });
+    });
+
+    test("pipeTo with preventCancel: the writable failing does not call the source's cancel()", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        c.write("two");
+        await c.flush();
+        c.close();
+      });
+      const ws = new WritableStream({
+        write() {
+          throw new Error("sink refused");
+        },
+      });
+      const result = await settle(rs.pipeTo(ws, { preventCancel: true }));
+      await later();
+      expect({ result, cancels: t.cancels.length }).toEqual({ result: { err: "sink refused" }, cancels: 0 });
+    });
+
+    test("pipeThrough a TransformStream whose transform() throws errors the readable side and cancels the source", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        c.write("two");
+        await c.flush();
+        await new Promise(() => {}); // still open when the transform fails
+      });
+      let n = 0;
+      const ts = new TransformStream({
+        transform(chunk, controller) {
+          if (++n === 2) throw new Error("transform failed");
+          controller.enqueue(chunk);
+        },
+      });
+      const result = await settle(Bun.readableStreamToText(rs.pipeThrough(ts)));
+      await later();
+      expect({ result, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        result: { err: "transform failed" },
+        pulls: 1,
+        cancels: ["transform failed"],
+      });
+    });
+
+    test("tee(): cancelling one branch immediately still lets the other read the whole body", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const part of ["a", "b", "c"]) {
+          c.write(part);
+          await c.flush();
+        }
+        c.close();
+      });
+      const [a, b] = rs.tee();
+      // a.cancel() resolves once the source is done (both branches settled), so it must not be awaited before b is read.
+      const cancelled = a.cancel("not interested");
+      expect({ b: await Bun.readableStreamToText(b), pulls: t.pulls, cancels: t.cancels.length }).toEqual({ b: "abc", pulls: 1, cancels: 0 });
+      await cancelled;
+    });
+
+    test("tee(): cancelling both branches cancels the source once with both reasons", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        await new Promise(() => {});
+      });
+      const [a, b] = rs.tee();
+      const ra = a.getReader();
+      await ra.read();
+      await Promise.all([ra.cancel("ra"), b.cancel("rb")]);
+      await later();
+      expect({ pulls: t.pulls, cancels: t.cancels }).toEqual({ pulls: 1, cancels: [["ra", "rb"]] });
+    });
+  });
+
+  describe("async generator bodies", () => {
+    test("a generator that yields then throws rejects text() with its error and runs finally once", async () => {
+      const events = [];
+      async function* gen() {
+        try {
+          yield "a";
+          await later();
+          throw new Error("gen failed");
+        } finally {
+          events.push("finally");
+        }
+      }
+      expect({ result: await settle(new Response(gen()).text()), events }).toEqual({ result: { err: "gen failed" }, events: ["finally"] });
+    });
+
+    test("breaking out of for-await over a generator-backed Response body calls return() once", async () => {
+      const events = [];
+      async function* gen() {
+        try {
+          yield "a";
+          await later();
+          yield "b";
+          await later();
+          yield "c";
+        } finally {
+          events.push("return");
+          await later();
+          events.push("after await in finally");
+        }
+      }
+      const body = new Response(gen()).body;
+      for await (const chunk of body) {
+        events.push("chunk:" + txt(chunk));
+        break;
+      }
+      await later();
+      await later();
+      expect(events).toEqual(["chunk:a", "return", "after await in finally"]);
+    });
+
+    test("a generator yielding an empty chunk, a string, a Uint8Array and an ArrayBuffer produces their concatenation", async () => {
+      async function* gen() {
+        yield new Uint8Array(0);
+        yield "str ";
+        yield new TextEncoder().encode("bytes ");
+        yield new TextEncoder().encode("buffer").buffer;
+      }
+      expect(await new Response(gen()).text()).toBe("str bytes buffer");
+    });
+
+    test("a generator yielding an unsupported value (a Blob) rejects the body with a TypeError", async () => {
+      async function* gen() {
+        yield "a";
+        yield new Blob(["blob"]);
+      }
+      const result = await settle(new Response(gen()).text());
+      expect("err" in result).toBe(true);
+    });
+  });
+
+  describe("node:stream interop", () => {
+    test("Readable.fromWeb(direct): pull() once, data in order, 'end' after close()", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const part of ["a", "b", "c"]) {
+          c.write(part);
+          await c.flush();
+        }
+        c.close();
+      });
+      const readable = Readable.fromWeb(rs);
+      const events = [];
+      readable.on("data", d => events.push("data:" + txt(d)));
+      await new Promise((resolve, reject) => {
+        readable.on("end", () => (events.push("end"), resolve()));
+        readable.on("error", reject);
+      });
+      const data = events.filter(e => e.startsWith("data:")).map(e => e.slice(5)).join("");
+      expect({ data, last: events.at(-1), pulls: t.pulls, cancels: t.cancels.length }).toEqual({ data: "abc", last: "end", pulls: 1, cancels: 0 });
+    });
+
+    test("Readable.fromWeb(direct): close(error) becomes 'error' with that error, no 'end'", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        c.close(new Error("source failed"));
+      });
+      const readable = Readable.fromWeb(rs);
+      const events = [];
+      readable.on("data", d => events.push("data:" + txt(d)));
+      readable.on("end", () => events.push("end"));
+      const err = await new Promise(resolve => readable.on("error", resolve));
+      expect({ events, err: err.message, pulls: t.pulls }).toEqual({ events: ["data:a"], err: "source failed", pulls: 1 });
+    });
+
+    test("Readable.fromWeb(direct).destroy(err) cancels the source once", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        await new Promise(() => {});
+      });
+      const readable = Readable.fromWeb(rs);
+      const errored = new Promise(resolve => readable.once("error", resolve));
+      await new Promise(resolve => readable.once("data", resolve));
+      readable.destroy(new Error("torn down"));
+      expect((await errored).message).toBe("torn down");
+      await later();
+      expect({ pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({ pulls: 1, cancels: ["torn down"] });
+    });
+
+    test("direct.pipeTo(Writable.toWeb(nodeWritable)) with highWaterMark 1 delivers everything in order", async () => {
+      const t = tally();
+      const parts = Array.from({ length: 20 }, (_, i) => "chunk" + i + ";");
+      const rs = direct(t, async c => {
+        for (const p of parts) await c.write(p);
+        c.close();
+      });
+      const seen = [];
+      const nodeWritable = new Writable({
+        highWaterMark: 1,
+        write(chunk, _enc, cb) {
+          seen.push(txt(chunk));
+          setImmediate(cb);
+        },
+      });
+      await rs.pipeTo(Writable.toWeb(nodeWritable));
+      expect({ body: seen.join(""), pulls: t.pulls }).toEqual({ body: parts.join(""), pulls: 1 });
+    });
+
+    test("stream.pipeline(Readable.fromWeb(direct), throwing transform, sink) reports the error once and cancels the source once", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const p of ["a", "b", "c"]) {
+          c.write(p);
+          await c.flush();
+        }
+        await new Promise(() => {}); // still open when the transform fails
+      });
+      let n = 0;
+      const transform = new PassThrough({
+        transform(chunk, _enc, cb) {
+          if (++n === 2) return cb(new Error("transform failed"));
+          cb(null, chunk);
+        },
+      });
+      const sink = new Writable({ write: (_c, _e, cb) => cb() });
+      const errors = [];
+      await new Promise(resolve => pipeline(Readable.fromWeb(rs), transform, sink, err => (errors.push(err?.message), resolve())));
+      await later();
+      expect({ errors, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        errors: ["transform failed"],
+        pulls: 1,
+        cancels: ["transform failed"],
+      });
+    });
+
+    test("finished(Readable.fromWeb(direct)) resolves after close() and rejects after close(error)", async () => {
+      const ok = Readable.fromWeb(direct(tally(), async c => (c.write("a"), await c.flush(), c.close())));
+      ok.resume();
+      const bad = Readable.fromWeb(direct(tally(), async c => (c.write("a"), await c.flush(), c.close(new Error("source failed")))));
+      bad.resume();
+      const results = await Promise.all([
+        settle(new Promise((res, rej) => finished(ok, e => (e ? rej(e) : res("finished"))))),
+        settle(new Promise((res, rej) => finished(bad, e => (e ? rej(e) : res("finished"))))),
+      ]);
+      expect(results).toEqual([{ ok: "finished" }, { err: "source failed" }]);
+    });
+
+    test("Readable.toWeb(nodeReadable) → Response.text() with destroy(err) mid-stream rejects with that error", async () => {
+      const readable = new Readable({ read() {} });
+      const text = settle(new Response(Readable.toWeb(readable)).text());
+      readable.push("a");
+      await later();
+      readable.destroy(new Error("node source failed"));
+      expect(await text).toEqual({ err: "node source failed" });
+    });
+  });
+});
+

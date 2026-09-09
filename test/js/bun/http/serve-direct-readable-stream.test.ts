@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
+import { Readable } from "node:stream";
 import {
   expected as directExpected,
   observe as directObserve,
@@ -1775,3 +1776,258 @@ describe("direct stream contract", () => {
     });
   });
 });
+
+describe("direct stream edge cases over Bun.serve", () => {
+  const later = () => new Promise<void>(r => setImmediate(r));
+  const dec = new TextDecoder();
+  type Tally = { pulls: number; cancels: unknown[]; events: string[] };
+  const tally = (): Tally => ({ pulls: 0, cancels: [], events: [] });
+  const direct = (t: Tally, pull: (c: any) => unknown) =>
+    new ReadableStream({
+      type: "direct",
+      pull(c: any) {
+        t.pulls++;
+        return pull(c);
+      },
+      cancel(reason: any) {
+        t.cancels.push(reason?.code ?? reason?.message ?? reason);
+      },
+    } as any);
+  const settle = <T,>(p: Promise<T>) => p.then(v => ({ ok: v }), (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }));
+  // Opens a raw connection, reads until `until` appears in the response, then destroys the socket.
+  async function abortAfter(server: { port: number }, until: string) {
+    const sock = net.connect(server.port, "127.0.0.1");
+    let raw = "";
+    await new Promise<void>((resolve, reject) => {
+      sock.on("connect", () => sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+      sock.on("data", d => {
+        raw += d.toString("latin1");
+        if (raw.includes(until)) resolve();
+      });
+      sock.on("error", reject);
+      sock.on("close", () => resolve());
+    });
+    sock.destroy();
+    return raw;
+  }
+
+  test("client abort while pull() is parked: cancel() once with the connection-closed reason, the parked write settles, no end", async () => {
+    const t = tally();
+    let parked: any;
+    const done = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, async c => {
+            c.write("first");
+            await c.flush();
+            parked = c.write(Buffer.alloc(512 * 1024, "x"));
+            t.events.push("parked");
+            await parked;
+            t.events.push("unparked");
+            done.resolve();
+          }),
+        ),
+    });
+    await abortAfter(server, "first");
+    // The parked write must settle (either way) once the peer is gone; otherwise pull() leaks forever.
+    await Promise.race([done.promise, (async () => { while (t.cancels.length === 0) await later(); await later(); })()]);
+    expect({ pulls: t.pulls, cancels: t.cancels.length, parkedSettled: "ok" in (await settle(Promise.race([parked, later().then(() => "pending")]))) }).toEqual({
+      pulls: 1,
+      cancels: 1,
+      parkedSettled: true,
+    });
+  });
+
+  test("client abort racing pull() resolution: exactly one of end / cancel is observed", async () => {
+    // Run the race many times; every iteration must be consistent, none may do both or neither.
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const t = tally();
+      const release = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            direct(t, async c => {
+              c.write("first");
+              await c.flush();
+              await release.promise;
+              c.write("tail");
+            }),
+          ),
+      });
+      const aborted = abortAfter(server, "first");
+      // Resolve pull() in the same turn the abort is processed, alternating who goes first.
+      if (i % 2) await aborted;
+      release.resolve();
+      await aborted;
+      await later();
+      await later();
+      outcomes.add(t.cancels.length === 1 ? "cancelled" : t.cancels.length === 0 ? "ended" : `cancels=${t.cancels.length}`);
+      expect(t.pulls).toBe(1);
+    }
+    expect([...outcomes].every(o => o === "cancelled" || o === "ended")).toBe(true);
+  });
+
+  test("client abort while a sync pull() has not returned yet: the late writes and close() are no-ops", async () => {
+    const t = tally();
+    let controller: any;
+    const gotController = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, c => {
+            controller = c;
+            c.write("first");
+            c.flush();
+            gotController.resolve();
+          }),
+        ),
+    });
+    const aborted = abortAfter(server, "first");
+    await gotController.promise;
+    await aborted;
+    while (t.cancels.length === 0) await later();
+    // The source keeps using the controller after the peer left; none of this may throw or crash.
+    const results = [settle(Promise.resolve().then(() => controller.write("late"))), settle(Promise.resolve().then(() => controller.flush())), settle(Promise.resolve().then(() => controller.close()))];
+    await Promise.all(results);
+    expect({ pulls: t.pulls, cancels: t.cancels.length }).toEqual({ pulls: 1, cancels: 1 });
+  });
+
+  test("cancel() hook that writes to and closes its controller after a client abort does not crash", async () => {
+    let controller: any;
+    const cancelled = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c: any) {
+              controller = c;
+              c.write("first");
+              await c.flush();
+              await new Promise(() => {});
+            },
+            cancel() {
+              controller.write("from cancel");
+              controller.close();
+              cancelled.resolve();
+            },
+          } as any),
+        ),
+    });
+    await abortAfter(server, "first");
+    await cancelled.promise;
+    // The same server still serves the next request.
+    expect(await abortAfter(server, "first")).toContain("first");
+  });
+
+  test("async generator body: client abort between yields runs the generator's finally once and does not throw into it", async () => {
+    const events: string[] = [];
+    const finished = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          (async function* () {
+            try {
+              yield "first";
+              for (let i = 0; i < 50; i++) {
+                await later();
+                yield "more";
+              }
+              events.push("completed");
+            } catch (e: any) {
+              events.push("catch:" + (e?.message ?? e));
+            } finally {
+              events.push("finally");
+              finished.resolve();
+            }
+          })() as any,
+        ),
+    });
+    await abortAfter(server, "first");
+    await finished.promise;
+    expect(events).toEqual(["finally"]);
+  });
+
+  test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
+    const readable = new Readable({ read() {} });
+    using server = Bun.serve({ port: 0, fetch: () => new Response(Readable.toWeb(readable) as any) });
+    const res = await fetch(server.url);
+    readable.push("first");
+    const reader = res.body!.getReader();
+    expect(dec.decode((await reader.read()).value)).toBe("first");
+    readable.destroy(new Error("node source failed"));
+    const rest = await settle((async () => { for (;;) { const r = await reader.read(); if (r.done) return "done"; } })());
+    expect("err" in rest || rest.ok === "done").toBe(true);
+  });
+
+  test("direct source → CompressionStream → Bun.serve: pull() once, body round-trips", async () => {
+    const t = tally();
+    const payload = Buffer.alloc(200 * 1024, "compress me ").toString();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          direct(t, async c => {
+            for (let i = 0; i < payload.length; i += 16 * 1024) await c.write(payload.slice(i, i + 16 * 1024));
+            c.close();
+          }).pipeThrough(new CompressionStream("gzip")),
+          { headers: { "content-encoding": "gzip" } },
+        ),
+    });
+    const body = await (await fetch(server.url)).text();
+    expect({ same: body === payload, length: body.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({ same: true, length: payload.length, pulls: 1, cancels: 0 });
+  });
+
+  test("GC while pull() is parked on a backpressured write: the controller keeps the source alive and the body completes", async () => {
+    const t = tally();
+    const total = 4 * 1024 * 1024;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        // No JS reference to the stream or source survives this function; only the sink controller's edge does.
+        return new Response(
+          direct(t, async c => {
+            for (let sent = 0; sent < total; sent += 256 * 1024) {
+              await c.write(new Uint8Array(256 * 1024));
+              if (sent === 512 * 1024) {
+                Bun.gc(true);
+                await later();
+                Bun.gc(true);
+              }
+            }
+            c.close();
+          }),
+        );
+      },
+    });
+    const res = await fetch(server.url);
+    Bun.gc(true);
+    const bytes = await res.bytes();
+    expect({ length: bytes.length, pulls: t.pulls, cancels: t.cancels.length }).toEqual({ length: total, pulls: 1, cancels: 0 });
+  });
+
+  test("request body (native source) echoed back while the client aborts mid-upload does not crash and releases the request", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    const sock = net.connect(server.port, "127.0.0.1");
+    await new Promise<void>(resolve => sock.on("connect", () => resolve()));
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+    await new Promise<void>(resolve => sock.once("data", () => resolve()));
+    sock.destroy();
+    await later();
+    // Server still answers.
+    expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
+  });
+});
+

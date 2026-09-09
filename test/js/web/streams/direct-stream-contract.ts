@@ -70,6 +70,75 @@ export const shapes: Record<string, Shape> = {
         });
       }),
   },
+  "async pull with no await (already-resolved promise)": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        c.write("world");
+      }),
+  },
+  "sync pull: close() from the write() promise's reaction": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c => {
+        Promise.resolve(c.write("hello world")).then(() => c.close());
+      }),
+  },
+  "sync pull: close() from process.nextTick": {
+    expect: { body: "hello world" },
+    make: t => direct(t, c => (c.write("hello world"), void process.nextTick(() => c.close()))),
+  },
+  "sync pull: close() from setTimeout(0)": {
+    expect: { body: "hello world" },
+    make: t => direct(t, c => (c.write("hello world"), void setTimeout(() => c.close(), 0))),
+  },
+  "async pull: flush() still pending when close() runs": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello world");
+        const flushed = c.flush();
+        c.close();
+        await flushed;
+      }),
+  },
+  "close() twice, then end(), then a late write()": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello world");
+        c.close();
+        c.close();
+        c.end();
+        await later();
+        try {
+          c.write("ignored");
+        } catch {}
+      }),
+  },
+  "close(undefined), close(0) and close('') are clean closes": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        c.write("world");
+        (c.close as any)(undefined);
+        (c.close as any)(0);
+        (c.close as any)("");
+      }),
+  },
+  "async pull: rejects after close() already ran": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello world");
+        c.close();
+        await later();
+        throw new Error("too late to matter");
+      }),
+  },
   "async pull: write, await, reject": {
     expect: { error: "source failed" },
     make: t =>
@@ -84,6 +153,15 @@ export const shapes: Record<string, Shape> = {
     make: t =>
       direct(t, () => {
         throw new Error("source failed");
+      }),
+  },
+  "async pull: rejects with a non-Error value": {
+    expect: { error: "[object Object]" },
+    make: t =>
+      direct(t, async c => {
+        c.write("hello ");
+        await later();
+        throw { code: "E_SOURCE" };
       }),
   },
   "close(error) after a write": {
@@ -148,7 +226,7 @@ export async function observe(shape: Shape, consume: (s: ReadableStream) => Prom
   try {
     result = { body: await consume(shape.make(t)) };
   } catch (e: any) {
-    result = { error: e?.message ?? String(e) };
+    result = { error: typeof e?.message === "string" ? e.message : String(e) };
   }
   // cancel() runs from the sink's close reaction; give it a turn to (not) fire.
   await later();

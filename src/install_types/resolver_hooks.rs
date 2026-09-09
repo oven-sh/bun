@@ -1292,8 +1292,10 @@ pub struct TaskCallbackContext {
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
+    /// Returns true if it dispatched the error to a JS-side queue; false
+    /// tells the caller to report the failure itself.
     pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) -> bool>,
 }
 
 impl WakeHandler {
@@ -1310,7 +1312,7 @@ impl WakeHandler {
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) -> bool {
         // Same invariant as `get_handler`: set together with `context` by the
         // sole installer; callers gate on `context.is_some()`.
         self.on_dependency_error.unwrap()
@@ -1450,6 +1452,11 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
+    /// Current `on_wake.context`, so a caller can avoid clobbering a
+    /// registered handler.
+    fn on_wake_context(&self) -> Option<NonNull<c_void>>;
+    /// Repoint the singleton's error log at the caller's live log.
+    fn set_log(&mut self, log: *mut bun_ast::Log);
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

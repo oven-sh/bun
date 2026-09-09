@@ -495,17 +495,36 @@ unsafe fn init_runtime_state(
                                 dep: &bun_resolver::install_types::Dependency,
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
-                            ) {
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                            ) -> bool {
+                                // `ctx` may name another VM's (possibly freed)
+                                // `WakeContext`: compare addresses against this
+                                // thread's own before any deref.
+                                let state = runtime_state();
+                                if state.is_null() {
+                                    return false;
+                                }
+                                // SAFETY: `state` is this thread's live `RuntimeState`.
+                                let Some(my_ctx) = (unsafe { (*state).wake_ctx.as_deref() }) else {
+                                    return false;
+                                };
+                                if !core::ptr::eq(
+                                    ctx.cast_const()
+                                        .cast::<bun_jsc::async_module::WakeContext>(),
+                                    core::ptr::from_ref(my_ctx),
+                                ) {
+                                    return false;
+                                }
+                                // SAFETY: `ctx` is this thread's own live
+                                // `WakeContext`; its queue is this VM's module queue.
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                            .cast(),
+                                        my_ctx.queue.cast(),
                                         dep,
                                         id,
                                         err,
-                                    )
+                                    );
                                 }
+                                true
                             }
                             adapter
                         }),

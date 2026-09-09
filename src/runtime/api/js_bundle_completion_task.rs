@@ -89,6 +89,10 @@ pub struct JSBundleCompletionTask {
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
     pub(crate) started_at_ns: u64,
+    /// Auto-install config captured from the VM's transpiler.
+    pub(crate) global_cache: options::GlobalCache,
+    pub(crate) install: Option<NonNull<api::BunInstall>>,
+    pub(crate) install_preference: options::OfflineMode,
 }
 
 #[repr(u8)]
@@ -136,6 +140,7 @@ impl JSBundleCompletionTask {
         plugins: Option<NonNull<Plugin>>,
         global_this: &JSGlobalObject,
     ) -> JSBundleCompletionTask {
+        let vm_opts = &global_this.bun_vm().transpiler.options;
         JSBundleCompletionTask {
             ref_count: RefCount::init(),
             config,
@@ -154,6 +159,9 @@ impl JSBundleCompletionTask {
             transpiler: ptr::null_mut(),
             plugins,
             started_at_ns: 0,
+            global_cache: vm_opts.global_cache,
+            install: vm_opts.install,
+            install_preference: vm_opts.install_preference,
         }
     }
 
@@ -1077,6 +1085,10 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }
+
+        transpiler.options.global_cache = self.global_cache;
+        transpiler.options.install = self.install;
+        transpiler.options.install_preference = self.install_preference;
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;

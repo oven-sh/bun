@@ -141,9 +141,10 @@ pub struct Terminal {
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
 
-    /// This value reference for GC tracking
-    /// - weak: allows GC when idle
-    /// - strong: prevents GC when actively connected
+    /// The JS wrapper. Strong from creation until no further callback can
+    /// fire (PTY EOF with no drain pending, close, or dispose), because the
+    /// wrapper's cached slots are the only GC root of the callbacks; weak
+    /// afterwards so the wrapper can be collected.
     this_value: JsCell<JsRef>,
 
     /// State flags
@@ -169,13 +170,12 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
         const READER_STARTED = 1 << 3;
-        const CONNECTED      = 1 << 4;
-        const READER_DONE    = 1 << 5;
-        const WRITER_DONE    = 1 << 6;
+        const READER_DONE    = 1 << 4;
+        const WRITER_DONE    = 1 << 5;
         /// Set once an inline-created terminal is attached to a spawn; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
-        const INLINE_SPAWNED = 1 << 7;
+        const INLINE_SPAWNED = 1 << 6;
     }
 }
 
@@ -1818,21 +1818,28 @@ impl Terminal {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
-        self.update_flags(|f| {
-            f.insert(Flags::READER_DONE);
-            f.remove(Flags::CONNECTED);
-        });
-        // Reader EOF means every slave fd is gone, so input still queued in the
-        // writer can never be read. A pty master does not report that as a
-        // write error (Linux keeps answering EAGAIN), so the writer would wait
-        // for a drain that cannot come: its poll stays armed on a permanent
-        // POLLHUP and the pending drain keeps the wrapper rooted. End it here
-        // instead. `end()` closes write_fd and the poll, then dispatches
-        // `on_writer_close`, which sets WRITER_DONE before the check below.
+        self.update_flags(|f| f.insert(Flags::READER_DONE));
         #[cfg(unix)]
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
-            self.writer.with_mut(|w| w.end());
-            self.write_fd.set(Fd::INVALID);
+        {
+            // EOF closes the reader on its own. A read error (Linux reports the
+            // last slave close as EIO, not EOF) leaves it open with its poll
+            // armed, and late echo of queued input would still reach `data`
+            // after `exit`. Close it so `exit` is the last callback.
+            if !self.reader.get().is_done() {
+                self.reader.with_mut(|r| r.close());
+                self.read_fd.set(Fd::INVALID);
+            }
+            // Every slave fd is gone, so input still queued in the writer can
+            // never be read. A pty master does not report that as a write
+            // error (Linux keeps answering EAGAIN), so the writer would wait
+            // for a drain that cannot come: its poll stays armed on a permanent
+            // POLLHUP and the pending drain keeps the wrapper rooted. `end()`
+            // closes write_fd and the poll, then dispatches `on_writer_close`,
+            // which sets WRITER_DONE before the downgrade check below.
+            if !self.flags.get().contains(Flags::WRITER_DONE) {
+                self.writer.with_mut(|w| w.end());
+                self.write_fd.set(Fd::INVALID);
+            }
         }
         // EOF from master - downgrade to weak ref to allow GC.
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
@@ -1902,17 +1909,6 @@ impl Terminal {
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
-        }
-
-        // First data received - upgrade to strong ref (connected). Not after
-        // the reader finished: the `exit` callback has already run and nothing
-        // downgrades again, so a chunk the poll delivers after EOF (a queued
-        // read that follows an EIO) would root the wrapper for good.
-        let flags = self.flags.get();
-        if !flags.contains(Flags::CONNECTED) && !flags.contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::CONNECTED));
-            let global = self.global();
-            self.this_value.with_mut(|v| v.upgrade(global));
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {

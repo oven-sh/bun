@@ -770,57 +770,74 @@ describe("Bun.Terminal", () => {
     // Input the child never read can never drain once the last slave fd is
     // gone, because a pty master answers EAGAIN instead of EPIPE. The writer
     // used to wait for that drain forever, which kept the wrapper (and the
-    // callbacks it roots) alive for the rest of the process and kept its poll
-    // re-arming on a permanent POLLHUP. PTY EOF now ends the writer, so `exit`
-    // is the last callback and the wrapper becomes collectable. The children
-    // alternate two queue shapes: complete lines (the line discipline stops
-    // accepting once its line buffer is full) and one unterminated line (the
-    // kernel keeps discarding it, so an unfixed build fires a late `drain`).
+    // callbacks it roots) alive with its three pty fds for the rest of the
+    // process, and kept its poll re-arming on a permanent POLLHUP. PTY EOF now
+    // ends the writer and closes the reader, so `exit` is the last callback,
+    // a later write() is dropped instead of queued, and the wrapper becomes
+    // collectable. The children alternate two queue shapes: complete lines
+    // (the line discipline stops accepting once its line buffer is full) and
+    // one unterminated line (the kernel keeps discarding it, so an unfixed
+    // build delivers late echo and a late `drain` after `exit`).
     test.skipIf(isWindows)("terminal is released after the child exits with input it never read", async () => {
       const childSrc = /* js */ `
+        const { readdirSync } = require("node:fs");
+        const openFds = () => readdirSync("/dev/fd").length;
         const N = 4;
         let collected = 0;
         const registry = new FinalizationRegistry(() => collected++);
         let exits = 0;
-        let drainsAfterExit = 0;
+        let callbacksAfterExit = 0;
+        const big = { lines: Buffer.alloc(65536, "echo\\n"), unterminated: Buffer.alloc(65536, "a") };
 
         async function one(i) {
           const { promise: ptyClosed, resolve } = Promise.withResolvers();
           let exited = false;
           let proc = Bun.spawn(["sh", "-c", "exit 0"], {
             terminal: {
-              data() {},
+              data() {
+                if (exited) callbacksAfterExit++;
+              },
               exit() {
                 exited = true;
                 exits++;
                 resolve();
               },
               drain() {
-                if (exited) drainsAfterExit++;
+                if (exited) callbacksAfterExit++;
               },
             },
           });
-          registry.register(proc.terminal, i);
-          const big = Buffer.alloc(65536, i % 2 === 0 ? "echo\\n" : "a");
-          for (let j = 0; j < 32; j++) proc.terminal.write(big);
+          let terminal = proc.terminal;
+          registry.register(terminal, i);
+          const input = i % 2 === 0 ? big.lines : big.unterminated;
+          for (let j = 0; j < 32; j++) terminal.write(input);
           const procExited = proc.exited;
           proc = null;
           await procExited;
           await ptyClosed;
+          // After PTY EOF a write is accepted and dropped; it must not queue
+          // (and so re-root the wrapper) behind input that can never drain.
+          for (let j = 0; j < 32; j++) terminal.write(input);
+          terminal = null;
         }
 
+        const fdsBefore = openFds();
         for (let i = 0; i < N; i++) await one(i);
 
         let sink;
         function churn() {
           for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
         }
-        for (let i = 0; i < 200 && collected < N; i++) {
+        // Collection runs the finalizer, which hands the remaining pty fds to
+        // a close thread; poll both conditions rather than a delay.
+        let fdsAfter = openFds();
+        for (let i = 0; i < 50 && (collected < N || fdsAfter > fdsBefore); i++) {
           churn();
           Bun.gc(true);
           await new Promise(r => setImmediate(r));
+          fdsAfter = openFds();
         }
-        console.log(JSON.stringify({ exits, collected, drainsAfterExit }));
+        console.log(JSON.stringify({ exits, collected, callbacksAfterExit, leakedFds: Math.max(0, fdsAfter - fdsBefore) }));
       `;
 
       await using proc = Bun.spawn({
@@ -831,7 +848,7 @@ describe("Bun.Terminal", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, drainsAfterExit: 0 });
+      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, callbacksAfterExit: 0, leakedFds: 0 });
       expect(exitCode).toBe(0);
     });
   });

@@ -26,6 +26,7 @@
 //! [`super::entities`] decodes them and the results are copied into the
 //! DOM's string arena.
 
+use bun_core::strings;
 use lol_html::errors::RewritingError;
 use lol_html::html_content::{StartTag, TextType};
 use lol_html::transform::{
@@ -1189,7 +1190,7 @@ fn carry_start(chunk: &str, rules: entities::TextRules) -> usize {
     if rules.decode_refs {
         // Longest reference is 33 bytes (`&CounterClockwiseContourIntegral;`).
         let from = bytes.len().saturating_sub(34);
-        if let Some(amp) = bytes[from..cut].iter().rposition(|&b| b == b'&') {
+        if let Some(amp) = strings::last_index_of_char(&bytes[from..cut], b'&') {
             let amp = from + amp;
             if bytes[amp + 1..cut]
                 .iter()

@@ -141,20 +141,16 @@ pub struct Terminal {
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
 
-    /// The JS wrapper. Strong from creation until no further callback can
-    /// fire (PTY EOF with no drain pending, close, or dispose), because the
-    /// wrapper's cached slots are the only GC root of the callbacks; weak
-    /// afterwards so the wrapper can be collected.
+    /// The JS wrapper, which roots the callbacks in its cached slots. Strong
+    /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
     this_value: JsCell<JsRef>,
 
     /// State flags
     flags: Cell<Flags>,
 
-    /// The streaming writer has accepted bytes it hasn't flushed to the fd
-    /// yet. Set by `write()` from `has_pending_data()`; cleared when
-    /// `on_write` observes `Drained` (POSIX fires the `drain` callback there,
-    /// Windows from `on_writable`) or `EndOfFile`. Also gates the post-EOF
-    /// downgrade in `maybe_downgrade_after_eof`.
+    /// The writer holds bytes it has not flushed to the fd yet, so a `drain`
+    /// is still owed. Gates the post-EOF downgrade in
+    /// `maybe_downgrade_after_eof`.
     writer_has_buffered: Cell<bool>,
 
     /// This PTY's own raw-mode state (mode + saved termios), so one terminal
@@ -1441,9 +1437,8 @@ impl Terminal {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // The PTY already hung up (see `on_reader_finished`): nothing can read
-        // this input, and handing it to the finished writer would re-root the
-        // wrapper below for a drain that never comes.
+        // The write side is gone, so queuing these bytes would only re-root the
+        // wrapper below for a drain that cannot come.
         if self.flags.get().contains(Flags::WRITER_DONE) {
             return Ok(JSValue::js_number(input_len as f64));
         }
@@ -1777,9 +1772,9 @@ impl Terminal {
         let _ = amount;
         match status {
             WriteStatus::Pending => {}
-            // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect
-            // the buffered→drained transition here instead. Windows fires the
-            // drain callback from `on_writable`, so only record the state.
+            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // fires `drain` off this transition. Windows fires it from
+            // `on_writable` and only records the state here.
             WriteStatus::Drained => {
                 let had_buffered = self.writer_has_buffered.replace(false);
                 #[cfg(unix)]
@@ -1789,8 +1784,7 @@ impl Terminal {
                 #[cfg(not(unix))]
                 let _ = had_buffered;
             }
-            // The writer dropped whatever it still had queued and closed its
-            // fd: no drain will follow, so stop holding the wrapper for one.
+            // The writer closed its fd, so no drain can follow.
             WriteStatus::EndOfFile => {
                 self.writer_has_buffered.set(false);
                 self.maybe_downgrade_after_eof();
@@ -1820,27 +1814,7 @@ impl Terminal {
         }
         self.update_flags(|f| f.insert(Flags::READER_DONE));
         #[cfg(unix)]
-        {
-            // EOF closes the reader on its own. A read error (Linux reports the
-            // last slave close as EIO, not EOF) leaves it open with its poll
-            // armed, and late echo of queued input would still reach `data`
-            // after `exit`. Close it so `exit` is the last callback.
-            if !self.reader.get().is_done() {
-                self.reader.with_mut(|r| r.close());
-                self.read_fd.set(Fd::INVALID);
-            }
-            // Every slave fd is gone, so input still queued in the writer can
-            // never be read. A pty master does not report that as a write
-            // error (Linux keeps answering EAGAIN), so the writer would wait
-            // for a drain that cannot come: its poll stays armed on a permanent
-            // POLLHUP and the pending drain keeps the wrapper rooted. `end()`
-            // closes write_fd and the poll, then dispatches `on_writer_close`,
-            // which sets WRITER_DONE before the downgrade check below.
-            if !self.flags.get().contains(Flags::WRITER_DONE) {
-                self.writer.with_mut(|w| w.end());
-                self.write_fd.set(Fd::INVALID);
-            }
-        }
+        self.finish_io_after_eof();
         // EOF from master - downgrade to weak ref to allow GC.
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
@@ -1850,11 +1824,29 @@ impl Terminal {
         self.deref_();
     }
 
-    /// Downgrade `this_value` once no further callback can fire: reader hit
-    /// EOF *and* the writer has no buffered data awaiting a `drain` dispatch.
-    /// The wrapper's cached callback slots are the only GC root of the
-    /// callbacks, so downgrading with a drain still pending lets GC collect
-    /// the wrapper before `on_writer_ready` dispatches through it.
+    /// Finish both ends of the PTY once the reader is done, so `exit` is the
+    /// last callback. A pty master reports neither side's hangup the way a
+    /// pipe does: Linux answers a write with EAGAIN instead of EPIPE, and a
+    /// read with EIO instead of EOF. Left alone, the writer waits for a drain
+    /// that cannot come and the reader delivers echo after `exit`.
+    #[cfg(unix)]
+    fn finish_io_after_eof(&self) {
+        // EOF closes the reader itself, a read error does not.
+        if !self.reader.get().is_done() {
+            self.reader.with_mut(|r| r.close());
+            self.read_fd.set(Fd::INVALID);
+        }
+        // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
+        if !self.flags.get().contains(Flags::WRITER_DONE) {
+            self.writer.with_mut(|w| w.end());
+            self.write_fd.set(Fd::INVALID);
+        }
+    }
+
+    /// Downgrade `this_value` once no further callback can fire: the reader is
+    /// done and no `drain` is owed. Downgrading with a drain pending would let
+    /// GC collect the wrapper, and with it the callbacks it roots, before
+    /// `on_writer_ready` dispatches through it.
     ///
     /// Reads only `Cell` fields, never `self.writer`: callers include
     /// writer-parent callbacks that run while a writer borrow is live.

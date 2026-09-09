@@ -4030,8 +4030,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     if !content_type.is_empty() {
         blob.content_type
             .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
-        blob.content_type_was_set.set(content_type_was_set);
+    } else if content_type_was_set {
+        // A type set to empty: drop the one a file store's extension gave the fresh Blob.
+        blob.content_type.set(BlobContentType::default());
     }
+    blob.content_type_was_set.set(content_type_was_set);
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
     // SAFETY: blob_ptr is valid; to_js is infallible. Spelled

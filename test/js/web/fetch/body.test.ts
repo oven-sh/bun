@@ -400,6 +400,18 @@ for (const { body, fn } of bodyTypes) {
         expect(await typesWith({ "content-type": "" })).toEqual(expectAll(""));
       });
 
+      test("an empty type stays empty through another body and through structuredClone", async () => {
+        using dir = tempDir("body-blob-empty-type", { "data.txt": "a=1" });
+        const fromString = await fn("a=1", { "content-type": "" }).blob();
+        const fromFile = await fn(Bun.file(`${dir}/data.txt`), { "content-type": "" }).blob();
+        expect({
+          rewrapped: (await fn(fromString).blob()).type,
+          cloned: structuredClone(fromString).type,
+          fileCloned: structuredClone(fromFile).type,
+          fileClonedText: await structuredClone(fromFile).text(),
+        }).toEqual({ rewrapped: "", cloned: "", fileCloned: "", fileClonedText: "a=1" });
+      });
+
       test("a header value that cannot be a MIME type gives an empty type", async () => {
         const types: string[] = [];
         for (const value of ["text/pl\u00ffain", "text/pl\u0001ain"]) {

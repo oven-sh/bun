@@ -70,7 +70,10 @@ pub(crate) fn blob_content_type_from_header(value: &[u8]) -> blob::BlobContentTy
 fn apply_blob_content_type(blob: &Blob, from_headers: Option<&[u8]>) {
     let content_type = match from_headers {
         // Equal to the body's own type: keep that verbatim rather than re-canonicalize it.
-        Some(value) if value == blob.content_type_slice() => return,
+        Some(value) if value == blob.content_type_slice() => {
+            blob.content_type_was_set.set(true);
+            return;
+        }
         Some(value) => blob_content_type_from_header(value),
         None if blob.content_type().is_empty()
             && !blob.content_type_was_set.get()

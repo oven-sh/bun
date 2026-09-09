@@ -44,7 +44,6 @@ pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
 pub type WatchItemIndex = u16;
-pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
@@ -121,8 +120,8 @@ pub struct Watcher {
     /// thread) after the loop exits.
     pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
 
-    pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
-    pub(crate) evict_list_i: WatchItemIndex,
+    /// Indices queued by `remove_at_index` and friends, drained by `flush_evictions`.
+    pub(crate) evict_list: Vec<WatchItemIndex>,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
@@ -201,8 +200,7 @@ impl Watcher {
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
-            evict_list: [0; MAX_EVICTION_COUNT],
-            evict_list_i: 0,
+            evict_list: Vec::new(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -227,8 +225,7 @@ impl Watcher {
         }
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
-        // kqueue: NOTE_RENAME / NOTE_DELETE on a directory entry are about its
-        // own vnode, so its path no longer names it (see `WatchItem::displaced`).
+        // kqueue: RENAME/DELETE on a directory entry concern its own vnode (`WatchItem::displaced`).
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         for event in events.iter() {
             let i = event.index as usize;
@@ -388,7 +385,7 @@ impl Watcher {
     }
 
     pub fn flush_evictions(&mut self) {
-        if self.evict_list_i == 0 {
+        if self.evict_list.is_empty() {
             return;
         }
         // The close+swap_remove below must be serialized against the JS
@@ -407,7 +404,7 @@ impl Watcher {
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
-        let evict_list_i = self.evict_list_i as usize;
+        let evict_list_i = self.evict_list.len();
 
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
@@ -436,9 +433,7 @@ impl Watcher {
             {
                 let kind = slice.items_kind()[item as usize];
                 let mut fd = fds[item as usize];
-                // An evicted file is unlinked or replaced, so closing its fd ends
-                // the watch too. A directory fd that stays open (see
-                // `WatchItem::owns_fd`) has its registration dropped after pass 2.
+                // Closing an evicted file's fd ends its watch; open directory fds are released after pass 2.
                 if fd.is_valid()
                     && (kind == WatchItemKind::File || slice.items_owns_fd()[item as usize])
                 {
@@ -483,7 +478,7 @@ impl Watcher {
             last_item = item;
         }
 
-        self.evict_list_i = 0;
+        self.evict_list.clear();
 
         #[cfg(not(windows))]
         for evicted in &evicted_dir_watches {
@@ -491,9 +486,7 @@ impl Watcher {
         }
     }
 
-    /// Drops the kernel registration of an evicted directory entry, unless a
-    /// surviving entry shares it (same inode under another path, e.g. with and
-    /// without a trailing slash); on kqueue that one is re-pointed instead.
+    /// Drops an evicted directory's kernel registration unless a surviving entry shares it.
     #[cfg(not(windows))]
     fn release_directory_watch(&mut self, evicted: &EvictedDirWatch) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1019,28 +1012,17 @@ impl Watcher {
         }
     }
 
-    /// `false` when `evict_list` is full; the entry stays until a later flush.
-    fn queue_eviction(&mut self, index: WatchItemIndex) -> bool {
-        let i = self.evict_list_i as usize;
-        if i >= self.evict_list.len() {
-            return false;
-        }
-        self.evict_list[i] = index;
-        self.evict_list_i += 1;
-        true
+    fn queue_eviction(&mut self, index: WatchItemIndex) {
+        self.evict_list.push(index);
     }
 
-    /// For a directory `event` inside `on_file_update`: when a directory below
-    /// it was replaced (renamed over, or removed and created again: a new inode
-    /// at a path whose watches still point at the old one), queues the
-    /// eviction of every entry at or below that path so the caller's reload
-    /// re-arms them. inotify: each created or moved-in `<dir>/<name>` that
-    /// prefixes watched paths. kqueue (no names): each watched directory below
-    /// whose inode no longer matches its path. Windows matches by path: no-op.
-    ///
-    /// `stale_dir` gets each directory path to bust (replaced path and evicted
-    /// directory entries, no trailing slash), `stale_file` each evicted file.
-    /// Caller holds `self.mutex`. Returns the number of entries queued.
+    /// For a directory `event` in `on_file_update`: a directory below it that was replaced (new
+    /// inode at a path whose watches still hold the old one) gets every entry at or below it
+    /// queued for eviction, so the caller's reload re-arms them. inotify: each created or moved-in
+    /// `<dir>/<name>` that prefixes watched paths; kqueue: each watched directory below whose
+    /// inode no longer matches its path; Windows (path-based): nothing. `stale_dir` gets each
+    /// directory to bust (no trailing slash), `stale_file` each evicted file. Caller holds
+    /// `self.mutex`. Returns the number of entries queued.
     pub fn remove_entries_under_replaced_dirs(
         &mut self,
         event: WatchEvent,
@@ -1114,24 +1096,17 @@ impl Watcher {
         let mut queued = 0;
         for i in 0..slice.len() {
             if is_parent_or_equal(dir_path, &paths[i]) == ParentEqual::Unrelated
-                || self.evict_list[..self.evict_list_i as usize].contains(&(i as WatchItemIndex))
+                || self.evict_list.contains(&(i as WatchItemIndex))
             {
                 continue;
             }
-            if !self.queue_eviction(i as WatchItemIndex) {
-                break;
-            }
-            // The old file usually still exists (under the directory's old
-            // name), so closing its fd will not end the watch; drop it unless
-            // another entry shares it.
+            self.queue_eviction(i as WatchItemIndex);
+            // The old inode usually survives (under the old directory name), so drop its watch here.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if kinds[i] == WatchItemKind::File {
                 let wds = slice.items_eventlist_index();
                 let shared = (0..slice.len()).any(|j| {
-                    j != i
-                        && wds[j] == wds[i]
-                        && !self.evict_list[..self.evict_list_i as usize]
-                            .contains(&(j as WatchItemIndex))
+                    j != i && wds[j] == wds[i] && !self.evict_list.contains(&(j as WatchItemIndex))
                 });
                 if !shared {
                     self.platform.unwatch(wds[i]);
@@ -1143,9 +1118,8 @@ impl Watcher {
         queued
     }
 
-    /// Evicts the subtree of every watched directory below `parent` whose path
-    /// now names another inode than its fd (or anything, once `displaced`). A
-    /// path that does not exist yet is skipped; its return writes `parent` again.
+    /// Evicts the subtree of each watched directory below `parent` whose path now names another
+    /// inode than its fd (or exists again after `displaced`); a missing path is left for later.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn remove_replaced_descendants(
         &mut self,
@@ -1317,14 +1291,12 @@ pub struct WatchItem {
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,
-    /// Whether `flush_evictions` may close `fd`: every file (see [`FdOwnership`]),
-    /// and a directory only when the watcher opened it itself rather than
-    /// borrowing the resolver's or the dev server's handle.
+    /// `flush_evictions` may close `fd`: always for files ([`FdOwnership`]), for a directory only
+    /// when the watcher opened it (not the resolver's or the dev server's handle).
     pub owns_fd: bool,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// kqueue: the directory's vnode was renamed or deleted, so `file_path` no
-    /// longer names it; it counts as replaced once the path exists again.
+    /// kqueue: the directory's vnode was renamed or deleted; replaced once the path exists again.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub displaced: bool,
 }

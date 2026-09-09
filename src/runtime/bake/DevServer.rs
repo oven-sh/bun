@@ -5830,8 +5830,7 @@ impl DevServer {
                         unsafe { &mut *ev_ptr }.append_dir(file_path, None);
                     }
 
-                    // A replaced directory below this one: the watcher evicts the
-                    // stale subtree; rebundle its files, bust its directories.
+                    // A directory below this one was replaced: evict, rebundle, bust caches.
                     self.bun_watcher.remove_entries_under_replaced_dirs(
                         *event,
                         changed_files,

@@ -1070,8 +1070,7 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // A replaced directory below this one (`mv lib lib.old && mv
-                        // lib.new lib`): the watcher evicts the stale subtree, reload it.
+                        // A directory below this one was replaced: evict its stale subtree, reload.
                         {
                             let mut stale_dirs: Vec<Box<[u8]>> = Vec::new();
                             let mut stale_files: usize = 0;

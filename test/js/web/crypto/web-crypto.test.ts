@@ -1459,7 +1459,8 @@ describe("exception scope discipline", () => {
 // Every global object creates its own native SubtleCrypto behind `crypto.subtle`. It must be
 // freed together with the global: at exit for the main global (BUN_DESTRUCT_VM_ON_EXIT), and on
 // a live VM when a ShadowRealm's global is collected. The object is fastMalloc'd, so LeakSanitizer
-// only sees it with Malloc=1.
+// only sees it with Malloc=1. LSan symbolizes the (suppressed) leak stacks against the debug binary,
+// which alone takes seconds, hence the explicit per-test timeout.
 describe.skipIf(!isASAN)("SubtleCrypto is freed with its global", () => {
   const repoSuppressions = join(import.meta.dirname, "../../../leaksan.supp");
 
@@ -1482,23 +1483,31 @@ describe.skipIf(!isASAN)("SubtleCrypto is freed with its global", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   }
 
-  it.concurrent("main global", async () => {
-    await expectNoLeak(`globalThis.crypto.subtle`);
-  });
+  it.concurrent(
+    "main global",
+    async () => {
+      await expectNoLeak(`globalThis.crypto.subtle`);
+    },
+    30_000,
+  );
 
-  it.concurrent("ShadowRealm globals", async () => {
-    // A realm global's console client is a separate leak; suppress it here so that this test
-    // only covers SubtleCrypto.
-    using dir = tempDir("subtle-crypto-lsan", {
-      "leaksan.supp":
-        readFileSync(repoSuppressions, "utf8") + "\nleak:Zig::GlobalObject::deriveShadowRealmGlobalObject\n",
-    });
-    await expectNoLeak(
-      `for (let i = 0; i < 4; i++) {
-        if (new ShadowRealm().evaluate("typeof crypto.subtle") !== "object") throw new Error("no crypto.subtle");
-      }
-      Bun.gc(true)`,
-      join(String(dir), "leaksan.supp"),
-    );
-  });
+  it.concurrent(
+    "ShadowRealm globals",
+    async () => {
+      // A realm global's console client is a separate leak; suppress it here so that this test
+      // only covers SubtleCrypto.
+      using dir = tempDir("subtle-crypto-lsan", {
+        "leaksan.supp":
+          readFileSync(repoSuppressions, "utf8") + "\nleak:Zig::GlobalObject::deriveShadowRealmGlobalObject\n",
+      });
+      await expectNoLeak(
+        `for (let i = 0; i < 4; i++) {
+          if (new ShadowRealm().evaluate("typeof crypto.subtle") !== "object") throw new Error("no crypto.subtle");
+        }
+        Bun.gc(true)`,
+        join(String(dir), "leaksan.supp"),
+      );
+    },
+    30_000,
+  );
 });

@@ -5847,11 +5847,7 @@ describe("css tests", () => {
       );
       prefix_test("_:-ms-lang(x), .c { color: red }", "_:-ms-lang(x), .c { color: red; }", targets);
       prefix_test(".e, ::-webkit-foo { color: red }", ".e, ::-webkit-foo { color: red; }", targets);
-      prefix_test(
-        ".i, input::-moz-placeholder { color: red }",
-        ".i, input::-moz-placeholder { color: red; }",
-        targets,
-      );
+      prefix_test(".i, input::-moz-placeholder { color: red }", ".i, input::-moz-placeholder { color: red; }", targets);
       prefix_test(".h, :-moz-focusring { outline: none }", ".h, :-moz-focusring { outline: none; }", targets);
       prefix_test(
         "button::-moz-focus-inner, [type=button]::-moz-focus-inner { border-style: none }",

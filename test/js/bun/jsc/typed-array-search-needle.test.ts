@@ -37,7 +37,23 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
     const array = new Uint8ClampedArray([7, 0, 255]);
     // In release builds each of these matched the low byte of cvttsd2si(needle): -1 found the 255,
     // the others found the 0.
-    for (const needle of [-1, 256, 263, -249, 300, 1e10, -1e10, 2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 53, Infinity, -Infinity, Number.MAX_VALUE]) {
+    for (const needle of [
+      -1,
+      256,
+      263,
+      -249,
+      300,
+      1e10,
+      -1e10,
+      2 ** 31,
+      -(2 ** 31),
+      2 ** 31 - 1,
+      2 ** 32,
+      2 ** 53,
+      Infinity,
+      -Infinity,
+      Number.MAX_VALUE,
+    ]) {
       expect(search(array, asDouble(needle)), `needle ${needle}`).toEqual([-1, -1, false]);
     }
     for (const needle of [0.5, -0.5, 7.5, 255.5, Number.MIN_VALUE]) {
@@ -131,7 +147,16 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
   test("BigInt64Array: a BigInt outside [-2^63, 2^63) matches nothing", () => {
     const array = new BigInt64Array([1n, 0n, -1n, -(2n ** 63n), 2n ** 63n - 1n]);
     // Each of these was reduced modulo 2^64 onto one of the elements.
-    for (const needle of [2n ** 64n + 1n, 2n ** 64n, -(2n ** 64n), 2n ** 64n - 1n, 2n ** 63n, -(2n ** 63n) - 1n, 2n ** 128n + 1n, (1n << 200n) - 1n]) {
+    for (const needle of [
+      2n ** 64n + 1n,
+      2n ** 64n,
+      -(2n ** 64n),
+      2n ** 64n - 1n,
+      2n ** 63n,
+      -(2n ** 63n) - 1n,
+      2n ** 128n + 1n,
+      (1n << 200n) - 1n,
+    ]) {
       expect(search(array, needle), `needle ${needle}`).toEqual([-1, -1, false]);
     }
     expect(search(array, 1n)).toEqual([0, 0, true]);
@@ -145,7 +170,16 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
   test("BigUint64Array: a BigInt outside [0, 2^64) matches nothing", () => {
     const array = new BigUint64Array([1n, 0n, 2n ** 64n - 1n, 2n ** 63n]);
     // Each of these was reduced modulo 2^64 onto one of the elements.
-    for (const needle of [-1n, -(2n ** 63n), 2n ** 64n, 2n ** 64n + 1n, -(2n ** 64n), -(2n ** 64n) + 1n, 2n ** 128n, (1n << 200n) + 1n]) {
+    for (const needle of [
+      -1n,
+      -(2n ** 63n),
+      2n ** 64n,
+      2n ** 64n + 1n,
+      -(2n ** 64n),
+      -(2n ** 64n) + 1n,
+      2n ** 128n,
+      (1n << 200n) + 1n,
+    ]) {
       expect(search(array, needle), `needle ${needle}`).toEqual([-1, -1, false]);
     }
     expect(search(array, 1n)).toEqual([0, 0, true]);

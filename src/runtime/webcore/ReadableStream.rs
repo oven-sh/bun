@@ -231,8 +231,7 @@ impl ReadableStream {
                 // we can avoid streaming it and convert it to a Blob
                 bytes.to_any_blob()?
             }
-            // A stream that closed before anything read from it never yields a byte; give back the
-            // store-less empty Blob that `new Response(new Blob([]))` holds.
+            // Closed before anything read from it: the same store-less empty Blob `new Blob([])` gives.
             Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
                 webcore::blob::Any::Blob(Blob::init_empty(global_this))
             }

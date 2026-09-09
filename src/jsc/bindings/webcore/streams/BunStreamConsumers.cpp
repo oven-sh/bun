@@ -632,8 +632,7 @@ static JSObject* createAlreadyUsedError(JSGlobalObject* globalObject)
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream has already been used"_s);
 }
 
-// Locked is checked before disturbed, except that a stream a Body consumer drained is both and
-// reports what happened to it rather than the lock it left behind. nullptr: usable.
+// nullptr when usable. A stream a Body drained is locked too, but "already used" is what happened to it.
 static JSObject* unusableStreamError(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
 {
     if (stream->m_consumedAsBody)

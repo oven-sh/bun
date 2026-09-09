@@ -370,9 +370,7 @@ impl PendingValue {
         None
     }
 
-    /// [`Self::to_any_blob`] for `clone()`: the stream is the wrapper's cached
-    /// `.body` when there is one. `to_any_blob` leaves a reference the caller
-    /// still holds reading as locked, the state a tee leaves it in.
+    /// [`Self::to_any_blob`] for `clone()`, going through the wrapper's cached `.body` when there is one.
     fn take_blob_from_unread_stream(
         &mut self,
         global: &JSGlobalObject,

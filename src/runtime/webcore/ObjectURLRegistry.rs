@@ -91,8 +91,7 @@ impl ObjectURLRegistry {
         Some(unsafe { (*blob).to_js(global_object) })
     }
 
-    /// Only the exact `blob:<uuid>` revokes. A URL with a query or a fragment
-    /// was never registered (WPT: "Only exact matches should revoke URLs").
+    /// Exact matches only: a URL with a query or a fragment was never registered.
     pub(crate) fn revoke(&self, url: &[u8]) {
         let url = bun_core::String::borrow_utf8(url);
         let Some(uuid) = uuid_from_key(bun_url::href_from_string(&url)) else {
@@ -110,16 +109,13 @@ impl ObjectURLRegistry {
     }
 }
 
-/// https://w3c.github.io/FileAPI/#blob-url-resolve: the store key is the URL
-/// serialized without its fragment, so `blob:<uuid>#frag` names the entry and
-/// `blob:<uuid>?query` does not.
+/// https://w3c.github.io/FileAPI/#blob-url-resolve: the key is the URL serialized without its fragment.
 fn uuid_from_url(url: &[u8]) -> Option<UUID> {
     let url = bun_core::String::borrow_utf8(url);
     uuid_from_key(bun_url::href_from_string_without_fragment(&url))
 }
 
-/// `href` is the parser's serialization: a lowercase scheme, then, for a URL
-/// this registry minted, exactly the 36-byte UUID.
+/// `href` is the parser's serialization, so a registered URL is exactly `blob:` + 36-byte UUID.
 fn uuid_from_key(href: bun_core::String) -> Option<UUID> {
     if href.is_dead() {
         return None;

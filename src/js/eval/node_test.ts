@@ -253,19 +253,31 @@ async function main() {
   const timeout = getFlag("--test-timeout");
   runOptions.timeout = timeout !== undefined ? Number(timeout) : Infinity;
 
-  // --test-only is rejected below before run() sees it; forceExit is validated
-  // by run() and acted on at the end of main().
+  // --test-only never reaches run() (rejected below under process isolation;
+  // under isolation 'none' the merged queue honors .only registrations by
+  // itself); forceExit is validated by run() and acted on at the end of main().
   const forceExit = hasFlag("--test-force-exit");
   runOptions.forceExit = forceExit;
 
-  if (getFlagList("--test-name-pattern").length > 0) {
-    fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
-  }
-  if (getFlagList("--test-skip-pattern").length > 0) {
-    fatal(new Error("--test-skip-pattern is not yet implemented in Bun's node:test CLI mode"));
-  }
-  if (hasFlag("--test-only")) {
-    fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
+  // run() applies these by pruning the merged queue, which only exists under
+  // isolation 'none'; under process isolation it would silently run every test,
+  // so keep failing loudly there.
+  const namePatterns = getFlagList("--test-name-pattern");
+  const skipPatterns = getFlagList("--test-skip-pattern");
+  const onlyFlag = hasFlag("--test-only");
+  if (isolation === "none") {
+    if (namePatterns.length > 0) runOptions.testNamePatterns = namePatterns;
+    if (skipPatterns.length > 0) runOptions.testSkipPatterns = skipPatterns;
+  } else {
+    if (namePatterns.length > 0) {
+      fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
+    }
+    if (skipPatterns.length > 0) {
+      fatal(new Error("--test-skip-pattern is not yet implemented in Bun's node:test CLI mode"));
+    }
+    if (onlyFlag) {
+      fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
+    }
   }
   const tagFilters = getFlagList("--experimental-test-tag-filter");
   if (tagFilters.length > 0) {

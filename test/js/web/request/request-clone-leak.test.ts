@@ -56,18 +56,27 @@ const constructorArgs = [
 ];
 for (let i = 0; i < constructorArgs.length; i++) {
   const args = constructorArgs[i];
+  // `new Request(req)` transfers (consumes) the input body; chain the result
+  // back as the next iteration's input so the single-arg Request-input path
+  // (construct_into's clone_into arm) stays covered at one allocation per
+  // iteration. The url/URL-input cases ignore `r` and reuse the shared args.
+  const chain = args.length === 1 && args[0] instanceof Request;
+  const seed = () => (chain ? (args[0] as Request).clone() : (args[0] as string | URL));
+  const step = chain ? (r: Request) => new Request(r) : () => new Request(...(args as [string, RequestInit]));
   test("new Request(test #" + i + ")", () => {
     Bun.gc(true);
 
+    let r = seed();
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      new Request(...args);
+      r = step(r as Request);
     }
 
     Bun.gc(true);
     const baseline = (rss() / 1024 / 1024) | 0;
+    r = seed();
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
-      for (let j = 0; j < 500; j++) {
-        new Request(...args);
+      for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
+        r = step(r as Request);
       }
       Bun.gc();
     }
@@ -86,17 +95,19 @@ for (let i = 0; i < constructorArgs.length; i++) {
   test("request.clone(test #" + i + ")", () => {
     Bun.gc(true);
 
+    let r = seed();
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      const request = new Request(...args);
-      request.clone();
+      r = step(r as Request);
+      r.clone();
     }
 
     Bun.gc(true);
     const baseline = (rss() / 1024 / 1024) | 0;
+    r = seed();
     for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
       for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
-        const request = new Request(...args);
-        request.clone();
+        r = step(r as Request);
+        r.clone();
       }
       Bun.gc();
     }

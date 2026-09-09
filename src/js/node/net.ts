@@ -42,7 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kDestroyOnRead, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -401,6 +401,22 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// The native 'data' callback of every handler table that feeds the stream
+// (all but the `onread` option's, which bypasses the stream) lands here.
+function deliverSocketData(self, socket, buffer) {
+  if (self[kDestroyOnRead]) {
+    $debug("DATA on a socket that must receive nothing - destroying it");
+    self.destroy();
+    return;
+  }
+
+  self._unrefTimer();
+  self.bytesRead += buffer.length;
+  if (!self.push(buffer)) {
+    readStop(self, socket);
+  }
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -414,12 +430,7 @@ const SocketHandlers: SocketHandler = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
-
-    self._unrefTimer();
-    self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    deliverSocketData(self, socket, buffer);
   },
   drain(socket) {
     const self = socket.data;
@@ -761,12 +772,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
-
-    self._unrefTimer();
-    self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    deliverSocketData(self, socket, buffer);
   },
   keylog(socket, line) {
     const { data: self } = socket;
@@ -1273,9 +1279,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   data(socket, buffer) {
     $debug("Bun.Socket data");
     const { self } = socket.data;
-    self._unrefTimer();
-    self.bytesRead += buffer.length;
-    if (!self.push(buffer)) readStop(self, socket);
+    deliverSocketData(self, socket, buffer);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1591,6 +1595,7 @@ function Socket(options?) {
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
+  this[kDestroyOnRead] = false;
   this.bytesRead = 0;
   this[kBytesWritten] = undefined;
   this[kclosed] = false;

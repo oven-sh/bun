@@ -23,12 +23,12 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Server as NetServer, Socket as NetSocket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
-import { connect as tlsConnect } from "node:tls";
+import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -3743,6 +3743,149 @@ it("registering 'keylog' on an agent with live sockets does not throw", async ()
     agent.destroy();
   } finally {
     server.close();
+  }
+});
+
+// A keep-alive socket parked in agent.freeSockets has no parser and no reader
+// attached. Bytes that arrive while it is idle are unsolicited: the next
+// request that reuses the socket would parse them as the start of its own
+// response (response queue poisoning, nodejs/node 179ddaedfb and 57a4932a9d).
+describe("http.Agent free keep-alive socket", () => {
+  const poisonedResponse =
+    "HTTP/1.1 200 OK\r\nX-Poisoned: 1\r\nConnection: keep-alive\r\nContent-Length: 6\r\n\r\npoison";
+
+  type Transport = {
+    createServer: (onConnection: (socket: NetSocket) => void) => NetServer;
+    createAgent: () => Agent;
+    get: typeof http.get;
+    options: object;
+  };
+  const transports: Record<string, Transport> = {
+    http: {
+      createServer: onConnection => createNetServer(onConnection),
+      createAgent: () => new Agent({ keepAlive: true }),
+      get: http.get,
+      options: {},
+    },
+    https: {
+      createServer: onConnection =>
+        createTlsServer({ cert: tlsCert.cert, key: tlsCert.key }, onConnection) as NetServer,
+      createAgent: () => new https.Agent({ keepAlive: true }),
+      get: https.get,
+      options: { ca: tlsCert.cert },
+    },
+  };
+
+  // Answers every request with its own path as the body and keeps the
+  // connection alive.
+  function respondToRequests(socket: NetSocket) {
+    let buffered = "";
+    socket.on("data", chunk => {
+      buffered += chunk;
+      let headersEnd: number;
+      while ((headersEnd = buffered.indexOf("\r\n\r\n")) !== -1) {
+        const body = buffered.slice(0, buffered.indexOf("\r\n")).split(" ")[1];
+        buffered = buffered.slice(headersEnd + 4);
+        socket.write(`HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+      }
+    });
+    socket.on("error", () => {});
+  }
+
+  async function pollUntil(condition: () => boolean) {
+    const deadline = Date.now() + 2000;
+    while (!condition() && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
+
+  async function theFreeSocket(agent: Agent, name: string): Promise<NetSocket> {
+    await pollUntil(() => agent.freeSockets[name]?.length === 1);
+    const freeSockets = agent.freeSockets[name];
+    expect(freeSockets).toHaveLength(1);
+    return freeSockets![0];
+  }
+
+  type Context = {
+    agent: Agent;
+    name: string;
+    serverSockets: NetSocket[];
+    request: (path: string) => Promise<{ body: string; poisoned?: string; reusedSocket: boolean }>;
+  };
+
+  async function withAgent(transport: Transport, body: (context: Context) => Promise<void>) {
+    const serverSockets: NetSocket[] = [];
+    const server = transport.createServer(socket => {
+      serverSockets.push(socket);
+      respondToRequests(socket);
+    });
+    const agent = transport.createAgent();
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const options = { host: "127.0.0.1", port, agent, ...transport.options };
+      await body({
+        agent,
+        name: agent.getName(options),
+        serverSockets,
+        request: path =>
+          new Promise((resolve, reject) => {
+            const req = transport.get({ ...options, path }, res => {
+              let body = "";
+              res.setEncoding("utf8");
+              res.on("data", chunk => (body += chunk));
+              res.on("end", () =>
+                resolve({
+                  body,
+                  poisoned: res.headers["x-poisoned"] as string | undefined,
+                  reusedSocket: req.reusedSocket,
+                }),
+              );
+            });
+            req.on("error", reject);
+          }),
+      });
+    } finally {
+      agent.destroy();
+      server.close();
+      for (const socket of serverSockets) socket.destroy();
+    }
+  }
+
+  for (const [protocol, transport] of Object.entries(transports)) {
+    it(`${protocol}: destroys a free socket that receives unsolicited data`, async () => {
+      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
+        expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
+
+        const freeSocket = await theFreeSocket(agent, name);
+        // The guard adds no public stream listener: node-fetch and others
+        // read these counts while a response is closing.
+        expect(freeSocket.listenerCount("data")).toBe(0);
+        expect(freeSocket.listenerCount("readable")).toBe(0);
+
+        serverSockets[0].write(poisonedResponse);
+
+        await pollUntil(() => freeSocket.destroyed && agent.freeSockets[name] === undefined);
+        expect(freeSocket.destroyed).toBe(true);
+        expect(agent.freeSockets[name]).toBeUndefined();
+
+        // The next request dials a new connection and reads the real response.
+        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
+        expect(serverSockets.length).toBe(2);
+      });
+    });
+
+    it(`${protocol}: reuses a free socket that received nothing`, async () => {
+      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
+        expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
+
+        const freeSocket = await theFreeSocket(agent, name);
+
+        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: true });
+        expect(freeSocket.destroyed).toBe(false);
+        expect(serverSockets.length).toBe(1);
+      });
+    });
   }
 });
 

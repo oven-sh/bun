@@ -2360,7 +2360,13 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
     try {
       const port = await listen(server as unknown as Server);
       const outcome = Promise.withResolvers<string>();
-      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, key: COMMON_CERT.key, cert: COMMON_CERT.cert });
+      client = connect({
+        port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        key: COMMON_CERT.key,
+        cert: COMMON_CERT.cert,
+      });
       client.on("secureConnect", () => client!.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
       let response = "";
       client.on("data", chunk => (response += chunk));

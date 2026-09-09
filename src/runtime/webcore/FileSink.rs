@@ -33,6 +33,7 @@ pub struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
+    /// Bytes that reached the fd. A buffered chunk counts once a drain pushes it out.
     pub(crate) written: Cell<usize>,
     pub(crate) pending: JsCell<streams::WritablePending>,
     pub(crate) source: JsCell<streams::SourceHandle>,
@@ -61,7 +62,7 @@ pub struct FileSink {
     /// the stream or the write.
     stream_done: JsCell<bun_jsc::JSPromiseStrong>,
     stream_error: JsCell<Option<streams::StreamError>>,
-    /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
+    /// Bytes accepted since `pipe_stream`, buffered ones included (`written` only has drained ones).
     pub(crate) stream_bytes: Cell<Option<u64>>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
@@ -890,11 +891,13 @@ impl FileSink {
                     (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                     return false;
                 }
-                WriteResult::Done(_) => {
+                WriteResult::Done(amount_drained) => {
+                    (*this).written.set((*this).written.get() + amount_drained);
                     (*this).update_ref(false);
                     (*this).run_pending_later();
                 }
                 WriteResult::Wrote(amount_drained) => {
+                    (*this).written.set((*this).written.get() + amount_drained);
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
                         (*this).run_pending_later();
@@ -905,7 +908,8 @@ impl FileSink {
                         }
                     }
                 }
-                _ => {
+                WriteResult::Pending(amount_drained) => {
+                    (*this).written.set((*this).written.get() + amount_drained);
                     return true;
                 }
             }
@@ -1250,6 +1254,7 @@ impl FileSink {
 
         match flush_result {
             WriteResult::Done(written) => {
+                self.written.set(self.written.get() + written);
                 self.update_ref(false);
                 self.writer.with_mut(|w| w.end());
                 if has_pending {
@@ -1320,6 +1325,7 @@ impl FileSink {
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
+                self.written.set(self.written.get() + written);
                 self.writer.with_mut(|w| w.end());
                 if has_pending {
                     // SAFETY: JsCell — see the `Done` arm above.

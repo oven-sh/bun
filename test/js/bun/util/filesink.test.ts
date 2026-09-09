@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -450,6 +450,82 @@ it.skipIf(!isPosix)(
     }
   },
 );
+
+// Chunks below the writer's buffer size are coalesced before they reach
+// write(2). Once the sink's end-of-tick flush has failed, `end()` reports the
+// bytes written so far. That count must include a coalesced chunk once, when it
+// reaches the fd, not a second time when it was buffered: on a full disk the
+// old count kept growing while nothing was written.
+describe("FileSink end() after a failed flush counts only bytes that reached the fd", () => {
+  // The failed end-of-tick flush leaves the sink closed. The first end() after
+  // it may report that error instead of a count; the count comes after.
+  async function endedWith(sink: ReturnType<ReturnType<typeof Bun.file>["writer"]>) {
+    try {
+      return await sink.end();
+    } catch {
+      return await sink.end();
+    }
+  }
+
+  // /dev/full takes the open() and fails every write(2) with ENOSPC.
+  it.skipIf(!isLinux)("nothing written (/dev/full)", async () => {
+    const sink = Bun.file("/dev/full").writer();
+    const chunk = Buffer.alloc(1024, "x");
+    const results: unknown[] = [];
+    for (let i = 0; i < 8; i++) {
+      results.push(sink.write(chunk));
+    }
+    // The first chunks are buffered and reported as written; the write that
+    // fills the buffer flushes it and is the first to see ENOSPC.
+    expect(results.slice(0, 3)).toEqual([1024, 1024, 1024]);
+    const settled = await Promise.allSettled(results.slice(3));
+    expect(settled.map(s => (s.status === "rejected" ? s.reason?.code : s))).toEqual(Array(5).fill("ENOSPC"));
+    // One loop turn: the end-of-tick flush fails too and closes the sink.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(await endedWith(sink)).toBe(0);
+  });
+
+  // A regular file that runs out of space part-way: RLIMIT_FSIZE makes write(2)
+  // fail with EFBIG once the file is `ulimit -f 32` long (bun ignores SIGXFSZ).
+  // That is 16 KiB where sh counts 512-byte blocks (dash, bash in POSIX mode)
+  // and 32 KiB where it counts KiB (macOS /bin/sh). Both are a whole number of
+  // flushes for either buffer size (4 KiB, 16 KiB on macOS arm64), so the limit
+  // is hit exactly at a flush boundary, and 64 KiB of writes pass it either way.
+  it.skipIf(!isPosix)("some bytes written (RLIMIT_FSIZE)", async () => {
+    using dir = tempDir("filesink-rlimit", {});
+    const script = /* js */ `
+      const { statSync } = require("node:fs");
+      const path = process.argv[1];
+      const sink = Bun.file(path).writer();
+      const chunk = Buffer.alloc(1024, "x");
+      const results = [];
+      for (let i = 0; i < 64; i++) results.push(sink.write(chunk));
+      const settled = await Promise.allSettled(results);
+      const codes = [...new Set(settled.filter(s => s.status === "rejected").map(s => s.reason.code))];
+      await new Promise(resolve => setImmediate(resolve));
+      let end;
+      try {
+        end = await sink.end();
+      } catch {
+        end = await sink.end();
+      }
+      console.log(JSON.stringify({ end, size: statSync(path).size, codes }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 32 && exec "$@"`, "sh", bunExe(), "-e", script, join(String(dir), "out.bin")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { end, size, codes } = JSON.parse(stdout);
+    expect(codes).toEqual(["EFBIG"]);
+    expect([16 * 1024, 32 * 1024]).toContain(size);
+    expect(end).toBe(size);
+    expect(exitCode).toBe(0);
+  });
+});
 
 if (isWindows) {
   it("ENOENT, Windows", () => {

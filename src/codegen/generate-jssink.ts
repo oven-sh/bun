@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import { createHashTable } from "./create-hash-table.ts";
 
 const classes = [
   "ArrayBufferSink",
@@ -142,9 +143,8 @@ function header() {
 
                 ~${controller}();
 
-                void detach();
+                void detach(JSC::JSValue reason = {});
 
-                void start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose);
                 DECLARE_VISIT_CHILDREN;
 
                 static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -173,6 +173,8 @@ JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
 #include "root.h"
 
 #include "JSDOMWrapper.h"
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "Sink.h"
@@ -182,11 +184,25 @@ extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace WebCore {
 using namespace JSC;
 
-// Shared field layout for every JSReadable*SinkController so the generic
-// JSSinkController__onReady/onClose externs can read m_onPull / m_onClose /
-// m_weakReadableStream without a per-sink symbol. JSCell is non-polymorphic,
-// so this base must stay non-virtual: a vtable pointer here would displace the
-// cell header.
+class JSReadableSinkControllerBase;
+
+// Who consumes the sink's close/ready signals. Both bodies live in BunStreamSource.cpp.
+enum class SinkSource : uint8_t {
+    None,
+    DirectStream, // m_source is the JSDirectStreamSource; only onClose is used
+    Pump,         // m_source is the JSReadStreamIntoSinkOperation
+};
+
+} // namespace WebCore
+
+namespace Bun::WebStreams {
+void sinkControllerOnClose(JSC::JSGlobalObject*, WebCore::JSReadableSinkControllerBase*, JSC::JSValue reason, bool sinkClosed);
+void sinkControllerOnReady(JSC::JSGlobalObject*, WebCore::JSReadableSinkControllerBase*);
+}
+
+namespace WebCore {
+
+// Shared non-virtual layout of every JSReadable*SinkController; the generic JSSinkController__* externs read it.
 class JSReadableSinkControllerBase : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -196,12 +212,35 @@ public:
     void* wrapped() const { return m_sinkPtr; }
     SinkID sinkId() const { return m_sinkId; }
 
+    void start(JSC::VM& vm, JSC::JSObject* readableStream, SinkSource kind, JSC::JSCell* source)
+    {
+        m_readableStream.set(vm, this, readableStream);
+        m_sourceKind = kind;
+        m_source.set(vm, this, source);
+    }
+    JSC::JSObject* readableStream() const { return m_readableStream.get(); }
+    // Two users: this cell's close handler (until m_sourceKind is None) and a sink that set it through setPipe. The last one out drops it.
+    void clearReadableStream()
+    {
+        if (!m_pipeHoldsStream && m_sourceKind == SinkSource::None)
+            m_readableStream.clear();
+    }
+    JSC::EncodedJSValue end(JSC::JSGlobalObject*); // the JS-visible end(): finish the native sink, then detach()
+    JSC::EncodedJSValue close(JSC::JSGlobalObject*, JSC::JSValue reason); // the JS-visible close(reason): a truthy reason fails the sink without flushing
+
     void* m_sinkPtr;
     SinkID m_sinkId;
-    mutable WriteBarrier<JSC::JSObject> m_onPull;
-    mutable WriteBarrier<JSC::JSObject> m_onClose;
-    mutable JSC::Weak<JSObject> m_weakReadableStream;
+    SinkSource m_sourceKind { SinkSource::None };
+    mutable WriteBarrier<JSC::JSCell> m_source;
+    mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
+    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
+    // Strong, and cleared as soon as the pipe is over, so a controller the user still holds does not keep the stream alive.
+    mutable WriteBarrier<JSC::JSObject> m_readableStream;
+    // While a native sink pipes a stream in, it roots only this cell; this and m_readableStream hold the rest (streams.rs PipeCell).
+    mutable WriteBarrier<JSC::JSPromise> m_pipeDone;
     uintptr_t m_onDestroy { 0 };
+    bool m_pipeHoldsStream { false };
+    bool m_destinationClosed { false }; // the sink closed underneath the source (peer abort, write error): write()/flush() report 0 instead of throwing
 
 protected:
     JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, SinkID sinkId, uintptr_t onDestroy)
@@ -397,7 +436,7 @@ static JSC::EncodedJSValue ${controller}__closeWithReason(JSC::JSGlobalObject* l
     ${name}__close(lexicalGlobalObject, ptr, reason);
 
     // detach() must still fire onClose (it transitions the direct
-    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // ReadableStream to closed and settles its close promise)
     // even if the native close threw, matching the pre-reorder behaviour.
     // Stash and rethrow around it; the sink's error wins over any onClose
     // error.
@@ -405,13 +444,13 @@ static JSC::EncodedJSValue ${controller}__closeWithReason(JSC::JSGlobalObject* l
         if (!scope.tryClearException()) {
             return {};
         }
-        controller->detach();
+        controller->detach(JSC::JSValue::decode(reason));
         (void)scope.tryClearException();
         scope.throwException(lexicalGlobalObject, pending);
         return {};
     }
 
-    controller->detach();
+    controller->detach(JSC::JSValue::decode(reason));
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -429,24 +468,17 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     }
 
     // close(error?): a falsy argument is the same clean close as close(),
-    // the truthiness rule readDirectStreamCloseImpl uses for its reason. The
+    // the truthiness rule directStreamOnClose uses for its reason. The
     // pump reports a failed source through closeSinkControllerWithError.
     JSC::JSValue error = callFrame->argument(0);
     JSC::EncodedJSValue reason = error.toBoolean(lexicalGlobalObject) ? JSC::JSValue::encode(error) : JSC::JSValue::encode(JSC::JSValue());
     RELEASE_AND_RETURN(scope, ${controller}__closeWithReason(lexicalGlobalObject, controller, reason));
 }
 
-JSC_DECLARE_HOST_FUNCTION(${controller}__end);
-JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+static JSC::EncodedJSValue ${controller}__endImpl(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::${controller}* controller)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
-    if (!controller) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
-        return {};
-    }
 
     void *ptr = controller->wrapped();
     if (ptr == nullptr) {
@@ -464,7 +496,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     auto result = ${name}__endWithSink(ptr, lexicalGlobalObject);
 
     // detach() must still fire onClose (it transitions the direct
-    // ReadableStream to closed/errored and calls underlyingSource.cancel())
+    // ReadableStream to closed and settles its close promise)
     // even if the native end threw, matching the pre-reorder behaviour.
     // Stash and rethrow around it; the sink's error wins over any onClose
     // error.
@@ -481,6 +513,19 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
     return result;
+}
+
+JSC_DECLARE_HOST_FUNCTION(${controller}__end);
+JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
+    if (!controller) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Expected ${controller}"_s));
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, ${controller}__endImpl(lexicalGlobalObject, controller));
 }
 
 extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
@@ -660,17 +705,11 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
     return ${controllerPrototypeName}::create(vm, &globalObject, ${controllerPrototypeName}::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
-void JS${controllerName}::detach() {
-    // Prevent re-entrancy.
-    JSC::EnsureStillAliveScope readableStream(m_weakReadableStream.get());
-    JSC::EnsureStillAliveScope onClose(m_onClose.get());
-
+void JS${controllerName}::detach(JSC::JSValue reason) {
+    if (reason && !m_failReason)
+        m_failReason.set(this->vm(), this, reason);
     auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
     auto destroy = std::exchange(m_onDestroy, 0);
-
-    m_onPull.clear();
-    m_onClose.clear();
-    m_weakReadableStream.clear();
 
     if (destroy) {
         Bun__onSinkDestroyed(destroy, sinkPtr);
@@ -680,19 +719,14 @@ void JS${controllerName}::detach() {
         ${name}__controllerDetached(sinkPtr, JSC::JSValue::encode(this));
     }
 
-    if (readableStream.value() && onClose.value()) {
-        JSC::JSGlobalObject *globalObject = this->globalObject();
-        auto& vm = globalObject->vm();
-        // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return;
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::MarkedArgumentBuffer arguments;
-        arguments.append(readableStream.value());
-        arguments.append(jsUndefined());
-        AsyncContextFrame::call(globalObject, onClose.value(), JSC::jsUndefined(), arguments);
-        RELEASE_AND_RETURN(scope, void());
+    if (m_sourceKind == SinkSource::None) {
+        clearReadableStream();
+        return;
     }
+    // A sink whose close re-enters here (FileSink's on_close runs inside close(error)) detaches before closeWithReason passes the reason; m_failReason already has it.
+    if (!reason)
+        reason = m_failReason.get();
+    Bun::WebStreams::sinkControllerOnClose(this->globalObject(), this, reason ? reason : JSC::jsUndefined(), /* sinkClosed */ false);
 }
 `;
 
@@ -800,22 +834,10 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     }
 
     auto& vm = cell->vm();
-    
-    if (thisObject->m_onPull) {
-        JSValue onPull = thisObject->m_onPull.get();
-        if (onPull.isCell()) {
-            const Identifier& id = Identifier::fromString(vm, "onPull"_s);
-            analyzer.analyzePropertyNameEdge(cell, onPull.asCell(), id.impl());
-        }
-    }
-
-    if (thisObject->m_onClose) {
-        JSValue onClose = thisObject->m_onClose.get();
-        if (onClose.isCell()) {
-            const Identifier& id = Identifier::fromString(vm, "onClose"_s);
-            analyzer.analyzePropertyNameEdge(cell, onClose.asCell(), id.impl());
-        }
-    }
+    if (auto* source = thisObject->m_source.get())
+        analyzer.analyzePropertyNameEdge(cell, source, Identifier::fromString(vm, "source"_s).impl());
+    if (auto* closePromise = thisObject->m_closePromise.get())
+        analyzer.analyzePropertyNameEdge(cell, closePromise, Identifier::fromString(vm, "closePromise"_s).impl());
 }
 
 
@@ -826,10 +848,12 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     
-    // Avoid duplicating in the heap snapshot
-    visitor.appendHidden(thisObject->m_onPull);
-    visitor.appendHidden(thisObject->m_onClose);
-    
+    visitor.append(thisObject->m_source);
+    visitor.append(thisObject->m_closePromise);
+    visitor.append(thisObject->m_failReason);
+    visitor.append(thisObject->m_readableStream);
+    visitor.append(thisObject->m_pipeDone);
+
     void* ptr = thisObject->m_sinkPtr;
     if (ptr)
       visitor.addOpaqueRoot(ptr);
@@ -850,20 +874,6 @@ void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(${className});
 
-
-void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose) {
-    this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
-    if (onPull) {
-        if (auto* object = onPull.getObject()) {
-            this->m_onPull.set(globalObject->vm(), this, object);
-        }
-    }
-    if (onClose) {
-        if (auto* object = onClose.getObject()) {
-            this->m_onClose.set(globalObject->vm(), this, object);
-        }
-    }
-}
 
 void ${className}::destroy(JSCell* cell)
 {
@@ -958,7 +968,7 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
         return sink->wrapped();
 
     if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(value)))
-        return controller->wrapped();
+        return controller->wrapped() ? controller->wrapped() : (controller->m_destinationClosed ? (void*)2 : nullptr);
 
     return (void*)1;
 }
@@ -977,56 +987,123 @@ extern "C" JSC::EncodedJSValue ${name}__createController(JSC::JSGlobalObject* ar
   }
 
   templ += `
+JSC::EncodedJSValue WebCore::JSReadableSinkControllerBase::end(JSC::JSGlobalObject* globalObject)
+{
+    switch (m_sinkId) {
+${classes
+  .map(
+    name =>
+      `    case WebCore::SinkID::${name}: return WebCore::${names(name).controller}__endImpl(globalObject, uncheckedDowncast<WebCore::${names(name).controller}>(this));`,
+  )
+  .join("\n")}
+    default: break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC::EncodedJSValue WebCore::JSReadableSinkControllerBase::close(JSC::JSGlobalObject* globalObject, JSC::JSValue reason)
+{
+    JSC::EncodedJSValue encoded = reason.toBoolean(globalObject) ? JSC::JSValue::encode(reason) : JSC::JSValue::encode(JSC::JSValue());
+    switch (m_sinkId) {
+${classes
+  .map(
+    name =>
+      `    case WebCore::SinkID::${name}: return WebCore::${names(name).controller}__closeWithReason(globalObject, uncheckedDowncast<WebCore::${names(name).controller}>(this), encoded);`,
+  )
+  .join("\n")}
+    default: break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 extern "C" void JSSinkController__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
 {
+    (void)amt;
+    (void)offset;
     auto* controller = static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(controllerValue).getObject());
-
-    JSC::JSValue function = controller->m_onPull.get();
-    if (!function)
+    if (controller->m_sourceKind != WebCore::SinkSource::Pump)
         return;
-    JSC::JSGlobalObject *globalObject = controller->globalObject();
-    auto& vm = globalObject->vm();
-    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(controller);
-    arguments.append(JSC::JSValue::decode(amt));
-    arguments.append(JSC::JSValue::decode(offset));
-
-    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
-    RELEASE_AND_RETURN(scope, void());
+    Bun::WebStreams::sinkControllerOnReady(controller->globalObject(), controller);
 }
 
 extern "C" void JSSinkController__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
     auto* controller = static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(controllerValue).getObject());
-
-    JSC::JSValue function = controller->m_onClose.get();
-    if (!function)
+    controller->m_destinationClosed = true;
+    if (controller->m_sourceKind == WebCore::SinkSource::None)
         return;
-    // only call close once
-    controller->m_onClose.clear();
-    JSC::JSGlobalObject* globalObject = controller->globalObject();
-    auto& vm = globalObject->vm();
-    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::MarkedArgumentBuffer arguments;
-    auto readableStream = controller->m_weakReadableStream.get();
-    arguments.append(readableStream ? readableStream : JSC::jsUndefined());
-    arguments.append(JSC::JSValue::decode(reason));
-    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
-    RELEASE_AND_RETURN(scope, void());
+    Bun::WebStreams::sinkControllerOnClose(controller->globalObject(), controller, JSC::JSValue::decode(reason), /* sinkClosed */ true);
 }
 
 extern "C" JSC::EncodedJSValue JSSinkController__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, JSC::EncodedJSValue controllerValue)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     return globalObject->assignToStream(JSC::JSValue::decode(stream), JSC::JSValue::decode(controllerValue));
+}
+
+static WebCore::JSReadableSinkControllerBase* pipeCell(JSC::EncodedJSValue value)
+{
+    return static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(value).getObject());
+}
+
+extern "C" void JSSinkController__setPipe(JSC::EncodedJSValue cell, JSC::EncodedJSValue stream, JSC::EncodedJSValue done)
+{
+    auto* controller = pipeCell(cell);
+    auto& vm = controller->vm();
+    if (auto* streamObject = JSC::JSValue::decode(stream).getObject()) {
+        controller->m_readableStream.set(vm, controller, streamObject);
+        controller->m_pipeHoldsStream = true;
+    } else {
+        controller->m_pipeHoldsStream = false;
+        controller->clearReadableStream();
+    }
+    controller->m_pipeDone.setMayBeNull(vm, controller, dynamicDowncast<JSC::JSPromise>(JSC::JSValue::decode(done)));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__pipeStream(JSC::EncodedJSValue cell)
+{
+    auto* stream = pipeCell(cell)->m_readableStream.get();
+    return JSC::JSValue::encode(stream ? JSC::JSValue(stream) : JSC::JSValue());
+}
+
+extern "C" void JSSinkController__clearPipeStream(JSC::EncodedJSValue cell)
+{
+    auto* controller = pipeCell(cell);
+    controller->m_pipeHoldsStream = false;
+    controller->clearReadableStream();
+}
+
+extern "C" void JSSinkController__setPipeDone(JSC::EncodedJSValue cell, JSC::EncodedJSValue done)
+{
+    auto* controller = pipeCell(cell);
+    controller->m_pipeDone.setMayBeNull(controller->vm(), controller, dynamicDowncast<JSC::JSPromise>(JSC::JSValue::decode(done)));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__pipeDone(JSC::EncodedJSValue cell)
+{
+    auto* done = pipeCell(cell)->m_pipeDone.get();
+    return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__takePipeDone(JSC::EncodedJSValue cell)
+{
+    auto* controller = pipeCell(cell);
+    auto* done = controller->m_pipeDone.get();
+    controller->m_pipeDone.clear();
+    return JSC::JSValue::encode(done ? JSC::JSValue(done) : JSC::JSValue());
+}
+
+// The pipe's failure value shares m_failReason: close(error) stores the same value there, and every other writer runs after pull() settled.
+extern "C" void JSSinkController__setPipeError(JSC::EncodedJSValue cell, JSC::EncodedJSValue error)
+{
+    auto* controller = pipeCell(cell);
+    if (!controller->m_failReason)
+        controller->m_failReason.set(controller->vm(), controller, JSC::JSValue::decode(error));
+}
+
+extern "C" JSC::EncodedJSValue JSSinkController__pipeError(JSC::EncodedJSValue cell)
+{
+    return JSC::JSValue::encode(pipeCell(cell)->m_failReason.get());
 }
 
 extern "C" void JSSinkController__detachPtr(JSC::EncodedJSValue controllerValue)
@@ -1279,15 +1356,4 @@ writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
   console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
 }
 
-Bun.spawnSync(
-  [
-    process.execPath,
-    "run",
-    join(import.meta.dir, "create-hash-table.ts"),
-    resolve(outDir + "/JSSink.lut.txt"),
-    join(outDir, "JSSink.lut.h"),
-  ],
-  {
-    stdio: ["inherit", "inherit", "inherit"],
-  },
-);
+createHashTable(resolve(outDir + "/JSSink.lut.txt"), join(outDir, "JSSink.lut.h"));

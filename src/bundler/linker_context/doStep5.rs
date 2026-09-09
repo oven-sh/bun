@@ -22,7 +22,7 @@ use bun_ast::{
 
 use crate::options::Format;
 use crate::perf;
-use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, js_meta};
+use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
 
 pub use crate::ThreadPool;
 
@@ -144,7 +144,21 @@ impl LinkerContext<'_> {
         // counting in here saves us an extra pass through the array
         let mut re_exports_count: usize = 0;
 
-        {
+        // SAFETY: read of this task's own row; only `create_exports_for_file`
+        // below writes it, after this read.
+        let is_lifted_commonjs = unsafe { *ast.flags.cast::<AstFlags>().add(id as usize) }
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+        // A lifted CommonJS file that is wrapped again (`require()` reaches it)
+        // prints its `exports.x = ...` assignments as written. Its namespace is
+        // the real `module.exports`, so it gets no export getters: they would
+        // read bindings the wrapped file never declares.
+        // SAFETY: read of this task's own row, before `create_exports_for_file`
+        // below takes `&mut` to it.
+        let is_wrapped_commonjs = is_lifted_commonjs
+            && unsafe { *meta.flags.cast::<js_meta::Flags>().add(id as usize) }.wrap
+                == WrapKind::Cjs;
+
+        if !is_wrapped_commonjs {
             // SAFETY: see above.
             let mut alias_iter = unsafe { (*resolved_exports).iterator() };
             'next_alias: while let Some(entry) = alias_iter.next() {
@@ -202,10 +216,6 @@ impl LinkerContext<'_> {
         // namespace of a CommonJS module whose `exports.foo = ...` assignments
         // were lifted to ES module exports stands in for `module.exports`, so
         // it keeps the assignment order (the order of `resolved_exports`).
-        // SAFETY: read of this task's own row; only `create_exports_for_file`
-        // below writes it, after this read.
-        let is_lifted_commonjs = unsafe { *ast.flags.cast::<AstFlags>().add(id as usize) }
-            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
         if !is_lifted_commonjs {
             strings::sort_asc(aliases.as_mut_slice());
         }

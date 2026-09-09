@@ -1413,6 +1413,7 @@ pub mod bv2_impl {
                 source: &[u8],
                 source_provider_url: &bun_core::String,
                 depth: u32,
+                optimize: bool,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
@@ -1445,6 +1446,14 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 wtf8: &[u8],
             ) -> u32;
+            /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
+            safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
+        }
+
+        /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
+        #[inline]
+        pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
+            __bun_jsc_wtf_string_hash(wtf8)
         }
 
         unsafe extern "Rust" {
@@ -1483,6 +1492,7 @@ pub mod bv2_impl {
             source: &[u8],
             source_provider_url: &bun_core::String,
             depth: u32,
+            optimize: bool,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
             // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
@@ -1495,6 +1505,7 @@ pub mod bv2_impl {
                 source,
                 source_provider_url,
                 depth,
+                optimize,
                 external_strings,
             )
         }
@@ -3068,6 +3079,7 @@ pub mod bv2_impl {
                     _ => None,
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
+            this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -4337,6 +4349,7 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
                     let index = reachable_source.get() as usize;
@@ -4373,9 +4386,8 @@ pub mod bv2_impl {
                             template
                         };
 
-                        let source = &mut sources[index];
-
-                        let output_path: Box<[u8]> = {
+                        {
+                            let source = &sources[index];
                             // TODO: outbase
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
@@ -4395,13 +4407,41 @@ pub mod bv2_impl {
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
                             if template.needs(options::PlaceholderField::Hash) {
-                                template.placeholder.hash =
-                                    Some(content_hashes_for_additional_files[index]);
+                                template.placeholder.hash = Some(
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
+                                );
                             }
 
                             if template.needs(options::PlaceholderField::Target) {
                                 template.placeholder.target = target.naming_placeholder().into();
                             }
+                        }
+                        templates.push((index, template));
+                    }
+                }
+
+                // Two assets whose hashes differ only past `[hash]`'s width get wider names.
+                {
+                    let hashed: Vec<usize> = (0..templates.len())
+                        .filter(|&i| templates[i].1.placeholder.hash.is_some())
+                        .collect();
+                    let mut names: Vec<bun_core::fmt::ContentHash> = hashed
+                        .iter()
+                        .map(|&i| templates[i].1.placeholder.hash.unwrap())
+                        .collect();
+                    while bun_core::fmt::ContentHash::widen_to_distinguish(&mut names) {}
+                    for (&i, name) in hashed.iter().zip(names) {
+                        templates[i].1.placeholder.hash = Some(name);
+                    }
+                }
+
+                for (index, template) in templates {
+                    let loader = loaders[index];
+                    {
+                        let source = &mut sources[index];
+
+                        let output_path: Box<[u8]> = {
                             let mut v = Vec::new();
                             template
                                 .print(
@@ -4435,7 +4475,10 @@ pub mod bv2_impl {
                                 input_loader: Loader::File,
                                 output_kind: crate::options::OutputKind::Asset,
                                 loader,
-                                hash: Some(content_hashes_for_additional_files[index]),
+                                hash: Some(
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
+                                ),
                                 side: Some(crate::options::Side::Client),
                                 entry_point_index: None,
                                 is_executable: false,

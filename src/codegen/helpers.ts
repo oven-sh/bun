@@ -15,8 +15,13 @@ export function low(str: string) {
   return str[0].toLowerCase() + str.slice(1);
 }
 
+/** Every file under `root`, sorted by name in each directory. */
 export function readdirRecursive(root: string): string[] {
-  const files = fs.readdirSync(root, { withFileTypes: true });
+  // The order of readdirSync() depends on the runtime and the file system:
+  // node sorts the entries, and bun does not.
+  const files = fs
+    .readdirSync(root, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return files.flatMap(file => {
     const fullPath = path.join(root, file.name);
     return file.isDirectory() ? readdirRecursive(fullPath) : fullPath;

@@ -11,7 +11,7 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
@@ -255,6 +255,7 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+        this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -394,7 +395,7 @@ impl BuildCommand {
             }
         }
 
-        let mut src_root_dir_buf = PathBuffer::uninit();
+        let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {
                 if !ctx.bundler_options.root_dir.is_empty() {
@@ -889,7 +890,7 @@ impl BuildCommand {
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    let mut zbuf = PathBuffer::uninit();
+                    let mut zbuf = bun_paths::path_buffer_pool::get();
                     let n = outfile.len().min(zbuf.0.len() - 1);
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
                     zbuf.0[n] = 0;
@@ -931,6 +932,9 @@ impl BuildCommand {
                             flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
                         }
                         flags
+                    },
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
                     },
                 ) {
                     Ok(r) => r,
@@ -996,7 +1000,7 @@ impl BuildCommand {
                             // root_dir already points to the outfile's parent directory,
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
-                            let mut pathbuf = PathBuffer::uninit();
+                            let mut pathbuf = bun_paths::path_buffer_pool::get();
                             match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
                                 &bun_sys::WriteFileArgs {
@@ -1111,7 +1115,8 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
-                        | options::OutputKind::ModuleInfoStringTable => "<d>",
+                        | options::OutputKind::ModuleInfoStringTable
+                        | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1160,6 +1165,7 @@ impl BuildCommand {
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
+                        options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

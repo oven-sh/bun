@@ -1,6 +1,5 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
-use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 
@@ -812,25 +811,27 @@ impl NameScopes for NumberRenamer {
 }
 
 impl NumberRenamer {
+    /// `symbols_in_chunk`: how many symbols the chunk's files declare, to size
+    /// the name table. `symbols` spans the whole bundle and every chunk's
+    /// renamer is alive at once, so sizing from it costs a bundle-sized table
+    /// per chunk.
     pub fn init(
         symbols: symbol::Map,
         root_names: &StringHashMap<u32>,
+        symbols_in_chunk: usize,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
         let len = symbols.symbols_for_source.len();
         let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
             .take(len)
             .collect();
-        let symbol_count: usize = symbols.symbols_for_source.iter().map(|s| s.len()).sum();
+        let capacity = root_names.len() + symbols_in_chunk / 4;
 
         let mut r = Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
             names,
             arena: Bump::new(),
-            ids: NameIds::with_capacity_and_hasher(
-                root_names.len() + symbol_count / 4,
-                Default::default(),
-            ),
-            slots: Vec::with_capacity(root_names.len() + symbol_count / 4),
+            ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
+            slots: Vec::with_capacity(capacity),
         });
         // `root_names` owns its keys and is dropped by the caller; copy them.
         for (key, &count) in root_names.iter() {
@@ -1215,7 +1216,18 @@ impl<'a> ScopeUses<'a> {
 
     /// Whether a binding in `scope` would capture a reference to `symbol`,
     /// i.e. whether `symbol` is referenced in `scope` or anywhere inside it.
+    /// A function body or catch block also sees its parameter scope, which it
+    /// cannot redeclare.
     pub fn sees(&self, symbol: Ref, scope: &js_ast::Scope) -> bool {
+        let scope = match (scope.kind, scope.parent.as_deref()) {
+            (js_ast::scope::Kind::FunctionBody, Some(parent)) => parent,
+            (js_ast::scope::Kind::Block, Some(parent))
+                if parent.kind == js_ast::scope::Kind::CatchBinding =>
+            {
+                parent
+            }
+            _ => scope,
+        };
         let Some(span) = scope.visit_span() else {
             return true;
         };
@@ -1321,88 +1333,6 @@ impl ScopeUseIndex {
     }
 }
 
-pub struct ExportRenamer {
-    pub(crate) string_buffer: MutableString,
-    pub(crate) used: StringHashMap<u32>,
-    pub(crate) count: isize,
-    /// Backs renamed export-name slices returned to the caller.
-    pub(crate) arena: Bump,
-}
-
-impl ExportRenamer {
-    pub fn init() -> ExportRenamer {
-        ExportRenamer {
-            string_buffer: MutableString::init_empty(),
-            used: StringHashMap::default(),
-            count: 0,
-            arena: Bump::new(),
-        }
-    }
-
-    pub fn clear_retaining_capacity(&mut self) {
-        self.used.clear();
-        self.string_buffer.reset();
-        // Per-chunk in `computeCrossChunkDependencies`. The method *name* is
-        // already `clear_retaining_capacity`; honour that for the arena too.
-        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
-    }
-
-    pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
-        let entry = self.used.get_or_put(input).expect("unreachable");
-        if !entry.found_existing {
-            *entry.value_ptr = 1;
-            // `StringHashMap` does not expose a key pointer; allocate a copy in
-            // `self.arena` so the returned slice is tied to `&self`.
-            return self.arena.alloc_slice_copy(input);
-        }
-
-        // Resume from the last suffix handed out for this prefix so N collisions
-        // on the same name stay O(N) total (see `NumberScope::find_unused_name`).
-        let mut tries: u32 = *entry.value_ptr;
-        loop {
-            self.string_buffer.reset();
-            write!(
-                self.string_buffer.writer(),
-                "{}{}",
-                bstr::BStr::new(input),
-                tries
-            )
-            .expect("unreachable");
-            tries += 1;
-            let attempt: &[u8] = self.string_buffer.slice();
-            if self.used.contains_key(attempt) {
-                continue;
-            }
-            // `StringHashMap::put` boxes the key itself; the arena copy below is
-            // only for the caller's returned slice (`string_buffer` is reused).
-            self.used.put(attempt, 1).expect("unreachable");
-            *self.used.get_mut(input).expect("unreachable") = tries;
-            return self.arena.alloc_slice_copy(attempt);
-        }
-    }
-
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
-        loop {
-            let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
-            self.count += 1;
-            if !self.used.contains_key(name.as_slice()) {
-                return Ok(name);
-            }
-        }
-    }
-
-    /// Mark `name` as taken so neither `next_renamed_name` nor
-    /// `next_minified_name` hands it out. Used for an entry point chunk's own
-    /// export names, which share the chunk's `export {}` namespace with the
-    /// cross-chunk exports.
-    pub fn reserve_name(&mut self, name: &[u8]) {
-        let entry = self.used.get_or_put(name).expect("unreachable");
-        if !entry.found_existing {
-            *entry.value_ptr = 1;
-        }
-    }
-}
-
 pub fn compute_initial_reserved_names(
     output_format: Format,
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
@@ -1413,7 +1343,11 @@ pub fn compute_initial_reserved_names(
 
     let mut names = StringHashMap::<u32>::default();
 
-    const EXTRAS: [&[u8]; 2] = [b"Promise", b"Require"];
+    /// Globals the linker or printer reference by name in generated code. A
+    /// user binding with one of these names is renamed so the reference
+    /// reaches the global: the printer emits `ENumber` NaN/±Infinity and
+    /// `EUndefined` as the bare identifiers when the renamer has run.
+    const EXTRAS: [&[u8]; 5] = [b"Promise", b"Require", b"NaN", b"Infinity", b"undefined"];
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
 

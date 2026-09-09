@@ -10,6 +10,7 @@ import {
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, rss } from "harness";
+import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
 
@@ -20,22 +21,20 @@ const emptyFrameWithWindowLog = (windowLog: number) =>
   new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, (windowLog - 10) << 3, 0x01, 0x00, 0x00]);
 const emptyFrameWith16MiBWindow = emptyFrameWithWindowLog(24);
 
-describe("Zstandard compression", async () => {
-  // Test data of various sizes
-  const testCases = [
-    // { name: "empty", data: new Uint8Array(0) },
-    { name: "small", data: new TextEncoder().encode("Hello, World!") },
-    { name: "medium", data: await Bun.file(path.join(__dirname, "..", "..", "..", "bun.lock")).bytes() },
-    {
-      name: "large",
-      data: Buffer.from(
-        (await Bun.file(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.rs")).text()).repeat(
-          5,
-        ),
-      ),
-    },
-  ] as const;
+// The Frame_Content_Size field of a frame header, if it has one (RFC 8878 3.1.1.1).
+function frameContentSize(frame: Uint8Array): number | undefined {
+  const descriptor = frame[4];
+  const singleSegment = (descriptor & 0x20) !== 0;
+  const fieldSize = [singleSegment ? 1 : 0, 2, 4, 8][descriptor >> 6];
+  if (fieldSize === 0) return undefined;
+  const dictionaryIdSize = [0, 1, 2, 4][descriptor & 3];
+  const offset = 5 + (singleSegment ? 0 : 1) + dictionaryIdSize;
+  let size = fieldSize === 2 ? 256 : 0;
+  for (let i = 0; i < fieldSize; i++) size += frame[offset + i] * 2 ** (8 * i);
+  return size;
+}
 
+describe("Zstandard compression", () => {
   it("throws with invalid level", () => {
     expect(() => zstdCompressSync(new Uint8Array(123), { level: 0 })).toThrowErrorMatchingInlineSnapshot(
       `"Compression level must be between 1 and 22"`,
@@ -55,23 +54,28 @@ describe("Zstandard compression", async () => {
   });
 
   it("does not leak on streaming decompression error (unknown content size + corrupt stream)", () => {
-    // Zstd frame header with content size *unknown* so decompressAlloc takes the streaming path:
+    // Zstd frame headers with content size *unknown* so decompress_alloc takes the streaming path:
     //   28 B5 2F FD - magic
     //   00          - Frame_Header_Descriptor: FCS_flag=0, Single_Segment=0 → content size not present
-    //   58          - Window_Descriptor
-    // followed by garbage block data so ZSTD_decompressStream errors after the output buffer
-    // has already been allocated.
+    //   58 / 38     - Window_Descriptor (2 MiB / 128 KiB)
+    // `bad` follows that with garbage block data, so ZSTD_decompressStream errors after the output
+    // buffer has been allocated. `partial` follows it with an RLE block (02 00 10: not the last block,
+    // type 1, 128 KiB of the next byte) and then the same garbage, so it errors after the output
+    // buffer has grown to hold those 128 KiB: a leak of it would cost at least that much per call.
     const bad = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x58, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    const partial = Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x02, 0x00, 0x10, 0x61, 0xff, 0xff, 0xff]);
 
-    // Ensure this input actually hits the streaming error path (not InvalidZstdData / fast path).
-    expect(() => zstdDecompressSync(bad)).toThrowError(/ZstdDecompressionError/);
+    // Ensure these inputs actually hit the streaming error path (not InvalidZstdData / fast path).
+    expect(() => zstdDecompressSync(bad)).toThrow("Decompression failed: ZstdDecompressionError");
+    expect(() => zstdDecompressSync(partial)).toThrow("Decompression failed: ZstdDecompressionError");
 
-    expectStreamingDecompressionNotToLeak(() => {
+    // A leak would add 500 * 128 KiB = 62 MiB to every batch.
+    expectStreamingDecompressionNotToLeak(500, "failed", () => {
       try {
-        zstdDecompressSync(bad);
+        zstdDecompressSync(partial);
       } catch {}
-    }, "failed");
-  }, 60_000);
+    });
+  });
 
   it("does not leak on streaming decompression of an empty result (unknown content size)", () => {
     // The streaming path reserves an output buffer before it knows the result is empty; the empty
@@ -79,11 +83,12 @@ describe("Zstandard compression", async () => {
     const frame = emptyFrameWithWindowLog(10);
     expect(zstdDecompressSync(frame)).toHaveLength(0);
 
-    expectStreamingDecompressionNotToLeak(() => zstdDecompressSync(frame), "empty");
-  }, 60_000);
+    // A leak would add 10,000 * 4 KiB (the smallest reservation) = 40 MiB to every batch.
+    expectStreamingDecompressionNotToLeak(10_000, "empty", () => zstdDecompressSync(frame));
+  });
 
-  function expectStreamingDecompressionNotToLeak(decompressOnce: () => void, what: string) {
-    const iterations = 10000;
+  // Runs batches of `iterations` calls until RSS stops growing by 10 MiB a batch, and fails if it never does.
+  function expectStreamingDecompressionNotToLeak(iterations: number, what: string, decompressOnce: () => void) {
     function batch() {
       for (let i = 0; i < iterations; i++) decompressOnce();
       Bun.gc(true);
@@ -91,7 +96,6 @@ describe("Zstandard compression", async () => {
     }
 
     // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).
-    // A leak of the ~4 KiB output buffer per call never converges: every batch adds 40+ MiB.
     let prev = batch();
     let growthMiB = Infinity;
     for (let round = 0; round < 5; round++) {
@@ -103,7 +107,7 @@ describe("Zstandard compression", async () => {
 
     expect(
       growthMiB,
-      `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} ${what} zstd decompressions after warmup`,
+      `RSS grew by ${growthMiB.toFixed(1)} MiB (${((growthMiB * 1024) / iterations).toFixed(1)} KiB per call) over a batch of ${iterations} ${what} zstd decompressions after warmup`,
     ).toBeLessThan(10);
   }
 
@@ -222,54 +226,12 @@ describe("Zstandard compression", async () => {
       },
     ] as const) {
       it(`can decompress ${name}`, async () => {
-        // Test sync decompression
-        const syncDecompressed = zstdDecompressSync(compressed);
-        expect(syncDecompressed.toString()).toStrictEqual(original.toString());
-
-        // Test async decompression
-        const asyncDecompressed = await zstdDecompress(compressed);
-        expect(asyncDecompressed.toString()).toStrictEqual(original.toString());
+        expect(frameContentSize(compressed)).toBe(original.length);
+        expect(zstdDecompressSync(compressed)).toEqual(original);
+        expect(await zstdDecompress(compressed)).toEqual(original);
       });
     }
   });
-
-  for (const { data: input, name } of testCases) {
-    describe.concurrent(name + " (" + input.length + " bytes)", () => {
-      for (let level = 1; level <= 22; level++) {
-        it("level " + level, async () => {
-          // Kick off async compression first so it runs in the thread pool while
-          // the sync compression below blocks the main thread.
-          const asyncCompressedPromise = zstdCompress(input, { level });
-
-          // Sync compression
-          const syncCompressed = zstdCompressSync(input, { level });
-
-          // Async compression
-          const asyncCompressed = await asyncCompressedPromise;
-
-          // Compare compressed results (they should be identical with same level)
-          expect(syncCompressed).toStrictEqual(asyncCompressed);
-
-          // Kick off async decompression of sync compressed data first so it overlaps
-          // with the sync decompression below.
-          const asyncDecompressedPromise = zstdDecompress(syncCompressed);
-
-          // Sync decompression of async compressed data
-          const syncDecompressed = zstdDecompressSync(asyncCompressed);
-
-          // Async decompression of sync compressed data
-          const asyncDecompressed = await asyncDecompressedPromise;
-
-          // Compare decompressed results
-          expect(syncDecompressed).toStrictEqual(asyncDecompressed);
-
-          // Verify both match original
-          expect(syncDecompressed).toStrictEqual(input);
-          expect(asyncDecompressed).toStrictEqual(input);
-        });
-      }
-    });
-  }
 });
 
 // zstdDecompressSync sizes its output from the frame header when the content size is
@@ -358,7 +320,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     });
 
   // Runs `script` in a child whose native allocations above the cap fail. `inputs` arrive in the
-  // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned.
+  // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned
+  // together with the child's exit code.
   async function runCapped(inputs: Record<string, Uint8Array>, script: string): Promise<unknown> {
     const inputsBase64 = Object.fromEntries(
       Object.entries(inputs).map(([name, bytes]) => [name, Buffer.from(bytes).toString("base64")]),
@@ -396,8 +359,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout, `the child printed nothing and exited with ${exitCode}\nstderr:\n${stderr}`).not.toBe("");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return { ...JSON.parse(stdout), exitCode };
   }
 
   it.concurrent("zstd: compress and decompress, sync and async", async () => {
@@ -443,6 +405,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "decompress largeWindow": outOfMemory,
       afterwards: "still works",
       afterwardsAsync: "still works",
+      exitCode: 0,
     });
   });
 
@@ -479,6 +442,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "gunzipSync libdeflate": outOfMemory,
       "inflateSync libdeflate": outOfMemory,
       afterwards: "still works still works",
+      exitCode: 0,
     });
   });
 
@@ -530,6 +494,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       "br-large-window": fetchOutOfMemory,
       "zstd-large-window": fetchOutOfMemory,
       afterwards: "still works",
+      exitCode: 0,
     });
   });
 
@@ -564,9 +529,180 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       brotliLargeWindow: outOfMemory,
       zstdLargeWindow: outOfMemory,
       afterwards: 12 * MiB,
+      exitCode: 0,
     });
   });
 });
+
+// libdeflate is one-shot, so Bun retries it with an output buffer that starts at the input's size and
+// doubles; that retry cap must not be tighter than the zlib backend's (ArrayBuffer max). The child
+// assembles a 2 MiB gzip member that inflates to 1040 MiB without compressing 1040 MiB: one deflate
+// segment of 1 MiB of zeros, repeated. A header comment pads the member to 1032 MiB / 512, so the
+// doubling passes through 1032 MiB: more than 1 GiB and still too small, which is where the old cap
+// gave up. Spawned so the multi-GB buffers are released with the child.
+it.concurrent(
+  "gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB",
+  async () => {
+    const MiB = 1024 * 1024;
+    const outputMiB = 1040;
+    const inputBytes = (1032 * MiB) / 512;
+    const script = /* js */ `
+      import zlib from "node:zlib";
+      const zeros = Buffer.alloc(${MiB});
+      // Z_SYNC_FLUSH ends the segment on a byte boundary without a last block, so copies concatenate.
+      const segment = zlib.deflateRawSync(zeros, { level: 9, finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      const lastBlock = Buffer.from([0x03, 0x00]); // empty, fixed Huffman codes
+      const deflated = Buffer.concat([...Array(${outputMiB}).fill(segment), lastBlock]);
+      let crc = 0;
+      for (let i = 0; i < ${outputMiB}; i++) crc = zlib.crc32(zeros, crc);
+      const trailer = Buffer.alloc(8);
+      trailer.writeUInt32LE(crc, 0);
+      trailer.writeUInt32LE(${outputMiB * MiB}, 4);
+      const header = Buffer.from([0x1f, 0x8b, 0x08, 0x10 /* FLG.FCOMMENT */, 0, 0, 0, 0, 0, 0xff]);
+      const comment = Buffer.alloc(${inputBytes} - header.length - deflated.length - trailer.length, "c");
+      comment[comment.length - 1] = 0;
+      const gzipped = Buffer.concat([header, comment, deflated, trailer]);
+      const out = Bun.gunzipSync(gzipped, { library: "libdeflate" });
+      console.log(JSON.stringify({ input: gzipped.length, output: out.length, first: out[0], last: out[out.length - 1] }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printed = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ ...printed, exitCode }).toEqual({
+      input: inputBytes,
+      output: outputMiB * MiB,
+      first: 0,
+      last: 0,
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+// The async functions read the input on a pool thread. The unfixed build segfaults there, so each
+// case runs in a child process: it compares the result against a fixed-length input's result.
+describe.concurrent("async compression of a resizable ArrayBuffer that shrinks after the call", () => {
+  async function runInChild(script: string, expectedStdout: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(expectedStdout);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  it("zstdCompress reads the bytes the caller passed", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.alloc(256 * 1024, 0x41);
+      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
+      let wrong = 0;
+      for (let i = 0; i < 20; i++) {
+        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+        new Uint8Array(ab).fill(0x41);
+        const promise = Bun.zstdCompress(new Uint8Array(ab));
+        ab.resize(0);
+        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
+      }
+      console.log("wrong:", wrong);
+    `,
+      "wrong: 0\n",
+    );
+  });
+
+  it("zstdDecompress reads the bytes the caller passed", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.from(Bun.zstdCompressSync(Buffer.alloc(256 * 1024, 0x41)));
+      const expected = Buffer.from(Bun.zstdDecompressSync(fixed)).toString("hex");
+      let wrong = 0;
+      for (let i = 0; i < 20; i++) {
+        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+        new Uint8Array(ab).set(fixed);
+        const promise = Bun.zstdDecompress(new Uint8Array(ab));
+        ab.resize(0);
+        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
+      }
+      console.log("wrong:", wrong);
+    `,
+      "wrong: 0\n",
+    );
+  });
+
+  it("a growable SharedArrayBuffer stays a borrow and compresses the same bytes", async () => {
+    await runInChild(
+      /* js */ `
+      const fixed = Buffer.alloc(256 * 1024, 0x41);
+      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
+      const sab = new SharedArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
+      new Uint8Array(sab).fill(0x41);
+      const promise = Bun.zstdCompress(new Uint8Array(sab, 0, fixed.byteLength));
+      sab.grow(1 << 21);
+      console.log(Buffer.from(await promise).toString("hex") === expected ? "same" : "different");
+    `,
+      "same\n",
+    );
+  });
+});
+
+// Every level, sync and async, on inputs of three sizes. "medium" is a few hundred KiB of unique text;
+// "large" repeats a source file past 1 MiB, so it spans many 128 KiB blocks but stays cheap to compress
+// at the slow levels. The sync calls block the main thread, so this group comes after the tests that
+// spawn child processes: they start first and run during it.
+const repeatedPastOneMiB = (chunk: Uint8Array) =>
+  Buffer.concat(Array.from({ length: Math.ceil((1024 * 1024) / chunk.length) }, () => chunk));
+for (const { name, input } of [
+  { name: "small", input: new TextEncoder().encode("Hello, World!") },
+  { name: "medium", input: readFileSync(path.join(__dirname, "..", "..", "..", "bun.lock")) },
+  {
+    name: "large",
+    input: repeatedPastOneMiB(
+      readFileSync(path.join(__dirname, "..", "..", "..", "..", "src", "js_parser", "parser.rs")),
+    ),
+  },
+]) {
+  describe.concurrent(name + " (" + input.length + " bytes)", () => {
+    // Every level above 1 compresses this much text smaller than level 1 does (the 13-byte input is
+    // stored raw at any level), so a smaller frame shows that `level` reached the encoder.
+    const levelChangesTheResult = input.length >= 64 * 1024;
+    const levelOneLength = zstdCompressSync(input, { level: 1 }).length;
+
+    for (let level = 1; level <= 22; level++) {
+      it("level " + level, async () => {
+        // Kick off async compression first so it runs in the thread pool while
+        // the sync compression below blocks the main thread.
+        const asyncCompressedPromise = zstdCompress(input, { level });
+        const syncCompressed = zstdCompressSync(input, { level });
+        const asyncCompressed = await asyncCompressedPromise;
+
+        // The same level gives the same frame either way, and its header records the content size.
+        expect(syncCompressed).toStrictEqual(asyncCompressed);
+        expect(frameContentSize(syncCompressed)).toBe(input.length);
+        if (levelChangesTheResult && level > 1) {
+          expect(syncCompressed.length, `level ${level} vs level 1`).toBeLessThan(levelOneLength);
+        }
+
+        // Likewise, decompress each one's output on the other path, async first so they overlap.
+        const asyncDecompressedPromise = zstdDecompress(syncCompressed);
+        const syncDecompressed = zstdDecompressSync(asyncCompressed);
+        const asyncDecompressed = await asyncDecompressedPromise;
+
+        expect(syncDecompressed).toStrictEqual(asyncDecompressed);
+        expect(syncDecompressed).toStrictEqual(input);
+        expect(asyncDecompressed).toStrictEqual(input);
+      });
+    }
+  });
+}
 
 describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before capturing the input", () => {
@@ -643,112 +779,6 @@ describe("sync compression argument handling", () => {
       expect(zstdDecompressSync(zstdCompressSync(empty)).byteLength).toBe(0);
       Bun.gc(true);
     }
-  });
-
-  // libdeflate is one-shot, so Bun retries with a doubling output buffer; the
-  // retry cap must not be tighter than the zlib backend's (ArrayBuffer max).
-  // Spawned so the multi-GB buffer is released with the child.
-  it("gunzipSync({library:'libdeflate'}) decompresses output larger than 1 GiB", async () => {
-    const MiB = 1024 * 1024;
-    const expected = 17 * 64 * MiB; // 1088 MiB
-    const script = `
-      import * as zlib from "node:zlib";
-      const chunk = Buffer.alloc(64 * ${MiB});
-      const bomb = await new Promise((resolve, reject) => {
-        const g = zlib.createGzip({ level: 9 });
-        const out = [];
-        g.on("data", c => out.push(c));
-        g.on("end", () => resolve(Buffer.concat(out)));
-        g.on("error", reject);
-        let left = 17;
-        const w = () => { if (!left--) return g.end(); g.write(chunk) ? w() : g.once("drain", w); };
-        w();
-      });
-      const out = Bun.gunzipSync(bomb, { library: "libdeflate" });
-      console.log(JSON.stringify({ libdeflate: out.length, head: out[0], tail: out[out.length - 1] }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify({ libdeflate: expected, head: 0, tail: 0 }),
-      stderr: expect.not.stringContaining("Out of memory"),
-    });
-    expect(exitCode).toBe(0);
-  }, 60_000);
-});
-
-// The async functions read the input on a pool thread. The unfixed build segfaults there, so each
-// case runs in a child process: it compares the result against a fixed-length input's result.
-describe.concurrent("async compression of a resizable ArrayBuffer that shrinks after the call", () => {
-  async function runInChild(script: string, expectedStdout: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe(expectedStdout);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  }
-
-  it("zstdCompress reads the bytes the caller passed", async () => {
-    await runInChild(
-      /* js */ `
-      const fixed = Buffer.alloc(256 * 1024, 0x41);
-      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
-      let wrong = 0;
-      for (let i = 0; i < 20; i++) {
-        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
-        new Uint8Array(ab).fill(0x41);
-        const promise = Bun.zstdCompress(new Uint8Array(ab));
-        ab.resize(0);
-        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
-      }
-      console.log("wrong:", wrong);
-    `,
-      "wrong: 0\n",
-    );
-  });
-
-  it("zstdDecompress reads the bytes the caller passed", async () => {
-    await runInChild(
-      /* js */ `
-      const fixed = Buffer.from(Bun.zstdCompressSync(Buffer.alloc(256 * 1024, 0x41)));
-      const expected = Buffer.from(Bun.zstdDecompressSync(fixed)).toString("hex");
-      let wrong = 0;
-      for (let i = 0; i < 20; i++) {
-        const ab = new ArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
-        new Uint8Array(ab).set(fixed);
-        const promise = Bun.zstdDecompress(new Uint8Array(ab));
-        ab.resize(0);
-        if (Buffer.from(await promise).toString("hex") !== expected) wrong++;
-      }
-      console.log("wrong:", wrong);
-    `,
-      "wrong: 0\n",
-    );
-  });
-
-  it("a growable SharedArrayBuffer stays a borrow and compresses the same bytes", async () => {
-    await runInChild(
-      /* js */ `
-      const fixed = Buffer.alloc(256 * 1024, 0x41);
-      const expected = Buffer.from(Bun.zstdCompressSync(fixed)).toString("hex");
-      const sab = new SharedArrayBuffer(fixed.byteLength, { maxByteLength: 1 << 21 });
-      new Uint8Array(sab).fill(0x41);
-      const promise = Bun.zstdCompress(new Uint8Array(sab, 0, fixed.byteLength));
-      sab.grow(1 << 21);
-      console.log(Buffer.from(await promise).toString("hex") === expected ? "same" : "different");
-    `,
-      "same\n",
-    );
   });
 });
 

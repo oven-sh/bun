@@ -1144,6 +1144,8 @@ describe("close() with unflushed data writes the chunked terminator exactly once
   function serve(pull: (c: any) => unknown) {
     return Bun.serve({
       port: 0,
+      development: false,
+      error: (e: any) => new Response(String(e?.message ?? e), { status: 500 }),
       fetch(req) {
         if (new URL(req.url).pathname === "/plain") {
           return new Response("ok");
@@ -1745,17 +1747,19 @@ describe("direct stream contract", () => {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${body}`);
     return body;
   };
+  // The error shapes fail the body on purpose; answer 500 (if headers are not out yet) instead of logging to stderr.
+  const quiet = { development: false, error: (e: any) => new Response(String(e?.message ?? e), { status: 500 }) };
   const consumers: Record<string, (s: ReadableStream) => Promise<string>> = {
     "Bun.serve response body (http)": async s => {
-      using server = Bun.serve({ port: 0, fetch: () => new Response(s) });
+      using server = Bun.serve({ port: 0, ...quiet, fetch: () => new Response(s) });
       return await okText(await fetch(server.url));
     },
     "Bun.serve response body (https)": async s => {
-      using server = Bun.serve({ port: 0, tls, fetch: () => new Response(s) });
+      using server = Bun.serve({ port: 0, tls, ...quiet, fetch: () => new Response(s) });
       return await okText(await fetch(server.url, { tls: { rejectUnauthorized: false } }));
     },
     "fetch request body": async s => {
-      using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+      using server = Bun.serve({ port: 0, ...quiet, fetch: async req => new Response(await req.text()) });
       return await okText(await fetch(server.url, { method: "POST", body: s, duplex: "half" } as RequestInit));
     },
   };
@@ -1961,7 +1965,7 @@ describe("direct stream edge cases over Bun.serve", () => {
 
   test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {
     const readable = new Readable({ read() {} });
-    using server = Bun.serve({ port: 0, fetch: () => new Response(Readable.toWeb(readable) as any) });
+    using server = Bun.serve({ port: 0, development: false, error: () => new Response("error", { status: 500 }), fetch: () => new Response(Readable.toWeb(readable) as any) });
     const resPromise = fetch(server.url);
     // Headers go out with the first body chunk, so push before awaiting the response.
     readable.push("first");

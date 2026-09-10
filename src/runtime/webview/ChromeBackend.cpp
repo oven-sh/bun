@@ -1147,6 +1147,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
+        // A document committed, so a live renderer exists again.
+        view->m_crashed = false;
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -1274,20 +1276,21 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     }
 
     // Inspector.targetCrashed — the tab's renderer process died (crash, OOM
-    // kill, SIGKILL). Chrome keeps the session attached and re-creates the
-    // renderer on the next navigation, so the view stays open, but it never
-    // answers the commands the dead renderer owed: without this the pending
-    // promises hang and their slots stay taken for the life of the view.
-    // Target.detachedFromTarget does not fire for this — that is the
-    // whole-tab case, handled above.
+    // kill, SIGKILL). Chrome keeps the session attached, so the view stays
+    // open and Target.detachedFromTarget (the whole-tab case above) never
+    // fires. Until a Page.navigate creates a new renderer, Chrome queues
+    // every page-handled command on this session, including the ones the
+    // dead renderer already owed, and answers them with "Target crashed"
+    // only once that navigation happens. So: settle what is pending now,
+    // and have sendChromeOp refuse page ops while m_crashed is set instead
+    // of letting them hang on a navigation that may never come.
     //
-    // Reject before the EventTarget dispatch below so a listener can start
-    // a new operation from inside its handler, like settleFailure does for
+    // Reject before the EventTarget dispatch below so a listener can call
+    // navigate() from inside its handler, like settleFailure does for
     // onNavigationFailed.
     if (method.size() == 23 && memcmp(method.data(), "Inspector.targetCrashed", 23) == 0) {
+        view->m_crashed = true;
         rejectViewSlots(g, view, createError(g, "page crashed (renderer process died)"_s));
-        // Chrome answers these ids with "Target crashed" only if the view is
-        // navigated again; drop them now so the slots are free either way.
         uint32_t vid = view->m_viewId;
         m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         updateKeepAlive();
@@ -1420,6 +1423,21 @@ void Transport::retireGlobal(Zig::GlobalObject* global)
 
 namespace Ops {
 
+static JSPromise* rejectedPromise(JSGlobalObject* g, const WTF::String& message)
+{
+    auto* promise = JSPromise::create(g->vm(), g->promiseStructure());
+    promise->reject(g->vm(), createError(g, message));
+    return promise;
+}
+
+// See Inspector.targetCrashed in handleEvent: Chrome would queue the op
+// behind a navigation that may never come.
+static JSPromise* refuseIfCrashed(JSGlobalObject* g, JSWebView* v)
+{
+    if (!v->m_crashed) return nullptr;
+    return rejectedPromise(g, "page crashed (renderer process died), navigate() to recover"_s);
+}
+
 // Allocate promise, store in slot, add to Transport pending map, send frame.
 // Caller guarantees the slot is empty and m_closed == false. Command is
 // moved in; t.send() calls finishAndWrite which zero-copies to the pipe
@@ -1430,15 +1448,19 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
 {
     auto& vm = g->vm();
     auto& t = transport();
-    auto* promise = JSPromise::create(vm, g->promiseStructure());
     // Unreachable: the constructor spawned or connected, and the paths that
     // kill or release the transport afterwards (rejectAllAndMarkDead,
     // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
-    if (t.m_dead || t.m_mode == TransportMode::None) {
-        promise->reject(vm, createError(g, "Chrome connection is not available"_s));
-        return promise;
+    if (t.m_dead || t.m_mode == TransportMode::None)
+        return rejectedPromise(g, "Chrome connection is not available"_s);
+    // Page.navigate is answered by the browser and is what recovers a
+    // crashed view; cdp() is the raw escape hatch and keeps Chrome's own
+    // semantics. Everything else waits on the renderer.
+    if (m != Method::PageNavigate && m != Method::UserRaw) {
+        if (auto* refused = refuseIfCrashed(g, v)) return refused;
     }
+    auto* promise = JSPromise::create(vm, g->promiseStructure());
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });
@@ -1557,6 +1579,8 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
 // Chrome sends a reply we ignore). Both frames go in one write().
 JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
+    // Before the untracked mousePressed below reaches a dead renderer.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     auto sid = sidSpan(view->m_sessionId);
     auto btn = cdpButton(button);
@@ -1675,6 +1699,8 @@ static const CDPKeyInfo& cdpKeyInfo(uint8_t k)
 
 JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifiers, const WTF::String& character)
 {
+    // Before the untracked keyDown below reaches a dead renderer.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     auto sid = sidSpan(view->m_sessionId);
     int32_t mods = cdpModifiers(modifiers);

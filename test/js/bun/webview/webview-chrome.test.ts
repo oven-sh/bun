@@ -539,23 +539,29 @@ it("chrome: close() rejects pending promises", async () => {
 
 // Page.crash kills the tab's renderer the same way an OOM kill or a SIGKILL
 // of that process does. The browser lives on, so only this view is affected:
-// Chrome sends Inspector.targetCrashed on its session, never answers the work
-// the dead renderer owed, and gives the view a new renderer on the next
-// navigate.
-it("chrome: a renderer crash rejects the view's pending work and keeps the view usable", async () => {
+// Chrome sends Inspector.targetCrashed on its session, holds every command
+// the page has to answer until a navigation recreates the renderer, and
+// gives the view that new renderer on the next navigate.
+it("chrome: a renderer crash rejects the view's pending work and navigate() recovers it", async () => {
   const view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const message = (e: unknown) => (e as Error).message;
   try {
     await view.navigate(html("<title>before</title>"));
     // Both reject in the same turn, so both need a handler before the
     // first await, or the second one reports as an unhandled rejection.
     const settled = await Promise.allSettled([view.evaluate("new Promise(() => {})"), view.cdp("Page.crash")]);
     expect(settled.map(s => s.status)).toEqual(["rejected", "rejected"]);
-    expect(settled.map(s => (s as PromiseRejectedResult).reason.message)).toEqual([
+    expect(settled.map(s => message((s as PromiseRejectedResult).reason))).toEqual([
       "page crashed (renderer process died)",
       "page crashed (renderer process died)",
     ]);
-    // The slots are free and the view is not closed: a navigate gets a new
-    // renderer, and evaluate() works in it.
+    // The slots are free, and a page operation fails fast while the renderer
+    // is gone rather than waiting on a navigation that may never come.
+    expect(await view.evaluate("1").then(() => null, message)).toBe(
+      "page crashed (renderer process died), navigate() to recover",
+    );
+    // The view is not closed: a navigate gets a new renderer, and evaluate()
+    // works in it again.
     await view.navigate(html("<title>after</title>"));
     expect(view.title).toBe("after");
     expect(await view.evaluate("document.title")).toBe("after");

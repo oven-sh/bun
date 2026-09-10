@@ -528,14 +528,20 @@ If the browser subprocess dies unexpectedly (crash, OOM-kill, `SIGKILL`), every 
 
 ### Renderer death
 
-On the Chrome backend, one tab's renderer process can die while the browser keeps running. Pending promises on that view reject with `Error("page crashed (renderer process died)")`, and the view's [operation slots](#concurrency-model) are freed. The view stays open: the next `navigate()` makes Chrome create a new renderer for it.
+On the Chrome backend, one tab's renderer process can die while the browser keeps running (an OOM kill, a `SIGKILL`, a renderer bug). Pending promises on that view reject with `Error("page crashed (renderer process died)")`, and the view's [operation slots](#concurrency-model) are freed.
 
-Chrome reports this as the CDP event `Inspector.targetCrashed`, which the view also dispatches to `addEventListener`:
+The view stays open, but Chrome has no renderer for it until a navigation makes a new one. Until then:
+
+- `navigate()` works. It gives the view a new renderer, and the view is usable again.
+- Every other method rejects at once with `Error("page crashed (renderer process died), navigate() to recover")`.
+- `cdp()` is the exception. It stays a raw passthrough, so Chrome answers it on its own terms: most commands wait for the next navigation and then fail with `"Target crashed"`.
+
+Chrome reports the death as the CDP event `Inspector.targetCrashed`, which the view also dispatches to `addEventListener`:
 
 ```ts
-view.addEventListener("Inspector.targetCrashed", () => {
+view.addEventListener("Inspector.targetCrashed", async () => {
   console.log("the page crashed, reloading");
-  view.navigate(view.url);
+  await view.navigate(view.url);
 });
 ```
 

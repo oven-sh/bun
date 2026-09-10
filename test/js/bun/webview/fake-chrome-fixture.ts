@@ -3,9 +3,10 @@
 // and this file speaks the --remote-debugging-pipe protocol back to it:
 // NUL-delimited CDP JSON, commands arriving on fd 3, replies and events
 // leaving on fd 4. It implements just enough of CDP for navigate(),
-// evaluate() and screenshot(). evaluate() runs the expression in this
-// process, which is how the tests move chosen payloads across the pipes and
-// how they make the fake browser misbehave on cue (the __fake_* globals).
+// evaluate(), screenshot() and a renderer crash (Page.crash). evaluate()
+// runs the expression in this process, which is how the tests move chosen
+// payloads across the pipes and how they make the fake browser misbehave on
+// cue (the __fake_* globals).
 import { closeSync, readSync, writeSync } from "node:fs";
 
 const COMMANDS = 3;
@@ -67,14 +68,30 @@ function send(message: unknown) {
 let targets = 0;
 let loads = 0;
 
+// Sessions whose renderer Page.crash killed, with the ids of the commands
+// Chrome would be holding for the dead renderer. What real Chrome does: the
+// session stays attached; commands the renderer handles get no reply until a
+// Page.navigate creates a new renderer, and are then failed with "Target
+// crashed"; Page.captureScreenshot and Input.* fail at once; Page.navigate
+// itself is handled by the browser and works.
+const crashedSessions = new Map<string, number[]>();
+
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
+  const fail = (failedId: number, code: number, message: string) =>
+    send(
+      sessionId ? { id: failedId, error: { code, message }, sessionId } : { id: failedId, error: { code, message } },
+    );
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  if (method === cdpErrorOn) {
-    const error = { code: -32000, message: "Cannot navigate to invalid URL" };
-    return send(sessionId ? { id, error, sessionId } : { id, error });
+  if (method === cdpErrorOn) return fail(id, -32000, "Cannot navigate to invalid URL");
+
+  const held = sessionId === undefined ? undefined : crashedSessions.get(sessionId);
+  if (held && method !== "Page.navigate" && !method.startsWith("Target.")) {
+    if (method === "Page.captureScreenshot" || method.startsWith("Input.")) return fail(id, -32603, "Internal error");
+    held.push(id);
+    return;
   }
 
   switch (method) {
@@ -86,6 +103,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
       const loaderId = "L" + ++loads;
       reply({ frameId: "F", loaderId });
+      if (held) {
+        crashedSessions.delete(sessionId!);
+        for (const heldId of held) fail(heldId, -32000, "Target crashed");
+        event("Inspector.targetReloadedAfterCrash", {});
+      }
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
       event("Page.loadEventFired", { timestamp: loads });
       return;
@@ -93,10 +115,8 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Page.crash":
-      // Real Chrome kills the tab's renderer process, reports the death on
-      // the view's session, and never answers this command or anything else
-      // the dead renderer owed. The session stays attached: a later
-      // Page.navigate gets a new renderer.
+      // The renderer dies before it could answer this.
+      crashedSessions.set(sessionId!, [id]);
       event("Inspector.targetCrashed", {});
       return;
     case "Runtime.evaluate": {

@@ -186,6 +186,7 @@ mod generic_registrations {
         css_values::position::HorizontalPosition,
         css_values::position::VerticalPosition,
         css_values::percentage::NumberOrPercentage,
+        css_values::ident::NoneOrCustomIdentList,
     );
 
     // Length derives `css::ToCss` only (custom Calc-unwrapping `parse` is

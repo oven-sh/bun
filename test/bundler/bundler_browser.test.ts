@@ -118,6 +118,54 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // The polyfill is plain JS bundled into the user's output, so it cannot use
+  // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
+  // only rewritten inside src/js; in a browser bundle they are bare globals.
+  itBundled("browser/NodeEventsOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { once, EventEmitter } from "node:events";
+        const results = [];
+        {
+          const e = new EventEmitter();
+          const p = once(e, "hello");
+          e.emit("hello", 1, "two");
+          results.push(JSON.stringify(await p));
+        }
+        {
+          const e = new EventEmitter();
+          const p = once(e, "never");
+          e.emit("error", new Error("boom"));
+          results.push(await p.then(() => "resolved", err => "rejected:" + err.message));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const e = new EventEmitter();
+          const ac = new AbortController();
+          const p = once(e, "never", { signal: ac.signal });
+          ac.abort();
+          results.push(await p.then(() => "resolved", err => err.name + ":" + err.code));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const et = new EventTarget();
+          const p = once(et, "ping");
+          et.dispatchEvent(new Event("ping"));
+          const [ev] = await p;
+          results.push(ev.type);
+        }
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '[1,"two"]\nrejected:boom\n0,0\nAbortError:ABORT_ERR\n0,0\nping',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `
@@ -449,8 +497,8 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "<bun>": [
-        `Cannot use Node.js builtin "fs" as an entry point`,
-        `Cannot use Node.js builtin "node:fs" as an entry point`,
+        `Cannot use "fs" as an entry point: it resolves to a builtin module`,
+        `Cannot use "node:fs" as an entry point: it resolves to a builtin module`,
       ],
     },
   });

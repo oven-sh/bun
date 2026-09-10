@@ -240,6 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
 
     if (port.isString()) {
         auto port_str = port.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto trimmed = port_str.trim([](auto c) {
             // https://tc39.es/ecma262/multipage/text-processing.html#sec-string.prototype.trim
             // The definition of white space is the union of *WhiteSpace* and *LineTerminator*.
@@ -369,19 +370,6 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
-    ASCIILiteral name)
-{
-    if (value.isCell()) {
-        auto type = value.asCell()->type();
-        if (type >= Int8ArrayType && type <= DataViewType) {
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -505,12 +493,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
     if (normalized == BufferEncodingType::hex) {
         auto data = callFrame->argument(0);
 
         size_t length = 0;
         if (data.isString()) {
-            length = data.toString(globalObject)->length();
+            length = asString(data)->length();
         } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
             length = view->length();
         } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(data)) {
@@ -583,17 +572,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
 
 JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out)
 {
-    if (!value.isInt32()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
-    }
-
-    int32_t value_num = value.asInt32();
-    for (int32_t oneOfNum : oneOf) {
-        if (value_num == oneOfNum) {
-            if (out) {
-                *out = oneOfNum;
+    // Node compares with ArrayPrototypeIncludes(), so a number matches by value whether
+    // the JSValue holds it as an int32 or as a double.
+    if (value.isNumber()) {
+        double value_num = value.asNumber();
+        for (int32_t oneOfNum : oneOf) {
+            if (value_num == static_cast<double>(oneOfNum)) {
+                if (out) {
+                    *out = oneOfNum;
+                }
+                return JSValue::encode(jsUndefined());
             }
-            return JSValue::encode(jsUndefined());
         }
     }
 

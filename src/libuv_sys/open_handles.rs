@@ -204,11 +204,12 @@ pub fn stop_all_for_vm_teardown() {
             // SAFETY: listed ⇒ initialised on this thread and not closing; a
             // pipe/tty nobody adopted is a leaked Box handed to libuv here.
             (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(handle.cast()) },
-            // SAFETY: as above (a leaked Box<uv_tty_t> nobody adopted).
+            // SAFETY: as above (a leaked Box<Tty> nobody adopted).
             (None, Kind::Tty) => unsafe {
                 unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
-                    // SAFETY: heap tty (stdin's static tty is never listed).
-                    drop(unsafe { Box::from_raw(t) });
+                    // SAFETY: heap `Box<Tty>` (stdin's static tty is never
+                    // listed); `from_uv` recovers the owning box.
+                    drop(unsafe { Box::from_raw(super::Tty::from_uv(t)) });
                 }
                 uv_close(
                     handle,

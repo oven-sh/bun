@@ -47,9 +47,6 @@ pub enum Strong {
     Weak(bun_jsc::Weak<()>),
 }
 
-/// Re-export under the qualified name callers expect.
-pub type ReadableStreamStrong = Strong;
-
 impl Strong {
     fn value(&self) -> Option<JSValue> {
         match self {
@@ -140,13 +137,19 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__isClosedUnread(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
-    safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
+    /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
+    safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
@@ -188,49 +191,56 @@ impl ReadableStream {
         });
     }
 
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) {
+        if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }
 
         self.reload_tag();
 
-        match self.ptr {
+        let blob = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done();
-                    return Some(blob);
-                }
+                blobby.to_any_blob(global_this)?
             }
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
-                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
-                    let blob = Blob::init_with_store(store.clone(), global_this);
-                    // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started.get());
-                    self.done();
-                    return Some(webcore::blob::Any::Blob(blob));
+                let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
+                    return None;
+                };
+                let blob = Blob::init_with_store(store.clone(), global_this);
+                // The window `from_blob_copy_ref` moved onto the reader.
+                if let Some(offset) = blobby.start_offset {
+                    blob.offset.set(offset as webcore::blob::SizeType);
                 }
+                if let Some(size) = blobby.max_size {
+                    blob.size.set(size as webcore::blob::SizeType);
+                }
+                // it should be lazy, file shouldn't have opened yet.
+                debug_assert!(!blobby.started.get());
+                webcore::blob::Any::Blob(blob)
             }
             Source::Bytes(_) => {
                 // BACKREF: see `Source::bytes()` — payload valid while stream alive.
                 let bytes = self.ptr.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
-                if let Some(blob) = bytes.to_any_blob() {
-                    self.done();
-                    return Some(blob);
-                }
-                return None;
+                bytes.to_any_blob()?
             }
-            _ => {}
-        }
+            // Closed before anything read from it: the same store-less empty Blob `new Blob([])` gives.
+            Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
+                webcore::blob::Any::Blob(Blob::init_empty(global_this))
+            }
+            Source::JavaScript | Source::Invalid => return None,
+        };
 
-        None
+        self.done();
+        self.mark_consumed_as_body(global_this);
+        Some(blob)
     }
 
     pub fn done(&self) {
@@ -283,9 +293,9 @@ impl ReadableStream {
         result
     }
 
-    pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__detach(self.value, global_object);
+    /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
+    pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
+        ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native
@@ -395,6 +405,11 @@ impl ReadableStream {
         ReadableStream__isLocked(self.value, global_object)
     }
 
+    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
+    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
+        self.is_disturbed(global_object) || self.is_locked(global_object)
+    }
+
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
     pub fn is_readable_stream(value: JSValue) -> bool {
         ReadableStream__is(value)
@@ -492,7 +507,6 @@ impl ReadableStream {
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
-        // defer blob.deinit() → handled by Drop
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
@@ -598,6 +612,29 @@ impl ReadableStream {
         Ok(stream)
     }
 
+    /// A stream that delivers `bytes`, then errors with `err`.
+    pub fn from_bytes_then_error(
+        global_this: &JSGlobalObject,
+        bytes: Vec<u8>,
+        err: syscall::Error,
+    ) -> JsResult<JSValue> {
+        let source = NewSource::<FileReader>::new_mut(NewSource {
+            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            context: FileReader {
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                    global_this.bun_vm().as_mut().event_loop().cast(),
+                )),
+                buffered: bun_jsc::JsCell::new(bytes),
+                read_error: bun_jsc::JsCell::new(Some(err)),
+                // The reader never starts: a sink attached later ends with the error.
+                done: Cell::new(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        source.to_readable_stream(global_this)
+    }
+
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
@@ -683,9 +720,6 @@ pub enum Source {
     /// but with a FileLoader
     /// we can skip the FileLoader and just use the underlying File
     File(*mut FileReader),
-    /// This is a direct readable stream
-    /// That means we can turn it into whatever we want
-    Direct,
     Bytes(*mut ByteStream),
 }
 
@@ -748,14 +782,10 @@ pub trait SourceContext: Sized {
     fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_set_cached`
-    fn js_on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_get_cached`
-    fn js_on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_set_cached`
-    fn js_on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_get_cached`
-    fn js_on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_set_cached`
+    fn js_close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_get_cached`
+    fn js_close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     /// `js_${NAME}InternalReadableStreamSource::owner_set_cached`
     fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
@@ -816,7 +846,7 @@ pub trait SourceContext: Sized {
 // type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
 // The toJS/fromJS/fromJSDirect aliases are wired
 // manually below; cached-property accessors (pendingPromiseSetCached,
-// onDrainCallback{Get,Set}Cached) are emitted by the .classes.ts generator.
+// closeAdapter{Get,Set}Cached) are emitted by the .classes.ts generator.
 //
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
 // [`ReadableStream::from_js`] casts that straight to `*mut C`.
@@ -828,11 +858,6 @@ pub struct NewSource<C: SourceContext> {
     pub cancelled: bool,
     pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
-    pub close_handler: Option<fn(Option<*mut c_void>)>,
-    /// Borrowed opaque context for native `close_handler`s (never
-    /// owned/freed here). The JS path stores
-    /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
-    pub close_ctx: Option<NonNull<c_void>>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
     pub producer: Cell<streams::SourceHandle>,
@@ -846,7 +871,7 @@ pub struct NewSource<C: SourceContext> {
     /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
-    /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
+    /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
     /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
@@ -866,8 +891,6 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             cancelled: false,
             ref_count: 1,
             pending_err: None,
-            close_handler: None,
-            close_ctx: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
@@ -885,10 +908,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
@@ -918,32 +939,18 @@ macro_rules! source_context_codegen {
             $crate::generated_classes::$gen::pending_promise_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_set_cached(
+        fn js_close_adapter_set_cached(
             this: $crate::webcore::jsc::JSValue,
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::on_drain_callback_set_cached(this, global, value)
+            $crate::generated_classes::$gen::close_adapter_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_get_cached(
+        fn js_close_adapter_get_cached(
             this: $crate::webcore::jsc::JSValue,
         ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_drain_callback_get_cached(this)
-        }
-        #[inline]
-        fn js_on_close_callback_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
-        ) {
-            $crate::generated_classes::$gen::on_close_callback_set_cached(this, global, value)
-        }
-        #[inline]
-        fn js_on_close_callback_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_close_callback_get_cached(this)
+            $crate::generated_classes::$gen::close_adapter_get_cached(this)
         }
         #[inline]
         fn js_owner_set_cached(
@@ -977,17 +984,11 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_pending_promise_set_cached(this, global, value)
     }
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_drain_callback_set_cached(this, global, value)
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_close_adapter_set_cached(this, global, value)
     }
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_drain_callback_get_cached(this)
-    }
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_close_callback_set_cached(this, global, value)
-    }
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_close_callback_get_cached(this)
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue> {
+        C::js_close_adapter_get_cached(this)
     }
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_owner_set_cached(this, global, value)
@@ -1095,63 +1096,52 @@ impl<C: SourceContext> NewSource<C> {
         p.close(None);
     }
 
+    /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
     pub fn on_close(&mut self) {
         if self.cancelled {
             return;
         }
-        if let Some(close) = self.close_handler.take() {
-            // Identity check against the *exact* fn pointer stored by `set_on_close_from_js`, so the
-            // JS path receives `self` (not `close_ctx`, which is unset on that path).
-            if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
-            } else {
-                close(self.close_ctx.map(|p| p.as_ptr()));
-            }
-        }
-    }
-
-    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Stored *directly* in
-    /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
-    /// identity check above matches.
-    fn on_js_close(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        // Reached from `FileReader::on_reader_done` off the event loop. While
-        // the across-read ref is held (`increment_count` upgraded to Strong),
-        // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
-        // already finalized, `try_get()` is `None` and there is no callback.
-        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+        // A finalized wrapper reads `None` here (see `this_jsvalue`), so a close after GC is a no-op.
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
-        let global_this = this.global_this();
-        if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
-            if !cb.is_undefined() {
-                global_this.queue_microtask(cb, &[]);
-            }
+        let Some(adapter) = <Self as NewSourceCodegen>::close_adapter_get_cached(this_jsvalue)
+        else {
+            return;
+        };
+        if !adapter.is_cell() {
+            return;
         }
-        <Self as NewSourceCodegen>::on_close_callback_set_cached(
+        let global_this = self.global_this();
+        <Self as NewSourceCodegen>::close_adapter_set_cached(
             this_jsvalue,
             global_this,
             JSValue::UNDEFINED,
         );
+        Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
     }
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
-        // `on_js_close`, reached from `on_reader_done` off the event loop with
+        // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
-            self.upgrade_wrapper();
+            // SAFETY: `self` is live for the call.
+            unsafe { Self::upgrade_wrapper(self) };
         }
     }
 
-    fn upgrade_wrapper(&mut self) {
-        if let Some(global) = self.global_this.as_deref() {
-            if self.this_jsvalue.is_not_empty() {
-                self.this_jsvalue.upgrade(global);
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    unsafe fn upgrade_wrapper(this: *mut Self) {
+        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
+        unsafe {
+            if let Some(global) = (*this).global_this.as_deref() {
+                if (*this).this_jsvalue.is_not_empty() {
+                    (*this).this_jsvalue.upgrade(global);
+                }
             }
         }
     }
@@ -1159,18 +1149,32 @@ impl<C: SourceContext> NewSource<C> {
     /// The producer keeps its native ref but stops rooting the wrapper: nothing
     /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
-    /// Same access pattern as [`Self::increment_count`]: reached through the
-    /// producer's raw pointer while the context may be borrowed.
-    pub fn unroot_wrapper(&mut self) {
-        self.wrapper_unrooted.set(true);
-        self.this_jsvalue.downgrade();
+    ///
+    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
+    /// `this` (the chunk it is delivering to), so only the fields written here
+    /// are touched, never a `&mut Self` that would cover the context too.
+    ///
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    pub unsafe fn unroot_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(true);
+            (*this).this_jsvalue.downgrade();
+        }
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
-    pub fn root_wrapper(&mut self) {
-        self.wrapper_unrooted.set(false);
-        if self.ref_count > 1 {
-            self.upgrade_wrapper();
+    ///
+    /// # Safety
+    /// As [`Self::unroot_wrapper`].
+    pub unsafe fn root_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(false);
+            if (*this).ref_count > 1 {
+                Self::upgrade_wrapper(this);
+            }
         }
     }
 
@@ -1358,96 +1362,6 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.cancel();
         Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_close_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        // Store the handler by *identity* — `NewSource::on_close` compares the
-        // stored fn pointer against `on_js_close` to decide whether to pass
-        // `self` (JS path) or `close_ctx` (native path).
-        self.close_handler = Some(Self::on_js_close);
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        if value.is_undefined() {
-            if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-                <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                    this_jsvalue,
-                    global_object,
-                    JSValue::UNDEFINED,
-                );
-            }
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onclose",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                cb,
-            );
-        }
-        Ok(())
-    }
-
-    pub fn set_on_drain_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
-            return Ok(());
-        };
-
-        if value.is_undefined() {
-            <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onDrain",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        <Self as NewSourceCodegen>::on_drain_callback_set_cached(this_jsvalue, global_object, cb);
-        Ok(())
-    }
-
-    pub fn get_on_close_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            if let Some(val) =
-                <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue)
-            {
-                return val;
-            }
-        }
-        JSValue::UNDEFINED
-    }
-
-    pub fn get_on_drain_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        self.this_jsvalue
-            .try_get()
-            .and_then(<Self as NewSourceCodegen>::on_drain_callback_get_cached)
-            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub fn update_ref_from_js(

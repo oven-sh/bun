@@ -47,6 +47,11 @@ pub struct DiskCacheCtx {
     /// branch that reads it is gated on that flag).
     pub(crate) cache_directory: Option<Fd>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
+    /// `--prefer-offline` / `--offline`: a cached manifest counts as fresh regardless of
+    /// its age (stored as `Value::Manifest`), so resolution can use it without a
+    /// revalidation request. It is still stored as `Value::Expired` when the caller needs
+    /// the extended manifest and the cached one lacks it — age is waived, content is not.
+    pub(crate) accept_expired: bool,
 }
 
 impl PackageManifestMap {
@@ -187,9 +192,10 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        if ctx.enable_manifest_cache_control
-                            && manifest.pkg.public_max_age
-                                > ctx.timestamp_for_manifest_cache_control
+                        if ctx.accept_expired
+                            || (ctx.enable_manifest_cache_control
+                                && manifest.pkg.public_max_age
+                                    > ctx.timestamp_for_manifest_cache_control)
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

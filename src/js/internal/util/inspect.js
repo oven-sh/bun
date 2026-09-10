@@ -30,7 +30,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 
-const { pathToFileURL } = require("node:url");
 let BufferModule;
 
 const primordials = require("internal/primordials");
@@ -83,9 +82,7 @@ const NumberPrototypeToString = uncurryThis(Number.prototype.toString);
 const NumberPrototypeValueOf = uncurryThis(Number.prototype.valueOf);
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectEntries = Object.entries;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const ObjectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -100,7 +97,6 @@ const ReflectOwnKeys = Reflect.ownKeys;
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 const RegExpPrototypeSymbolReplace = uncurryThis(RegExp.prototype[Symbol.replace]);
 const RegExpPrototypeSymbolSplit = uncurryThis(RegExp.prototype[Symbol.split]);
-const RegExpPrototypeTest = uncurryThis(RegExp.prototype.test);
 const RegExpPrototypeToString = uncurryThis(RegExp.prototype.toString);
 const SetPrototypeEntries = uncurryThis(Set.prototype.entries);
 const SetPrototypeValues = uncurryThis(Set.prototype.values);
@@ -201,12 +197,20 @@ const { validateObject, kValidateObjectAllowArray } = require("internal/validato
 
 const SymbolToPrimitive = Symbol.toPrimitive;
 
-const builtInObjects = new SafeSet(
-  ArrayPrototypeFilter(
-    ObjectGetOwnPropertyNames(globalThis),
-    e => RegExpPrototypeExec(/^[A-Z][a-zA-Z0-9]+$/, e) !== null,
-  ),
-);
+// Node.js computes this from `globalThis` at bootstrap, before any host globals
+// (Buffer, URL, ...) are installed. Bun's globalThis already has them when this
+// module loads, so hardcode the names Node observes instead of scraping.
+// prettier-ignore
+const builtInObjects = new SafeSet([
+  "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
+  "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
+  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
+  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
+  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
+  "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
+  "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
 const isUndetectableObject = v => typeof v === "undefined" && v !== undefined;
@@ -241,51 +245,16 @@ const kObjectType = 0;
 const kArrayType = 1;
 const kArrayExtrasType = 2;
 
-// Work-arounds for Safari not implementing negative look-behinds.
-// Remove all of this once Safari 16.4 is rolled out "enough".
-let strEscapeSequencesRegExp,
-  strEscapeSequencesReplacer,
-  strEscapeSequencesRegExpSingle,
-  strEscapeSequencesReplacerSingle,
-  extractedSplitNewLinesSlow;
-try {
-  // Change from regex literals to RegExp constructors to avoid unrecoverable
-  // syntax error at load time.
-  strEscapeSequencesRegExp = new RegExp(
-    "[\\x00-\\x1f\\x27\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-  );
-  strEscapeSequencesReplacer = new RegExp(
-    "[\x00-\\x1f\\x27\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-    "g",
-  );
-  strEscapeSequencesRegExpSingle = new RegExp(
-    "[\\x00-\\x1f\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-  );
-  strEscapeSequencesReplacerSingle = new RegExp(
-    "[\\x00-\\x1f\\x5c\\x7f-\\x9f]|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]",
-    "g",
-  );
-  const extractedNewLineRe = new RegExp("(?<=\\n)");
-  extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
-  // CI doesn't run in an elderly runtime
-} catch {
-  // These are from a previous version of node,
-  // see commit 76372607a6743cc75eae50ca58657c9e8a654428
-  // dated 2021-12-06
-  strEscapeSequencesRegExp = /[\x00-\x1f\x27\x5c\x7f-\x9f]/;
-  strEscapeSequencesReplacer = /[\x00-\x1f\x27\x5c\x7f-\x9f]/g;
-  strEscapeSequencesRegExpSingle = /[\x00-\x1f\x5c\x7f-\x9f]/;
-  strEscapeSequencesReplacerSingle = /[\x00-\x1f\x5c\x7f-\x9f]/g;
-  extractedSplitNewLinesSlow = value => {
-    const lines = RegExpPrototypeSymbolSplit(/\n/, value);
-    const last = ArrayPrototypePop(lines);
-    const nlLines = ArrayPrototypeMap(lines, line => line + "\n");
-    if (last !== "") {
-      nlLines.push(last);
-    }
-    return nlLines;
-  };
-}
+const strEscapeSequencesRegExp =
+  /[\x00-\x1f\x27\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const strEscapeSequencesReplacer =
+  /[\x00-\x1f\x27\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const strEscapeSequencesRegExpSingle =
+  /[\x00-\x1f\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+const strEscapeSequencesReplacerSingle =
+  /[\x00-\x1f\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+const extractedNewLineRe = /(?<=\n)/;
+const extractedSplitNewLinesSlow = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 
 const extractedSplitNewLines = value => {
   if (typeof value === "string") {
@@ -1911,7 +1880,7 @@ function formatError(err, constructor, tag, ctx, keys) {
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= pathToFileURL(workingDirectory).href;
+              esmWorkingDirectory ??= require("node:url").pathToFileURL(workingDirectory).href;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;
@@ -2774,15 +2743,18 @@ function getStringWidth(str, removeControlChars = true) {
 // node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
-const ansi = new RegExp(
-  "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-    "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-    "[\\dA-PR-TZcf-nq-uy=><~]))",
-  "g",
-);
+let ansi;
+function getAnsiRegExp() {
+  return (ansi ??= new RegExp(
+    "[\\u001B\\u009B][[\\]()#;?]*" +
+      "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
+      "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
+      "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+      "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
+      "[\\dA-PR-TZcf-nq-uy=><~]))",
+    "g",
+  ));
+}
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
@@ -2790,27 +2762,11 @@ function stripVTControlCharacters(str) {
   if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
     return str;
   }
-  return RegExpPrototypeSymbolReplace(ansi, str, "");
+  return RegExpPrototypeSymbolReplace(getAnsiRegExp(), str, "");
 }
 
 // utils
-function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
-  const desc = ObjectGetOwnPropertyDescriptors(a);
-  const ret = [];
-  for (const [k, v] of ObjectEntries(desc)) {
-    if (!RegExpPrototypeTest(/^(0|[1-9][0-9]*)$/, k) || NumberParseInt(k, 10) >= 2 ** 32 - 1) {
-      // Arrays are limited in size
-      if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
-      else ArrayPrototypePush.$call(ret, k);
-    }
-  }
-  for (const s of ObjectGetOwnPropertySymbols(a)) {
-    const v = ObjectGetOwnPropertyDescriptor(a, s);
-    if (filter === ONLY_ENUMERABLE && !v.enumerable) continue;
-    ArrayPrototypePush.$call(ret, s);
-  }
-  return ret;
-}
+const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
 function getPromiseDetails(promise) {
   const state = $peekPromiseStatus(promise);
   if (state !== 0) {

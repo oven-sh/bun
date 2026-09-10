@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
@@ -231,7 +231,7 @@ extern "C" fn on_data(
 
         let span = hostname.unwrap();
         #[allow(unused_labels)]
-        let mut hostname_string = if let Some(id) = scope_id {
+        let hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
                 {
@@ -254,7 +254,7 @@ extern "C" fn on_data(
                 BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
             }
         } else {
-            BunString::init(span)
+            BunString::from_bytes(span)
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();
@@ -279,7 +279,7 @@ extern "C" fn on_data(
                 return;
             }
         };
-        let hostname_js = match hostname_string.transfer_to_js(global_this) {
+        let hostname_js = match hostname_string.into_js(global_this) {
             Ok(v) => v,
             Err(_) => {
                 loop_.exit();
@@ -333,7 +333,7 @@ pub struct UDPSocketConfig {
 impl Default for UDPSocketConfig {
     fn default() -> Self {
         Self {
-            hostname: BunString::empty(),
+            hostname: BunString::EMPTY,
             connect: None,
             port: 0,
             flags: 0,
@@ -415,8 +415,6 @@ impl UDPSocketConfig {
             shared_fd,
             ..Default::default()
         };
-
-        // `config` cleanup: Drop handles this on `?` paths.
 
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
             if !socket.is_object() {
@@ -501,9 +499,6 @@ impl UDPSocketConfig {
         Ok(config)
     }
 }
-
-// `UDPSocketConfig::deinit` becomes Drop: `hostname.deref()` and `connect.address.deref()` are
-// handled by `bun_core::String`'s own Drop. No explicit body needed.
 
 #[derive(Clone, Copy)]
 struct ConnectInfo {
@@ -643,6 +638,22 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    hostname_z.as_bytes(),
+                )),
+            );
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -728,9 +739,9 @@ impl UDPSocket {
                 };
                 let sys_err = SystemError {
                     errno: err,
-                    code: BunString::static_(code).into(),
-                    message: message.into(),
-                    syscall: BunString::static_(syscall).into(),
+                    code: BunString::static_(code),
+                    message,
+                    syscall: BunString::static_(syscall),
                     ..Default::default()
                 };
                 let error_value = sys_err.to_error_instance(global_this);
@@ -1409,9 +1420,9 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Collect the slices into a Vec so the borrowed bytes live until
-        // `socket.send()`.
-        let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
+        // Collect the strings' UTF-8 bytes into a Vec so they live until
+        // `socket.send()` (a ref for 8-bit ASCII strings, a transcode otherwise).
+        let mut string_slices: Vec<Utf8Bytes<'static>> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
             // (the underlying buffer is GC-rooted via `payload_vals`; the
@@ -1428,11 +1439,8 @@ impl UDPSocket {
                     }
                     break 'brk array_buffer.slice();
                 }
-                // Phase 1 stored the primitive JSString; `asString()` is a
-                // plain cast (no `toPrimitive`, no user JS). `JSString` is an
-                // `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
-                string_slices
-                    .push(bun_jsc::JSString::opaque_ref(val.as_string()).to_slice(global_this));
+                // Phase 1 stored the primitive JSString, so this runs no user JS.
+                string_slices.push(val.to_utf8(global_this)?);
                 break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
@@ -1512,7 +1520,8 @@ impl UDPSocket {
         };
 
         let payload_arg = arguments[0];
-        let mut payload_str = ZigStringSlice::empty();
+        let payload_view;
+        let mut payload_str = Utf8Bytes::EMPTY;
         // Hoisted so the `slice()` borrow outlives the `'brk` block; the
         // backing store is kept alive by `payload_arg` on the JS stack.
         let array_buffer = payload_arg.as_array_buffer(global_this);
@@ -1528,8 +1537,8 @@ impl UDPSocket {
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                // SAFETY: to_js_string returned non-null on success path.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
+                payload_view = payload_arg.to_js_string_view(global_this)?;
+                payload_str = payload_view.to_utf8();
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1575,7 +1584,7 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let str = bun_core::OwnedString::new(address_val.to_bun_string(global_this)?);
+        let str = address_val.to_bun_string(global_this)?;
         let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
@@ -1770,21 +1779,24 @@ impl UDPSocket {
         JSValue::js_number(uws::udp::Socket::opaque_mut(socket).bound_port() as f64)
     }
 
-    fn create_sock_addr(global_this: &JSGlobalObject, address_bytes: &[u8], port: u16) -> JSValue {
-        let sockaddr: SocketAddress = match SocketAddress::init(address_bytes, port) {
-            Ok(sa) => sa,
-            Err(_) => return JSValue::UNDEFINED,
+    fn create_sock_addr(
+        global_this: &JSGlobalObject,
+        address_bytes: &[u8],
+        port: u16,
+    ) -> JsResult<JSValue> {
+        let Ok(sockaddr) = SocketAddress::init(address_bytes, port) else {
+            return Ok(JSValue::UNDEFINED);
         };
-        sockaddr.into_dto(global_this).unwrap_or(JSValue::UNDEFINED)
+        sockaddr.into_dto(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_address(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1802,15 +1814,18 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_remote_address(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_remote_address(
+        this: &Self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         if this.closed.get() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         let Some(connect_info) = this.connect_info.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let Some(socket) = this.socket.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         let mut buf = [0u8; 64];
         let mut length: i32 = 64;
@@ -1895,8 +1910,16 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 2 arguments")));
         }
 
-        let str = bun_core::OwnedString::new(args[0].to_bun_string(global_this)?);
+        let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 
@@ -2303,7 +2326,7 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
     #[cfg(not(windows))]
     {
         let fd = dgram_owned_fd_arg(global, frame.argument(0))?;
-        let address = bun_core::OwnedString::new(frame.argument(1).to_bun_string(global)?);
+        let address = frame.argument(1).to_bun_string(global)?;
         let address_z = address.to_owned_slice_z();
         let port_num = frame.argument(2).coerce_to_i32(global)?;
         let port: u16 = if (0..=0xffff).contains(&port_num) {
@@ -2395,7 +2418,7 @@ pub(crate) fn js_dgram_get_sock_name_fd(
                     .to_js(global),
             ));
         };
-        Ok(UDPSocket::create_sock_addr(global, bytes, port))
+        UDPSocket::create_sock_addr(global, bytes, port)
     }
     #[cfg(windows)]
     {
@@ -2539,16 +2562,10 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
-            // → `E` for us, so `e` is `bun_sys::E` here.
-            if let Some(e) = bun_sys::windows::WSAGetLastError() {
-                if e != bun_sys::E::SUCCESS {
-                    // `WSASetLastError` is declared `safe fn` in
-                    // `bun_windows_sys::ws2_32` (thread-local Winsock error
-                    // slot write — no preconditions).
-                    bun_sys::windows::ws2_32::WSASetLastError(0);
-                    return Some(bun_sys::Error::from_code(e, tag));
-                }
+            let err = bun_sys::windows::Win32Error::get();
+            if err != bun_sys::windows::Win32Error::SUCCESS {
+                bun_sys::windows::kernel32::SetLastError(0);
+                return Some(bun_sys::Error::from_win32(err, tag));
             }
         }
 

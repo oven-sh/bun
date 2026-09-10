@@ -43,7 +43,7 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { readdirSync, rmSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
@@ -92,7 +92,7 @@ interface BundledBuiltin {
  */
 async function processFileSplit(filename: string): Promise<{ functions: BundledBuiltin[]; internal: boolean }> {
   const basename = path.basename(filename, ".ts");
-  let contents = await Bun.file(filename).text();
+  let contents = readFileSync(filename, "utf8");
 
   contents = applyGlobalReplacements(contents);
   const originalContents = contents;
@@ -286,7 +286,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     const useThis = true;
 
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    await Bun.write(
+    writeFileSync(
       tmpFile,
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -384,6 +384,7 @@ interface BundleBuiltinFunctionsArgs {
 }
 
 export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+  mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();

@@ -12,9 +12,10 @@ use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_io::{self as Async};
+use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
-use bun_uws::{self as uws, SocketGroup, SslCtx};
+use bun_uws::{self as uws, SocketGroup};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
@@ -30,8 +31,8 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `node_fs_stat_watcher_scheduler`
+//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
@@ -209,8 +210,6 @@ pub struct RareData {
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
     pub(crate) hot_map: Option<HotMap>,
-    /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
-    pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
@@ -247,7 +246,8 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    pub default_client_ssl_ctx: Option<*mut SslCtx>,
+    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -269,6 +269,10 @@ pub struct RareData {
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
     compression_scratch: Option<Vec<u8>>,
+    /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
+    websocket_inflate_scratch: Option<Vec<u8>>,
+    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
+    libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -305,7 +309,6 @@ impl Default for RareData {
             stdout_mode: 0,
             entropy_cache: None,
             hot_map: None,
-            cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
@@ -329,6 +332,8 @@ impl Default for RareData {
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,
             compression_scratch: None,
+            websocket_inflate_scratch: None,
+            libdeflate_decompressor: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -521,6 +526,46 @@ impl ProxyEnvSlots {
         sync_one!(b"NO_PROXY", NO_PROXY);
         sync_one!(b"no_proxy", no_proxy);
     }
+
+    /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
+    /// slot refs and put the captured values back into `map`. Caller holds
+    /// the `ProxyEnvStorage` lock, like the setter.
+    pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
+        for_each_proxy_field!(self, |_name, field| {
+            *field = None;
+        });
+        for (key, value) in &snapshot.entries {
+            match value {
+                Some(value) => bun_core::handle_oom(map.put(key, value)),
+                None => map.remove(key),
+            }
+        }
+    }
+}
+
+const PROXY_ENV_KEYS: [&[u8]; 6] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
+
+/// The six proxy keys as the env map held them when the test runner started.
+/// `process.env` writes to these keys go through `Bun__setEnvValue` into the
+/// per-VM env map, which seeds every later global's `process.env`, so
+/// `--isolate` restores them from this between files.
+pub struct ProxyEnvSnapshot {
+    entries: [(&'static [u8], Option<Box<[u8]>>); 6],
+}
+
+impl ProxyEnvSnapshot {
+    pub fn capture(map: &bun_dotenv::Map) -> Self {
+        Self {
+            entries: PROXY_ENV_KEYS.map(|key| (key, map.get(key).map(Box::from))),
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -680,6 +725,31 @@ impl RareData {
             buffer.clear();
             self.compression_scratch = Some(buffer);
         }
+    }
+
+    /// Empty `Vec` with whatever capacity the last WebSocket client inflate left behind. By value,
+    /// like [`Self::take_h2_padded_frame_buffer`]: delivering the payload runs JS, which can reach
+    /// this path again before the buffer comes back.
+    pub fn take_websocket_inflate_scratch(&mut self) -> Vec<u8> {
+        self.websocket_inflate_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_websocket_inflate_scratch(&mut self, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
+            buffer.clear();
+            self.websocket_inflate_scratch = Some(buffer);
+        }
+    }
+
+    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
+    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
+    pub fn libdeflate_decompressor(&mut self) -> Option<&mut libdeflate::Decompressor> {
+        if self.libdeflate_decompressor.is_none() {
+            self.libdeflate_decompressor = libdeflate::OwnedDecompressor::new();
+        }
+        self.libdeflate_decompressor.as_deref_mut()
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
@@ -1032,14 +1102,14 @@ fn set_tls_default_ciphers_from_js(
     if !ciphers.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
-    let sliced = ciphers.to_slice(global_this)?;
+    let utf8 = ciphers.to_utf8(global_this)?;
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(sliced.slice());
+        .set_tls_default_ciphers(utf8.slice());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1064,20 +1134,16 @@ fn get_tls_default_ciphers_from_js(
 impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
         }
-        debug_assert!(self.cron_jobs.is_empty());
 
-        if let Some(s) = self.default_client_ssl_ctx.take() {
-            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
-        }
+        self.default_client_ssl_ctx = None;
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 

@@ -755,6 +755,9 @@ if (isDockerEnabled()) {
               expect(column).toBe(value);
               value++;
             }
+            // sizes past JSFinalObject::maxInlineCapacity take SQLClient.cpp's
+            // null-structure fallback; the row must still be spreadable.
+            expect({ ...result[0] }).toEqual(result[0]);
           });
         }
       }
@@ -860,6 +863,19 @@ if (isDockerEnabled()) {
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
       expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    });
+
+    // https://github.com/oven-sh/bun/issues/39940
+    // close() used to fire onclose once per pool slot, even for slots whose
+    // handshake never completed, so onconnect/onclose pairing drifted.
+    test("close() fires onclose only for connections that fired onconnect", async () => {
+      const onconnect = mock();
+      const onclose = mock();
+      const sql = postgres({ ...options, max: 10, onconnect, onclose });
+      await sql`select 1`;
+      await sql.close();
+      expect(onconnect).toHaveBeenCalled();
+      expect(onclose).toHaveBeenCalledTimes(onconnect.mock.calls.length);
     });
 
     // Last one wins.

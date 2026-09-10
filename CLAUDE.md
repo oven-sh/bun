@@ -123,7 +123,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/bun_core/` - The `bun.*`-namespace foundation: strings/`String` (`string/`), formatting (`fmt.rs`), logging (`output.rs`), feature flags, env vars, allocator helpers
 - `src/sys/` - Cross-platform syscall wrappers (`file.rs`, `dir.rs`, `fd.rs`, `Error.rs`, `tmp.rs`) — the `bun.sys` equivalent
 - `src/collections/`, `src/threading/`, `src/paths/`, `src/semver/`, `src/sourcemap/` - shared utilities
-- `src/bun_bin/` - Cargo entrypoint; produces `libbun_rust.a`, linked into the final binary
+- `src/runtime/bin_entry/` - process entry point (`main`); `bun_runtime` is built as the staticlib (`libbun_runtime.a`) linked into the final binary
 - `src/runtime/cli/` - CLI argument parsing and command dispatch
 - `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
 - `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
@@ -227,7 +227,7 @@ If output from these commands looks wrong (mis-parsed annotation HTML, a field B
 
 ## Reading PR Feedback
 
-`gh pr view --comments` silently omits review summaries and line-level review comments. For the complete picture — especially when responding to a review — use `bun run pr:comments`, which fetches issue comments, reviews, and line comments in one chronological, labelled listing.
+Use **bun run pr::comments** to read PR comments. `gh` CLI misses comments after 100 and you get confused by the GraphQL API sometimes.
 
 ```bash
 bun run pr:comments                    # current branch's PR — resolved threads hidden

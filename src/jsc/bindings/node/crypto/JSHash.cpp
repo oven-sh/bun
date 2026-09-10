@@ -132,8 +132,7 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
 
 bool JSHash::update(std::span<const uint8_t> input)
 {
-    // Succeeds even once digest() freed the state, as in OpenSSL (and so Node):
-    // https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/evp/digest.c#L387-L393
+    // Empty input succeeds even once digest() freed the state, as in OpenSSL and so Node: https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/evp/digest.c#L387-L393
     if (input.empty()) {
         return true;
     }
@@ -235,8 +234,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
     }
 
-    // Hash.prototype._flush passes `false`: no finalized check and no finalizing, as in Node.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hash.js#L129-L160
+    // Hash.prototype._flush passes `false`: no finalized check and no finalizing, like Node's _flush: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hash.js#L129-L160
     bool finalize = true;
     JSValue finalizeValue = callFrame->argument(1);
     if (finalizeValue.isBoolean()) {
@@ -261,8 +259,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     uint32_t len = hash->m_mdLen;
 
-    // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate),
-    // so free the native state here and serve later calls from m_digest.
+    // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate), so free it here and serve later calls from m_digest.
     if (!hash->m_digest && len > 0) {
         if (hash->m_zigHasher) {
             size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);

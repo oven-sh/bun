@@ -392,22 +392,25 @@ test.concurrent("click(selector) sends the position the page reported", async ()
   ]);
 });
 
-// The same reply without result.value. The handler used to read the position
-// with strtof() straight off the pointer jsonField returns, which is null
-// when the field is absent.
-test.concurrent("a click reply with no position rejects", async () => {
-  const result = await runScenario(`
-    const view = new Bun.WebView({
-      backend: { ...backend, argv: [...backend.argv, "--malformed=click-no-value"] },
-      width: 100,
-      height: 100,
-    });
-    await view.navigate("http://fake/");
-    print(await outcome(view.click("#target", { timeout: 100 })));
-    view.close();
-  `);
-  expect(result).toEqual({ rejected: "malformed click response" });
-});
+// The same reply without result.value, or with a position that is not two
+// finite numbers. The handler used to read the position with strtof()
+// straight off the pointer jsonField returns, which is null when the field
+// is absent.
+for (const kind of ["click-no-value", "click-huge-value"]) {
+  test.concurrent(`a click reply with no usable position rejects (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/");
+      print(await outcome(view.click("#target", { timeout: 100 })));
+      view.close();
+    `);
+    expect(result).toEqual({ rejected: "malformed click response" });
+  });
+}
 
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that

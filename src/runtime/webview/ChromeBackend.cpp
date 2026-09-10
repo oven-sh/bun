@@ -25,6 +25,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
 
+#include <cmath>
 #include <errno.h>
 #include <mutex>
 #include <stdio.h>
@@ -1082,12 +1083,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto point = root ? root->asArray() : nullptr;
         auto px = point && point->length() == 2 ? point->get(0)->asDouble() : std::nullopt;
         auto py = px ? point->get(1)->asDouble() : std::nullopt;
-        if (!py) {
+        // "1e999" parses to infinity, which Command::num would put on the
+        // wire as a bare `Infinity` token.
+        if (!py || !std::isfinite(*px) || !std::isfinite(*py)) {
             settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
             return;
         }
-        float cx = static_cast<float>(*px);
-        float cy = static_cast<float>(*py);
+        double cx = *px;
+        double cy = *py;
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();

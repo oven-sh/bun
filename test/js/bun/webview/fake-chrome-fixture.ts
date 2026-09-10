@@ -40,6 +40,7 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 //   attach-no-session-id   Target.attachToTarget answers {}
 //   attach-bad-utf8        ... answers a sessionId that is not valid UTF-8
 //   click-no-value         the click(selector) check answers without result.value
+//   click-huge-value       ... answers a position too large for a double (1e999)
 //   detach-no-session-id   Target.detachedFromTarget arrives with params {}
 //   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
 const malformed = process.argv.find(a => a.startsWith("--malformed="))?.slice("--malformed=".length);
@@ -143,6 +144,12 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       // process cannot run it; answer the [cx, cy] the page would return.
       if (params.expression.includes("elementFromPoint")) {
         if (malformed === "click-no-value") return reply({ result: { type: "undefined" } });
+        // JSON.stringify cannot write 1e999 (it is Infinity, which encodes
+        // as null), so the literal goes in by hand.
+        if (malformed === "click-huge-value") {
+          const frame = JSON.stringify({ id, result: { result: { type: "object", value: "HUGE" } }, sessionId });
+          return sendBytes(Buffer.from(frame.replace('"HUGE"', "[1e999,0]") + "\0"));
+        }
         return reply({ result: { type: "object", value: [12, 34] } });
       }
       let value: unknown;

@@ -492,19 +492,15 @@ describe("a MIME string that does not fit in a string", () => {
   // The child holds 2 GiB of strings. `repeat` builds each one in a single
   // allocation, which `Buffer.alloc(...).toString()` does not.
   describe.skipIf(totalmem() < 10 * 1024 ** 3)("a result past String::MaxLength", () => {
-    test(
-      "MIMEType.prototype.toString",
-      async () => {
-        expect(
-          await buildInChild(`
+    test("MIMEType.prototype.toString", async () => {
+      expect(
+        await buildInChild(`
             const mime = new MIMEType("text/plain");
             MIMEParams.prototype.toString = () => "a".repeat(2 ** 31 - 1);
             return String(mime);
           `),
-        ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
-      },
-      120_000,
-    );
+      ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
+    }, 120_000);
 
     // A debug build validates a parameter name and a type at about 25 ns per
     // character, so this case and the next take a minute each there. The case

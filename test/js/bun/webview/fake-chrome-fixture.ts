@@ -66,15 +66,30 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
+let lastUrl = "about:blank";
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+  const committed = (url: string) => {
+    lastUrl = url;
+    const loaderId = "L" + ++loads;
+    event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
+    event("Page.loadEventFired", { timestamp: loads });
+    return loaderId;
+  };
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
+  }
+
+  // The browser endpoint carries Target.* and Browser.* only. Every other
+  // domain lives on a target's session, so Chrome answers a command that
+  // arrives with no sessionId the same way it answers an unknown method.
+  if (!sessionId && !method.startsWith("Target.") && !method.startsWith("Browser.")) {
+    return send({ id, error: { code: -32601, message: `'${method}' wasn't found` } });
   }
 
   switch (method) {
@@ -84,10 +99,13 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
+      reply({ frameId: "F", loaderId: "L" + (loads + 1) });
+      committed(params.url);
+      return;
+    }
+    case "Page.reload": {
+      reply({});
+      committed(lastUrl);
       return;
     }
     case "Page.captureScreenshot":

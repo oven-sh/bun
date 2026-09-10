@@ -340,7 +340,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
 #endif
 }
 
-void Transport::send(uint32_t cdpId, Command&& cmd)
+void Transport::send(uint32_t cdpId, Command&& cmd, std::span<const char> sessionId)
 {
     if (m_mode == TransportMode::WebSocket) {
         // WS text frame per CDP message — the framing IS the delimiter.
@@ -349,7 +349,7 @@ void Transport::send(uint32_t cdpId, Command&& cmd)
         // m_pending (view closed before open = don't create its target).
         // sendTextNative is a no-op when m_state != OPEN, so queuing is
         // mandatory here or commands silently drop.
-        auto body = cmd.finishToString();
+        auto body = cmd.finishToString(sessionId);
         if (m_wsOpen) {
             m_ws->sendTextNative(body);
         } else {
@@ -357,7 +357,7 @@ void Transport::send(uint32_t cdpId, Command&& cmd)
         }
         return;
     }
-    cmd.finishAndWrite([this](const char* d, size_t n) { writeRaw(d, n); });
+    cmd.finishAndWrite([this](const char* d, size_t n) { writeRaw(d, n); }, sessionId);
 }
 
 // --- WebSocket transport ----------------------------------------------------
@@ -643,6 +643,10 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
         return view->m_pendingMisc;
     case PendingSlot::Cdp:
         return view->m_pendingCdp;
+    case PendingSlot::Attach:
+        // The attach chain settles no slot: its failures go through
+        // failDeferred, and its successes chain to the next command.
+        break;
     }
     ASSERT_NOT_REACHED();
     return view->m_pendingMisc;
@@ -694,6 +698,85 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
     rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
     rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
     rejectSlotAsHandled(g, view, view->m_pendingCdp, err);
+}
+
+// --- Attach chain + parked commands ----------------------------------------
+// Every Page.*, Runtime.*, Input.* and Emulation.* command has to carry a
+// sessionId: those domains exist per target, not on the browser endpoint.
+// A view gets its session from Target.createTarget → Target.attachToTarget
+// → Page.enable, so the first operation on a view starts that chain and
+// waits for it.
+
+void Transport::sendToView(JSWebView* view, uint32_t cdpId, Command&& cmd)
+{
+    if (!view->m_sessionId.isEmpty()) {
+        send(cdpId, WTF::move(cmd), sidSpan(view->m_sessionId));
+        return;
+    }
+    m_deferred.append(DeferredCmd { view->m_viewId, cdpId, WTF::move(cmd) });
+    if (!std::exchange(view->m_chromeAttaching, true)) beginAttach(view);
+}
+
+void Transport::beginAttach(JSWebView* view)
+{
+    // newWindow:true is required for width/height — without it Chrome
+    // reuses an existing window and rejects position params. Headless has
+    // no visible window either way; "new window" just means "new top-level
+    // browsing context".
+    uint32_t id = nextId();
+    m_pending.add(id, Pending { Method::TargetCreateTarget, PendingSlot::Attach, view->m_viewId });
+    send(id,
+        Command(id, "Target.createTarget"_s)
+            .str("url"_s, "about:blank"_s)
+            .boolean("newWindow"_s, true)
+            .num("width"_s, static_cast<int32_t>(view->m_width))
+            .num("height"_s, static_cast<int32_t>(view->m_height)));
+}
+
+void Transport::drainDeferred(JSWebView* view)
+{
+    auto sid = sidSpan(view->m_sessionId);
+    uint32_t vid = view->m_viewId;
+    for (size_t i = 0; i < m_deferred.size();) {
+        if (m_deferred[i].viewId != vid) {
+            ++i;
+            continue;
+        }
+        auto parked = WTF::move(m_deferred[i]);
+        m_deferred.removeAt(i);
+        if (parked.id && !m_pending.contains(parked.id)) continue; // cancelled
+        send(parked.id, WTF::move(parked.cmd), sid);
+    }
+}
+
+void Transport::failDeferred(JSWebView* view, JSValue error)
+{
+    auto* g = m_global;
+    uint32_t vid = view->m_viewId;
+    view->m_chromeAttaching = false;
+    for (size_t i = 0; i < m_deferred.size();) {
+        if (m_deferred[i].viewId != vid) {
+            ++i;
+            continue;
+        }
+        uint32_t id = m_deferred[i].id;
+        m_deferred.removeAt(i);
+        // id 0 is the untracked half of a pair (click's mousePressed). It
+        // owns no slot, and 0 is the HashMap's empty key, so looking it
+        // up asserts. The tracked half carries the rejection.
+        if (!id) continue;
+        auto it = m_pending.find(id);
+        if (it == m_pending.end()) continue; // cancelled by close()
+        auto entry = it->value;
+        m_pending.remove(it);
+        settleFailure(g, view, entry.slot, entry.method, error);
+    }
+    updateKeepAlive();
+}
+
+void Transport::dropDeferred(uint32_t viewId)
+{
+    m_deferred.removeAllMatching([viewId](auto& parked) { return parked.viewId == viewId; });
 }
 
 // Build an Error from CDP exceptionDetails. exception.description is V8's
@@ -764,24 +847,30 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        settleFailure(g, view, entry.slot, entry.method,
-            createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
+        JSValue errValue = createError(g, errStr.isEmpty() ? "CDP error"_s : errStr);
+        // An attach-chain failure belongs to no single slot: every
+        // operation parked behind it fails with it.
+        if (entry.slot == PendingSlot::Attach) {
+            failDeferred(view, errValue);
+            return;
+        }
+        settleFailure(g, view, entry.slot, entry.method, errValue);
         return;
     }
 
     switch (entry.method) {
     // --- Attach chain --------------------------------------------------
-    // First navigate() sends Target.createTarget; each response chains
-    // into the next command by re-adding to m_pending with WTFMove'd
-    // Weak. The chain carries entry.slot (= Navigate) so errors at any
-    // stage reject the right promise. The promise RESOLVES on
-    // Page.loadEventFired — not on any response in this chain.
+    // The first operation on a view sends Target.createTarget; each
+    // response chains into the next command. None of them settles a user
+    // promise: the operations that started the chain, and any issued
+    // while it ran, are parked in m_deferred and written by the last
+    // step. A failure at any stage rejects all of them (failDeferred).
     case Method::TargetCreateTarget: {
         // {"targetId":"<hex>"}
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
         view->m_targetId = WTF::String::fromUTF8(tid);
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::TargetAttachToTarget, PendingSlot::Attach, entry.viewId });
         send(cid, Command(cid, "Target.attachToTarget"_s).str("targetId"_s, view->m_targetId).boolean("flatten"_s, true));
         return;
     }
@@ -797,32 +886,20 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
-        auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Page.enable"_s, sidSpan));
+        m_pending.add(cid, Pending { Method::PageEnable, PendingSlot::Attach, entry.viewId });
+        send(cid, Command(cid, "Page.enable"_s), sidSpan(view->m_sessionId));
         return;
     }
     case Method::PageEnable: {
-        // Chain into Runtime.enable (for consoleAPICalled later) then
-        // Page.navigate to the stashed url.
-        auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
-
-        // Runtime.enable — fire-and-forget, untracked. We don't need to
-        // wait for its reply before navigating.
+        // Runtime.enable (for consoleAPICalled later) — fire-and-forget,
+        // untracked. Chrome processes commands in order per session, so
+        // it takes effect before anything drained below.
         uint32_t rid = nextId();
-        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
+        send(0, Command(rid, "Runtime.enable"_s), sidSpan(view->m_sessionId));
 
-        // Page.navigate with the url stashed by the first navigate() call.
-        // The response confirms the navigation STARTED; Page.loadEventFired
-        // confirms completion. We keep the pending entry alive for the
-        // response so errorText rejects the right slot.
-        uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Page.navigate"_s, sidSpan).str("url"_s, view->m_pendingChromeNavigateUrl));
-        view->m_pendingChromeNavigateUrl = WTF::String();
+        view->m_chromeAttaching = false;
+        drainDeferred(view);
         return;
     }
     case Method::RuntimeEnable:
@@ -888,7 +965,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
-        send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
+        send(cid, Command(cid, "Page.navigateToHistoryEntry"_s).num("entryId"_s, entryId), sidSpan(view->m_sessionId));
         return;
     }
     case Method::PageNavigateToHistoryEntry:
@@ -1067,19 +1144,17 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         float cy = strtof(p, nullptr);
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
-        auto ss = view->m_sessionId.utf8();
-        std::span<const char> sid(ss.data(), ss.length());
-
+        auto sid = sidSpan(view->m_sessionId);
         auto btn = cdpButton(view->m_selButton);
         int32_t mods = cdpModifiers(view->m_selModifiers);
 
         // Pressed — untracked fire-and-forget.
         uint32_t idDown = nextId();
-        send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
+        send(0, Command(idDown, "Input.dispatchMouseEvent"_s).raw("type"_s, "\"mousePressed\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods), sid);
         // Released — tracked, resolves the slot.
         uint32_t idUp = nextId();
         m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
-        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mouseReleased\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
+        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s).raw("type"_s, "\"mouseReleased\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods), sid);
         return;
     }
 
@@ -1118,6 +1193,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         m_sessions.remove(it);
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
+        dropDeferred(vid);
         if (!view) return;
         rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
         // Erase stale m_pending entries — replies won't come.
@@ -1167,7 +1243,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_loading = false;
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        send(tid, Command(tid, "Runtime.evaluate"_s).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true), sidSpan(view->m_sessionId));
         return;
     }
 
@@ -1328,6 +1404,7 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
+    m_deferred.clear();
     m_pending.clear();
     m_sessions.clear();
     // ~JSWebView() (a GC while settling) removes from m_views; iterate a local.
@@ -1402,8 +1479,8 @@ namespace Ops {
 
 // Allocate promise, store in slot, add to Transport pending map, send frame.
 // Caller guarantees the slot is empty and m_closed == false. Command is
-// moved in; t.send() calls finishAndWrite which zero-copies to the pipe
-// when the body is all-ASCII.
+// moved in; sendToView stamps the session id and writes, or parks the
+// command until the view's attach chain produces one.
 static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     WriteBarrier<JSPromise>& slot, PendingSlot ps, Method m,
     uint32_t id, Command&& cmd)
@@ -1422,47 +1499,21 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });
-    t.send(id, WTF::move(cmd));
+    t.sendToView(v, id, WTF::move(cmd));
     t.updateKeepAlive();
     return promise;
 }
 
-// The first navigate() kicks off the attach chain: Target.createTarget
-// (browser-level, no sessionId) → Target.attachToTarget → Page.enable →
-// Page.navigate(url). Each response chains into the next command; the
-// Navigate slot promise resolves on Page.loadEventFired, not on any
-// response. Subsequent navigates skip straight to Page.navigate.
+// Page.navigate. The response confirms the navigation STARTED;
+// Page.loadEventFired resolves the promise. On a view that has not
+// attached yet this parks behind the attach chain, like every other op.
 JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
 {
     auto& t = transport();
-
-    if (!view->m_sessionId.isEmpty()) {
-        uint32_t id = t.nextId();
-        return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
-            Method::PageNavigate, id,
-            Command(id, "Page.navigate"_s, sidSpan(view->m_sessionId))
-                .str("url"_s, url));
-    }
-
-    // First navigate: start the chain. Stash url; the PageEnable response
-    // handler in Transport::handleResponse reads it and sends Page.navigate.
-    // The Navigate slot promise is created now; it resolves much later on
-    // Page.loadEventFired. The chain carries the same Weak<view> forward
-    // so the pending activity count keeps this object rooted the whole time.
-    //
-    // newWindow:true is required for width/height — without it Chrome
-    // reuses an existing window and rejects position params. Headless has
-    // no visible window either way; "new window" just means "new top-level
-    // browsing context".
-    view->m_pendingChromeNavigateUrl = url;
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
-        Method::TargetCreateTarget, id,
-        Command(id, "Target.createTarget"_s)
-            .str("url"_s, "about:blank"_s)
-            .boolean("newWindow"_s, true)
-            .num("width"_s, static_cast<int32_t>(view->m_width))
-            .num("height"_s, static_cast<int32_t>(view->m_height)));
+        Method::PageNavigate, id,
+        Command(id, "Page.navigate"_s).str("url"_s, url));
 }
 
 // Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
@@ -1478,7 +1529,7 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
     auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
     return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
         Method::RuntimeEvaluate, id,
-        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+        Command(id, "Runtime.evaluate"_s)
             .str("expression"_s, body)
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true));
@@ -1493,18 +1544,16 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
 // Response handler JSONParse's the result object and settles with the
 // decoded JSValue — caller gets the same object shape CDP documents.
 //
-// Scoped to the view's sessionId, so commands target THIS tab. Browser-
-// level commands (Target.*, Browser.*) need the sessionId omitted —
-// if m_sessionId is empty (first-navigate chain not yet complete) we send
-// browser-level. For explicit browser-level after attach, the user can
-// construct a second WebView or await Bun-side Target APIs (v2).
+// Scoped to the view's sessionId, so commands target THIS tab. The
+// prototype guard (m_sessionId empty → ERR_INVALID_STATE) means this
+// never parks: the user has already run an operation that attached.
 JSPromise* cdp(JSGlobalObject* g, JSWebView* view, const WTF::String& method, const WTF::String& paramsJson)
 {
     auto& t = transport();
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingCdp, PendingSlot::Cdp,
         Method::UserRaw, id,
-        Command(Command::RawTag {}, id, method, sidSpan(view->m_sessionId), paramsJson));
+        Command(Command::RawTag {}, id, method, paramsJson));
 }
 
 JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat format, uint8_t quality)
@@ -1523,7 +1572,7 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
                                                            : "\"png\""_s;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
-        Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
+        Command(id, "Page.captureScreenshot"_s)
             .raw("format"_s, fmtLit)
             .num("quality"_s, static_cast<int32_t>(quality)));
 }
@@ -1538,19 +1587,20 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
 JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     auto& t = transport();
-    auto sid = sidSpan(view->m_sessionId);
     auto btn = cdpButton(button);
     int32_t mods = cdpModifiers(modifiers);
 
     // Pressed — untracked. Chrome replies but we don't need the ack; the
-    // Released event's reply confirms both were processed.
+    // Released event's reply confirms both were processed. Parked with
+    // id 0 when the view is still attaching: the pair stays in order and
+    // neither half can be cancelled on its own.
     uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
+    t.sendToView(view, 0, Command(idDown, "Input.dispatchMouseEvent"_s).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
     // Released — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputDispatchMouseEvent, idUp,
-        Command(idUp, "Input.dispatchMouseEvent"_s, sid)
+        Command(idUp, "Input.dispatchMouseEvent"_s)
             .raw("type"_s, "\"mouseReleased\""_s)
             .num("x"_s, x)
             .num("y"_s, y)
@@ -1581,7 +1631,7 @@ JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& 
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::ClickSelectorEval, id,
-        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+        Command(id, "Runtime.evaluate"_s)
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true));
@@ -1602,7 +1652,7 @@ JSPromise* scrollTo(JSGlobalObject* g, JSWebView* view, const WTF::String& selec
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::ScrollToSelectorEval, id,
-        Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
+        Command(id, "Runtime.evaluate"_s)
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true));
@@ -1616,7 +1666,7 @@ JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
     // InsertText does — inserts text at the caret without keydown events.
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputInsertText, id,
-        Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
+        Command(id, "Input.insertText"_s)
             .str("text"_s, text));
 }
 
@@ -1656,7 +1706,6 @@ static const CDPKeyInfo& cdpKeyInfo(uint8_t k)
 JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifiers, const WTF::String& character)
 {
     auto& t = transport();
-    auto sid = sidSpan(view->m_sessionId);
     int32_t mods = cdpModifiers(modifiers);
     const auto& info = cdpKeyInfo(key);
 
@@ -1677,12 +1726,12 @@ JSPromise* press(JSGlobalObject* g, JSWebView* view, uint8_t key, uint8_t modifi
     // fired if text present) by the time we get the reply. No _doAfter*
     // dance like WKWebView's press().
     uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchKeyEvent"_s, sid).raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s).str("key"_s, keyStr).str("text"_s, textStr).num("windowsVirtualKeyCode"_s, info.vk).num("modifiers"_s, mods));
+    t.sendToView(view, 0, Command(idDown, "Input.dispatchKeyEvent"_s).raw("type"_s, hasText ? "\"keyDown\""_s : "\"rawKeyDown\""_s).str("key"_s, keyStr).str("text"_s, textStr).num("windowsVirtualKeyCode"_s, info.vk).num("modifiers"_s, mods));
     // keyUp — tracked, resolves the promise.
     uint32_t idUp = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputDispatchKeyEvent, idUp,
-        Command(idUp, "Input.dispatchKeyEvent"_s, sid)
+        Command(idUp, "Input.dispatchKeyEvent"_s)
             .raw("type"_s, "\"keyUp\""_s)
             .str("key"_s, keyStr)
             .num("windowsVirtualKeyCode"_s, info.vk)
@@ -1697,7 +1746,7 @@ JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
     // reply means the scroll was processed.
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputDispatchMouseEvent, id,
-        Command(id, "Input.dispatchMouseEvent"_s, sidSpan(view->m_sessionId))
+        Command(id, "Input.dispatchMouseEvent"_s)
             .raw("type"_s, "\"mouseWheel\""_s)
             .num("x"_s, view->m_width / 2.0)
             .num("y"_s, view->m_height / 2.0)
@@ -1713,7 +1762,7 @@ JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t h
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::EmulationSetDeviceMetricsOverride, id,
-        Command(id, "Emulation.setDeviceMetricsOverride"_s, sidSpan(view->m_sessionId))
+        Command(id, "Emulation.setDeviceMetricsOverride"_s)
             .num("width"_s, static_cast<int32_t>(width))
             .num("height"_s, static_cast<int32_t>(height))
             .num("deviceScaleFactor"_s, 1)
@@ -1733,7 +1782,7 @@ static JSPromise* historyGo(JSGlobalObject* g, JSWebView* view, int8_t delta)
     // Page.loadEventFired settles PendingSlot::Navigate only.
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::PageGetNavigationHistory, id,
-        Command(id, "Page.getNavigationHistory"_s, sidSpan(view->m_sessionId)));
+        Command(id, "Page.getNavigationHistory"_s));
 }
 
 JSPromise* goBack(JSGlobalObject* g, JSWebView* view) { return historyGo(g, view, -1); }
@@ -1749,7 +1798,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
     // Op::Reload Ack is synchronous.
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::PageReload, id,
-        Command(id, "Page.reload"_s, sidSpan(view->m_sessionId)));
+        Command(id, "Page.reload"_s));
 }
 
 void close(JSWebView* view)
@@ -1757,16 +1806,17 @@ void close(JSWebView* view)
     auto& t = transport();
     if (auto* g = t.m_global) rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
-    // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
-    // PageNavigate) holds Weak<view> per step and each step chains to the
-    // next on reply. If close() lands mid-chain, the next reply would
-    // continue on a closed view: m_sessions.add re-registers it,
-    // PageEnable sends Page.navigate, the tab navigates after dispose.
-    // removeIf breaks the chain at the next reply — handleResponse's
-    // find(id)==end() early-return drops it.
+    // (TargetCreateTarget → TargetAttachToTarget → PageEnable) chains to
+    // the next command on each reply. If close() lands mid-chain, the
+    // next reply would continue on a closed view: m_sessions.add
+    // re-registers it, and the commands parked behind the chain reach
+    // the tab after dispose. removeIf breaks the chain at the next
+    // reply — handleResponse's find(id)==end() early-return drops it —
+    // and dropDeferred forgets what was parked.
     t.m_pending.removeIf([vid = view->m_viewId](auto& pair) {
         return pair.value.viewId == vid;
     });
+    t.dropDeferred(view->m_viewId);
     // Target.closeTarget — fire-and-forget. targetId is stashed at
     // TargetCreateTarget's reply (before sessionId) so it's populated
     // earlier in the chain. Chrome tears down the tab; we ignore the

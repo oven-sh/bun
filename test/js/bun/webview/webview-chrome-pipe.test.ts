@@ -74,6 +74,119 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+// A view has no CDP session until Target.createTarget → attachToTarget →
+// Page.enable has run, and every Page.*, Runtime.*, Input.* and
+// Emulation.* command needs one. The operation that finds no session
+// starts that chain and waits for it, whichever operation it is. Sending
+// the command without a session id would reach the browser endpoint,
+// where those domains do not exist, and Chrome would answer
+// "'Runtime.evaluate' wasn't found".
+test.concurrent("the first operation attaches the view instead of going to the browser endpoint", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    // No navigate() first: this evaluate has to attach the view itself.
+    const value = await view.evaluate("6 * 7");
+    const navigated = await outcome(view.navigate("http://fake/after"));
+    print({ value, navigated, url: view.url, title: view.title });
+    view.close();
+  `);
+  expect(result).toEqual({
+    value: 42,
+    navigated: {}, // resolves undefined
+    url: "http://fake/after",
+    title: "fake chrome",
+  });
+});
+
+test.concurrent("every operation kind works as the first one on a view", async () => {
+  const result = await runScenario(`
+    // JSON keeps no undefined, so name the void resolution.
+    const settled = promise => promise.then(value => (value === undefined ? "resolved" : value), e => "rejected: " + e.message);
+    const first = {
+      evaluate: view => view.evaluate("'ok'"),
+      screenshot: view => view.screenshot({ encoding: "base64" }).then(shot => shot.length > 0),
+      click: view => view.click(5, 5),
+      type: view => view.type("hello"),
+      press: view => view.press("Enter"),
+      scroll: view => view.scroll(0, 10),
+      resize: view => view.resize(120, 90),
+      reload: view => view.reload(),
+      goBack: view => view.goBack(),
+      navigate: view => view.navigate("http://fake/first"),
+    };
+    const results = {};
+    for (const [name, run] of Object.entries(first)) {
+      const view = newView();
+      results[name] = await settled(run(view));
+      view.close();
+    }
+    print(results);
+  `);
+  expect(result).toEqual({
+    evaluate: "ok",
+    screenshot: true,
+    click: "resolved",
+    type: "resolved",
+    press: "resolved",
+    scroll: "resolved",
+    resize: "resolved",
+    reload: "resolved",
+    goBack: "resolved",
+    navigate: "resolved",
+  });
+});
+
+// One chain serves every operation issued while it runs: they wait for
+// the session instead of each starting an attach of their own.
+test.concurrent("operations issued while the view attaches all complete", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    const settled = await Promise.all([
+      outcome(view.evaluate("'during'")),
+      outcome(view.navigate("http://fake/during")),
+      outcome(view.resize(300, 200)),
+    ]);
+    print({ settled, url: view.url, title: view.title });
+    view.close();
+  `);
+  expect(result).toEqual({
+    settled: [{ resolved: "during" }, {}, {}],
+    url: "http://fake/during",
+    title: "fake chrome",
+  });
+});
+
+// The attach chain settles no promise of its own, so a failure in it has
+// to reach every operation parked behind it. "Cannot navigate to invalid
+// URL" is the fake's one canned protocol error, here on attachToTarget.
+test.concurrent("an attach failure rejects every operation waiting on it", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.attachToTarget"] },
+      width: 100,
+      height: 100,
+    });
+    // click() parks two commands, and only the second one owns a slot.
+    const failed = await Promise.all([
+      outcome(view.evaluate("1")),
+      outcome(view.navigate("http://fake/nope")),
+      outcome(view.screenshot()),
+      outcome(view.click(5, 5)),
+    ]);
+    print({ failed, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: [
+      { rejected: "Cannot navigate to invalid URL" },
+      { rejected: "Cannot navigate to invalid URL" },
+      { rejected: "Cannot navigate to invalid URL" },
+      { rejected: "Cannot navigate to invalid URL" },
+    ],
+    loading: false,
+  });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

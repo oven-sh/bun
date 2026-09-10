@@ -132,7 +132,10 @@ JSWebView::~JSWebView()
             auto it = t.m_sessions.find(m_sessionId);
             if (it != t.m_sessions.end() && it->value == m_viewId) t.m_sessions.remove(it);
         }
-        if (m_viewId) t.m_views.remove(m_viewId);
+        if (m_viewId) {
+            t.m_views.remove(m_viewId);
+            t.dropDeferred(m_viewId);
+        }
         t.updateKeepAlive();
         return;
     }
@@ -383,9 +386,9 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // dereferences through this — m_pending and m_sessions hold just the
     // viewId, not their own Weaks. Mirrors WebKit's HostClient::viewsById.
     view->m_viewId = t.registerView(view);
-    // Target.createTarget deferred to first navigate() — keeps the constructor
-    // synchronous and the attach chain owned by the navigate promise (which
-    // resolves on Page.loadEventFired, so one await covers the whole sequence).
+    // Target.createTarget is deferred to the first operation — the
+    // constructor stays synchronous, and a view nobody uses opens no tab
+    // and keeps no event-loop reference.
     return view;
 }
 

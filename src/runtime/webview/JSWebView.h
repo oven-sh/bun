@@ -90,14 +90,14 @@ public:
     bool m_loading = false;
 
     // Chrome session state. Empty until the Target.createTarget →
-    // Target.attachToTarget → Page.enable chain completes (driven by the
-    // first navigate()). sessionId routes commands; targetId is for
-    // Target.closeTarget. The chain stashes the navigate URL here so the
-    // final step can send Page.navigate; subsequent navigates read
-    // m_sessionId directly and skip the chain.
+    // Target.attachToTarget → Page.enable chain completes (started by the
+    // first operation on this view). sessionId routes commands; targetId
+    // is for Target.closeTarget. Operations issued while the chain runs
+    // wait in Transport::m_deferred; m_chromeAttaching keeps the chain
+    // from being started twice.
     WTF::String m_sessionId;
     WTF::String m_targetId;
-    WTF::String m_pendingChromeNavigateUrl;
+    bool m_chromeAttaching = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

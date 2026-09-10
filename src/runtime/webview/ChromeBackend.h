@@ -74,18 +74,15 @@ std::span<const char> jsonString(std::span<const char> field);
 // StringBuilder::appendQuotedJSONString is the one escape hatch — it's
 // WTF's own JSON string quoter (handles control chars, quotes, backslash,
 // non-BMP). Every user-controlled string goes through it.
+//
+// The session id is NOT a constructor argument: it is stamped at finish
+// time. A command built before its view attached has no session id yet,
+// and Transport parks it until the attach chain produces one.
 class Command {
 public:
-    Command(uint32_t id, ASCIILiteral method, std::span<const char> sessionId = {})
+    Command(uint32_t id, ASCIILiteral method)
     {
-        m_sb.append("{\"id\":"_s, id, ",\"method\":\""_s, method, "\""_s);
-        if (!sessionId.empty()) {
-            m_sb.append(",\"sessionId\":\""_s);
-            m_sb.append(std::span<const Latin1Character>(
-                reinterpret_cast<const Latin1Character*>(sessionId.data()), sessionId.size()));
-            m_sb.append('"');
-        }
-        m_sb.append(",\"params\":{"_s);
+        m_sb.append("{\"id\":"_s, id, ",\"method\":\""_s, method, "\""_s, ",\"params\":{"_s);
     }
 
     // Raw passthrough — user-provided method string and pre-serialized
@@ -93,26 +90,14 @@ public:
     // method goes through appendQuotedJSONString (a user can pass
     // `Page.navigate"` with a stray quote — the method string IS user input
     // for this entry point). paramsJson is trusted JSON — it came from
-    // JSON.stringify which guarantees well-formed output. The builder's
-    // finishAndWrite appends the closing }} so paramsJson must be the inner
-    // object without the outer braces; we write it verbatim and skip the
-    // normal str()/num() comma machinery.
+    // JSON.stringify which guarantees well-formed output. It is the
+    // complete params object, so set m_paramsRaw: finish() then skips the
+    // implicit params brace and the normal str()/num() comma machinery.
     struct RawTag {};
-    Command(RawTag, uint32_t id, const WTF::String& method, std::span<const char> sessionId, const WTF::String& paramsJson)
+    Command(RawTag, uint32_t id, const WTF::String& method, const WTF::String& paramsJson)
     {
         m_sb.append("{\"id\":"_s, id, ",\"method\":"_s);
         m_sb.appendQuotedJSONString(method);
-        if (!sessionId.empty()) {
-            m_sb.append(",\"sessionId\":\""_s);
-            m_sb.append(std::span<const Latin1Character>(
-                reinterpret_cast<const Latin1Character*>(sessionId.data()), sessionId.size()));
-            m_sb.append('"');
-        }
-        // paramsJson is an object or {} — the user passed `params` or
-        // nothing. JSON.stringify already handled escapes/encoding. We
-        // write `,"params":` then the verbatim JSON, then cheat: set
-        // m_paramsRaw so finishAndWrite appends a single } (the frame
-        // close) instead of }} (frame close + our implicit params brace).
         m_sb.append(",\"params\":"_s);
         m_sb.append(paramsJson);
         m_paramsRaw = true;
@@ -180,19 +165,16 @@ public:
     // into the String if nothing else holds a ref — zero-copy for the
     // 8-bit-ASCII case (our templates are ASCII, user strings go
     // through appendQuotedJSONString which produces ASCII escapes).
-    WTF::String finishToString()
+    WTF::String finishToString(std::span<const char> sessionId)
     {
-        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
+        finish(sessionId);
         return m_sb.toString();
     }
 
     template<typename Sink> // void(const char*, size_t)
-    void finishAndWrite(Sink&& sink)
+    void finishAndWrite(Sink&& sink, std::span<const char> sessionId)
     {
-        // RawTag constructor already wrote the complete params object;
-        // only the outer frame brace remains. Normal path needs both the
-        // params brace and the frame brace.
-        m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
+        finish(sessionId);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
             // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
@@ -213,6 +195,21 @@ public:
     }
 
 private:
+    // Close the params object, then the frame. The session id goes last:
+    // CDP reads JSON, where key order carries no meaning, so a command
+    // built before its session existed can still be routed to it.
+    void finish(std::span<const char> sessionId)
+    {
+        if (!m_paramsRaw) m_sb.append('}');
+        if (!sessionId.empty()) {
+            m_sb.append(",\"sessionId\":\""_s);
+            m_sb.append(std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(sessionId.data()), sessionId.size()));
+            m_sb.append('"');
+        }
+        m_sb.append('}');
+    }
+
     void comma()
     {
         if (m_hasParam) m_sb.append(',');
@@ -229,9 +226,9 @@ private:
 // the method string. Adding a method means adding a tag + a handler arm.
 //
 // TargetCreateTarget + TargetAttachToTarget + PageEnable form an internal
-// chain kicked off by the first navigate() on a view. Their responses
-// don't settle a user promise; the last one (PageEnable) sends the actual
-// Page.navigate and the promise resolves on Page.loadEventFired.
+// chain kicked off by the first operation on a view. Their responses
+// don't settle a user promise; the last one (PageEnable) writes every
+// command parked while the chain ran.
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateTarget,
@@ -341,6 +338,10 @@ enum class PendingSlot : uint8_t {
     // resize/goBack/etc. Still one-at-a-time (slot model, not id-keyed
     // promise map) — lift in v2 when/if someone needs burst CDP.
     Cdp,
+    // The attach chain's own commands. They settle no user promise, so
+    // this names no barrier. A chain failure rejects every parked
+    // operation instead (Transport::failDeferred).
+    Attach,
 };
 
 // Per-CDP-id pending entry. viewId indirects through Transport::m_views
@@ -409,7 +410,14 @@ public:
     // Pipe mode: NUL-delimited via writeRaw. WebSocket mode: one text
     // frame via sendTextNative, or queue with its CDP id pre-open so
     // close() can cancel (m_pending.removeIf erases the id, drain skips).
-    void send(uint32_t cdpId, Command&& cmd);
+    // An empty sessionId makes it a browser-level command (Target.*).
+    void send(uint32_t cdpId, Command&& cmd, std::span<const char> sessionId = {});
+
+    // Write a command that belongs to one view's CDP session. Before the
+    // session exists (no operation has run yet) the frame cannot be
+    // built: park it and start the attach chain. drainDeferred stamps the
+    // session id on every parked command once the chain completes.
+    void sendToView(JSWebView*, uint32_t cdpId, Command&& cmd);
 
     // Both transports' receive path: parses complete NUL-delimited messages
     // out of rx, dispatches each to handleMessage.
@@ -442,6 +450,21 @@ public:
         WTF::String body;
     };
     WTF::Vector<WsPendingCmd> m_wsPending;
+    // Commands parked while a view's attach chain runs. Every operation
+    // needs the view's session id, which only Target.attachToTarget can
+    // provide, so the ones issued before it answers wait here in the
+    // order the user made them. At most one per slot per attaching view.
+    //
+    // id is the CDP id the command carries, or 0 for the untracked half
+    // of a pair (click's mousePressed). Nonzero ids that Ops::close()
+    // already erased from m_pending are dropped instead of sent, the
+    // same cancellation check wsOnOpen's drain does.
+    struct DeferredCmd {
+        uint32_t viewId;
+        uint32_t id;
+        Command cmd;
+    };
+    WTF::Vector<DeferredCmd> m_deferred;
     bool m_wsOpen = false;
     // True when ensureConnected was called from auto-detect (the
     // constructor read DevToolsActivePort) — gates the stale-file
@@ -480,6 +503,19 @@ public:
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);
+
+    // Target.createTarget → Target.attachToTarget → Page.enable. Started
+    // by the first operation on a view, once.
+    void beginAttach(JSWebView*);
+    // Write every command parked for this view, in issue order, now that
+    // it has a session id.
+    void drainDeferred(JSWebView*);
+    // The attach chain failed: reject each parked operation's slot with
+    // the CDP error, so the user sees the failure instead of a promise
+    // that never settles.
+    void failDeferred(JSWebView*, JSC::JSValue error);
+    // Forget a view's parked commands (close, detach, transport death).
+    void dropDeferred(uint32_t viewId);
 
     // Resolve viewId → JSWebView* through m_views. Null if the view was
     // collected (user dropped both the view and its awaited promise —

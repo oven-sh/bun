@@ -33,7 +33,7 @@ const view = new Bun.WebView({
 });
 ```
 
-The constructor is synchronous — it returns immediately and spawns the browser subprocess in the background. The first operation you `await` (such as `navigate()` or `evaluate()`) waits for the browser to be ready.
+The constructor is synchronous — it returns immediately and spawns the browser subprocess in the background. The first operation you `await` (such as `navigate()` or `evaluate()`) waits for the browser to be ready. Before any navigation, the page is `about:blank`: `evaluate()` runs there, and `screenshot()` captures it.
 
 If you pass `url`, the view begins navigating before the constructor returns, the same way `view.navigate(url)` on the next line would. One difference: the constructor keeps the navigation's promise internal, so a failure never surfaces as a rejection. Set `onNavigationFailed` to observe it.
 
@@ -471,7 +471,7 @@ await view.cdp("DOM.focus", { nodeId });
 
 `cdp(method, params?)` returns the `result` object from the CDP response. If Chrome returns an error (unknown method, bad params), the promise rejects with its `error.message`.
 
-Commands are scoped to this view's session (they target this tab). You must `await navigate(...)` at least once before calling `cdp()` — the first navigation establishes the session. Calling `cdp()` before that throws `ERR_INVALID_STATE`.
+Commands are scoped to this view's session (they target this tab). You must `await` one other operation, such as `navigate()` or `evaluate()`, before calling `cdp()` — the first operation establishes the session. Calling `cdp()` before that throws `ERR_INVALID_STATE`.
 
 `params` must be a JSON-serializable object; omit it for commands that take no parameters. One `cdp()` call may be in flight at a time per view.
 

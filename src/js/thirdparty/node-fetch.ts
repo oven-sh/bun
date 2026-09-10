@@ -156,13 +156,10 @@ function tlsFromAgent(agent, url) {
     agent = agent.$call(undefined, parsedUrl);
   }
   if (!$isObject(agent)) return undefined;
-  // https.Agent keeps its options on `options`; the proxy-agent family uses `connectOpts`
-  let options = Object.hasOwn(agent, "options") ? agent.options : undefined;
-  if (!$isObject(options)) options = undefined;
-  let connectOpts = Object.hasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
-  if (!$isObject(connectOpts)) connectOpts = undefined;
-  if (options === undefined && connectOpts === undefined) return undefined;
-  const opts = { __proto__: null, ...connectOpts, ...options };
+  // Node's https.Agent applies `agent.options` to every tls.connect it makes
+  const options = Object.hasOwn(agent, "options") ? agent.options : undefined;
+  if (!$isObject(options)) return undefined;
+  const opts = { __proto__: null, ...options };
   let tls;
   for (const key of kAgentTlsKeys) {
     let value = opts[key];

@@ -1,198 +1,153 @@
 // https://github.com/oven-sh/bun/issues/7332
 // https://github.com/oven-sh/bun/issues/19754
 // @kubernetes/client-node passes an https.Agent (with ca/cert/key) to node-fetch.
-// Bun's node-fetch shim must forward those TLS options to the underlying fetch.
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
-import { tls as harnessTls } from "harness";
-import nodeFetch from "node-fetch";
+// Bun's node-fetch shim must apply those TLS options like node-fetch does on Node.
+// This file uses node:test so it runs unchanged on Node: `node --test <file>`.
+import assert from "node:assert";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import { join } from "path";
+import path from "node:path";
+import { describe, test } from "node:test";
+import type { TLSSocket } from "node:tls";
+import nodeFetch from "node-fetch";
 
-const fixturesDir = join(import.meta.dir, "..", "tls", "fixtures");
-const ca1 = readFileSync(join(fixturesDir, "ca1-cert.pem"), "utf8");
-const serverKey = readFileSync(join(fixturesDir, "agent1-key.pem"), "utf8");
-const serverCert = readFileSync(join(fixturesDir, "agent1-cert.pem"), "utf8");
+const fixturesDir = path.join(import.meta.dirname, "..", "tls", "fixtures");
+const ca1 = readFileSync(path.join(fixturesDir, "ca1-cert.pem"), "utf8");
+const serverKey = readFileSync(path.join(fixturesDir, "agent1-key.pem"), "utf8");
+const serverCert = readFileSync(path.join(fixturesDir, "agent1-cert.pem"), "utf8");
+// agent1-cert has CN=agent1 and no SAN, so clients verify it under that servername.
+const servername = "agent1";
 
-describe("node-fetch honors TLS options from agent", () => {
-  test("rejects self-signed server cert when agent has no ca (baseline)", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
+async function listen(server: http.Server | https.Server) {
+  server.on("tlsClientError", () => {});
+  server.listen(0);
+  await once(server, "listening");
+  return {
+    port: (server.address() as AddressInfo).port,
+    async [Symbol.asyncDispose]() {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+function serve(options: https.ServerOptions) {
+  return listen(
+    https.createServer(options, (req, res) => {
+      const socket = req.socket as TLSSocket;
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ authorized: socket.authorized }));
+    }),
+  );
+}
+
+function serveSelfSigned() {
+  return serve({ key: serverKey, cert: serverCert });
+}
+
+async function fetchWith(port: number, agent: https.Agent | ((url: URL) => https.Agent)) {
+  const res = await nodeFetch(`https://localhost:${port}/`, { agent });
+  assert.strictEqual(res.status, 200);
+  return (await res.json()) as { authorized: boolean };
+}
+
+describe("node-fetch applies TLS options from the agent", () => {
+  test("rejects a server signed by an unknown CA when no agent is given (baseline)", async () => {
+    await using server = await serveSelfSigned();
+    await assert.rejects(nodeFetch(`https://localhost:${server.port}/`), (err: Error & { code?: string }) => {
+      assert.match(String(err.code), /UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|SELF_SIGNED/);
+      return true;
     });
-    await expect(nodeFetch(`https://localhost:${server.port}/`)).rejects.toThrow(
-      expect.objectContaining({ code: expect.stringMatching(/SELF_SIGNED|UNABLE_TO_VERIFY/) }),
-    );
   });
 
-  test("verifies server via agent.options.ca", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    const agent = new https.Agent({ ca: harnessTls.cert });
+  test("verifies the server via agent.options.ca and servername", async () => {
+    await using server = await serveSelfSigned();
+    const agent = new https.Agent({ ca: ca1, servername });
     try {
-      const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
-      expect(await res.text()).toBe("OK");
-      expect(res.status).toBe(200);
+      assert.deepStrictEqual(await fetchWith(server.port, agent), { authorized: false });
     } finally {
       agent.destroy();
     }
   });
 
-  test("sends client cert/key for mTLS via agent", async () => {
-    const server = https.createServer(
-      {
-        key: serverKey,
-        cert: serverCert,
-        ca: ca1,
-        requestCert: true,
-        rejectUnauthorized: false,
-      },
-      (req, res) => {
-        const socket = req.socket as import("node:tls").TLSSocket;
-        res.writeHead(200, { "content-type": "application/json", connection: "close" });
-        res.end(JSON.stringify({ authorized: socket.authorized }));
-      },
-    );
-    server.on("clientError", () => {});
-    server.listen(0);
-    await once(server, "listening");
-    const { port } = server.address() as AddressInfo;
-
-    const anonAgent = new https.Agent({ ca: ca1, servername: "agent1" });
-    const agent = new https.Agent({
-      ca: ca1,
-      cert: serverCert,
+  test("sends the client cert and key for mTLS via the agent", async () => {
+    await using server = await serve({
       key: serverKey,
-      servername: "agent1",
+      cert: serverCert,
+      ca: ca1,
+      requestCert: true,
+      rejectUnauthorized: false,
     });
+    const anonAgent = new https.Agent({ ca: ca1, servername });
+    const agent = new https.Agent({ ca: ca1, cert: serverCert, key: serverKey, servername });
+    // Node also accepts the key as [{ pem }] objects.
+    const pemAgent = new https.Agent({ ca: ca1, cert: serverCert, key: [{ pem: serverKey }], servername });
     try {
       // Without cert/key on the agent the server sees an unauthenticated client.
-      const anon = await nodeFetch(`https://localhost:${port}/`, { agent: anonAgent });
-      expect(await anon.json()).toEqual({ authorized: false });
-
-      const res = await nodeFetch(`https://localhost:${port}/`, { agent });
-      expect(await res.json()).toEqual({ authorized: true });
-
-      // Node also accepts the key as [{ pem }] objects.
-      const pemAgent = new https.Agent({
-        ca: ca1,
-        cert: serverCert,
-        key: [{ pem: serverKey }],
-        servername: "agent1",
-      });
-      try {
-        const pemRes = await nodeFetch(`https://localhost:${port}/`, { agent: pemAgent });
-        expect(await pemRes.json()).toEqual({ authorized: true });
-      } finally {
-        pemAgent.destroy();
-      }
+      assert.deepStrictEqual(await fetchWith(server.port, anonAgent), { authorized: false });
+      assert.deepStrictEqual(await fetchWith(server.port, agent), { authorized: true });
+      assert.deepStrictEqual(await fetchWith(server.port, pemAgent), { authorized: true });
     } finally {
       anonAgent.destroy();
       agent.destroy();
-      server.close();
-      await once(server, "close");
+      pemAgent.destroy();
     }
   });
 
-  test("forwards rejectUnauthorized: false from agent", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
+  test("applies rejectUnauthorized: false from the agent", async () => {
+    await using server = await serveSelfSigned();
     const agent = new https.Agent({ rejectUnauthorized: false });
     try {
-      const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
-      expect(await res.text()).toBe("OK");
+      assert.deepStrictEqual(await fetchWith(server.port, agent), { authorized: false });
     } finally {
       agent.destroy();
     }
   });
 
-  test("converts string minVersion/maxVersion from agent options", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    const agent = new https.Agent({ ca: harnessTls.cert, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
+  test("accepts string minVersion and maxVersion on the agent", async () => {
+    await using server = await serveSelfSigned();
+    const agent = new https.Agent({ ca: ca1, servername, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
     try {
-      const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
-      expect(await res.text()).toBe("OK");
+      assert.deepStrictEqual(await fetchWith(server.port, agent), { authorized: false });
     } finally {
       agent.destroy();
     }
   });
 
-  test("accepts agent as a function", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    const agent = new https.Agent({ ca: harnessTls.cert });
-    let calledWith: URL | undefined;
+  test("accepts agent as a function of the request URL", async () => {
+    await using server = await serveSelfSigned();
+    const agent = new https.Agent({ ca: ca1, servername });
+    // node-fetch v2 passes a legacy url.parse() object and v3 a WHATWG URL. Both have these fields.
+    let calledWith: { protocol: string; hostname: string; port: string } | undefined;
     try {
-      const res = await nodeFetch(`https://localhost:${server.port}/`, {
-        agent: (url: URL) => {
-          calledWith = url;
-          return agent;
-        },
+      const body = await fetchWith(server.port, url => {
+        calledWith = url;
+        return agent;
       });
-      expect(await res.text()).toBe("OK");
-      expect(calledWith).toBeInstanceOf(URL);
-      expect(calledWith!.protocol).toBe("https:");
+      assert.deepStrictEqual(body, { authorized: false });
+      assert.deepStrictEqual(
+        { protocol: calledWith?.protocol, hostname: calledWith?.hostname, port: String(calledWith?.port) },
+        { protocol: "https:", hostname: "localhost", port: String(server.port) },
+      );
     } finally {
       agent.destroy();
     }
   });
 
-  test("reads ca from agent.connectOpts (proxy-agent shape)", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    const agent = { connectOpts: { ca: harnessTls.cert } };
-    const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
-    expect(await res.text()).toBe("OK");
-  });
-
-  test("explicit tls in init is not overridden by agent options", async () => {
-    using server = Bun.serve({
-      tls: harnessTls,
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    // agent with a wrong CA; explicit tls with the right one should win
-    const agent = new https.Agent({ ca: ca1 });
-    try {
-      const res = await nodeFetch(`https://localhost:${server.port}/`, {
-        agent,
-        // @ts-expect-error Bun extension
-        tls: { ca: harnessTls.cert },
-      });
-      expect(await res.text()).toBe("OK");
-    } finally {
-      agent.destroy();
-    }
-  });
-
-  test("a plain http request with an agent still works", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response("OK"),
-    });
-    const agent = new https.Agent({ ca: harnessTls.cert });
+  test("a plain http request with an http.Agent still works", async () => {
+    await using server = await listen(
+      http.createServer((req, res) => {
+        res.writeHead(200, { connection: "close" });
+        res.end("OK");
+      }),
+    );
+    const agent = new http.Agent();
     try {
       const res = await nodeFetch(`http://localhost:${server.port}/`, { agent });
-      expect(await res.text()).toBe("OK");
+      assert.strictEqual(await res.text(), "OK");
     } finally {
       agent.destroy();
     }

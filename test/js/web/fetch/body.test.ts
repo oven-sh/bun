@@ -1757,18 +1757,17 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
       // https://fetch.spec.whatwg.org/#concept-bodyinit-extract gives a
       // ReadableStream init no MIME type, whatever the stream was made from.
       describe("a stream body contributes no Content-Type, whatever is behind the stream", () => {
-        for (const [name, init, , content] of typedSources) {
-          for (const [fromName, makeFrom] of owners) {
-            test(`a stream taken from a ${fromName} made from ${name}`, async () => {
-              expect({
-                bare: make(makeFrom(init()).body!).headers.get("content-type"),
-                otherHeaders: make(makeFrom(init()).body!, { "x-a": "1" }).headers.get("content-type"),
-                explicit: make(makeFrom(init()).body!, { "content-type": "text/x-other" }).headers.get("content-type"),
-                text: await make(makeFrom(init()).body!).text(),
-              }).toEqual({ bare: null, otherHeaders: null, explicit: "text/x-other", text: content });
-            });
-          }
-        }
+        const cases = typedSources.flatMap(([name, init, , content]) =>
+          owners.map(([fromName, makeFrom]) => [fromName, name, makeFrom, init, content] as const),
+        );
+        test.each(cases)("a stream taken from a %s made from %s", async (fromName, name, makeFrom, init, content) => {
+          expect({
+            bare: make(makeFrom(init()).body!).headers.get("content-type"),
+            otherHeaders: make(makeFrom(init()).body!, { "x-a": "1" }).headers.get("content-type"),
+            explicit: make(makeFrom(init()).body!, { "content-type": "text/x-other" }).headers.get("content-type"),
+            text: await make(makeFrom(init()).body!).text(),
+          }).toEqual({ bare: null, otherHeaders: null, explicit: "text/x-other", text: content });
+        });
       });
     });
   }
@@ -1780,64 +1779,62 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
   // at the body again.
   describe("new Request() takes the Content-Type from the body init at construction", () => {
     const make = (body: BodyInit) => new Request("http://a/", { method: "POST", body, duplex: "half" } as RequestInit);
-    for (const [name, init, type] of typedSources) {
-      test(name, async () => {
-        const contentType = (request: Request) => request.headers.get("content-type")?.slice(0, type.length) ?? null;
-        const after = async (use: (request: Request) => unknown) => {
-          const request = make(init());
-          await use(request);
-          return contentType(request);
-        };
-        const touched = make(init());
-        touched.body;
-        const clone = touched.clone();
-        await clone.text();
-        const adopted = () => make(new Response(init()).body!);
-        const adoptedThenCloned = adopted();
-        adoptedThenCloned.clone();
-        expect({
-          headersFirst: await after(() => {}),
-          bodyFirst: await after(request => request.body),
-          textFirst: await after(request => request.text()),
-          arrayBufferFirst: await after(request => request.arrayBuffer()),
-          blobFirst: await after(request => request.blob()),
-          cloneFirst: await after(request => request.clone().text()),
-          bodyThenClone: contentType(touched),
-          readCloneOfTouched: contentType(clone),
-          sameBoundary: clone.headers.get("content-type") === touched.headers.get("content-type"),
-          copied: contentType(new Request(make(init()))),
-          copiedWithInit: contentType(new Request(make(init()), { method: "PUT" })),
-          copiedWithNewHeaders: contentType(new Request(make(init()), { headers: { "x-a": "1" } })),
-          explicitWins: new Request("http://a/", {
-            method: "POST",
-            body: init(),
-            headers: { "content-type": "text/x-other" },
-          }).headers.get("content-type"),
-          cloneOfAdoptedStream: contentType(adopted().clone()),
-          adoptedStreamAfterClone: contentType(adoptedThenCloned),
-          copyOfAdoptedStream: contentType(new Request(adopted())),
-          copyOfAdoptedStreamWithInit: contentType(new Request(adopted(), { method: "PUT" })),
-        }).toEqual({
-          headersFirst: type,
-          bodyFirst: type,
-          textFirst: type,
-          arrayBufferFirst: type,
-          blobFirst: type,
-          cloneFirst: type,
-          bodyThenClone: type,
-          readCloneOfTouched: type,
-          sameBoundary: true,
-          copied: type,
-          copiedWithInit: type,
-          copiedWithNewHeaders: null,
-          explicitWins: "text/x-other",
-          cloneOfAdoptedStream: null,
-          adoptedStreamAfterClone: null,
-          copyOfAdoptedStream: null,
-          copyOfAdoptedStreamWithInit: null,
-        });
+    test.each(typedSources)("%s", async (name, init, type) => {
+      const contentType = (request: Request) => request.headers.get("content-type")?.slice(0, type.length) ?? null;
+      const after = async (use: (request: Request) => unknown) => {
+        const request = make(init());
+        await use(request);
+        return contentType(request);
+      };
+      const touched = make(init());
+      touched.body;
+      const clone = touched.clone();
+      await clone.text();
+      const adopted = () => make(new Response(init()).body!);
+      const adoptedThenCloned = adopted();
+      adoptedThenCloned.clone();
+      expect({
+        headersFirst: await after(() => {}),
+        bodyFirst: await after(request => request.body),
+        textFirst: await after(request => request.text()),
+        arrayBufferFirst: await after(request => request.arrayBuffer()),
+        blobFirst: await after(request => request.blob()),
+        cloneFirst: await after(request => request.clone().text()),
+        bodyThenClone: contentType(touched),
+        readCloneOfTouched: contentType(clone),
+        sameBoundary: clone.headers.get("content-type") === touched.headers.get("content-type"),
+        copied: contentType(new Request(make(init()))),
+        copiedWithInit: contentType(new Request(make(init()), { method: "PUT" })),
+        copiedWithNewHeaders: contentType(new Request(make(init()), { headers: { "x-a": "1" } })),
+        explicitWins: new Request("http://a/", {
+          method: "POST",
+          body: init(),
+          headers: { "content-type": "text/x-other" },
+        }).headers.get("content-type"),
+        cloneOfAdoptedStream: contentType(adopted().clone()),
+        adoptedStreamAfterClone: contentType(adoptedThenCloned),
+        copyOfAdoptedStream: contentType(new Request(adopted())),
+        copyOfAdoptedStreamWithInit: contentType(new Request(adopted(), { method: "PUT" })),
+      }).toEqual({
+        headersFirst: type,
+        bodyFirst: type,
+        textFirst: type,
+        arrayBufferFirst: type,
+        blobFirst: type,
+        cloneFirst: type,
+        bodyThenClone: type,
+        readCloneOfTouched: type,
+        sameBoundary: true,
+        copied: type,
+        copiedWithInit: type,
+        copiedWithNewHeaders: null,
+        explicitWins: "text/x-other",
+        cloneOfAdoptedStream: null,
+        adoptedStreamAfterClone: null,
+        copyOfAdoptedStream: null,
+        copyOfAdoptedStreamWithInit: null,
       });
-    }
+    });
 
     test("also when Bun.serve's server.fetch() builds the Request", async () => {
       const seen: (string | null)[] = [];
@@ -1849,15 +1846,17 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           return new Response("ok");
         },
       });
+      const url = new URL("/", server.url).href;
       const body = new Blob(["a=1"], { type: "text/x-custom" });
-      await server.fetch(new URL("/", server.url).href, { method: "POST", body });
-      await server.fetch(new URL("/", server.url).href, { method: "POST", body, headers: { "x-a": "1" } });
-      await server.fetch(new URL("/", server.url).href, {
-        method: "POST",
-        body,
-        headers: { "content-type": "text/x-other" },
+      const callerHeaders = new Headers({ "x-a": "1" });
+      await server.fetch(url, { method: "POST", body });
+      await server.fetch(url, { method: "POST", body, headers: { "x-a": "1" } });
+      await server.fetch(url, { method: "POST", body, headers: callerHeaders });
+      await server.fetch(url, { method: "POST", body, headers: { "content-type": "text/x-other" } });
+      expect({ seen, callerHeaders: [...callerHeaders] }).toEqual({
+        seen: ["text/x-custom", "text/x-custom", "text/x-custom", "text/x-other"],
+        callerHeaders: [["x-a", "1"]],
       });
-      expect(seen).toEqual(["text/x-custom", "text/x-custom", "text/x-other"]);
     });
   });
 

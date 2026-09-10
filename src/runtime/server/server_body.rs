@@ -2308,19 +2308,14 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // NOTE: `cast_` returns the `FetchHeaders*` held by the
-                        // JS `Headers` wrapper (`JSFetchHeaders`'s internal
-                        // `Ref<FetchHeaders>`) without bumping the refcount —
-                        // the FFI surface has `WebCore__FetchHeaders__deref` but
-                        // no `ref()`, so a +1 cannot be taken here. Adopting
-                        // hands that wrapper-held ref to the constructed
-                        // `Request` (via `Request::init2` below): the eventual
-                        // single deref happens when the Request's finalizer
-                        // drops its `headers` field (`HeadersRef::Drop`,
-                        // Response.rs), pairing with the wrapper's +1.
-                        // SAFETY: `headers__` is live (rooted by `headers_`),
-                        // and ownership of one ref transfers as described above.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
+                        // Copy the caller's `Headers`, as `new Request()` does: the Request owns
+                        // its list (and may append the body's Content-Type to it).
+                        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                        let original = bun_opaque::opaque_deref_mut(headers__.as_ptr());
+                        // SAFETY: `clone_this` returns a fresh +1 ref.
+                        headers = original
+                            .clone_this(ctx)?
+                            .map(|p| unsafe { HeadersRef::adopt(p) });
                     } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
                         // SAFETY: create_from_js returns a +1 ref.
                         headers = Some(unsafe { HeadersRef::adopt(headers__) });

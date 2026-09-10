@@ -2066,7 +2066,12 @@ fn codegen_base_instruction_value(
             raw.extend_from_slice(pattern.slice());
             raw.push(b'/');
             raw.extend_from_slice(flags.slice());
-            Ok(Expr::init(E::RegExp { value: store_str(&raw) }, loc))
+            Ok(Expr::init(
+                E::RegExp {
+                    value: store_str(&raw),
+                },
+                loc,
+            ))
         }
         InstructionValue::MetaProperty { meta, property, .. } => match (*meta, *property) {
             ("import", "meta") => Ok(Expr::init(E::ImportMeta {}, loc)),

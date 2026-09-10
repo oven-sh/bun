@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, nodeExe, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -23,12 +23,12 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import type { AddressInfo, Server as NetServer, Socket as NetSocket } from "node:net";
+import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
-import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
+import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -3747,198 +3747,32 @@ it("registering 'keylog' on an agent with live sockets does not throw", async ()
 });
 
 // A keep-alive socket parked in agent.freeSockets has no parser and no reader
-// attached. Bytes that arrive while it is idle are unsolicited: the next
-// request that reuses the socket would parse them as the start of its own
-// response (response queue poisoning, nodejs/node 179ddaedfb and 57a4932a9d).
+// attached, so bytes that reach it are unsolicited and must not become the next
+// request's response. The cases live in a node:test file so the same assertions
+// run on Node.js and on Bun.
 describe("http.Agent free keep-alive socket", () => {
-  const poisonedResponse =
-    "HTTP/1.1 200 OK\r\nX-Poisoned: 1\r\nConnection: keep-alive\r\nContent-Length: 6\r\n\r\npoison";
+  const file = path.join(import.meta.dir, "node-http-agent-free-socket.node.mts");
 
-  type Transport = {
-    createServer: (onConnection: (socket: NetSocket) => void) => NetServer;
-    createAgent: (options: http.AgentOptions) => Agent;
-    get: typeof http.get;
-    options: object;
-  };
-  const transports: Record<string, Transport> = {
-    http: {
-      createServer: onConnection => createNetServer(onConnection),
-      createAgent: options => new Agent({ keepAlive: true, ...options }),
-      get: http.get,
-      options: {},
-    },
-    https: {
-      createServer: onConnection =>
-        createTlsServer({ cert: tlsCert.cert, key: tlsCert.key }, onConnection) as NetServer,
-      createAgent: options => new https.Agent({ keepAlive: true, ...options }),
-      get: https.get,
-      options: { ca: tlsCert.cert },
-    },
-  };
-
-  // Answers every request with its own path as the body and keeps the
-  // connection alive.
-  function respondToRequests(socket: NetSocket) {
-    let buffered = "";
-    socket.on("data", chunk => {
-      buffered += chunk;
-      let headersEnd: number;
-      while ((headersEnd = buffered.indexOf("\r\n\r\n")) !== -1) {
-        const body = buffered.slice(0, buffered.indexOf("\r\n")).split(" ")[1];
-        buffered = buffered.slice(headersEnd + 4);
-        socket.write(`HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
-      }
+  test("on node.js", async () => {
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, "--test", file],
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: bunEnv,
     });
-    socket.on("error", () => {});
-  }
+    expect(await proc.exited).toBe(0);
+  });
 
-  async function pollUntil(condition: () => boolean) {
-    const deadline = Date.now() + 2000;
-    while (!condition() && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
-  }
-
-  async function theFreeSocket(agent: Agent, name: string): Promise<NetSocket> {
-    await pollUntil(() => agent.freeSockets[name]?.length === 1);
-    const freeSockets = agent.freeSockets[name];
-    expect(freeSockets).toHaveLength(1);
-    return freeSockets![0];
-  }
-
-  type Context = {
-    agent: Agent;
-    name: string;
-    serverSockets: NetSocket[];
-    // `beforeFree` runs in the response's 'end' handler: the parser is already
-    // detached and the agent frees the socket on the next tick.
-    request: (
-      path: string,
-      beforeFree?: (socket: NetSocket) => void,
-    ) => Promise<{ body: string; poisoned?: string; reusedSocket: boolean }>;
-  };
-
-  async function withAgent(
-    transport: Transport,
-    body: (context: Context) => Promise<void>,
-    agentOptions: http.AgentOptions = {},
-  ) {
-    const serverSockets: NetSocket[] = [];
-    const server = transport.createServer(socket => {
-      serverSockets.push(socket);
-      respondToRequests(socket);
+  test("on bun", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", file],
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: bunEnv,
     });
-    const agent = transport.createAgent(agentOptions);
-    try {
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const { port } = server.address() as AddressInfo;
-      const options = { host: "127.0.0.1", port, agent, ...transport.options };
-      await body({
-        agent,
-        name: agent.getName(options),
-        serverSockets,
-        request: (path, beforeFree) =>
-          new Promise((resolve, reject) => {
-            const req = transport.get({ ...options, path }, res => {
-              let body = "";
-              res.setEncoding("utf8");
-              res.on("data", chunk => (body += chunk));
-              res.on("end", () => {
-                beforeFree?.(req.socket!);
-                resolve({
-                  body,
-                  poisoned: res.headers["x-poisoned"] as string | undefined,
-                  reusedSocket: req.reusedSocket,
-                });
-              });
-            });
-            req.on("error", reject);
-          }),
-      });
-    } finally {
-      agent.destroy();
-      server.close();
-      for (const socket of serverSockets) socket.destroy();
-    }
-  }
-
-  describe.each(Object.entries(transports))("over %s", (_protocol, transport) => {
-    it("destroys a free socket that receives unsolicited data", async () => {
-      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
-        expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
-
-        const freeSocket = await theFreeSocket(agent, name);
-        // The guard adds no public stream listener: node-fetch and others
-        // read these counts while a response is closing.
-        expect(freeSocket.listenerCount("data")).toBe(0);
-        expect(freeSocket.listenerCount("readable")).toBe(0);
-
-        serverSockets[0].write(poisonedResponse);
-
-        await pollUntil(() => freeSocket.destroyed && agent.freeSockets[name] === undefined);
-        expect(freeSocket.destroyed).toBe(true);
-        expect(agent.freeSockets[name]).toBeUndefined();
-
-        // The next request dials a new connection and reads the real response.
-        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
-        expect(serverSockets.length).toBe(2);
-      });
-    });
-
-    it("does not pool a socket that holds unsolicited data when it is freed", async () => {
-      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
-        let firstSocket: NetSocket | undefined;
-        // push() stands in for bytes the transport delivered after the parser
-        // detached: they sit in the socket's read buffer when the agent frees it.
-        const first = await request("/first", socket => {
-          firstSocket = socket;
-          socket.push(Buffer.from(poisonedResponse));
-        });
-        expect(first).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
-
-        const pooled = () => agent.freeSockets[name]?.includes(firstSocket!) === true;
-        await pollUntil(() => pooled() || (firstSocket!.destroyed && agent.freeSockets[name] === undefined));
-        expect(firstSocket!.destroyed).toBe(true);
-        expect(agent.freeSockets[name]).toBeUndefined();
-
-        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
-        expect(serverSockets.length).toBe(2);
-      });
-    });
-
-    it("does not hand a freed socket that holds unsolicited data to a queued request", async () => {
-      await withAgent(
-        transport,
-        async ({ serverSockets, request }) => {
-          let firstSocket: NetSocket | undefined;
-          const first = request("/first", socket => {
-            firstSocket = socket;
-            socket.push(Buffer.from(poisonedResponse));
-          });
-          // maxSockets is 1, so this request waits in agent.requests for the
-          // first socket to be freed.
-          const second = request("/second");
-
-          expect(await first).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
-          expect(await second).toEqual({ body: "/second", poisoned: undefined, reusedSocket: false });
-          expect(firstSocket!.destroyed).toBe(true);
-          expect(serverSockets.length).toBe(2);
-        },
-        { maxSockets: 1 },
-      );
-    });
-
-    it("reuses a free socket that received nothing", async () => {
-      await withAgent(transport, async ({ agent, name, serverSockets, request }) => {
-        expect(await request("/first")).toEqual({ body: "/first", poisoned: undefined, reusedSocket: false });
-
-        const freeSocket = await theFreeSocket(agent, name);
-
-        expect(await request("/second")).toEqual({ body: "/second", poisoned: undefined, reusedSocket: true });
-        expect(freeSocket.destroyed).toBe(false);
-        expect(serverSockets.length).toBe(1);
-      });
-    });
+    expect(await proc.exited).toBe(0);
   });
 });
 

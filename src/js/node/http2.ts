@@ -5712,13 +5712,8 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
-    // The parser serializes the connection preface as soon as it is constructed. A socket
-    // whose connect() is still in flight must not receive it: the kernel reports the
-    // pending connect error from that write and then forgets it, so a refused connect is
-    // reported as ECONNRESET. The parser queues the preface until #onConnect attaches the
-    // socket and flushes, which is what #Handlers.write already does for a JS transport.
+    // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({
-      native: socket.connecting || socket.secureConnecting ? undefined : nativeSocket,
       context: this,
       settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,

@@ -2113,6 +2113,8 @@ describe("ReadableStream for a File that fails to open", () => {
     "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
     "Bun.file(missing).slice().stream()": [() => file(missing).slice(0, 10).stream(), enoent],
     "new Response(Bun.file(missing)).body": [() => new Response(file(missing)).body, enoent],
+    // The text-mode native source takes the same start path.
+    "new Response(Bun.file(missing)).textStream()": [() => new Response(file(missing)).textStream(), enoent],
     "new Request({ body: Bun.file(missing) }).body": [
       () => new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
       enoent,

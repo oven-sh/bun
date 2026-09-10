@@ -1232,9 +1232,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // If no navigate is pending (uninitiated navigation, redirect), the
     // PageTitle handler settles a no-op and m_title still updates.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
-        // The event names no frame and no loader, so it is the load event of
-        // whatever document is live. Only a document the view's own
-        // navigation committed ends that navigation.
+        // Page-level: no frame, no loader. Only a commit of the view's own ends its navigation.
         if (view->m_chromeNavigationKind != ChromeNavigationKind::NotRequested
             && !view->m_chromeNavigationCommitted)
             return;

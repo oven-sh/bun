@@ -1742,6 +1742,8 @@ JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
 
 JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
 {
+    // Before the stored size below diverges from a viewport nothing resized.
+    if (auto* refused = refuseIfCrashed(g, view)) return refused;
     auto& t = transport();
     view->m_width = width;
     view->m_height = height;

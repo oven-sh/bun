@@ -532,9 +532,9 @@ On the Chrome backend, one tab's renderer process can die while the browser keep
 
 The view stays open, but it has no renderer until a navigation gives it a new one:
 
-- `navigate()`, `reload()`, `goBack()` and `goForward()` work. Once one of them commits a document, the view is usable again.
-- Until then, Bun rejects every other method at once with `Error("page crashed (renderer process died), reload() or navigate() to recover")` instead of sending it to a renderer that cannot answer.
-- `cdp()` is the exception. It stays a raw passthrough, so Chrome answers on its own terms: browser-handled commands work, most page commands wait for the next navigation and then fail with `"Target crashed"`.
+- `navigate()`, `reload()`, `goBack()` and `goForward()` work. Once one of them commits a document, the view is usable again. `close()` works too.
+- Until then, Bun rejects the operations that need the page (`evaluate()`, `screenshot()`, `click()`, `type()`, `press()`, `scroll()`, `scrollTo()`, `resize()`) at once with `Error("page crashed (renderer process died), reload() or navigate() to recover")` instead of sending them to a renderer that cannot answer.
+- `cdp()` stays a raw passthrough, so Chrome answers on its own terms: browser-handled commands work, most page commands wait for the next navigation and then fail with `"Target crashed"`.
 
 Chrome reports the death as the CDP event `Inspector.targetCrashed`, which the view also dispatches to `addEventListener`:
 

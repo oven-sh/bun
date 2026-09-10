@@ -377,6 +377,11 @@ test.concurrent("a renderer crash rejects the view's pending work and a reload()
     report.reload = await outcome(begin(() => view.reload()));
     report.cdpWhileCrashed = await cdpWhileCrashed;
     report.after = await outcome(begin(() => view.evaluate("'alive at ' + " + JSON.stringify(view.url))));
+    // The refused resize() left the view's own idea of its size alone:
+    // scroll() still aims its wheel event at the centre of the 100x100 view.
+    await view.scroll(0, 10);
+    const { x, y } = await view.evaluate("__fake_last_input");
+    report.scrollCentre = [x, y];
     view.close();
     print(report);
   `);
@@ -392,7 +397,26 @@ test.concurrent("a renderer crash rejects the view's pending work and a reload()
     reload: {},
     cdpWhileCrashed: { rejected: "Target crashed" },
     after: { resolved: "alive at http://fake/crashed-and-reloaded" },
+    scrollCentre: [50, 50],
   });
+});
+
+// History navigation is a navigation too: Chrome answers
+// Page.getNavigationHistory from the browser while the renderer is dead, and
+// Page.navigateToHistoryEntry recreates it. So goBack() must not be refused.
+test.concurrent("goBack() recovers a crashed view too", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/one");
+    await view.navigate("http://fake/two");
+    const crashed = new Promise(resolve => view.addEventListener("Inspector.targetCrashed", resolve));
+    view.cdp("Page.crash").catch(() => {});
+    await crashed;
+    const back = await outcome(view.goBack());
+    print({ back, url: view.url, value: await outcome(view.evaluate("'alive'")) });
+    view.close();
+  `);
+  expect(result).toEqual({ back: {}, url: "http://fake/one", value: { resolved: "alive" } });
 });
 
 // The crash rejection is not a requested teardown, so a pending operation

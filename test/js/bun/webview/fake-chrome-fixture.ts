@@ -3,10 +3,10 @@
 // and this file speaks the --remote-debugging-pipe protocol back to it:
 // NUL-delimited CDP JSON, commands arriving on fd 3, replies and events
 // leaving on fd 4. It implements just enough of CDP for navigate(),
-// evaluate(), screenshot() and a renderer crash (Page.crash). evaluate()
-// runs the expression in this process, which is how the tests move chosen
-// payloads across the pipes and how they make the fake browser misbehave on
-// cue (the __fake_* globals).
+// reload(), goBack()/goForward(), evaluate(), screenshot() and a renderer
+// crash (Page.crash). evaluate() runs the expression in this process, which
+// is how the tests move chosen payloads across the pipes and how they make
+// the fake browser misbehave on cue (the __fake_* globals).
 import { closeSync, readSync, writeSync } from "node:fs";
 
 const COMMANDS = 3;
@@ -67,8 +67,17 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
-// Last committed URL per session, for Page.reload.
-const urls = new Map<string, string>();
+let entryIds = 0;
+// Session history for Page.reload and the Page.getNavigationHistory +
+// Page.navigateToHistoryEntry pair behind goBack()/goForward(). A new tab
+// starts at about:blank, as in Chrome.
+type History = { entries: { id: number; url: string }[]; index: number };
+const histories = new Map<string, History>();
+function historyOf(sessionId: string): History {
+  let h = histories.get(sessionId);
+  if (!h) histories.set(sessionId, (h = { entries: [{ id: ++entryIds, url: "about:blank" }], index: 0 }));
+  return h;
+}
 
 // Sessions whose renderer Page.crash killed, with the ids of the commands
 // Chrome would be holding for the dead renderer. What real Chrome (153) does:
@@ -99,7 +108,6 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       for (const heldId of held) fail(heldId, -32000, "Target crashed");
       event("Inspector.targetReloadedAfterCrash", {});
     }
-    urls.set(sessionId!, url);
     event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
     event("Page.loadEventFired", { timestamp: loads });
     return loaderId;
@@ -121,14 +129,32 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      const h = historyOf(sessionId!);
+      h.entries.splice(h.index + 1, Infinity, { id: ++entryIds, url: params.url });
+      h.index = h.entries.length - 1;
       reply({ frameId: "F", loaderId: "L" + (loads + 1) });
       load(params.url);
       return;
     }
-    case "Page.reload":
+    case "Page.reload": {
+      const h = historyOf(sessionId!);
       reply({});
-      load(urls.get(sessionId!) ?? "about:blank");
+      load(h.entries[h.index].url);
       return;
+    }
+    case "Page.getNavigationHistory": {
+      const h = historyOf(sessionId!);
+      return reply({ currentIndex: h.index, entries: h.entries });
+    }
+    case "Page.navigateToHistoryEntry": {
+      const h = historyOf(sessionId!);
+      const index = h.entries.findIndex(e => e.id === params.entryId);
+      if (index === -1) return fail(id, -32000, "No entry with passed id");
+      h.index = index;
+      reply({});
+      load(h.entries[index].url);
+      return;
+    }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Page.crash":
@@ -155,6 +181,8 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ result: { type: typeof value, value } });
     }
     default:
+      // Input.* is recorded where a later evaluate("__fake_last_input") finds it.
+      if (method.startsWith("Input.")) Object.assign(globalThis, { __fake_last_input: { method, ...params } });
       // Page.enable, Runtime.enable, Target.closeTarget, Input.*: nothing to say.
       return reply({});
   }

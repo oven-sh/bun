@@ -867,11 +867,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageNavigate: {
-        // {"frameId":"...","loaderId"?:"...","errorText"?:"..."}
-        // errorText present → the navigation failed before anything committed
-        // (a bad URL, a net::ERR_* resolved early). Reject now; Chrome's error
-        // page for this loader commits next and must not report it again. No
-        // loaderId → a same-document navigation, which loads no document.
+        // {frameId, loaderId?, errorText?}. errorText: failed before any commit; the error page for this loader follows.
         auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(result, { "loaderId", 8 })));
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty()) {
@@ -1169,8 +1165,7 @@ static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::Strin
     }
 }
 
-// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}: a document
-// committed. Same timing as WKWebView's NavDone: the URL is the new document's, subresources may still load.
+// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}: a document committed.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto frame = jsonField(params, { "frame", 5 });
@@ -1229,9 +1224,7 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     fireOnNavigated(m_global, view, view->m_url);
 }
 
-// Page.loadEventFired: the live document finished loading. It is page-level — no frame, no loader — so only a
-// document the view's own command committed ends the view's navigation. The document.title fetch chained here
-// makes `await view.navigate(); view.title` work, like WKWebView's NavDone which carries url and title together.
+// Page.loadEventFired (page-level: no frame, no loader): the live document loaded. Title fetch, then settle.
 void Transport::onLoadEventFired(JSWebView* view)
 {
     auto* g = m_global;

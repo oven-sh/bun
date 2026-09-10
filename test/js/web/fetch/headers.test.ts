@@ -390,6 +390,12 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => headers.has()).toThrow(TypeError);
     });
+    test("names the invalid header the same way get() and delete() do", () => {
+      const headers = new Headers();
+      for (const method of ["has", "get", "delete"] as const) {
+        expect(() => headers[method]("a b")).toThrow("Invalid header name: 'a b'");
+      }
+    });
   });
   describe("entries()", () => {
     test("can get header entries when empty", () => {

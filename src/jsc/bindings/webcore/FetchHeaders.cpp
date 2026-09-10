@@ -296,7 +296,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
     bool has = m_headers.contains(name);
     if (!has) {
         if (!isValidHTTPToken(name))
-            return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, '"');
+            return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
     }
     return has;
 }

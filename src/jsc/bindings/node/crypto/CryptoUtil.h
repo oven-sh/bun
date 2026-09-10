@@ -65,8 +65,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
-// Copies caller-provided bytes. Past INT32_MAX bytes (Node's limit for these arguments,
-// and the most a WTF::Vector holds) it throws ERR_OUT_OF_RANGE "<argName> is too big".
+// Throws ERR_OUT_OF_RANGE "<argName> is too big" past INT32_MAX bytes, like Node.
 std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 
 // For output encoding

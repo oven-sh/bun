@@ -1177,13 +1177,7 @@ impl PathLikeExt for PathLike<'_> {
     }
 }
 
-/// `value`'s bytes as a `PathLike`, NUL-checked; the caller checks the length
-/// ([`Valid::path_length`]).
-///
-/// An async op copies the bytes, like node's `BufferValue`: the name is the one
-/// the call was made with, not whatever the buffer holds when a pool thread
-/// reads it. The copy is also what the NUL check validates, so a NUL written
-/// after the check cannot truncate the name.
+/// `value`'s bytes as a `PathLike`, NUL-checked (the caller checks the length): an async call validates and keeps a copy, so a pool thread reads the call-time name.
 fn path_like_from_buffer(
     global: &JSGlobalObject,
     value: jsc::JSValue,

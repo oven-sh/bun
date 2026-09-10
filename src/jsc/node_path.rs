@@ -15,8 +15,7 @@ use crate::array_buffer::PinnedArrayBuffer;
 /// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
 pub enum PathLike<'a> {
-    /// Pinned for a synchronous call. An async call copies a buffer path into
-    /// `Utf8(Owned)` instead, so a pool thread never reads JS-writable bytes.
+    /// Pinned for a synchronous call (an async call copies a buffer path into `Utf8(Owned)`).
     Buffer(PinnedArrayBuffer),
     /// Always shares its WTF string's bytes (built by `shared_or_utf8`);
     /// transcoded paths are `Utf8(Owned)`.

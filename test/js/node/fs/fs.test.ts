@@ -173,8 +173,9 @@ describe("a Buffer path an async call copies at call time", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const fs = require("fs");
-        const p = Buffer.from(require("path").join(process.argv[1], "a.txt.png"));
+        `import fs from "node:fs";
+        import path from "node:path";
+        const p = Buffer.from(path.join(process.argv[1], "a.txt.png"));
         fs.readFile(p, "utf8", (err, data) => console.log(err ? err.code : data));
         p[p.length - 4] = 0;`,
         String(dir),

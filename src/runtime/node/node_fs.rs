@@ -999,9 +999,7 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-        /// [`from_js`](Self::from_js) for a work-pool job: under `will_be_async`
-        /// a path parses thread-isolated (string) or copied (buffer), and a data
-        /// buffer parses pinned and rooted.
+        /// [`from_js`](Self::from_js) under `will_be_async`: paths parse thread-isolated or copied, data pinned and rooted.
         fn from_js_async(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,

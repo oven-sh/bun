@@ -336,6 +336,104 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// CDP is JSON and JSON has no NaN or Infinity. A click(x, y) coordinate that
+// is not finite used to be written into Input.dispatchMouseEvent as a bare
+// `NaN` (1e300 became `Infinity` through the float cast); Chrome drops a frame
+// it cannot parse without replying (the fake throws on it), so the promise
+// never settled and the view's one input slot stayed taken. Real Chrome also
+// never answers a finite coordinate that overflows its own float conversion.
+// The argument check now throws for all of these before anything is sent.
+test.concurrent("a click() coordinate that is not a finite float throws before reaching the pipe", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const thrown = call => {
+      try {
+        call().catch(() => {});
+        return "did not throw";
+      } catch (e) {
+        return e.code + ": " + e.message;
+      }
+    };
+    const checks = {
+      nanX: thrown(() => view.click(NaN, 5)),
+      infiniteY: thrown(() => view.click(5, -Infinity)),
+      noArguments: thrown(() => view.click()),
+      beyondFloat: thrown(() => view.click(1e300, 5)),
+    };
+    // The slot is still free and the browser still there.
+    const nextClick = await outcome(view.click(1.5, -2));
+    const alive = await view.evaluate("'still here'");
+    print({ checks, nextClick, alive });
+    view.close();
+  `);
+  expect(result).toEqual({
+    checks: {
+      nanX: "ERR_INVALID_ARG_VALUE: The argument 'x' must be finite. Received NaN",
+      infiniteY: "ERR_INVALID_ARG_VALUE: The argument 'y' must be finite. Received -Infinity",
+      noArguments: "ERR_INVALID_ARG_VALUE: The argument 'x' must be finite. Received NaN",
+      beyondFloat: "ERR_INVALID_ARG_VALUE: The argument 'x' is too large for a viewport coordinate. Received 1e+300",
+    },
+    nextClick: {},
+    alive: "still here",
+  });
+});
+
+// The selector ops carry their timeout as uint32 milliseconds. Converting the
+// option with a bare cast wrapped Infinity and anything >= 2**32 to 0 (an
+// instant "timeout waiting for ..." rejection) and let NaN and negatives
+// through as 0 too. Out-of-range values now throw; too-large ones saturate.
+// The fake has no DOM, so the scenario gives it the few globals the page-side
+// poll loop touches, with the element turning up on the third frame.
+test.concurrent("a selector timeout is range-checked and saturates at uint32 instead of wrapping", async () => {
+  const result = await runScenario(`
+    const fakePage = \`(() => {
+      let frames = 0;
+      globalThis.requestAnimationFrame = f => setTimeout(() => f(++frames), 1);
+      globalThis.innerWidth = 100;
+      globalThis.innerHeight = 100;
+      const el = {
+        getBoundingClientRect: () => ({ left: 10, top: 20, width: 30, height: 40 }),
+        contains: () => false,
+        scrollIntoView: () => {},
+      };
+      globalThis.document = {
+        querySelector: () => (frames >= 3 ? el : null),
+        elementFromPoint: () => el,
+      };
+      return true;
+    })()\`;
+    const view = newView();
+    await view.navigate("http://fake/");
+    const thrown = call => {
+      try {
+        call().catch(() => {});
+        return "did not throw";
+      } catch (e) {
+        return e.code + ": " + e.message;
+      }
+    };
+    const checks = {
+      nan: thrown(() => view.click("#later", { timeout: NaN })),
+      negative: thrown(() => view.scrollTo("#later", { timeout: -1 })),
+    };
+    await view.evaluate(fakePage);
+    const infinite = await outcome(view.click("#later", { timeout: Infinity }));
+    await view.evaluate(fakePage);
+    const aboveUint32 = await outcome(view.scrollTo("#later", { timeout: 2 ** 32 }));
+    print({ checks, infinite, aboveUint32 });
+    view.close();
+  `);
+  expect(result).toEqual({
+    checks: {
+      nan: 'ERR_OUT_OF_RANGE: The value of "timeout" is out of range. It must be >= 0. Received NaN',
+      negative: 'ERR_OUT_OF_RANGE: The value of "timeout" is out of range. It must be >= 0. Received -1',
+    },
+    infinite: {},
+    aboveUint32: {},
+  });
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

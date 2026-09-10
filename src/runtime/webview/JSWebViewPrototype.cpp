@@ -207,6 +207,39 @@ static VirtualKey virtualKeyFromName(const WTF::String& s)
     return VirtualKey::Character;
 }
 
+// options.timeout for the selector ops. Both backends carry it as uint32 ms,
+// so larger values (and Infinity) saturate at ~49.7 days instead of wrapping.
+// A missing or non-number value keeps the caller's default.
+static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue t, uint32_t& timeout)
+{
+    if (!t.isNumber()) return true;
+    double ms = t.asNumber();
+    if (std::isnan(ms) || ms < 0) {
+        Bun::ERR::OUT_OF_RANGE(scope, g, "timeout"_s, ">= 0"_s, t);
+        return false;
+    }
+    constexpr double maxMs = std::numeric_limits<uint32_t>::max();
+    timeout = ms >= maxMs ? std::numeric_limits<uint32_t>::max() : static_cast<uint32_t>(ms);
+    return true;
+}
+
+// click(x, y) coordinates end up as 32-bit floats on both backends (WebKit's
+// ClickPayload; Chrome narrows Input.dispatchMouseEvent x/y itself). Chrome
+// never answers a command whose JSON holds NaN/Infinity or whose coordinate
+// overflows a float, which would leave the promise and the input slot stuck.
+static bool checkCoordinate(JSGlobalObject* g, ThrowScope& scope, ASCIILiteral name, double v)
+{
+    if (!std::isfinite(v)) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, name, jsNumber(v), "must be finite"_s);
+        return false;
+    }
+    if (std::fabs(v) > std::numeric_limits<float>::max()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, name, jsNumber(v), "is too large for a viewport coordinate"_s);
+        return false;
+    }
+    return true;
+}
+
 // --- Core ops ---------------------------------------------------------------
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -439,9 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, false);
         JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
+        return parseTimeout(globalObject, scope, t, timeout);
     };
 
     // click(selector, opts?) — rAF-polled actionability check page-side
@@ -462,6 +493,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
     double y = callFrame->argument(1).toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (!checkCoordinate(globalObject, scope, "x"_s, x) || !checkCoordinate(globalObject, scope, "y"_s, y)) return {};
     if (!parseOpts(callFrame->argument(2))) return {};
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
@@ -566,8 +598,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
         JSObject* o = opts.getObject();
         JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!parseTimeout(globalObject, scope, t, timeout)) return {};
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "block"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (b.isString()) {

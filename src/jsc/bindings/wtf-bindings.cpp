@@ -107,11 +107,6 @@ extern "C" void Bun__atexit(void (*func)(void));
 extern "C" volatile sig_atomic_t bun_stdio_modified[3];
 #endif
 
-extern "C" size_t Bun__ttyStateSize()
-{
-    return sizeof(BunTTYState);
-}
-
 #if !OS(WINDOWS)
 // Port of libuv's uv_tty_set_mode(), with `state` standing in for the
 // per-handle fields of uv_tty_t. The file statics above are only the

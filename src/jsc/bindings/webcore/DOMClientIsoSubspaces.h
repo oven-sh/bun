@@ -58,7 +58,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellman { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSECDH { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForTTYWrapObject { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiHandleScopeImpl { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStrongRootBlock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiTypeTag { nullptr };

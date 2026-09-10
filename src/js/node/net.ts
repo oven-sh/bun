@@ -238,7 +238,7 @@ function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
+  socket.shutdown?.();
   callback(err);
 }
 function emitCloseNT(self, hasError) {
@@ -567,9 +567,92 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+// Stream-wrap handles (`tty_wrap.TTY`) follow Node's LibuvStreamWrap contract:
+// readStart()/readStop() return a libuv errno, reads arrive as onread(nread, buffer).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js
+const UV_EOF = -4095;
+function isStreamWrapHandle(handle) {
+  return $isCallable(handle.readStart);
+}
+function tryReadStart(self, handle) {
+  if (handle.reading) return;
+  handle.reading = true;
+  const err = handle.readStart();
+  if (err) self.destroy(new ErrnoException(err, "read"));
+}
+function tryReadStop(self, handle) {
+  if (!handle.reading) return;
+  handle.reading = false;
+  if (self.destroyed) return;
+  const err = handle.readStop();
+  if (err) self.destroy(new ErrnoException(err, "read"));
+}
+function handleReadStart(self, handle) {
+  if (isStreamWrapHandle(handle)) tryReadStart(self, handle);
+  else handle.resume?.();
+}
+function onStreamRead(nread, buffer) {
+  const self = this[owner_symbol];
+  if (!self || self.destroyed) return;
+  if (nread > 0) {
+    self._unrefTimer();
+    self.bytesRead += nread;
+    // A socket built with the `onread` option hands chunks to that callback.
+    const deliver = self[kOnreadDeliver];
+    if (deliver !== undefined) {
+      const tail = self[kOnreadTail];
+      if (tail !== undefined) {
+        self[kOnreadTail] = Buffer.concat([tail, buffer]);
+        return;
+      }
+      deliver(buffer);
+      return;
+    }
+    if (!self.push(buffer)) readStop(self, this);
+    return;
+  }
+  if (nread === 0) return;
+  if (nread !== UV_EOF) {
+    self.destroy(new ErrnoException(nread, "read"));
+    return;
+  }
+  if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+}
+// The handle has no writer: write(2) to its fd, as fdSyncWrite does.
+function streamWrapSyncWrite(chunk, encoding, callback) {
+  const handle = this._handle;
+  if (!handle) return callback($ERR_SOCKET_CLOSED());
+  const fs = require("node:fs");
+  try {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    let offset = 0;
+    while (offset < buf.length) {
+      offset += fs.writeSync(handle.fd, buf, offset);
+    }
+    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
+    callback();
+  } catch (err) {
+    callback(err);
+  }
+}
+function streamWrapSyncWritev(data, callback) {
+  for (let i = 0; i < data.length; i++) {
+    const { chunk, encoding } = data[i];
+    let failed;
+    streamWrapSyncWrite.$call(this, chunk, encoding, err => {
+      failed = err;
+    });
+    if (failed) return callback(failed);
+  }
+  callback();
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self, handle) {
-  handle?.pause?.();
+  if (handle) {
+    if (isStreamWrapHandle(handle)) tryReadStop(self, handle);
+    else handle.pause?.();
+  }
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
@@ -1608,7 +1691,14 @@ function Socket(options?) {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
-  this._handle = options?.handle || null;
+  const handle = options?.handle || null;
+  this._handle = handle;
+  if (handle && isStreamWrapHandle(handle)) {
+    handle[owner_symbol] = this;
+    handle.onread = onStreamRead;
+    this._write = streamWrapSyncWrite;
+    this._writev = streamWrapSyncWritev;
+  }
   this[ksocket] = undefined;
   this.server = undefined;
   this._server = undefined;
@@ -1770,6 +1860,10 @@ function Socket(options?) {
         self[kOnreadDeliver](buffer);
       },
     };
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L472
+  if (handle && isStreamWrapHandle(handle) && opts.readable !== false && !opts.manualStart) {
+    this.read(0);
   }
   if (signal) {
     if (signal.aborted) {
@@ -2200,11 +2294,12 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   if (this._handle) {
     $debug("close handle");
     const isException = err ? true : false;
+    const currentHandle = this._handle;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
-    this[kBytesWritten] = this._handle.bytesWritten;
+    // A stream-wrap handle does not write: streamWrapSyncWrite keeps the count here.
+    if (!isStreamWrapHandle(currentHandle)) this[kBytesWritten] = currentHandle.bytesWritten;
 
-    const currentHandle = this._handle;
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees
@@ -2327,8 +2422,9 @@ function drainOnreadTailNT(socket) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
-    socket._handle?.resume?.();
-    restorePausedHold(socket, socket._handle);
+    const handle = socket._handle;
+    if (handle) handleReadStart(socket, handle);
+    restorePausedHold(socket, handle);
   }
 }
 
@@ -2337,11 +2433,12 @@ Socket.prototype.resume = function resume() {
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
-  if (!this.connecting && !drainOnreadTail(this)) {
-    this._handle?.resume?.();
+  const handle = this._handle;
+  if (handle && !this.connecting && !drainOnreadTail(this)) {
+    handleReadStart(this, handle);
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
-  restorePausedHold(this, this._handle);
+  restorePausedHold(this, handle);
   return ret;
 };
 
@@ -2437,8 +2534,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   if (!this.connecting && !drainOnreadTail(this, true)) {
-    this._handle?.resume?.();
-    restorePausedHold(this, this._handle);
+    const handle = this._handle;
+    if (handle) handleReadStart(this, handle);
+    restorePausedHold(this, handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2448,7 +2546,7 @@ Socket.prototype._read = function _read(size) {
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else if (!drainOnreadTail(this, true)) {
-    socket?.resume?.();
+    handleReadStart(this, socket);
     restorePausedHold(this, socket);
   }
 };

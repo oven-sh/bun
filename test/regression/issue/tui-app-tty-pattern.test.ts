@@ -107,35 +107,29 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Test that tty.ReadStream works correctly with various file descriptors
-test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
+// Node rejects a regular file: uv_tty_init returns EINVAL and tty.ReadStream
+// throws ERR_TTY_INIT_FAILED. A pipe is accepted (it is a stream), so a
+// reopened /dev/tty is not the only fd a ReadStream can wrap.
+test("tty.ReadStream rejects a regular file like Node", () => {
   const fs = require("fs");
   const tty = require("tty");
   const path = require("path");
   const os = require("os");
 
-  // Create a regular file in the system temp directory
   const tempFile = path.join(os.tmpdir(), "test-regular-file-" + Date.now() + ".txt");
   fs.writeFileSync(tempFile, "test content");
-
+  const fd = fs.openSync(tempFile, "r");
   try {
-    const fd = fs.openSync(tempFile, "r");
-    const stream = new tty.ReadStream(fd);
-
-    // Regular file should not be identified as TTY
-    expect(stream.isTTY).toBe(false);
-
-    // ref/unref should still exist (for compatibility) but may be no-ops
-    expect(typeof stream.ref).toBe("function");
-    expect(typeof stream.unref).toBe("function");
-
-    // Clean up - only destroy the stream, don't double-close the fd
-    stream.destroy();
+    expect(() => new tty.ReadStream(fd)).toThrow(
+      expect.objectContaining({
+        code: "ERR_TTY_INIT_FAILED",
+        message: "TTY initialization failed: uv_tty_init returned EINVAL (invalid argument)",
+      }),
+    );
+    // The rejected fd is still the caller's.
+    expect(fs.fstatSync(fd).isFile()).toBe(true);
   } finally {
-    try {
-      fs.unlinkSync(tempFile);
-    } catch (e) {
-      // Ignore cleanup errors
-    }
+    fs.closeSync(fd);
+    fs.unlinkSync(tempFile);
   }
 });

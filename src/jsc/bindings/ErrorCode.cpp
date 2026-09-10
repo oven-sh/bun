@@ -1877,6 +1877,8 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_ASYNC_CALLBACK, 1, { ""_s, " must be a function"_s, ""_s } },
     { ErrorCode::ERR_AMBIGUOUS_ARGUMENT, 2, { "The \""_s, "\" argument is ambiguous. "_s, ""_s } },
     { ErrorCode::ERR_INVALID_FD_TYPE, 1, { "Unsupported fd type: "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_INVALID_FD, 1, { "\"fd\" must be a positive integer: "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_TTY_INIT_FAILED, 1, { "TTY initialization failed: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_CHILD_PROCESS_STDIO_MAXBUFFER, 1, { ""_s, " maxBuffer length exceeded"_s, ""_s } },
     { ErrorCode::ERR_IP_BLOCKED, 1, { "IP("_s, ") is blocked by net.BlockList"_s, ""_s } },
     { ErrorCode::ERR_VM_MODULE_STATUS, 1, { "Module status "_s, ""_s, ""_s } },

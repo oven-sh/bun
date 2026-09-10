@@ -21,6 +21,8 @@
 #include <sys/socket.h>
 #if OS(DARWIN)
 #include <mach-o/loader.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
 #endif
 #else
 #include <uv.h>
@@ -866,6 +868,24 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
     if (ttyname_r(fd, pathbuf, sizeof(pathbuf)) != 0) {
         return -1;
     }
+
+#if OS(DARWIN)
+    // kqueue rejects the /dev/tty alias: open the controlling terminal's real device.
+    if (strcmp(pathbuf, "/dev/tty") == 0) {
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+        struct kinfo_proc kp;
+        size_t len = sizeof(kp);
+        if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp))
+            return -1;
+        dev_t tdev = kp.kp_eproc.e_tdev;
+        if (tdev == NODEV || tdev == static_cast<dev_t>(-1))
+            return -1;
+        char name[64];
+        if (devname_r(tdev, S_IFCHR, name, sizeof(name)) == nullptr)
+            return -1;
+        snprintf(pathbuf, sizeof(pathbuf), "/dev/%s", name);
+    }
+#endif
 
     return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
 }

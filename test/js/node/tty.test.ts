@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
-import { WriteStream } from "node:tty";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
+import { join } from "node:path";
+import { ReadStream, WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -149,6 +151,7 @@ describe("ReadStream.prototype.setRawMode", () => {
 
     // A child that dies early must reject the phase waits rather than hang them.
     const exitedEarly = proc.exited.then(code => {
+      if (code === 0) return new Promise<never>(() => {});
       throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
     });
     exitedEarly.catch(() => {});
@@ -189,6 +192,659 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// Runs `script` in a child attached to a fresh PTY and drives it through a
+// phase protocol: the child prints a marker, the parent reads termios and
+// types the next line. Markers beyond the last phase (the child's final
+// record) are awaited too, so `output()` is complete when this resolves.
+// With `controllingTerminal` the PTY is created by the spawn itself, which is
+// the only form that makes the child a session leader on it (so /dev/tty opens).
+async function runInPty(
+  script: string,
+  phases: ((terminal: Bun.Terminal, output: () => string) => void | Promise<void>)[],
+  opts: { markers: string[]; controllingTerminal?: boolean },
+) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const waiters: { marker: string; resolve: () => void }[] = [];
+  const terminalOptions = {
+    data(_terminal: Bun.Terminal, chunk: Uint8Array) {
+      buffer += decoder.decode(chunk, { stream: true });
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (buffer.includes(waiters[i].marker)) {
+          waiters[i].resolve();
+          waiters.splice(i, 1);
+        }
+      }
+    },
+  };
+  await using ownTerminal = opts.controllingTerminal ? null : new Bun.Terminal(terminalOptions);
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    terminal: ownTerminal ?? terminalOptions,
+  });
+  await using spawnedTerminal = ownTerminal ? null : proc.terminal!;
+  const terminal = (ownTerminal ?? spawnedTerminal)!;
+  // A failing child rejects the marker waits instead of hanging them. A clean
+  // exit can land before the PTY delivers the child's last output, so it does
+  // not end the wait: the marker still arrives through `data`.
+  const exitedEarly = proc.exited.then(code => {
+    if (code === 0) return new Promise<never>(() => {});
+    throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
+  });
+  exitedEarly.catch(() => {});
+  const phase = (marker: string) => {
+    const seen = buffer.includes(marker)
+      ? Promise.resolve()
+      : new Promise<void>(resolve => waiters.push({ marker, resolve }));
+    return Promise.race([seen, exitedEarly]);
+  };
+  for (let i = 0; i < opts.markers.length; i++) {
+    await phase(opts.markers[i]);
+    if (i < phases.length) await phases[i](terminal, () => buffer);
+  }
+  const code = await proc.exited;
+  return { code, output: () => buffer };
+}
+
+describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY handle", () => {
+  test("process.stdin has Node's shape under a PTY", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const tty = require("node:tty");
+        const { Duplex } = require("node:stream");
+        const { TTY } = process.binding("tty_wrap");
+        // Before any ReadStream exists: Node's test-net-access-byteswritten reads this.
+        const readStreamExtendsSocket = Object.getPrototypeOf(tty.ReadStream) === net.Socket;
+        const s = process.stdin;
+        const out = {
+          isReadStream: s instanceof tty.ReadStream,
+          isSocket: s instanceof net.Socket,
+          isDuplex: s instanceof Duplex,
+          constructor: s.constructor === tty.ReadStream,
+          readStreamExtendsSocket,
+          protoChain: Object.getPrototypeOf(tty.ReadStream.prototype) === net.Socket.prototype,
+          handleIsTTY: s._handle instanceof TTY,
+          handleMethods: ["readStart", "readStop", "setRawMode", "getWindowSize", "ref", "unref", "close"].every(
+            m => typeof s._handle[m] === "function",
+          ),
+          highWaterMark: s.readableHighWaterMark,
+          readingBeforeConsumer: s._handle.reading,
+          fd: s.fd,
+          isTTY: s.isTTY,
+          isRaw: s.isRaw,
+          bytesReadGetter: typeof Object.getOwnPropertyDescriptor(TTY.prototype, "bytesRead").get,
+        };
+        process.stdout.write("RESULT " + JSON.stringify(out) + "\\n");
+        process.exit(0);
+      `,
+      [() => {}],
+      { markers: ["RESULT "] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);
+    expect(JSON.parse(match![1])).toEqual({
+      isReadStream: true,
+      isSocket: true,
+      isDuplex: true,
+      constructor: true,
+      readStreamExtendsSocket: true,
+      protoChain: true,
+      handleIsTTY: true,
+      handleMethods: true,
+      highWaterMark: 0,
+      readingBeforeConsumer: false,
+      fd: 0,
+      isTTY: true,
+      isRaw: false,
+      bytesReadGetter: "function",
+    });
+  });
+
+  // readableHighWaterMark: 0 makes every push() report backpressure, so the
+  // handle stops reading after each chunk and only reads again when the
+  // stream asks for more. That is what hands fd 0 to a child.
+  test("the handle stops reading after every chunk and resumes on demand", async () => {
+    const { code, output } = await runInPty(
+      `
+        const s = process.stdin;
+        const log = [];
+        const ack = () => new Promise(resolve => s.once("data", () => resolve()));
+        (async () => {
+          s.setRawMode(true);
+          log.push(["idle", s._handle.reading]);
+          process.stdout.write("P1\\n"); await ack();
+          // The push() that delivered the byte stopped the handle; by the time
+          // this continuation runs, the nextTick read(0) of flowing mode has
+          // re-armed it. Same sequence as Node.
+          log.push(["in-data", s._handle.reading]);
+          await new Promise(r => setTimeout(r, 0));
+          log.push(["flowing", s._handle.reading, s._handle.bytesRead]);
+          s.pause();
+          await new Promise(r => process.nextTick(r));
+          log.push(["paused", s._handle.reading, s.readableFlowing]);
+          s.resume();
+          await new Promise(r => setTimeout(r, 0));
+          log.push(["resumed", s._handle.reading]);
+          s.unref();
+          process.stdout.write("RESULT " + JSON.stringify(log) + "\\n");
+        })();
+      `,
+      [
+        terminal => {
+          terminal.write("x");
+        },
+      ],
+      { markers: ["P1", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\[.*\])/);
+    expect(JSON.parse(match![1])).toEqual([
+      ["idle", false],
+      ["in-data", true],
+      ["flowing", true, 1],
+      ["paused", false, false],
+      ["resumed", true],
+    ]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29126: a TUI reads stdin with a
+  // 'readable' listener, removes it, then spawns an interactive child with
+  // stdio: "inherit". Bun kept polling fd 0 for good and stole the child's
+  // keystrokes. Node (and now Bun) keeps the handle armed until the next
+  // chunk arrives: that chunk is the stream's, push() reports backpressure,
+  // the handle stops, and everything after belongs to the child.
+  test("a child with stdio: 'inherit' owns stdin once the handle stops after the last 'readable' listener is removed", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { spawn } = require("node:child_process");
+        const s = process.stdin;
+        s.setRawMode(true);
+        const seen = [];
+        const handler = () => {
+          let c;
+          while ((c = s.read()) !== null) seen.push(c.toString());
+        };
+        s.on("readable", handler);
+        process.stdout.write("P1\\n");
+        s.once("readable", () => setTimeout(() => {
+          s.setRawMode(false);
+          s.removeListener("readable", handler);
+          const armed = s._handle.reading;
+          // With no consumer left the next chunk is buffered in the stream and
+          // stops the handle; nothing re-arms it. A listener here would.
+          const timer = setInterval(() => {
+            if (s._handle.reading) return;
+            clearInterval(timer);
+            process.stdout.write("P3 " + JSON.stringify({ armed, buffered: s.readableLength }) + "\\n");
+            s.unref();
+            const child = spawn(
+              process.execPath,
+              ["-e", "process.stdin.on('data', d => process.stdout.write('CHILD:' + d)); process.stdin.on('end', () => process.exit(0)); console.log('CHILDREADY')"],
+              { stdio: "inherit" },
+            );
+            child.on("exit", exitCode => {
+              process.stdout.write("RESULT " + JSON.stringify({ parentSaw: seen, readingAtExit: s._handle.reading, childExit: exitCode }) + "\\n");
+              process.exit(0);
+            });
+          }, 10);
+          process.stdout.write("P2\\n");
+        }, 50));
+      `,
+      [
+        terminal => {
+          terminal.write("a");
+        },
+        terminal => {
+          // Cooked mode now: a whole line.
+          terminal.write("b\n");
+        },
+        () => {},
+        terminal => {
+          terminal.write("hello child\n");
+        },
+        terminal => {
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["P1", "P2", "P3", "CHILDREADY", "CHILD:hello child", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    expect(JSON.parse(text.match(/P3 (\{.*\})/)![1])).toEqual({ armed: true, buffered: 2 });
+    expect(JSON.parse(text.match(/RESULT (\{.*\})/)![1])).toEqual({
+      parentSaw: ["a"],
+      readingAtExit: false,
+      childExit: 0,
+    });
+    expect(text).toContain("CHILD:hello child");
+  });
+
+  // Before, tty.ReadStream was an fs.ReadStream with a blocking read(2) on a
+  // pool thread: destroy() could not cancel it, the process lived until the
+  // next line, and that line vanished into the destroyed stream. Now close()
+  // unregisters the poll, the loop empties, and the line is still in the
+  // terminal's input queue for the next reader. The caller's fd stays open,
+  // as in Node (libuv closes only the fd it reopened).
+  test("destroy() with no input pending lets the process exit and leaves the next line to the next reader", async () => {
+    const { code, output } = await runInPty(
+      `
+        const fs = require("node:fs");
+        const tty = require("node:tty");
+        const { spawn } = require("node:child_process");
+        const fd = fs.openSync("/dev/tty", "r");
+        const input = new tty.ReadStream(fd);
+        const seen = [];
+        input.on("data", d => seen.push(String(d)));
+        let readingBeforeDestroy;
+        input.on("close", () => {
+          let fdOpen = true;
+          try { fs.fstatSync(fd); } catch { fdOpen = false; }
+          process.stdout.write("P1 " + JSON.stringify({ seen, readingBeforeDestroy, fdOpen, destroyed: input.destroyed }) + "\\n");
+          const child = spawn(
+            process.execPath,
+            ["-e", "process.stdout.write('CHILDREADY\\\\n'); process.stdin.once('data', d => { process.stdout.write('CHILD:' + d); process.exit(0); })"],
+            { stdio: "inherit" },
+          );
+          child.on("exit", exitCode => process.stdout.write("P2 " + exitCode + "\\n"));
+        });
+        const timer = setInterval(() => {
+          if (input._handle && !input._handle.reading) return;
+          clearInterval(timer);
+          readingBeforeDestroy = input._handle ? input._handle.reading : null;
+          input.destroy();
+        }, 1);
+      `,
+      [
+        () => {},
+        terminal => {
+          terminal.write("after destroy\n");
+        },
+      ],
+      { markers: ["P1 ", "CHILDREADY", "P2 "], controllingTerminal: true },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    expect(JSON.parse(text.match(/P1 (\{.*\})/)![1])).toEqual({
+      seen: [],
+      readingBeforeDestroy: true,
+      fdOpen: true,
+      destroyed: true,
+    });
+    expect(text).toContain("CHILD:after destroy");
+    expect(text).toContain("P2 0");
+  });
+
+  test("tty_wrap.TTY delivers reads through onread and reports EOF", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { TTY } = process.binding("tty_wrap");
+        const handle = new TTY(0, {});
+        const events = [];
+        handle.onread = function (nread, buf) {
+          events.push([nread, buf === undefined ? null : buf.toString(), this === handle]);
+          process.stdout.write("READ " + events.length + "\\n");
+          if (nread === -4095) {
+            process.stdout.write("RESULT " + JSON.stringify({ events, bytesRead: handle.bytesRead, fd: handle.fd }) + "\\n");
+            handle.close();
+            process.exit(0);
+          }
+        };
+        process.stdout.write("started=" + handle.readStart() + "\\n");
+      `,
+      [
+        terminal => {
+          // Cooked mode: a line per read, and ^D at the start of a line is EOF.
+          terminal.write("abc\n");
+        },
+        terminal => {
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["started=0", "READ 1", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);
+    const result = JSON.parse(match![1]);
+    expect(result.events.at(-1)).toEqual([-4095, null, true]);
+    expect(
+      result.events
+        .slice(0, -1)
+        .map(e => e[1])
+        .join(""),
+    ).toBe("abc\n");
+    expect(result.events.every(e => e[2])).toBe(true);
+    expect(result).toMatchObject({ bytesRead: 4, fd: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,
+  // "setRawMode"), so code/errno/syscall are set. A pipe is accepted by
+  // uv_tty_init. Closing fd 0 under the handle makes tcgetattr fail with EBADF
+  // on every platform (a pipe alone gives ENOTTY on Linux, EOPNOTSUPP on macOS).
+  test("setRawMode failure emits an ErrnoException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tty = require("node:tty");
+          const s = new tty.ReadStream(0);
+          s.on("error", err => {
+            console.log(JSON.stringify({ code: err.code, errno: err.errno, syscall: err.syscall, message: err.message, isRaw: s.isRaw }));
+            s.destroy();
+          });
+          require("node:fs").closeSync(0);
+          s.setRawMode(true);
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      code: "EBADF",
+      errno: -9,
+      syscall: "setRawMode",
+      message: "setRawMode EBADF",
+      isRaw: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("ReadStream constructor", () => {
+  // Node's ERR_TTY_INIT_FAILED is a SystemError carrying the uv_tty_init context.
+  test("a regular file fails with the SystemError shape Node uses", () => {
+    using dir = tempDir("tty-init-failed", { "file.txt": "x" });
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    try {
+      let err: any;
+      try {
+        new ReadStream(fd);
+      } catch (e) {
+        err = e;
+      }
+      expect({
+        name: err?.name,
+        code: err?.code,
+        message: err?.message,
+        errno: err?.errno,
+        syscall: err?.syscall,
+        info: err?.info,
+      }).toEqual({
+        name: "SystemError",
+        code: "ERR_TTY_INIT_FAILED",
+        message: "TTY initialization failed: uv_tty_init returned EINVAL (invalid argument)",
+        errno: isWindows ? -4071 : -22,
+        syscall: "uv_tty_init",
+        info: { errno: isWindows ? -4071 : -22, code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" },
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("rejects a negative or non-integer fd like Node", () => {
+    for (const fd of [-1, 1.5]) {
+      expect(() => new ReadStream(fd)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_INVALID_FD",
+          message: `"fd" must be a positive integer: ${fd}`,
+        }),
+      );
+    }
+  });
+});
+
+describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Socket", () => {
+  // Node's net.Socket({ handle, onread }) hands every chunk to onread.callback
+  // instead of push(); the stream-wrap read path must do the same.
+  test("a Socket over a TTY handle honours the onread option", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const { TTY } = process.binding("tty_wrap");
+        const seen = [];
+        const s = new net.Socket({
+          handle: new TTY(0, {}),
+          onread: {
+            buffer: Buffer.alloc(64),
+            callback(nread, buf) {
+              seen.push(buf.toString("utf8", 0, nread));
+              if (seen.join("").includes("\\n")) {
+                process.stdout.write("RESULT " + JSON.stringify({ seen, pushed: s.readableLength, bytesRead: s.bytesRead }) + "\\n");
+                s.destroy();
+              }
+            },
+          },
+        });
+        process.stdout.write("P1\\n");
+      `,
+      [
+        terminal => {
+          terminal.write("abc\n");
+        },
+      ],
+      { markers: ["P1", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    const result = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1]);
+    expect(result.seen.join("")).toBe("abc\n");
+    expect(result).toMatchObject({ pushed: 0, bytesRead: 4 });
+  });
+
+  // A callback that returns false parks the rest of the chunk as a tail. EOF
+  // must wait until resume() has delivered that tail, as on the usockets path.
+  test("EOF after a paused onread callback is delivered after the buffered tail", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const { TTY } = process.binding("tty_wrap");
+        const events = [];
+        const s = new net.Socket({
+          handle: new TTY(0, {}),
+          onread: {
+            buffer: Buffer.alloc(2),
+            callback(nread, buf) {
+              events.push("data:" + buf.toString("utf8", 0, nread));
+              if (events.length === 1) {
+                setImmediate(() => { events.push("resume"); s.resume(); });
+                return false;
+              }
+            },
+          },
+        });
+        s.on("end", () => {
+          events.push("end");
+          process.stdout.write("RESULT " + JSON.stringify(events) + "\\n");
+        });
+        process.stdout.write("P1\\n");
+      `,
+      [
+        terminal => {
+          // One cooked line then ^D: a 5-byte read split over a 2-byte onread buffer, then EOF.
+          terminal.write("abcd\n");
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["P1", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    const events = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\[.*\])/)![1]);
+    expect(events[0]).toBe("data:ab");
+    expect(events[1]).toBe("resume");
+    expect(events.at(-1)).toBe("end");
+    expect(
+      events
+        .filter((e: string) => e.startsWith("data:"))
+        .map((e: string) => e.slice(5))
+        .join(""),
+    ).toBe("abcd\n");
+  });
+
+  // The handle does not count writes (they go through write(2) on the JS
+  // side), so destroy() must not reset bytesWritten from the handle.
+  test("bytesWritten survives destroy()", async () => {
+    const { code, output } = await runInPty(
+      `
+        const s = process.stdin;
+        s.write("hi", () => {
+          const before = s.bytesWritten;
+          s.on("close", () => {
+            process.stdout.write("RESULT " + JSON.stringify({ before, after: s.bytesWritten }) + "\\n");
+          });
+          s.destroy();
+        });
+      `,
+      [() => {}],
+      { markers: ["RESULT "] },
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({ before: 2, after: 2 });
+  });
+
+  // A TUI run as 'app < in > out' still has a controlling terminal and opens
+  // /dev/tty. On macOS kqueue refuses the /dev/tty alias, and with no tty on
+  // stdio the real device must come from the kernel, not from a stdio scan.
+  test("reads /dev/tty from a process whose stdio are all pipes", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", \`
+          const fs = require("node:fs");
+          const tty = require("node:tty");
+          const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+          input.on("error", err => { process.stdout.write("ERROR " + err.code + "\\\\n"); process.exit(1); });
+          input.on("data", d => {
+            process.stdout.write("DATA " + JSON.stringify(String(d)) + "\\\\n");
+            input.destroy();
+          });
+          process.stdout.write("CHILDREADY\\\\n");
+        \`], { stdio: ["pipe", "pipe", "pipe"] });
+        child.stdout.on("data", d => process.stdout.write(d));
+        child.stderr.on("data", d => process.stdout.write("STDERR " + d));
+        child.on("exit", code => { process.stdout.write("RESULT " + code + "\\n"); process.exit(0); });
+      `,
+      [
+        terminal => {
+          terminal.write("from the terminal\n");
+        },
+      ],
+      { markers: ["CHILDREADY", "RESULT "], controllingTerminal: true },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    expect(text).toContain('DATA "from the terminal\\n"');
+    expect(text).toContain("RESULT 0");
+  });
+});
+
+// node-pty sets O_NONBLOCK on the pty master and wraps it in tty.ReadStream
+// (https://github.com/oven-sh/bun/issues/41414). A read with no data then
+// fails with EAGAIN. The stream must wait for data, as Node's does. libuv
+// cannot reopen a pty master by name, so it owns that fd and closes it on
+// close(); node-pty relies on that.
+describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
+  // A separate process opens the path and writes one chunk. The fixture issues
+  // its next read as soon as it says READY, and that read completes long
+  // before a new process can start. So every chunk lands after a read that
+  // found no data, which is the read the bug turned into EAGAIN.
+  async function writeFromAnotherProcess(path: string, chunk: string) {
+    await using writer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const fd = fs.openSync(process.argv[1], fs.constants.O_WRONLY | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK);
+         fs.writeSync(fd, process.argv[2]);
+         fs.closeSync(fd);`,
+        path,
+        chunk,
+      ],
+      env: bunEnv,
+    });
+    expect(await writer.exited).toBe(0);
+  }
+
+  // Runs the fixture, writes "one" and "two" to the slave after each READY,
+  // then ends the stream the requested way. Returns the fixture's event log.
+  async function runFixture(end: "destroy" | "hangup") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tty-readstream-nonblocking.fixture.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Drain stderr from the start so a chatty fixture cannot block on it.
+    const stderr = proc.stderr.text();
+    const chunks = ["one", "two"];
+    const lines: string[] = [];
+    let slavePath = "";
+    let buffered = "";
+    for await (const chunk of proc.stdout) {
+      buffered += Buffer.from(chunk).toString();
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.startsWith("SLAVE ")) {
+          slavePath = line.slice("SLAVE ".length);
+          continue;
+        }
+        if (line !== "READY") {
+          lines.push(line);
+          continue;
+        }
+        const next = chunks.shift();
+        if (next !== undefined) {
+          await writeFromAnotherProcess(slavePath, next);
+          continue;
+        }
+        proc.stdin.write(end + "\n");
+        proc.stdin.end();
+      }
+    }
+
+    const [, exitCode] = await Promise.all([stderr, proc.exited]);
+    return { lines, exitCode };
+  }
+
+  // After each chunk the fixture resizes the pty through the master, as
+  // node-pty's pty.resize() does. That ioctl failed with EBADF when the stream
+  // had closed the fd on the first EAGAIN.
+  test.concurrent("delivers data written after the first EAGAIN and destroy() closes the fd", async () => {
+    const { lines, exitCode } = await runFixture("destroy");
+    expect(lines).toEqual([
+      'DATA "one"',
+      "RESIZE ok",
+      'DATA "two"',
+      "RESIZE ok",
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("ends when the slave side hangs up", async () => {
+    const { lines, exitCode } = await runFixture("hangup");
+    // Linux reports the hangup as EIO, macOS as end of file.
+    expect(["ERROR EIO", "END"]).toContain(lines[4]);
+    expect([...lines.slice(0, 4), ...lines.slice(5)]).toEqual([
+      'DATA "one"',
+      "RESIZE ok",
+      'DATA "two"',
+      "RESIZE ok",
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

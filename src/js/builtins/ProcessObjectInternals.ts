@@ -40,7 +40,7 @@ export function getStdioWriteStream(
 
   let stream;
   if (isTTY) {
-    const tty = require("node:tty");
+    const tty = require("internal/tty/write_stream");
     stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex
@@ -136,6 +136,37 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (isTTY) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L190
+    const stdin = new (require("node:tty").ReadStream)(fd);
+
+    // stdin starts out paused; tell the handle so nothing reads fd 0 yet.
+    const handle = stdin._handle;
+    if (handle?.readStop) {
+      handle.reading = false;
+      stdin._readableState.reading = false;
+      handle.readStop();
+    }
+
+    // pause() leaves the handle reading; stop it once the stream has settled.
+    stdin.on("pause", () => {
+      process.nextTick(onpause);
+    });
+
+    function onpause() {
+      const handle = stdin._handle;
+      if (!handle) return;
+      if (handle.reading && !stdin.readableFlowing) {
+        stdin._readableState.reading = false;
+        handle.reading = false;
+        handle.readStop();
+      }
+    }
+
+    return stdin;
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -174,8 +205,7 @@ export function getStdinStream(
     source?.updateRef?.(false);
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  const stream = new (require("node:fs").ReadStream)(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -199,9 +229,8 @@ export function getStdinStream(
 
   stream.fd = fd;
 
-  // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref.
+  if (fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       forceUnref = false;
       own();

@@ -883,21 +883,16 @@ TLSSocket.prototype._start = function _start() {
 
 TLSSocket.prototype._final = function _final(callback) {
   if (!this._handle) return callback();
-  // A write issued before the handshake completed still owes its bytes to the
-  // peer, and the engine can only frame them once the handshake flight is out:
-  // hold the close_notify and the FIN behind it, so the peer sees the data and
-  // then a clean shutdown instead of a bare FIN (socket.end('') right after
-  // tls.connect()). Node gets that ordering from its write queue, which keeps
-  // such a write pending while TLSWrap still has handshake output to push.
-  // kSecureConnectDone rather than 'secureConnect': a server-side socket emits
-  // no user event (node parity), but every handshake table emits the signal.
+  // The engine can only frame a pre-handshake write once the handshake flight
+  // is out, so the close_notify and the FIN follow it. Node gets that order
+  // from its write queue. kSecureConnectDone rather than 'secureConnect': a
+  // server-side socket emits no user event, but every table emits the signal.
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
   // With nothing queued, do not wait for a handshake that may never complete.
-  // Node's TLSWrap.DoShutdown shuts the transport down whether or not SSL is in
-  // init, so a peer that accepts the connection and then never answers the
-  // ClientHello still gets the FIN.
+  // TLSWrap.DoShutdown shuts the transport down in init too, so a peer that
+  // never answers the ClientHello still gets the FIN.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/src/crypto/crypto_tls.cc#L1203
   return NetSocket.prototype._final.$call(this, callback);
 };

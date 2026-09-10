@@ -1193,20 +1193,6 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.frameStartedNavigating — Chrome classifies a navigation before it commits.
-    if (method.size() == 27 && memcmp(method.data(), "Page.frameStartedNavigating", 27) == 0) {
-        if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
-        // Nothing of the view's is in flight: the page started this one.
-        if (view->m_chromeNavigationKind == ChromeNavigationKind::NotRequested) return;
-        auto type = jsonString(jsonField(params, { "navigationType", 14 }));
-        bool sameDocument = (type.size() == 12 && memcmp(type.data(), "sameDocument", 12) == 0)
-            || (type.size() == 19 && memcmp(type.data(), "historySameDocument", 19) == 0);
-        view->m_chromeNavigationKind = sameDocument
-            ? ChromeNavigationKind::SameDocument
-            : ChromeNavigationKind::CrossDocument;
-        return;
-    }
-
     // Page.frameNavigated — commit. Update m_url and fire onNavigated.
     // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
     // now the new document, resources may still be loading.

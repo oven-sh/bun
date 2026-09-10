@@ -34,12 +34,6 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
-// `--no-started-navigating`: never send Page.frameStartedNavigating, the way
-// a Chrome older than that event behaves. The runtime then has only the
-// Page.navigate reply to tell a same-document navigation from one that
-// replaces the document.
-const noStartedNavigating = process.argv.includes("--no-started-navigating");
-
 // `--subframe-navigation`: every document load commits a subframe navigation
 // too, the way a page holding an <iframe> does.
 const subframeNavigation = process.argv.includes("--subframe-navigation");
@@ -56,10 +50,10 @@ let replaceStateOnHistoryLookup: string | undefined;
 // is being answered: that document commits during the lookup, and only
 // __fake_load_event() finishes it (see __fake_page_load_on_history_lookup).
 let pageLoadOnHistoryLookup: string | undefined;
-// One URL the page "replaceState"s to as the next navigation command is read,
-// before its reply: the way an event already in the pipe reaches the runtime
-// after it wrote the command (see __fake_replace_state_on_next_navigate).
-let replaceStateOnNextNavigate: string | undefined;
+// One #fragment the page follows as the next navigation command is read,
+// before its reply: the way events already in the pipe reach the runtime
+// after it wrote the command (see __fake_fragment_link_on_next_navigate).
+let fragmentLinkOnNextNavigate: string | undefined;
 // One URL the page "replaceState"s to right after the next same-document
 // commit, the way a hashchange handler canonicalizing the URL does.
 let replaceStateAfterNextCommit: string | undefined;
@@ -90,10 +84,11 @@ Object.assign(globalThis, {
   __fake_page_load_on_history_lookup(url: string) {
     pageLoadOnHistoryLookup = url;
   },
-  // The page's own same-document commit reaches the runtime after it wrote
-  // the next navigation command and before Chrome answers it.
-  __fake_replace_state_on_next_navigate(url: string) {
-    replaceStateOnNextNavigate = url;
+  // The page follows a #fragment link of its own, which Chrome starts and
+  // commits after the runtime wrote the next navigation command and before
+  // Chrome answers it. Chrome calls that start "sameDocument".
+  __fake_fragment_link_on_next_navigate(url: string) {
+    fragmentLinkOnNextNavigate = url;
   },
   // The page's own same-document commit lands right behind the next one,
   // the way a hashchange handler that rewrites the URL produces.
@@ -160,10 +155,7 @@ function replaceState(url: string) {
 function pageLoad(url: string) {
   const event = (method: string, params: unknown) => send({ method, params, sessionId: currentSessionId });
   loads++;
-  if (!noStartedNavigating) {
-    const started = { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" };
-    event("Page.frameStartedNavigating", started);
-  }
+  event("Page.frameStartedNavigating", { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" });
   history.length = historyIndex + 1;
   history.push({ id: ++entries, url });
   historyIndex = history.length - 1;
@@ -176,9 +168,9 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  // Chrome names a navigation's kind before it starts.
+  // Chrome names a navigation's kind before it starts. The runtime ignores it.
   const startNavigating = (url: string, navigationType: string) => {
-    if (!noStartedNavigating) event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
+    event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
   };
 
   // The commit. A cross-document navigation commits with
@@ -216,9 +208,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      if (replaceStateOnNextNavigate !== undefined) {
-        replaceState(replaceStateOnNextNavigate);
-        replaceStateOnNextNavigate = undefined;
+      if (fragmentLinkOnNextNavigate !== undefined) {
+        startNavigating(fragmentLinkOnNextNavigate, "sameDocument");
+        replaceState(fragmentLinkOnNextNavigate);
+        fragmentLinkOnNextNavigate = undefined;
       }
       // A #fragment target of the current document keeps that document.
       const current = history[historyIndex]?.url;

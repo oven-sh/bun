@@ -48,8 +48,8 @@ enum class ScreenshotEncoding : uint8_t {
 // Chrome: which event ends the navigation the view has in flight.
 enum class ChromeNavigationKind : uint8_t {
     NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
-    Requested, // command written, no reply yet: a commit now can still be the page's own
-    Unknown, // command answered, kind unknown (a history traversal): the next commit of either shape ends it
+    Requested, // command written, no reply yet: every commit so far is the page's own
+    Unknown, // a history traversal, which Chrome answers with {}: the next commit of either shape ends it
     SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
     CrossDocument, // Page.loadEventFired ends it
 };

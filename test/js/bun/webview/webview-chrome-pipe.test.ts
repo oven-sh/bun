@@ -100,23 +100,6 @@ test.concurrent("a same-document navigation settles navigate(), goBack() and goF
   });
 });
 
-// Without Page.frameStartedNavigating the kind comes from the Page.navigate
-// reply, which names a loaderId only for a navigation that loads a document.
-test.concurrent("a same-document navigation settles without Page.frameStartedNavigating", async () => {
-  const result = await runScenario(`
-    const view = new Bun.WebView({
-      backend: { ...backend, argv: [...backend.argv, "--no-started-navigating"] },
-      width: 100,
-      height: 100,
-    });
-    await view.navigate("http://fake/page");
-    await view.navigate("http://fake/page#one");
-    print({ url: view.url, loading: view.loading });
-    view.close();
-  `);
-  expect(result).toEqual({ url: "http://fake/page#one", loading: false });
-});
-
 // Page.frameNavigated reports the fragment in frame.urlFragment, not in
 // frame.url, and a subframe's commit arrives on the same session as the main
 // frame's. view.url is the main frame's document URL, fragment and all.
@@ -234,14 +217,15 @@ test.concurrent("goBack() is not settled by the load of a document it did not co
   expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/own" });
 });
 
-// A same-document commit that reaches the runtime after it wrote a navigation
-// command, but before Chrome answered it, cannot be that command's: Chrome
-// answers a navigation before the document commits.
-test.concurrent("a commit that arrives before the navigate command is answered settles nothing", async () => {
+// A navigation that reaches the runtime after it wrote a navigation command,
+// but before Chrome answered it, cannot be that command's: Chrome answers a
+// navigation before its document commits. Its Page.frameStartedNavigating
+// says "sameDocument", which is no statement about the command either.
+test.concurrent("a navigation that arrives before the navigate command is answered settles nothing", async () => {
   const result = await runScenario(`
     const view = newView();
     await view.navigate("http://fake/page");
-    await view.evaluate("__fake_replace_state_on_next_navigate('http://fake/page#spa')");
+    await view.evaluate("__fake_fragment_link_on_next_navigate('http://fake/page#spa')");
     const started = view.navigate("http://fake/never-load");
     const first = await Promise.race([
       started.then(() => "navigate() settled", () => "navigate() rejected"),

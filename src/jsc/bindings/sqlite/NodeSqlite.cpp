@@ -912,11 +912,11 @@ void JSDatabaseSync::closeInternal(FinalizeStatements finalizeStatements)
     // Statement cells are not tracked here: GC order between JSDatabaseSync
     // and its JSStatementSyncs is undefined during VM teardown, so holding
     // raw pointers back to them would dangle. FinalizeStatements::Yes
-    // instead finalizes the native handles through sqlite3_next_stmt and
-    // flags the shared NodeSqliteConnectionRecord so ~JSStatementSync()
-    // does not double-finalize. With No, close_v2 zombifies the connection
-    // and each statement finalizes itself on GC; statements observe
-    // closure via isFinalized().
+    // instead finalizes the native handles tracked in the shared
+    // NodeSqliteConnectionRecord, so ~JSStatementSync() does not
+    // double-finalize. With No, close_v2 zombifies the connection and each
+    // statement finalizes itself on GC; statements observe closure via
+    // isFinalized().
     if (!m_db) return;
 
     // A BusyScope is on the stack (re-entrant close from an option getter /
@@ -944,15 +944,16 @@ void JSDatabaseSync::closeInternal(FinalizeStatements finalizeStatements)
     m_db = nullptr;
     unregisterOpenDatabase(this);
     if (finalizeStatements == FinalizeStatements::Yes && record) {
-        // Finalize every outstanding statement so close_v2 really closes
-        // the file. The flag is set BEFORE the walk: an xFinal re-entry
-        // can trigger GC, and a wrapper swept mid-walk must not finalize a
-        // handle the walk already released. A wrapper that skips its own
-        // finalize early is still in the connection's list, and the walk
-        // re-fetches the head each iteration, so nothing is leaked.
+        // Finalize every StatementSync-owned handle so close_v2 really
+        // closes the file. sqlite3_next_stmt() also exposes private
+        // statements owned by virtual table extensions; finalizing those
+        // here leaves the extension with dangling pointers during teardown.
+        // The flag is set before the loop because sqlite3_finalize() can run
+        // an aggregate xFinal callback, which may trigger GC mid-loop.
         record->statementsFinalized = true;
+        auto statements = WTF::move(record->statements);
         ++m_closeWalkDepth;
-        while (sqlite3_stmt* stmt = sqlite3_next_stmt(handle, nullptr))
+        for (sqlite3_stmt* stmt : statements)
             sqlite3_finalize(stmt);
         --m_closeWalkDepth;
     }
@@ -2474,6 +2475,8 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
     m_stmt = stmt;
     m_originGeneration = db->openGeneration();
     m_connectionRecord = db->connectionRecord();
+    if (stmt)
+        m_connectionRecord->statements.add(stmt);
     m_database.set(vm, this, db);
     m_extraMemorySize = stmt ? static_cast<size_t>(sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_MEMUSED, 0)) : 0;
     if (m_extraMemorySize)
@@ -2483,12 +2486,18 @@ void JSStatementSync::finishCreation(VM& vm, JSDatabaseSync* db, sqlite3_stmt* s
 void JSStatementSync::finalizeStatement()
 {
     if (!m_stmt) return;
-    // After an explicit db.close() the shared record says the walk already
-    // finalized this handle; m_stmt dangles and must not be touched. The
-    // database cell itself may already be swept, hence the record.
-    if (!m_connectionRecord || !m_connectionRecord->statementsFinalized)
-        sqlite3_finalize(m_stmt);
+    sqlite3_stmt* stmt = m_stmt;
     m_stmt = nullptr;
+    // After an explicit db.close() the shared record says its tracked loop
+    // already finalized this handle. Otherwise remove this wrapper-owned
+    // handle before finalizing it so the connection never retains a stale
+    // pointer that an allocator may reuse.
+    if (m_connectionRecord && m_connectionRecord->statementsFinalized)
+        return;
+    if (m_connectionRecord) {
+        m_connectionRecord->statements.remove(stmt);
+    }
+    sqlite3_finalize(stmt);
 }
 
 JSStatementSync::~JSStatementSync()

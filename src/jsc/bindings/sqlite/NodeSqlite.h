@@ -15,6 +15,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 #include <wtf/text/StringHash.h>
@@ -73,14 +74,16 @@ struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord>
 };
 
 // Shared bookkeeping between a DatabaseSync and every StatementSync prepared
-// on one open()ed connection. An explicit close() finalizes all outstanding
-// sqlite3_stmts (a sqlite3_next_stmt walk) so sqlite3_close_v2 really closes
-// the file; an unfinalized statement zombifies the connection and the open
-// OS handle locks the database file on Windows. Statement wrappers are GC
-// cells whose sweep order relative to the database is undefined, so they
-// learn "close() already finalized my handle" through this refcounted
-// record instead of reaching back into the database cell.
+// on one open()ed connection. Track native handles instead of JS cells so
+// explicit close() can finalize only statements owned by StatementSync.
+// sqlite3_next_stmt() cannot be used here: virtual table extensions may own
+// private statements on the same connection and must finalize those during
+// their own teardown. Statement wrappers are GC cells whose sweep order
+// relative to the database is undefined, so they learn "close() already
+// finalized my handle" through this refcounted record instead of reaching
+// back into the database cell.
 struct NodeSqliteConnectionRecord : public WTF::RefCounted<NodeSqliteConnectionRecord> {
+    WTF::HashSet<sqlite3_stmt*> statements;
     bool statementsFinalized { false };
 };
 

@@ -135,6 +135,19 @@ describe("DatabaseSync", () => {
     );
   });
 
+  test("close() leaves virtual-table-owned statements to the module", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE docs USING fts5(body); INSERT INTO docs VALUES ('alpha beta')");
+    const statement = db.prepare("SELECT rowid FROM docs WHERE docs MATCH ?");
+    expect(statement.all("alpha")).toEqual([{ rowid: 1 }]);
+
+    db.close();
+
+    expect(() => statement.all("alpha")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement has been finalized" }),
+    );
+  });
+
   test("close() finalizes outstanding prepared statements and releases the file", () => {
     using dir = tempDir("node-sqlite-close-finalize", {});
     const dbPath = path.join(String(dir), "x.db");

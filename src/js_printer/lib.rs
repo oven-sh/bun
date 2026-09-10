@@ -671,15 +671,19 @@ pub mod analyze_transpiled_module {
                 return;
             }
             self.strings_buf = buf;
-            // Re-key the content map. If two ids now hold equal bytes, `str()` returns the first.
+            // Re-key the content map. A rewrite onto bytes another id already holds would leave
+            // two ids (and possibly two requested modules) for one string; callers must not do that.
             self.strings_map.clear();
             let mut offset = 0usize;
             for (index, &len) in self.strings_lens.iter().enumerate() {
                 let string = &self.strings_buf[offset..offset + len as usize];
                 offset += len as usize;
-                if !self.strings_map.contains_key(string) {
-                    self.strings_map.insert(string.to_vec(), index as u32);
-                }
+                let previous = self.strings_map.insert(string.to_vec(), index as u32);
+                debug_assert!(
+                    previous.is_none(),
+                    "rewrite_strings: two ids now hold {:?}",
+                    bstr::BStr::new(string)
+                );
             }
         }
 

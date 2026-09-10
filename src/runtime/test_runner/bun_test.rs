@@ -1744,6 +1744,21 @@ pub struct DescribeScope {
     pub(crate) failed: bool,
 }
 
+impl Drop for DescribeScope {
+    /// Children are moved onto a worklist and dropped one at a time. Letting `entries` drop
+    /// in place would recurse once per `describe()` level, and that depth comes straight
+    /// from the test file.
+    fn drop(&mut self) {
+        let mut pending: Vec<TestScheduleEntry> = core::mem::take(&mut self.entries);
+        while let Some(entry) = pending.pop() {
+            if let TestScheduleEntry::Describe(mut scope) = entry {
+                pending.append(&mut scope.entries);
+                // `scope.entries` is empty now, so dropping `scope` here does not recurse.
+            }
+        }
+    }
+}
+
 impl DescribeScope {
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
@@ -1756,7 +1771,6 @@ impl DescribeScope {
             failed: false,
         })
     }
-    // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));

@@ -1847,9 +1847,9 @@ unsafe fn retroactively_report_discovered_tests(
     agent: *mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
-    use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
+    use crate::test_runner::bun_test::{Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
-    use bun_jsc::debugger::{TestReporterHandle, TestType};
+    use bun_jsc::debugger::TestType;
 
     let Some(runner) = Jest::runner() else {
         return next_test_id;
@@ -1876,77 +1876,63 @@ unsafe fn retroactively_report_discovered_tests(
 
     let mut max_id: i32 = next_test_id;
 
-    // Recursively report all discovered tests starting from root scope.
-    retroactively_report_scope(
-        agent,
-        &mut active_file.collection.root_scope,
-        -1,
-        &mut max_id,
-        &source_url,
-    );
-
-    return max_id;
-
-    fn retroactively_report_scope(
-        agent: *mut TestReporterHandle,
-        scope: &mut DescribeScope,
-        parent_id: i32,
-        max_id: &mut i32,
-        source_url: &bun_core::String,
-    ) {
-        for entry in scope.entries.iter_mut() {
-            match entry {
-                TestScheduleEntry::Describe(describe) => {
-                    if describe.base.test_id_for_debugger == 0 {
-                        *max_id += 1;
-                        let test_id = *max_id;
-                        // Assign the ID so start/end events will fire during
-                        // execution.
-                        describe.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::from_bytes(
-                            describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                        );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
-                            test_id,
-                            &name,
-                            TestType::Describe,
-                            parent_id,
-                            source_url,
-                            describe.base.line_no as i32,
-                        );
-                        // Recursively report children with this describe as
-                        // parent.
-                        retroactively_report_scope(agent, describe, test_id, max_id, source_url);
-                    } else {
-                        // Already has ID, just recurse with existing ID as
-                        // parent.
-                        let existing = describe.base.test_id_for_debugger;
-                        retroactively_report_scope(agent, describe, existing, max_id, source_url);
-                    }
+    // Report all discovered tests in pre-order starting from the root scope. The walk keeps
+    // its own stack of (unreported children, parent id) instead of recursing: the describe()
+    // nesting depth comes straight from the test file.
+    let mut open: Vec<(core::slice::IterMut<'_, TestScheduleEntry>, i32)> =
+        vec![(active_file.collection.root_scope.entries.iter_mut(), -1)];
+    while let Some((children, parent_id)) = open.last_mut() {
+        let parent_id = *parent_id;
+        let Some(entry) = children.next() else {
+            open.pop();
+            continue;
+        };
+        match entry {
+            TestScheduleEntry::Describe(describe) => {
+                if describe.base.test_id_for_debugger == 0 {
+                    max_id += 1;
+                    // Assign the ID so start/end events will fire during
+                    // execution.
+                    describe.base.test_id_for_debugger = max_id;
+                    let name = bun_core::String::from_bytes(
+                        describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                    );
+                    // SAFETY: `agent` is a live C++ handle (fn contract).
+                    unsafe { &mut *agent }.report_test_found_with_location(
+                        max_id,
+                        &name,
+                        TestType::Describe,
+                        parent_id,
+                        &source_url,
+                        describe.base.line_no as i32,
+                    );
                 }
-                TestScheduleEntry::TestCallback(test_entry) => {
-                    if test_entry.base.test_id_for_debugger == 0 {
-                        *max_id += 1;
-                        let test_id = *max_id;
-                        test_entry.base.test_id_for_debugger = test_id;
-                        let name = bun_core::String::from_bytes(
-                            test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                        );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
-                            test_id,
-                            &name,
-                            TestType::Test,
-                            parent_id,
-                            source_url,
-                            test_entry.base.line_no as i32,
-                        );
-                    }
+                // Report this describe's children (with it as their parent) before its
+                // next sibling. A describe that already had an ID keeps it.
+                let describe_id = describe.base.test_id_for_debugger;
+                open.push((describe.entries.iter_mut(), describe_id));
+            }
+            TestScheduleEntry::TestCallback(test_entry) => {
+                if test_entry.base.test_id_for_debugger == 0 {
+                    max_id += 1;
+                    test_entry.base.test_id_for_debugger = max_id;
+                    let name = bun_core::String::from_bytes(
+                        test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+                    );
+                    // SAFETY: `agent` is a live C++ handle (fn contract).
+                    unsafe { &mut *agent }.report_test_found_with_location(
+                        max_id,
+                        &name,
+                        TestType::Test,
+                        parent_id,
+                        &source_url,
+                        test_entry.base.line_no as i32,
+                    );
                 }
             }
         }
     }
+    max_id
 }
 
 // ════════════════════════════════════════════════════════════════════════════

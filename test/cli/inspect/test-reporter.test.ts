@@ -1,6 +1,6 @@
 import { Subprocess, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -450,6 +450,139 @@ afterAll(async () => {
       .sort();
     expect(testNames).toEqual(["test A1", "test A2", "test B1"]);
 
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("retroactively reports a deeply nested describe() tree", async () => {
+    // describe() callbacks run from a queue, so nothing caps how deep the collected tree
+    // gets. The retroactive walk must not recurse once per level. Linux sizes the main
+    // thread's stack from `ulimit -s`: at the 1 MB pinned below, a native frame per level
+    // overflows it at this depth. A debug build has larger frames and spends about 0.5 ms
+    // per `found` event, so the slow builds get a shallower tree.
+    //
+    // This uses the WebSocket transport. The `found` events arrive as one burst, and the
+    // WebSocket writer queues messages across partial writes.
+    const depth = isDebug || isASAN ? 2_000 : 20_000;
+    using dir = tempDir("test-reporter-deep-nesting", {
+      "deep.test.ts": `
+import { afterAll, describe, test, expect } from "bun:test";
+import { existsSync } from "node:fs";
+
+let depth = ${depth};
+function nest() {
+  if (depth-- <= 0) {
+    test("leaf", async () => {
+      console.log("__LEAF_RUNNING__");
+      while (!existsSync("leaf-gate")) await Bun.sleep(10);
+      expect(1).toBe(1);
+    });
+    return;
+  }
+  describe("d" + depth, nest);
+}
+nest();
+
+afterAll(async () => {
+  while (!existsSync("done-gate")) await Bun.sleep(10);
+});
+`,
+    });
+
+    const leafGatePath = join(String(dir), "leaf-gate");
+    const doneGatePath = join(String(dir), "done-gate");
+
+    const cmd = [bunExe(), "--inspect-wait=127.0.0.1:0", "test", "--timeout", "30000", "deep.test.ts"];
+    proc = spawn({
+      cmd: isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // The inspector prints `ws://127.0.0.1:<port>/<id>` on stderr, then waits for a client.
+    let stderr = "";
+    const stderrReader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let url: string | undefined;
+    while (url === undefined) {
+      const { value, done } = await stderrReader.read();
+      if (done) throw new Error(`bun test exited before it printed the inspector URL. stderr:\n${stderr}`);
+      stderr += decoder.decode(value, { stream: true });
+      url = stderr.match(/(ws:\/\/\S+)\r?\n/)?.[1];
+    }
+    const stderrDone = (async () => {
+      while (true) {
+        const { value, done } = await stderrReader.read();
+        if (done) return;
+        stderr += decoder.decode(value, { stream: true });
+      }
+    })();
+
+    const session = new TestReporterSession();
+    let foundCount = 0;
+    session.addEventListener("TestReporter.found", () => void foundCount++);
+
+    // A stack overflow is a silent SIGSEGV. Every wait below also ends, with the
+    // subprocess's stderr, when the subprocess exits.
+    const exitedEarly = proc.exited.then(async () => {
+      await stderrDone;
+      throw new Error(
+        `bun test exited (code ${proc!.exitCode}, signal ${proc!.signalCode}) after ${foundCount} of ${depth + 1} found events. stderr:\n${stderr}`,
+      );
+    });
+    exitedEarly.catch(() => {});
+    const orExit = <T>(promise: Promise<T>) => Promise.race([promise, exitedEarly]);
+
+    const ws = new WebSocket(url);
+    await orExit(
+      new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = cause => reject(new Error("WebSocket error", { cause }));
+      }),
+    );
+    ws.onmessage = event => session.onMessage(String(event.data));
+    session.framer = { send: (_socket: unknown, data: string) => ws.send(data) } as unknown as SocketFramer;
+
+    session.enableInspector();
+    session.send("Console.enable");
+    const leafStarted = session.waitForConsoleMessage("__LEAF_RUNNING__", 15000);
+    session.initialize();
+
+    // Collection is done and the leaf test is running: every scope is discovered but none
+    // has been reported yet.
+    await orExit(leafStarted);
+    session.enableTestReporter();
+
+    // depth describes + 1 test, all via the retroactive walk.
+    const foundTests = await orExit(session.waitForFoundTests(depth + 1, 15000));
+    expect(foundTests.size).toBe(depth + 1);
+
+    // The outermost describe has no parent, each inner describe hangs off the one around
+    // it, and the leaf test off the innermost describe.
+    const byName = new Map([...foundTests.values()].map(t => [t.name, t]));
+    expect(byName.get(`d${depth - 1}`)).toEqual(expect.objectContaining({ type: "describe" }));
+    expect(byName.get(`d${depth - 1}`).parentId).toBeUndefined();
+    const misparented: unknown[] = [];
+    for (let i = 0; i < depth; i++) {
+      const child = i === 0 ? byName.get("leaf") : byName.get(`d${i - 1}`);
+      const parent = byName.get(`d${i}`);
+      if (parent?.type !== "describe" || child?.parentId !== parent.id) misparented.push({ child, parent });
+    }
+    expect(misparented).toEqual([]);
+    expect(byName.get("leaf").type).toBe("test");
+
+    await write(leafGatePath, "go");
+    const endedTests = await orExit(session.waitForEndedTests(1, 15000));
+    expect(endedTests.size).toBe(1);
+
+    await write(doneGatePath, "go");
+    const exitCode = await proc.exited;
+    await stderrDone;
+    ws.close();
     if (exitCode !== 0) {
       expect(stderr).toBe("");
     }

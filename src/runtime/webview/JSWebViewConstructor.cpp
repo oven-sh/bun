@@ -124,9 +124,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
 
-    // Every option: undefined means the default; any other value must have
-    // the documented type (ERR_INVALID_ARG_TYPE) and range (ERR_OUT_OF_RANGE,
-    // reported with the value as passed).
+    // For every option, undefined means the default; anything else is type- and range-checked.
     JSValue options = callFrame->argument(0);
     if (!options.isUndefined() && (!options.isObject() || options.isCallable()))
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
@@ -192,9 +190,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             if (!parseBackendType(type.toWTFString(globalObject))) return {};
             RETURN_IF_EXCEPTION(scope, {});
 
-            // path/argv select spawn mode even when empty, so they can be
-            // checked against url (connect mode) below.
-            bool spawnOptionGiven = false;
+            bool spawnOptionGiven = false; // path/argv present (even empty): spawn mode
             JSValue path = beObj->get(globalObject, Identifier::fromString(vm, "path"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (path.isString()) {

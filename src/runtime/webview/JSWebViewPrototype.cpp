@@ -155,8 +155,7 @@ static bool checkSlot(JSGlobalObject* g, ThrowScope& scope, const WriteBarrier<J
     return true;
 }
 
-// options.modifiers: undefined, or an array of modifier names. Throws on
-// anything else so a typo is not a silently unmodified click.
+// options.modifiers: undefined or an array of modifier names; anything else throws.
 static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
 {
     using namespace WebViewProto;
@@ -189,8 +188,7 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
     return mods;
 }
 
-// options.timeout: undefined (keep the default) or a finite number of
-// milliseconds >= 0.
+// options.timeout: undefined (keep the default) or a finite millisecond count >= 0.
 static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue v, uint32_t& timeout)
 {
     if (v.isUndefined()) return true;

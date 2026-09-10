@@ -88,9 +88,7 @@ public:
     WTF::String m_url;
     WTF::String m_title;
     bool m_loading = false;
-    // Chrome: the tab's renderer died (Inspector.targetCrashed) and no
-    // document has committed since. Chrome queues page commands in this
-    // state, so CDP::Ops refuses them; Page.frameNavigated clears it.
+    // Chrome: renderer dead since Inspector.targetCrashed, no document yet.
     bool m_crashed = false;
 
     // Chrome session state. Empty until the Target.createTarget →

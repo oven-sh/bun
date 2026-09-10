@@ -910,7 +910,7 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
     // `dependencies` and `resolutions` are parallel buffers: the tree builder
     // iterates a package's `resolutions` range and indexes both with it.
     if resolutions_len != dependencies_len {
-        return Err(bun_core::err!("InvalidLockfile"));
+        return Err(crate::Error::InvalidLockfile);
     }
 
     // A package's two windows must be the same range, not just two in-bounds
@@ -926,7 +926,7 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
             || resolutions.off != dependencies.off
             || resolutions.len != dependencies.len
         {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
     }
 
@@ -940,7 +940,7 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
             // SAFETY: `tag == Map` discriminates the active union field.
             let map = unsafe { package_bin.value.map };
             if !slice_in_bounds(map.off, map.len, extern_strings_len) || map.len % 2 != 0 {
-                return Err(bun_core::err!("InvalidLockfile"));
+                return Err(crate::Error::InvalidLockfile);
             }
         }
     }
@@ -948,13 +948,13 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
     let packages_len = lockfile.packages.len();
     for &package_id in buffers.resolutions.iter() {
         if package_id != invalid_package_id && package_id as usize >= packages_len {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
     }
 
     for &dependency_id in buffers.hoisted_dependencies.iter() {
         if dependency_id != invalid_dependency_id && dependency_id as usize >= dependencies_len {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
     }
 
@@ -968,13 +968,13 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         // with its id.
         let dependency_id_valid = (tree.dependency_id as usize) < dependencies_len
             || (tree_index == 0
-                && (tree.dependency_id == Tree::ROOT_DEP_ID
+                && (tree.dependency_id == super::tree::ROOT_DEP_ID
                     || tree.dependency_id == invalid_dependency_id));
         if !dependency_id_valid
             || (tree.parent != Tree::INVALID_ID && tree.parent as usize >= trees_len)
             || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)
         {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
     }
 

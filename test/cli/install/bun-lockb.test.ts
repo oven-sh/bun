@@ -465,7 +465,7 @@ for (const [what, column, poke] of [
         env,
       });
       const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-      expect(stderrForInstall(err)).toContain("Saved lockfile");
+      expect(err).toContain("Saved lockfile");
       expect(out).toBeDefined();
       expect(code).toBe(0);
     }
@@ -518,8 +518,8 @@ for (const [what, column, poke] of [
         stderr: "pipe",
         env,
       });
-      const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-      expect(stderrForInstall(rawErr)).toContain("Ignoring lockfile");
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("Ignoring lockfile");
       expect(out).toBeDefined();
       expect(code).not.toBe(0);
     }

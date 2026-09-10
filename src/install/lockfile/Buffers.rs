@@ -478,7 +478,7 @@ pub(crate) fn load(
         // in a bitset sized by `dependencies`. The two are parallel buffers,
         // but nothing has validated that yet at this point.
         if this.resolutions.len() != this.dependencies.len() {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
         // Iterate by index so

@@ -3752,10 +3752,11 @@ it("registering 'keylog' on an agent with live sockets does not throw", async ()
 // run on Node.js and on Bun.
 describe("http.Agent free keep-alive socket", () => {
   const file = path.join(import.meta.dir, "node-http-agent-free-socket.node.mts");
+  const node = nodeExe();
 
-  test("on node.js", async () => {
+  test.skipIf(!node)("on node.js", async () => {
     await using proc = Bun.spawn({
-      cmd: [nodeExe()!, "--test", file],
+      cmd: [node!, "--test", file],
       stdout: "inherit",
       stderr: "inherit",
       stdin: "ignore",

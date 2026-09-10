@@ -477,9 +477,7 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
-    // Runtime.evaluate("document.title") on the Navigate slot, sent from the
-    // commit that ends a navigation. The reply sets m_title and settles the
-    // slot, so view.title is current when navigate() resolves.
+    // Fetches document.title; the reply (PageTitle) settles the Navigate slot.
     void sendTitleFetch(JSWebView*);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();

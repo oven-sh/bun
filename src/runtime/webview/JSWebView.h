@@ -45,20 +45,13 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
-// Chrome: which commit ends the navigation command the view has in flight.
-// A cross-document navigation ends with Page.loadEventFired. A
-// same-document one (a #fragment target, a history.pushState entry) fires
-// no load event and ends with Page.navigatedWithinDocument. Chrome names
-// the kind in Page.frameStartedNavigating and in the Page.navigate reply,
-// and Page.frameNavigated is itself a cross-document commit. While the kind
-// is Unknown either commit ends the navigation, so one that Chrome never
-// classifies cannot hang.
+// Chrome: which event ends the navigation the view has in flight.
+// CrossDocument ends on Page.loadEventFired, SameDocument (a #fragment, a
+// history.pushState entry) on Page.navigatedWithinDocument, Unknown on
+// whichever comes first, NotRequested on neither.
 enum class ChromeNavigationKind : uint8_t {
-    // No navigation command of the view's is in flight: nothing is pending,
-    // or goBack()/goForward() is still looking up the history entry. A
-    // same-document commit now is the page's own doing.
-    NotRequested,
-    Unknown,
+    NotRequested, // slot empty, or goBack()/goForward() still looking up the entry
+    Unknown, // command sent, Chrome has not classified it yet
     SameDocument,
     CrossDocument,
 };
@@ -116,9 +109,7 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Chrome: the main frame, named by the first Page.navigate reply. Page
-    // events carry a frameId; a subframe's navigation is not the view's, so
-    // it must not touch m_url or settle the navigate() promise.
+    // Chrome: from the first Page.navigate reply. Subframe events are ignored.
     WTF::String m_mainFrameId;
     ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
     // clickSelector stash — the actionability eval chains into a

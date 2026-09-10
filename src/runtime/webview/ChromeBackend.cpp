@@ -846,17 +846,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
             return;
         }
-        // Page.navigate targets the main frame and its reply names it. The
-        // id is needed before the first commit: a same-document navigation
-        // emits no Page.frameNavigated, so that event cannot be the only
-        // source of the main frame's id.
+        // The reply names the main frame, the one Page.navigate targets.
         if (view->m_mainFrameId.isEmpty())
             view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(result, { "frameId", 7 })));
-        // Don't settle — the commit does. Which commit is the kind's:
-        // Page.loadEventFired for a cross-document navigation,
-        // Page.navigatedWithinDocument for a same-document one. loaderId is
-        // absent exactly when the navigation is same-document, which is the
-        // classification on a Chrome too old for frameStartedNavigating.
+        // Don't settle — the commit does (handleEvent). No loaderId means no
+        // document load: the navigation is same-document.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::Unknown) {
             view->m_chromeNavigationKind = jsonField(result, { "loaderId", 8 }).empty()
                 ? ChromeNavigationKind::SameDocument
@@ -902,8 +896,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         }
         auto elem = entries->get(static_cast<unsigned>(target))->asObject();
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
-        // Chain into navigateToHistoryEntry. The traversal starts now; its
-        // reply is {} either way, so Chrome's events classify it.
+        // Chain into navigateToHistoryEntry. The traversal starts now.
         view->m_chromeNavigationKind = ChromeNavigationKind::Unknown;
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
@@ -1116,9 +1109,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
-// Is this event's frame the view's main frame? A page can hold subframes,
-// and each navigates on its own. An empty m_mainFrameId means no
-// Page.navigate has replied yet, so no subframe exists to confuse us.
+// Subframes navigate too. Before the first Page.navigate reply there are none.
 static bool isMainFrame(JSWebView* view, std::span<const char> frameId)
 {
     return view->m_mainFrameId.isEmpty() || view->m_mainFrameId == WTF::String::fromUTF8(frameId);
@@ -1172,17 +1163,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.frameStartedNavigating — Chrome names the navigation's kind
-    // before it commits. navigationType is "sameDocument" or
-    // "historySameDocument" for a navigation that keeps the current
-    // document, and "differentDocument", "historyDifferentDocument",
-    // "reload" or "restore" for one that replaces it. Knowing this before
-    // the commit keeps a same-document navigation the page makes on its own
-    // (an SPA updating location.hash) from settling our cross-document one.
+    // Page.frameStartedNavigating — Chrome classifies a navigation before it
+    // commits. "sameDocument" and "historySameDocument" keep the document;
+    // every other navigationType loads one.
     if (method.size() == 27 && memcmp(method.data(), "Page.frameStartedNavigating", 27) == 0) {
         if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
-        // Nothing of the view's is in flight, so this navigation is the
-        // page's own (a link, history.back()); its kind says nothing about ours.
+        // Nothing of the view's is in flight: the page started this one.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::NotRequested) return;
         auto type = jsonString(jsonField(params, { "navigationType", 14 }));
         bool sameDocument = (type.size() == 12 && memcmp(type.data(), "sameDocument", 12) == 0)
@@ -1199,10 +1185,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
         if (!isMainFrame(view, jsonString(jsonField(frame, { "id", 2 })))) return;
-        // Chrome keeps the fragment out of frame.url and reports it in
-        // frame.urlFragment ("#section", including the '#'). view.url is the
-        // document's whole URL, the same one Page.navigatedWithinDocument
-        // sends for a same-document commit.
+        // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto fragment = jsonString(jsonField(frame, { "urlFragment", 11 }));
         auto urlStr = fragment.empty()
@@ -1210,8 +1193,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             : makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it. A new document is
-        // live, so the load event is the commit that ends the navigation in
-        // flight, whatever Chrome called it before.
+        // live, so its load event ends whatever the view has in flight.
         if (view->m_chromeNavigationKind != ChromeNavigationKind::NotRequested)
             view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
 
@@ -1222,24 +1204,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.navigatedWithinDocument — same-document commit: a #fragment
-    // target, history.pushState/replaceState, or a history traversal
-    // between two entries of one document. The document stays, so no load
-    // event follows and this is where such a navigation ends.
+    // Page.navigatedWithinDocument — same-document commit (#fragment,
+    // history.pushState, a traversal inside one document). No load event
+    // follows, so a same-document navigation ends here.
     if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0) {
         if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
         auto urlStr = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
         view->m_url = urlStr;
 
-        // This commit ends the navigation in flight when Chrome called it
-        // same-document or never classified it. A CrossDocument one belongs
-        // to the load event and a NotRequested slot has asked Chrome for
-        // nothing yet: then the commit is the page's own (an SPA updating
-        // location.hash), and with nothing pending there is no title to keep
-        // current either, so both skip the roundtrip. Decide and queue the
-        // title fetch before onNavigated runs: the callback is user code that
-        // can close() the view or start the next navigation, and the title
-        // reply must settle the navigation this commit ended, not that one.
+        // CrossDocument waits for its load event and NotRequested has asked
+        // Chrome for nothing: then the page did this on its own. Decided
+        // before onNavigated runs user code, which may navigate() next.
         auto kind = view->m_chromeNavigationKind;
         if (view->m_pendingNavigate && (kind == ChromeNavigationKind::Unknown || kind == ChromeNavigationKind::SameDocument)) {
             view->m_loading = false;
@@ -1531,8 +1506,6 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
 JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
 {
     auto& t = transport();
-    // Chrome decides whether the URL keeps the current document (a #fragment
-    // target) or loads a new one, and says which before the commit.
     view->m_chromeNavigationKind = ChromeNavigationKind::Unknown;
 
     if (!view->m_sessionId.isEmpty()) {
@@ -1827,9 +1800,7 @@ static JSPromise* historyGo(JSGlobalObject* g, JSWebView* view, int8_t delta)
 {
     auto& t = transport();
     view->m_chromeHistoryDelta = delta;
-    // The slot fills now, but no navigation is asked of Chrome until the
-    // history lookup replies. A same-document commit during the lookup is
-    // the page's own and must not settle this promise.
+    // Nothing is asked of Chrome until the history lookup replies.
     view->m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
     uint32_t id = t.nextId();
     // Navigate slot — navigateToHistoryEntry IS a navigation and
@@ -1845,7 +1816,7 @@ JSPromise* goForward(JSGlobalObject* g, JSWebView* view) { return historyGo(g, v
 JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 {
     auto& t = transport();
-    // A reload always loads the document again, so only the load event ends it.
+    // A reload always loads the document again.
     view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
     uint32_t id = t.nextId();
     // Navigate slot — reload IS a navigation. Page.loadEventFired only

@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// A worker flips bytes in a SharedArrayBuffer while the main thread decodes
-// it as UTF-8. The decoder must not trust a byte it read earlier: the length
-// pass and the conversion pass can see different bytes. An unfixed build
-// panics on a debug assertion or writes past the end of the output buffer.
+// A worker rewrites a SharedArrayBuffer while the main thread decodes it as
+// UTF-8. The decoder must not trust a byte it read earlier: the length pass
+// and the conversion pass can see different bytes.
 //
-// The worker leaves every byte at 0x41 ("A") except the one it is on, which
-// is briefly 0x80 (a continuation byte). The length pass counts 0x80 as
-// zero UTF-16 units, so a conversion pass that sees 0x41 there writes one
-// unit more than was allocated.
+// The worker fills the buffer with 0x80 (a continuation byte), then with
+// 0x61 ("a"). The length pass counts a 0x80 byte as zero UTF-16 units, so a
+// conversion pass that sees 0x61 there writes one unit per byte more than
+// was allocated. An unfixed build segfaults in release and reports a
+// heap-buffer-overflow under ASAN.
 const fixture = String.raw`
   import { Worker, isMainThread, workerData, parentPort } from "node:worker_threads";
   import { transcode } from "node:buffer";
@@ -17,19 +17,22 @@ const fixture = String.raw`
   if (!isMainThread) {
     const u8 = new Uint8Array(workerData);
     parentPort.postMessage("go");
-    for (let i = 0; ; i++) u8[(i >>> 1) & 63] = i & 1 ? 0x41 : 0x80;
+    for (;;) {
+      u8.fill(0x80);
+      u8.fill(0x61);
+    }
   } else {
     const mode = process.argv[2];
     const iterations = Number(process.argv[3]);
-    const sab = new SharedArrayBuffer(64);
-    const buf = Buffer.from(sab).fill(0x41);
+    const sab = new SharedArrayBuffer(4096);
+    const buf = Buffer.from(sab).fill(0x61);
     const worker = new Worker(import.meta.path, { workerData: sab });
     worker.on("message", async () => {
       let total = 0;
       if (mode === "toString") {
         for (let i = 0; i < iterations; i++) total += buf.toString("utf8").length;
       } else if (mode === "transcode") {
-        // A snapshot that holds the 0x80 byte is invalid UTF-8, which transcode rejects.
+        // A snapshot of the 0x80 fill is invalid UTF-8, which transcode rejects.
         for (let i = 0; i < iterations; i++) {
           try {
             total += transcode(buf, "utf8", "ucs2").length;
@@ -69,7 +72,7 @@ for (const mode of ["toString", "transcode", "string_decoder", "TextDecoderStrea
   test.concurrent(`${mode} on a SharedArrayBuffer that another thread writes`, async () => {
     using dir = tempDir("buffer-shared-decode-race", { "fixture.mjs": fixture });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.mjs", mode, "5000"],
+      cmd: [bunExe(), "fixture.mjs", mode, "500"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

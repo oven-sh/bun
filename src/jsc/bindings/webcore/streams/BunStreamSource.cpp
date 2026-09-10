@@ -752,8 +752,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     ASSERT(!pullArgs.hasOverflowed());
     JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        // A synchronous throw is pull()'s rejection: fail the sink and hand the owner a rejected promise it can read the
-        // state of, as onReadDirectStreamPullRejected does for an async pull(). A VM termination is not converted.
+        // A synchronous throw is pull()'s rejection: fail the sink and reject to the owner as onReadDirectStreamPullRejected does. A VM termination is not converted.
         JSValue reason = exception->value();
         TRY_CLEAR_EXCEPTION(scope, {});
         if (sinkController->wrapped()) {

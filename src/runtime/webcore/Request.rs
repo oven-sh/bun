@@ -257,35 +257,14 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                },
-                _ => None,
-            };
-
-            if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
-                if !content_type_.is_empty() {
+            // `construct_into` already appended a JS-constructed body's type. A
+            // stream body has no MIME type, whatever backs the stream.
+            if let BodyValue::Blob(blob) = self.body_value() {
+                let content_type = blob.content_type_slice();
+                if !content_type.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
+                        &BunString::ascii(content_type),
                         global_this,
                     )?;
                 }
@@ -1398,22 +1377,20 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
+        // Fetch "extract a body": a Blob, FormData or URLSearchParams init has a
+        // MIME type and the constructor appends it to the header list now. Later
+        // the body may be a stream or used up, and a stream's source says nothing
+        // about this Request: `body: new Response(formData).body` has no type.
+        if let BodyValue::Blob(blob) = req.body_value() {
+            let content_type = blob.content_type_slice();
+            if !content_type.is_empty() {
+                let headers = req
+                    .headers_mut()
+                    .get_or_insert_with(HeadersRef::create_empty);
+                if !headers.fast_has(HTTPHeaderName::ContentType) {
+                    match headers.put(
                         HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
+                        &BunString::ascii(content_type),
                         global_this,
                     ) {
                         Ok(()) => {}

@@ -162,19 +162,12 @@ impl ArrayBuffer {
         }
     }
 
-    /// True when a pin does not keep these bytes mapped, so a borrower that
-    /// reads or writes them after the call returns must copy them:
-    ///
-    /// - a resizable non-shared ArrayBuffer: `resize()` unmaps the trimmed pages.
-    /// - a non-shared `WebAssembly.Memory`: `grow()` on a bounds-checked memory
-    ///   allocates a new block, copies into it, and frees the old one. JSC
-    ///   detaches a wasm memory's buffer whatever its pin count ("We allow
-    ///   detaching wasm memory ArrayBuffers even though they are locked",
-    ///   `ArrayBuffer::detach`), and the detached contents hold the last ref on
-    ///   the block, so the pages go away under the borrow.
-    ///
-    /// A SharedArrayBuffer (including a shared wasm memory) only ever grows in
-    /// place, so a borrow of one stays valid and needs no copy.
+    /// True when a pin does not keep these bytes mapped: `resize()` unmaps a
+    /// resizable buffer's trimmed pages, and `grow()` on a bounds-checked
+    /// `WebAssembly.Memory` frees the old block, which JSC detaches whatever
+    /// the pin count ("We allow detaching wasm memory ArrayBuffers even though
+    /// they are locked", `ArrayBuffer::detach`). Only a shared one grows in
+    /// place. Copy these bytes for a borrow that outlives the call.
     pub fn pin_cannot_hold(&self) -> bool {
         !self.shared && (self.resizable || self.wasm_memory)
     }
@@ -666,10 +659,9 @@ impl ArrayBuffer {
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
-/// GC-roots the cell. `Drop` releases what was taken, which reads the cell, so
-/// it has to run on the JS thread and outside a heap sweep. Every value is
-/// constructed and dropped inside one host call: a value a `Blob` store keeps
-/// is copied out first ([`PathLike::thread_isolated_copy`]).
+/// GC-roots the cell. `Drop` reads the cell, so it runs on the JS thread and
+/// outside a heap sweep: a value a `Blob` store keeps is copied out first
+/// ([`PathLike::thread_isolated_copy`]).
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -711,10 +703,9 @@ impl PinnedArrayBuffer {
         this.copy_if_pin_cannot_hold(global).then_some(this)
     }
 
-    /// Copies the bytes when the pin does not keep them mapped
-    /// ([`ArrayBuffer::pin_cannot_hold`]), so that a read of them after the
-    /// call returns cannot fault or see another object's memory. `false` if the
-    /// copy cannot be allocated.
+    /// Copies the bytes the pin does not keep mapped
+    /// ([`ArrayBuffer::pin_cannot_hold`]). `false` if the copy cannot be
+    /// allocated.
     pub fn copy_if_pin_cannot_hold(&mut self, global: &JSGlobalObject) -> bool {
         if !self.buffer.pin_cannot_hold() || self.buffer.byte_len == 0 || self.copy.is_some() {
             return true;

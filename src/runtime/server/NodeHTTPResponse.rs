@@ -2066,9 +2066,8 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
-                // Storage a pin does not keep mapped is spilled instead
-                // (copied into backpressure now): see
-                // `ArrayBuffer::pin_cannot_hold`.
+                // Storage `ArrayBuffer::pin_cannot_hold` names is spilled
+                // into backpressure here instead.
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.pin_cannot_hold() => {

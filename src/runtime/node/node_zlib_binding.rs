@@ -394,8 +394,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // The pool thread writes the output after this call returns; storage a
-        // pin does not keep mapped until then cannot take it.
+        // The pool thread writes into `out` after this call returns.
         if out_buf.pin_cannot_hold() {
             return Err(global_this
                 .err(
@@ -429,9 +428,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let mut in_: Option<&[u8]> = in_buf
             .as_ref()
             .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
-        // The pool thread reads the input after this call returns, and a pin does
-        // not keep every kind of storage mapped until then
-        // (`ArrayBuffer::pin_cannot_hold`). Read a copy of the chunk instead.
+        // The pool thread reads the input after this call returns, so read a
+        // copy of storage the pin does not keep mapped.
         if let (Some(chunk), Some(buf)) = (in_, in_buf.as_ref())
             && buf.pin_cannot_hold()
         {
@@ -512,8 +510,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         ticket.post(ConcurrentTask::create(Task::init(this)));
     }
 
-    /// Copies an input chunk the caller's pin does not keep mapped into the
-    /// stream's own buffer. `None` if the copy cannot be allocated.
+    /// Copies an input chunk into the stream's own buffer. `None` if the copy
+    /// cannot be allocated.
     fn copy_input<'a>(this: &'a T, chunk: &[u8]) -> Option<&'a [u8]> {
         this.input_copy().with_mut(|copy| {
             copy.clear();

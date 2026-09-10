@@ -46,8 +46,7 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
-        /// Input bytes copied by `write()` when the caller's pin does not keep
-        /// the caller's storage mapped; empty otherwise.
+        /// What `write()` copies for storage a pin cannot hold; else empty.
         pub input_copy: JsCell<Vec<u8>>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,

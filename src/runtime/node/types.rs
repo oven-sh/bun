@@ -342,9 +342,8 @@ impl StringOrBuffer<'static> {
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
-    /// pinned and GC-rooted for `Async`. An `Async` parse is read after the
-    /// call returns, so storage the pin does not keep mapped is copied
-    /// ([`PinnedArrayBuffer::root_read_only`]).
+    /// pinned, GC-rooted and copied where a pin cannot hold the bytes for
+    /// `Async` ([`PinnedArrayBuffer::root_read_only`]).
     pub(crate) fn buffer_from_js(
         global: &JSGlobalObject,
         value: JSValue,

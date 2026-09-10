@@ -3476,11 +3476,9 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
-// True when the view's bytes belong to a `WebAssembly.Memory`. Only a view
-// that already has an ArrayBuffer can be one (a memory hands out its buffer),
-// so a Fast/Oversize view answers false without materializing anything; for
-// the other modes `possiblySharedBuffer()` is the buffer the butterfly already
-// holds.
+// True when the view's bytes belong to a `WebAssembly.Memory`. A memory hands
+// out its buffer, so only a view that already has one can be backed by it and
+// nothing is materialized here.
 static bool viewIsWasmMemory(JSC::JSArrayBufferView* view)
 {
     if (!view->hasArrayBuffer())

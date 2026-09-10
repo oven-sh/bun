@@ -12,40 +12,45 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "node:path";
 
-/** Best-of timing; repeats while cheap so release builds get several samples. */
-async function bench(run: () => unknown, maxRuns = 5, budgetMs = 2000): Promise<number> {
-  let best = Infinity;
+/**
+ * Best-of timing. Repeats only while a run is cheap, so a release build takes
+ * several samples and a debug build takes one.
+ */
+async function bench<T>(run: () => T | Promise<T>): Promise<{ ms: number; result: T }> {
+  let ms = Infinity;
   let spent = 0;
-  for (let i = 0; i < maxRuns && spent < budgetMs; i++) {
+  let result!: T;
+  for (let i = 0; i < 5 && spent < 400; i++) {
     const start = performance.now();
-    await run();
+    result = await run();
     const elapsed = performance.now() - start;
-    best = Math.min(best, elapsed);
+    ms = Math.min(ms, elapsed);
     spent += elapsed;
   }
-  return best;
+  return { ms, result };
 }
 
 test("merged enum declarations transpile in linear time", async () => {
-  const n = 24_000;
-  const merged = Array.from({ length: n }, (_, i) => `enum E { M${i.toString(36)} }`).join("\n");
-  const distinct = Array.from({ length: n }, (_, i) => `enum E${i.toString(36)} { M }`).join("\n");
+  const n = 16_384;
+  const merged = Buffer.alloc(n * 9, "enum E{}\n").toString();
+  const distinct = Array.from({ length: n }, (_, i) => `enum E${i.toString(36)}{}\n`).join("");
   const transpiler = new Bun.Transpiler({ loader: "ts" });
+  transpiler.transformSync("enum Warmup {}");
 
-  const out = transpiler.transformSync(merged);
-  expect(out).toStartWith("var E;\n");
-  expect(out).toContain(`E[E["M${(n - 1).toString(36)}"] = 0] = "M${(n - 1).toString(36)}";`);
-  // One `var E;` for the whole chain, not one per block.
+  const baseline = await bench(() => transpiler.transformSync(distinct));
+  const { ms, result: out } = await bench(() => transpiler.transformSync(merged));
+
+  // One `var E;` for the whole chain, then one closure per block.
+  expect(out).toStartWith("var E;\n((E) => {})(E ||= {});\n((E) => {})(E ||= {});\n");
   expect(out.indexOf("var E", 1)).toBe(-1);
+  expect(out.length).toBe("var E;\n".length + n * "((E) => {})(E ||= {});\n".length);
 
-  const distinctMs = await bench(() => transpiler.transformSync(distinct));
-  const mergedMs = await bench(() => transpiler.transformSync(merged));
-  // ~0.9x with the fix; 10x (debug) to 40x (release) before it.
-  expect(mergedMs / distinctMs).toBeLessThan(3);
-}, 90_000);
+  // ~0.8x with the fix; 10x (debug) to 30x (release) before it.
+  expect(ms / baseline.ms).toBeLessThan(3);
+});
 
 test("top-level var re-declarations bundle in linear time", async () => {
-  const n = 32_768;
+  const n = 16_384;
   using dir = tempDir("redeclared-var-chain", {
     "same.ts": Buffer.alloc(n * 11, "var x = 1;\n").toString() + "export { x };\n",
     "distinct.ts": Array.from({ length: n }, (_, i) => `var x${i.toString(36)} = 1;\n`).join("") + "export { x0 };\n",
@@ -53,10 +58,15 @@ test("top-level var re-declarations bundle in linear time", async () => {
   const build = async (file: string) => {
     const result = await Bun.build({ entrypoints: [join(String(dir), file)] });
     expect(result.success).toBeTrue();
+    return result.outputs[0].text();
   };
 
-  const distinctMs = await bench(() => build("distinct.ts"));
-  const sameMs = await bench(() => build("same.ts"));
-  // ~1x with the fix; 30x (debug) to 50x (release) before it.
-  expect(sameMs / distinctMs).toBeLessThan(4);
-}, 90_000);
+  const baseline = await bench(() => build("distinct.ts"));
+  const { ms, result: out } = await bench(() => build("same.ts"));
+
+  expect(out).toContain("var x = 1;\nvar x = 1;\n");
+  expect(out).toContain("export {\n  x\n};");
+
+  // ~1x with the fix; 10x (debug) to 20x (release) before it.
+  expect(ms / baseline.ms).toBeLessThan(4);
+});

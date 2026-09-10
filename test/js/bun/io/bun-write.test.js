@@ -1174,6 +1174,34 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await expect(Bun.write(join(String(dir), "upfront.txt"), upfront)).rejects.toThrow("boom");
     });
 
+    // A synchronous throw from pull() is its rejection: it fails the sink and rejects the write, as the async
+    // throw above does. A falsy thrown value cannot fail a sink (close() reads it as a clean close), so the sink
+    // records a substitute Error and the write reports that.
+    it("a direct pull() that throws synchronously rejects the write and errors the stream", async () => {
+      using dir = tempDir("bun-write-direct-sync-throw", {});
+      const attempt = async thrown => {
+        const stream = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("a");
+            throw thrown;
+          },
+        });
+        const result = await Bun.write(join(String(dir), "out.txt"), new Response(stream)).then(
+          written => "resolved " + written,
+          error => "rejected " + (error instanceof Error ? error.message : String(error)),
+        );
+        // directStreamOnClose released the sink's lock, so the terminal state is observable through a reader.
+        const state = await stream.getReader().closed.then(
+          () => "closed",
+          () => "errored",
+        );
+        return { result, state };
+      };
+      expect(await attempt(new Error("boom"))).toEqual({ result: "rejected boom", state: "errored" });
+      expect(await attempt(null)).toEqual({ result: "rejected pull() threw", state: "errored" });
+    });
+
     // The sink is released when the pump rejects; a controller collected after that must
     // already be detached. A subprocess, because that GC can be the one at process exit.
     it("survives a GC after a direct stream or a generator body fails", async () => {

@@ -3571,42 +3571,36 @@ bool JSC__JSValue__asArrayBuffer(
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
 // A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
-// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
-// an ArrayBuffer just to pin it registers the bytes with the heap a second
-// time and, because ArrayBuffers are only reclaimed by full collections,
-// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
-// pressure. Such a view cannot be detached without JS first touching
-// `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
-// `transfer()` moves (does not free) the storage — the same window Node has.
-// The caller keeps the returned kind and only calls unpin for `Pinned`; a
-// held view is kept alive by the caller's own root, and nothing here needs
-// undoing for it.
-enum class PinKind : uint8_t { None = 0,
-    Pinned = 1,
-    Held = 2 };
-static PinKind pinStorage(JSC::JSValue value)
+// past fastSizeLimit: OversizeTypedArray) is adopted first, because a pin needs
+// an ArrayBuffer to live on: `possiblySharedBuffer()` wraps the storage where it
+// already is (`ArrayBuffer::createAdopted`, no byte copy). Holding such a view
+// without adopting it does not keep the storage alive. JS reaches the same bytes
+// through `view.buffer`, which materializes an ArrayBuffer no pin covers, and a
+// transfer of that buffer moves the storage into a fresh ArrayBufferContents.
+// When nothing references the new owner, `Heap::sweepArrayBuffers` frees the
+// bytes while the borrower still reads them. Adoption costs one ArrayBuffer per
+// borrow, and only a full collection reclaims it.
+static bool pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         if (view->isDetached())
-            return PinKind::None;
-        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
-            return PinKind::Held;
+            return false;
         buf = view->possiblySharedBuffer();
     }
     if (!buf)
-        return PinKind::None;
+        return false;
     if (!buf->isShared())
         buf->pin();
-    return PinKind::Pinned;
+    return true;
 }
-CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
+    return pinStorage(JSC::JSValue::decode(v));
 }
-// Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
+// Only for a value `pinStorage` answered true for: that buffer still exists (pinned buffers are not detached).
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
     auto value = JSC::JSValue::decode(v);
@@ -3623,16 +3617,13 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
-// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
+// the caller dupes instead. Every other mode goes through `pinStorage`.
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
-//      when done.
-//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
-//      the value for the duration as it already does for 2.
+//   2  Pinned the storage: an existing ArrayBuffer, or one adopted for a
+//      bufferless view. Caller MUST `unpinArrayBuffer(v)` when done.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3645,11 +3636,10 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        auto kind = pinStorage(view);
-        if (kind == PinKind::None) return 0;
+        if (!pinStorage(view)) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return kind == PinKind::Held ? 3 : 2;
+        return 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();

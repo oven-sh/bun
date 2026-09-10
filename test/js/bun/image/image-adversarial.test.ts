@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -77,6 +77,9 @@ function makePng(
 }
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
+/// Past JSC's fastSizeLimit (1000 elements), so a `new Uint8Array(kilobytePng)`
+/// is an OversizeTypedArray: its bytes sit in fastMalloc with no ArrayBuffer.
+const kilobytePng = makePng(32, 32, (x, y) => [(x * 7 + y * 13) & 255, (x * 31) & 255, (y * 17) & 255, 255]);
 
 /// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
 /// (filter de-prediction included) so assertions are against ground truth,
@@ -692,6 +695,80 @@ describe("hostile option objects", () => {
     // After resolve the pin is released; now transfer() actually detaches.
     a.buffer.transfer();
     expect(a.byteLength).toBe(0);
+  });
+
+  test("a view that never had a `.buffer` is pinned too, so the same transfer copies", async () => {
+    // Same as above without the subarray(): subarray() materializes the
+    // ArrayBuffer, so that test only ever reached the already-has-a-buffer
+    // path. A view handed straight to the constructor is still
+    // OversizeTypedArray when the borrow happens, and the helper has to adopt
+    // an ArrayBuffer for it before a pin has anywhere to live.
+    const a = new Uint8Array(kilobytePng); // > fastSizeLimit elements, no .buffer touched
+    const p = new Bun.Image(a).png().bytes();
+    const moved = a.buffer.transfer();
+    expect(moved.byteLength).toBe(kilobytePng.length);
+    expect(a.byteLength).toBe(kilobytePng.length); // pinned: `a` keeps its bytes
+    expect((await p)[0]).toBe(0x89);
+    a.buffer.transfer();
+    expect(a.byteLength).toBe(0); // pin released with the task
+  });
+
+  test("transfer + GC under a decode does not free the bytes the pool thread reads", async () => {
+    // The same sequence in a loop, with a decode long enough to still be
+    // running when the collection happens. Without the pin, `.buffer` +
+    // transfer moves the storage to an ArrayBuffer nothing references,
+    // Heap::sweepArrayBuffers frees it, and the pool thread reads the freed
+    // block: an ASAN heap-use-after-free, or a decode error / wrong image on a
+    // build without ASAN. `Malloc=1` routes the Gigacage through system malloc
+    // so ASAN sees the free.
+    using dir = tempDir("image-oversize-transfer", {
+      "repro.ts": `
+        import zlib from "node:zlib";
+        const be32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+        const chunk = (t: string, d: Buffer) =>
+          Buffer.concat([be32(d.length), Buffer.from(t), d,
+            be32(zlib.crc32(Buffer.concat([Buffer.from(t), d])) >>> 0)]);
+        const w = 900, h = 700, stride = w * 4 + 1;
+        const raw = Buffer.alloc(stride * h);
+        // Noise, so the JPEG below stays large and its decode outlives the
+        // collection. One 64 KB tile (the getRandomValues limit), repeated.
+        const tile = new Uint8Array(65536);
+        crypto.getRandomValues(tile);
+        for (let off = 0; off < raw.length; off += tile.length) raw.set(tile.subarray(0, Math.min(tile.length, raw.length - off)), off);
+        for (let y = 0; y < h; y++) raw[y * stride] = 0; // filter byte: none
+        const png = Buffer.concat([
+          Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+          chunk("IHDR", Buffer.concat([be32(w), be32(h), Buffer.from([8, 6, 0, 0, 0])])),
+          chunk("IDAT", zlib.deflateSync(raw)),
+          chunk("IEND", Buffer.alloc(0)),
+        ]);
+        const jpeg = Buffer.from(await new Bun.Image(png).jpeg({ quality: 90 }).bytes());
+        const want = Bun.hash(await new Bun.Image(new Uint8Array(jpeg)).bytes());
+        const rounds = Number(process.argv[2]);
+        let ok = 0, wrong = 0, rejected = 0;
+        for (let i = 0; i < rounds; i++) {
+          const input = new Uint8Array(jpeg);       // OversizeTypedArray: no ArrayBuffer yet
+          const decode = new Bun.Image(input).bytes(); // the pool thread reads input's storage
+          const ab = input.buffer;                  // an ArrayBuffer over the same storage
+          structuredClone(ab, { transfer: [ab] });  // storage moves to an unreferenced owner
+          Bun.gc(true);                             // ... which this collection sweeps
+          for (let k = 0; k < 8; k++) new Uint8Array(jpeg.length).fill(0xee); // reuse the block
+          await decode.then(r => { Bun.hash(r) === want ? ok++ : wrong++; }, () => { rejected++; });
+        }
+        console.log(JSON.stringify({ ok, wrong, rejected }));
+      `,
+    });
+    const rounds = 3;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repro.ts", String(rounds)],
+      env: { ...bunEnv, Malloc: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(JSON.stringify({ ok: rounds, wrong: 0, rejected: 0 }));
+    expect(exitCode).toBe(0);
   });
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {

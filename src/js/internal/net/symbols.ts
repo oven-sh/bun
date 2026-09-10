@@ -1,7 +1,5 @@
 export default {
   kArmHandshakeTimeout: Symbol("kArmHandshakeTimeout"),
-  // A write reached the TLS engine before the handshake completed, so its bytes
-  // precede the close_notify (see TLSSocket.prototype._final).
   kPreHandshakeWrite: Symbol("kPreHandshakeWrite"),
   // Internal handshake-settled signal: server-side sockets emit no user
   // 'secureConnect' (node parity), so internal deferrals park on this instead.

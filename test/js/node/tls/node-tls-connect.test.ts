@@ -1943,112 +1943,53 @@ it.skipIf(!nodeExe())(
   },
 );
 
-describe("end() and destroySoon() before the handshake completes", () => {
-  // The peer accepts the TCP connection and then never answers the ClientHello:
-  // a dead TLS backend, a plaintext service on a TLS port, a middlebox. A
-  // caller that gives up politely must still finish its writable side and send
-  // the FIN. Node's TLSWrap.DoShutdown shuts the transport down whether or not
-  // SSL is still in init, so the connection winds down instead of leaking.
-  async function stalledPeer() {
-    const sawFin = Promise.withResolvers<void>();
-    let accepted: net.Socket | undefined;
-    const server = net.createServer({ allowHalfOpen: true }, socket => {
-      accepted = socket;
-      socket.on("data", () => {});
-      socket.on("error", () => {});
-      socket.on("end", () => sawFin.resolve());
+// The peer accepts the TCP connection and never answers the ClientHello (a dead
+// TLS backend, a plaintext service on a TLS port). A caller that gives up must
+// still finish its writable side and send the FIN, as node does:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+// The fixture runs on both runtimes so the expected reports are pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
+      env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    return {
-      port: (server.address() as AddressInfo).port,
-      sawFin: sawFin.promise,
-      async [Symbol.asyncDispose]() {
-        accepted?.destroy();
-        server.close();
-        await once(server, "close");
-      },
-    };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const report = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return report;
   }
 
-  // 'connect' is the TCP connection, so the handshake has not completed yet -
-  // and with this peer it never will.
-  function connectAndLog(port: number, log: string[]) {
-    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-    for (const event of ["secureConnect", "finish", "end", "error", "close"]) {
-      client.on(event, (arg?: any) => log.push(arg?.code ? `${event}:${arg.code}` : event));
-    }
-    return track(client);
-  }
-
-  // `using` releases the socket even when an assertion throws first.
-  function track<T extends { destroy(): void }>(socket: T) {
-    return Object.assign(socket, { [Symbol.dispose]: () => socket.destroy() });
-  }
-
-  it("end() finishes the writable side and sends the FIN", async () => {
-    await using peer = await stalledPeer();
-    const log: string[] = [];
-    using client = connectAndLog(peer.port, log);
-    client.on("connect", () => {
-      log.push(`connect secureConnecting=${client.secureConnecting}`);
-      client.end();
+  it.skipIf(!exe)("end() finishes the writable side and sends the FIN", async () => {
+    expect(await run("end")).toEqual({
+      log: ["connect secureConnecting=true", "finish"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
     });
-
-    await Promise.all([once(client, "finish"), peer.sawFin]);
-
-    expect(log).toEqual(["connect secureConnecting=true", "finish"]);
-    expect(client.writableFinished).toBe(true);
-    expect(client.readyState).toBe("readOnly");
   });
 
-  it("destroySoon() closes the socket", async () => {
-    await using peer = await stalledPeer();
-    const log: string[] = [];
-    using client = connectAndLog(peer.port, log);
-    client.on("connect", () => client.destroySoon());
-
-    await Promise.all([once(client, "close"), peer.sawFin]);
-
-    expect(log.filter(event => event === "finish" || event === "close")).toEqual(["finish", "close"]);
-    expect(log).not.toContain("secureConnect");
-    expect(client.destroyed).toBe(true);
+  it.skipIf(!exe)("destroySoon() closes the socket", async () => {
+    expect(await run("destroySoon")).toEqual({
+      log: ["connect secureConnecting=true", "finish", "close"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "closed",
+      destroyed: true,
+    });
   });
 
-  it("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
-    const clientSawFin = Promise.withResolvers<void>();
-    const log: string[] = [];
-    let serverTlsSocket: TLSSocket | undefined;
-    await using server = net.createServer(raw => {
-      const socket = (serverTlsSocket = new TLSSocket(raw, {
-        isServer: true,
-        key: COMMON_CERT_.key,
-        cert: COMMON_CERT_.cert,
-      }));
-      socket.on("error", () => {});
-      raw.on("error", () => {});
-      socket.on("finish", () => log.push("finish"));
-      // The wrap adopts the connection's handle on the next tick, so end() from
-      // a later turn is the reported shape: the TLS engine runs and waits for a
-      // peer flight that never arrives.
-      setImmediate(() => {
-        log.push(`end secureConnecting=${socket.secureConnecting}`);
-        socket.end();
-      });
+  it.skipIf(!exe)("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
+    expect(await run("server-end")).toEqual({
+      log: ["end secureConnecting=true", "finish"],
+      clientSawFin: true,
     });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-
-    // Disposed in reverse order: both sockets go before the server waits for
-    // its connections to close, and before any assertion can throw.
-    using cleanupServerSocket = { [Symbol.dispose]: () => serverTlsSocket?.destroy() };
-    using client = track(
-      net.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true }),
-    );
-    client.on("data", () => {});
-    client.on("error", () => {});
-    client.on("end", () => clientSawFin.resolve());
-
-    await clientSawFin.promise;
-
-    expect(log).toEqual(["end secureConnecting=true", "finish"]);
   });
 });

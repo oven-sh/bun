@@ -883,17 +883,12 @@ TLSSocket.prototype._start = function _start() {
 
 TLSSocket.prototype._final = function _final(callback) {
   if (!this._handle) return callback();
-  // The engine can only frame a pre-handshake write once the handshake flight
-  // is out, so the close_notify and the FIN follow it. Node gets that order
-  // from its write queue. kSecureConnectDone rather than 'secureConnect': a
-  // server-side socket emits no user event, but every table emits the signal.
+  // A pre-handshake write stays pending until the handshake completes, and the
+  // shutdown follows it: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
-  // With nothing queued, do not wait for a handshake that may never complete.
-  // TLSWrap.DoShutdown shuts the transport down in init too, so a peer that
-  // never answers the ClientHello still gets the FIN.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/src/crypto/crypto_tls.cc#L1203
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);
 };
 

@@ -297,13 +297,39 @@ function writeAfterFIN(chunk, encoding, cb) {
 
   return false;
 }
-// Shared client handshake tail (_finishInit + onConnectSecure) for the two
-// client handler tables. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1711
-function onClientHandshakeComplete(self, socket, verifyError) {
-  // Destroying a socket whose SSL is still in init drives the engine once more,
-  // and that drive reports the unfinished handshake as a failed one. Node's
-  // destroy() closes the TLSWrap, so no verdict arrives after it.
+// ssl.onhandshakedone for the two client handler tables: node's _finishInit +
+// onConnectSecure. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1647-L1707
+function onClientHandshake(self, socket, success, verifyError) {
+  if (!success && verifyError?.code === "ECONNRESET") {
+    // will be handled in onConnectEnd
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1090
   if (self.destroyed) return;
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+  if (!success && verifyError == null && self.writableFinished) {
+    self.secureConnecting = false;
+    return;
+  }
+  // The second argument is "authorized" (handshake + verification +
+  // hostname), matching the public Bun.connect handshake callback. node:tls
+  // decides what to do with verification results in JS via the
+  // rejectUnauthorized / checkServerIdentity handling below, so a
+  // verification-class result (an X509 code such as
+  // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
+  // means the TLS session itself was established. Only a fatal TLS protocol
+  // failure tears the socket down here: those arrive as EPROTO carrying the
+  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
+  // ERR_SSL_* / ERR_OSSL_* code).
+  const isProtocolFailure =
+    !success && verifyError?.code != null && (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+  if (isProtocolFailure) {
+    // Surface the OpenSSL reason instead of letting the close path report a
+    // generic disconnect.
+    self.destroy(tlsHandshakeError(verifyError));
+    return;
+  }
+
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
@@ -535,39 +561,7 @@ const SocketHandlers: SocketHandler = {
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
     if (!self) return;
-    if (!success && verifyError?.code === "ECONNRESET") {
-      // will be handled in onConnectEnd
-      return;
-    }
-    if (!success && verifyError == null && self.writableFinished) {
-      // A verdict that follows our own FIN is the abandoned handshake, not a
-      // result: node reports no 'secureConnect' and no error. Record only that
-      // the socket stopped connecting, which onConnectEnd reads.
-      self.secureConnecting = false;
-      return;
-    }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
-    const isProtocolFailure =
-      !success &&
-      verifyError?.code != null &&
-      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
-    if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
-      self.destroy(tlsHandshakeError(verifyError));
-      return;
-    }
-
-    onClientHandshakeComplete(self, socket, verifyError);
+    onClientHandshake(self, socket, success, verifyError);
   },
   timeout(socket) {
     const self = socket.data;
@@ -1380,39 +1374,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
     const { self } = socket.data;
-    if (!success && verifyError?.code === "ECONNRESET") {
-      // will be handled in onConnectEnd
-      return;
-    }
-    if (!success && verifyError == null && self.writableFinished) {
-      // A verdict that follows our own FIN is the abandoned handshake, not a
-      // result: node reports no 'secureConnect' and no error. Record only that
-      // the socket stopped connecting, which onConnectEnd reads.
-      self.secureConnecting = false;
-      return;
-    }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
-    const isProtocolFailure =
-      !success &&
-      verifyError?.code != null &&
-      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
-    if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
-      self.destroy(tlsHandshakeError(verifyError));
-      return;
-    }
-
-    onClientHandshakeComplete(self, socket, verifyError);
+    onClientHandshake(self, socket, success, verifyError);
   },
   error(socket, error) {
     $debug("Bun.Socket error");
@@ -2805,7 +2767,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
-  // TLSSocket._final waits for the handshake when a write got there first.
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was

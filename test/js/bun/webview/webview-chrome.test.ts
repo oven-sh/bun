@@ -1110,25 +1110,21 @@ it("chrome: goBack/goForward navigates history", async () => {
 
 it("chrome: goBack at history start resolves undefined (no-op)", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
-  await view.navigate(html("<body>only</body>"));
-  // The tab is created on about:blank before it can be driven; that bootstrap
-  // entry is dropped once the first page commits, so history starts at the
-  // first page the caller asked for, as on WKWebView. Session history is the
-  // browser's, so ask it, not the page (the page's copy of history.length
-  // arrives on its own channel and can lag this evaluate).
-  const history = (await view.cdp("Page.getNavigationHistory")) as { currentIndex: number; entries: unknown[] };
-  expect({ currentIndex: history.currentIndex, entries: history.entries.length }).toEqual({
-    currentIndex: 0,
-    entries: 1,
-  });
-  const r = await view.goBack();
-  expect(r).toBeUndefined();
-  expect(view.url).toBe(html("<body>only</body>"));
+  const first = html("<body>only</body>");
+  await view.navigate(first);
+  // The tab is created on a blank page before it can be driven. That page is
+  // not part of the view's history, so the first goBack() has nowhere to go,
+  // as on WKWebView.
+  expect(await view.goBack()).toBeUndefined();
+  expect(view.url).toBe(first);
   expect(await view.evaluate("document.body.textContent")).toBe("only");
   // A later navigation still gets a real back entry.
   await view.navigate(html("<body>second</body>"));
   await view.goBack();
-  expect(await view.evaluate("document.body.textContent")).toBe("only");
+  expect({ url: view.url, body: await view.evaluate("document.body.textContent") }).toEqual({
+    url: first,
+    body: "only",
+  });
   expect(await view.goBack()).toBeUndefined();
   expect(await view.evaluate("document.body.textContent")).toBe("only");
 });

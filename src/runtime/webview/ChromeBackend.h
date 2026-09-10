@@ -246,6 +246,9 @@ enum class Method : uint8_t {
     // → set m_title, settle Navigate. Makes `await navigate(); view.title`
     // work like WKWebView (which packs title in NavDone).
     PageTitle,
+    // Sent once during the attach chain, before the first Page.navigate, so
+    // the reply names the entry the tab was created on. goBack() stops there.
+    PageBootstrapHistory,
     // goBack/goForward chain: getNavigationHistory → navigateToHistoryEntry.
     // The first picks entries[currentIndex + delta].id; the second navigates.
     // Page.loadEventFired settles, same as navigate/reload.

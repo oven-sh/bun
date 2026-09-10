@@ -761,6 +761,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     if (!view) return; // user dropped both view and the awaited promise
 
     if (!error.empty()) {
+        // The bootstrap history fetch is bookkeeping: a failure costs goBack()
+        // its stop, not the navigation the user asked for.
+        if (entry.method == Method::PageBootstrapHistory) return;
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
@@ -815,6 +818,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
+        // The tab was created on about:blank so that Page.enable could run
+        // before the first real navigation. Chrome keeps that as a history
+        // entry; ask for its id now, while it is the only one, so goBack()
+        // can stop above it.
+        uint32_t hid = nextId();
+        m_pending.add(hid, Pending { Method::PageBootstrapHistory, entry.slot, entry.viewId });
+        send(hid, Command(hid, "Page.getNavigationHistory"_s, sidSpan));
+
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
@@ -861,6 +872,22 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
 
+    case Method::PageBootstrapHistory: {
+        // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]} for a tab
+        // that has only ever loaded about:blank, so the current entry is it.
+        auto root = JSON::Value::parseJSON(
+            StringView::fromLatin1(std::span<const Latin1Character>(
+                reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
+        auto o = root ? root->asObject() : nullptr;
+        auto entries = o ? o->getArray("entries"_s) : nullptr;
+        if (!entries) return;
+        int32_t cur = o->getInteger("currentIndex"_s).value_or(0);
+        if (cur < 0 || static_cast<unsigned>(cur) >= entries->length()) return;
+        auto elem = entries->get(static_cast<unsigned>(cur))->asObject();
+        view->m_chromeBootstrapEntryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
+        return;
+    }
+
     case Method::PageGetNavigationHistory: {
         // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]}
         // Pick entries[currentIndex + delta].id and chain into
@@ -885,6 +912,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         }
         auto elem = entries->get(static_cast<unsigned>(target))->asObject();
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
+        if (entryId && entryId == view->m_chromeBootstrapEntryId) {
+            // The blank page the view started on is not part of its history.
+            settle(g, view, entry.slot, true, jsUndefined());
+            return;
+        }
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
@@ -1232,12 +1264,6 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
-
-        // Drop the about:blank entry the tab was created on, so history starts at the first real page.
-        if (!view->m_chromeHistoryPruned) {
-            view->m_chromeHistoryPruned = true;
-            send(0, Command(nextId(), "Page.resetNavigationHistory"_s, sidSpan(view->m_sessionId)));
-        }
 
         // runCallback reports a throwing callback itself.
         if (JSObject* cb = view->m_onNavigated.get()) {

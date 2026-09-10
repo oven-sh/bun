@@ -580,6 +580,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
     if (!std::isfinite(dx) || !std::isfinite(dy))
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dx/dy"_s,
             jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
+    // The WebKit host hands the deltas to CGEvent as int32.
+    constexpr double minDelta = std::numeric_limits<int32_t>::min(), maxDelta = std::numeric_limits<int32_t>::max();
+    if (dx < minDelta || dx > maxDelta)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "dx"_s, minDelta, maxDelta, callFrame->argument(0));
+    if (dy < minDelta || dy > maxDelta)
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "dy"_s, minDelta, maxDelta, callFrame->argument(1));
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));

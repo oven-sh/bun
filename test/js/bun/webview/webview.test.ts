@@ -1069,6 +1069,15 @@ it("views orphaned by a host death are closed, even after a new view respawns th
             return e.code;
           }
         };
+        // The view kept the reason the host died of, for the calls it refuses.
+        const reason = fn => {
+          try {
+            fn().catch(() => {});
+            return "returned a promise";
+          } catch (e) {
+            return e.message;
+          }
+        };
 
         const busy = open();
         const idle = open();
@@ -1083,6 +1092,7 @@ it("views orphaned by a host death are closed, even after a new view respawns th
           busy: probe(() => busy.evaluate("1")),
           idle: probe(() => idle.evaluate("1")),
           blank: probe(() => blank.navigate(html("<body>blank</body>"))),
+          idleMessage: reason(() => idle.evaluate("1")),
         };
 
         // The client is marked dead as soon as the event loop sees the
@@ -1139,6 +1149,9 @@ it("views orphaned by a host death are closed, even after a new view respawns th
       click: "ERR_INVALID_STATE",
       idle: "ERR_INVALID_STATE",
       blank: "ERR_INVALID_STATE",
+      idleMessage: expect.stringMatching(
+        /^Invalid state: WebView\.evaluate: WebView host process (died|killed by signal \d+|exited)$/,
+      ),
     },
   });
   expect(exitCode, stderr).toBe(0);

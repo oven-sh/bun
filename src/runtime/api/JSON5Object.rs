@@ -368,8 +368,7 @@ impl Stringifier {
             let c = str.char_at(i);
             match c {
                 0x00 => {
-                    // `\0` followed by a decimal digit is an octal escape,
-                    // which JSON5 forbids. Spell it `\x00` in that case.
+                    // JSON5 forbids `\0` before a decimal digit (an octal escape).
                     let next_is_digit = i + 1 < len
                         && matches!(str.char_at(i + 1), 0x30..=0x39 /* '0'..='9' */);
                     if next_is_digit {

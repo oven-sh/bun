@@ -164,8 +164,7 @@ public:
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
 
     WEBCORE_EXPORT String get(const StringView name) const;
-    // The mutators return false, and leave the map unchanged, when a vector is at
-    // Bun::maxVectorSize<T>() or its allocation fails.
+    // Mutators return false, map unchanged, when a vector is at Bun::maxVectorSize<T>() or allocation fails.
     [[nodiscard]] WEBCORE_EXPORT bool set(const String& name, const String& value);
     [[nodiscard]] WEBCORE_EXPORT bool add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;

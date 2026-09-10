@@ -3314,3 +3314,60 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("end tag handler dispatch", () => {
+  const annotate = () =>
+    new HTMLRewriter().on("*", {
+      element(el) {
+        const id = el.getAttribute("id");
+        el.onEndTag(end => {
+          end.before(`<!--${id}:${end.name}-->`, { html: true });
+        });
+      },
+    });
+
+  it("runs nested handlers innermost first, including when one end tag closes several elements", () => {
+    expect([
+      annotate().transform('<a id="0"><a id="1"><a id="2">x</a></a></a>'),
+      // </div> pops <b>, <span> and <div> at once: all three handlers run on it.
+      annotate().transform('<div id="0"><span id="1"><b id="2">x</div><p id="3">y</p>'),
+    ]).toEqual([
+      '<a id="0"><a id="1"><a id="2">x<!--2:a--></a><!--1:a--></a><!--0:a--></a>',
+      '<div id="0"><span id="1"><b id="2">x<!--2:div--><!--1:div--><!--0:div--></div><p id="3">y<!--3:p--></p>',
+    ]);
+  });
+
+  // Every open element that called onEndTag() keeps a pending handler, and
+  // each end tag used to scan all of them: n nested elements cost n^2/2
+  // visits (n = 100k, a 700 KB document, took 5.3 s in a release build).
+  // The scan now stops once the handlers that end tag activated have run.
+  // The release size cannot finish inside the spawn timeout with the old
+  // scan and takes well under a second without it. A debug build spends
+  // ~0.2 ms of JS per element, so it gets a size that only keeps it short.
+  it("stays linear when every nested element registers onEndTag", async () => {
+    const n = isDebug ? 40_000 : 400_000;
+    const fixture = /* js */ `
+      const n = ${n};
+      const doc = Buffer.alloc(n * 3, "<a>").toString() + "x" + Buffer.alloc(n * 4, "</a>").toString();
+      let ends = 0;
+      const onEnd = () => { ends++; };
+      const out = new HTMLRewriter().on("a", { element(el) { el.onEndTag(onEnd); } }).transform(doc);
+      console.log(JSON.stringify({ ends, same: out === doc }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signal: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ ends: n, same: true }),
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  }, 60_000);
+});

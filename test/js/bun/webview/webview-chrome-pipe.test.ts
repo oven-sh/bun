@@ -160,7 +160,7 @@ test.concurrent("operations issued while the view attaches all complete", async 
 // user never sees a promise for. The next operation has to wait behind
 // it like behind an explicit navigate(): the fake reports which page it
 // had committed when the evaluate reached it.
-test.concurrent("an operation right after new Bun.WebView({ url }) waits behind the constructor navigation", async () => {
+test.concurrent("an operation after new Bun.WebView({ url }) waits behind that navigation", async () => {
   const result = await runScenario(`
     const view = new Bun.WebView({ backend, width: 100, height: 100, url: "http://fake/ctor" });
     const urlWhenTheEvaluateRan = await outcome(view.evaluate("__fake_url()"));

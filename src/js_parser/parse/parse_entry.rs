@@ -605,7 +605,7 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
@@ -900,7 +900,7 @@ impl<'a> Parser<'a> {
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
@@ -1717,7 +1717,7 @@ impl<'a> Parser<'a> {
                 p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
                     0;
                 match part.symbol_uses.get_mut(&found.namespace_ref) {
-                    Some(uses) if uses.count_estimate > 1 => uses.count_estimate -= 1,
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
                     _ => {
                         let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
                     }

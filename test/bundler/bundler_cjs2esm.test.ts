@@ -529,6 +529,79 @@ describe("bundler", () => {
       stdout: "side effect\nrendered render,version object",
     },
   });
+  // `module.exports = ns` re-exports the whole namespace, so `default` of an
+  // ES module target comes through too (a plain `export *` would drop it).
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { version } from "react-dom";
+        import * as ns from "react-dom";
+        const m = require("react-dom");
+        console.log(version, typeof ReactDOM.default, ReactDOM.default(), typeof ns.default, ns.default(), m.default(), Object.keys(ns).sort().join(","));
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\n19.0.0 function rendered function rendered rendered default,version",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultRequireOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("react-dom");
+        console.log(Object.keys(m).sort().join(","), typeof m.default, m.default(), m.version);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\ndefault,version function rendered 19.0.0",
+    },
+  });
+  // A real `export *` of the lifted file keeps ES module semantics: `default`
+  // of the lifted namespace does not pass through it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultBehindExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./reexport";
+        import ReactDOM from "react-dom";
+        console.log(Object.keys(ns).sort().join(","), typeof ns.default, typeof ReactDOM.default);
+      `,
+      "/reexport.js": /* js */ `
+        export * from "react-dom";
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nversion undefined function",
+    },
+  });
   // The namespace the require() became stays imported when the file also
   // reads from it before the `module.exports =` assignment.
   itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillUsed", {
@@ -1530,6 +1603,68 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function",
+    },
+  });
+  // `require()` of a lifted file keeps it in a `__commonJS` wrapper. A call of its own
+  // export must not bring an export table for the lifted bindings into the wrapper.
+  itBundled("cjs2esm/SelfMethodCallInRequiredFileKeepsExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as m from "./index.cjs";
+        console.log(typeof m.publicEncrypt, typeof m.privateEncrypt, m.privateEncrypt("x"));
+      `,
+      "/index.cjs": /* js */ `
+        var c = require("./empty.cjs");
+        if (typeof c.publicEncrypt !== "function") c = require("./lib.cjs");
+        exports.publicEncrypt = c.publicEncrypt;
+        exports.privateEncrypt = c.privateEncrypt;
+      `,
+      "/lib.cjs": /* js */ `
+        exports.publicEncrypt = require("./pe.cjs");
+        exports.privateEncrypt = function (k) { return exports.publicEncrypt(k); };
+      `,
+      "/pe.cjs": /* js */ `
+        module.exports = function publicEncrypt(k) { return "enc:" + k; };
+      `,
+      "/empty.cjs": /* js */ `
+        module.exports = {};
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs", "/pe.cjs", "/empty.cjs"] },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__export(");
+      expect(out).toContain("var require_lib = __commonJS(function(exports) {");
+    },
+    run: {
+      stdout: "function function enc:x",
+    },
+  });
+  // The same, with export names that no other file declares.
+  itBundled("cjs2esm/SelfMethodCallInRequiredFileDistinctNames", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./index.cjs";
+        console.log(run());
+      `,
+      "/index.cjs": /* js */ `
+        var lib = require("./lib.cjs");
+        exports.run = function () { return lib.parse("in"); };
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.internal = function () { return exports.parse("x"); };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__export(");
+      expect(out).not.toContain("$parse");
+    },
+    run: {
+      stdout: "helped:in",
     },
   });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {

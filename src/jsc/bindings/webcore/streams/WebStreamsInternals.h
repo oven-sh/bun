@@ -52,8 +52,8 @@ inline bool exceedsStringLimit(size_t length)
 
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
 using WebCore::JSCrossRealmTransformState;
-using WebCore::JSDirectSinkCloseState;
 using WebCore::JSDirectStreamController;
+using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
 using WebCore::JSPullIntoDescriptor;
 using WebCore::JSReadableByteStreamController;
@@ -629,15 +629,15 @@ JSC::JSPromise* cancelPendingNativeSource(JSC::JSGlobalObject*, JSReadableStream
 // a JSPromise (the Signal protocol's value).
 JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue jsSinkController); // userJS: yes — BunStreamSource.cpp
 // The direct-stream → native-JSSink path. Returns undefined | JSPromise.
-JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
+JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSDirectStreamSource*); // userJS: yes — BunStreamSource.cpp
 // The generic pump into a native JSSink controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
 // Installs a JSDirectStreamController of the given flavor on the stream, nulls the stream's
-// m_directUnderlyingSource, and sets m_bunMode = Default.
-void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind, double highWaterMark); // userJS: yes — JSDirectStreamController.cpp
+// m_directSource, and sets m_bunMode = Default.
+void setUpDirectStreamController(JSC::JSGlobalObject*, JSReadableStream*, DirectSinkKind); // userJS: no — JSDirectStreamController.cpp
 // Drop the direct controller's retained user-source state once no further pull/close callbacks
 // can run (m_closed set, or the stream has left Readable). Idempotent.
 void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no — JSDirectStreamController.cpp
@@ -668,7 +668,11 @@ JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); //
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // Drop ONE leading U+FEFF, and only on the generic toText path.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
-// Appends `string` UTF-8 encoded (lone surrogates become U+FFFD); false = over the string limit or allocation failed.
+// UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and write) as
+// U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
+size_t utf8ByteLengthWithReplacement(WTF::StringView); // userJS: no — BunStreamConsumers.cpp
+size_t writeUTF8WithReplacement(WTF::StringView, std::span<uint8_t> destination); // userJS: no — BunStreamConsumers.cpp
+// Appends `string` UTF-8 encoded; false = over the string limit or allocation failed.
 bool appendUTF8WithinStringLimit(const WTF::String&, WTF::Vector<uint8_t>& bytes); // userJS: no — BunStreamConsumers.cpp
 
 // The three *Direct conversion paths.
@@ -715,7 +719,8 @@ bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::G
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
 // NO sentinel guard (reachable on a NativeSink-controlled stream).
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
-void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no

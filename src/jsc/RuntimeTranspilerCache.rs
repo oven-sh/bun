@@ -56,7 +56,9 @@ bun_core::declare_scope!(cache, visible);
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 /// Version 28: the define table and `--drop` entries participate in the features hash.
-const EXPECTED_VERSION: u32 = 28;
+/// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
+/// Version 30: String enum members are stored flat, so folds no longer append onto an inlined member.
+const EXPECTED_VERSION: u32 = 30;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -247,7 +249,7 @@ impl Entry {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
         // atomically write to a tmpfile and then move it to the final destination
-        let mut tmpname_buf = PathBuffer::uninit();
+        let mut tmpname_buf = bun_paths::path_buffer_pool::get();
         let tmpfilename = FileSystem::tmpname(
             paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
@@ -496,11 +498,18 @@ impl Entry {
         };
 
         if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
+            let sourcemap = pread_box(
                 file,
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+
+            // `InternalSourceMap::find` trusts these header offsets.
+            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+                return Err(crate::CrateError::InvalidSourceMap);
+            }
+
+            self.sourcemap = sourcemap;
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -710,7 +719,7 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<Entry> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
-        let mut cache_file_path_buf = PathBuffer::uninit();
+        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
@@ -784,7 +793,7 @@ impl RuntimeTranspilerCache {
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
-        let mut cache_file_path_buf = PathBuffer::uninit();
+        let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         bun_core::scoped_log!(
             cache,

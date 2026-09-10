@@ -505,6 +505,7 @@ pub(crate) fn scan_imports_and_exports(
                             source_index_stack: Vec::with_capacity(32),
                             exports_kind,
                             named_exports,
+                            ast_flags: ast_flags_list,
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
@@ -594,15 +595,13 @@ pub(crate) fn scan_imports_and_exports(
                     col!(flags)[source_index] = flag;
                 }
 
-                // The namespace object of a lifted CommonJS module stands in for
-                // `module.exports`, so its properties get setters that assign the
-                // lifted bindings. Step 5 runs in parallel and cannot create the
-                // setters' parameter symbol, so create it here.
-                if export_kind != ExportsKind::Cjs
-                    && flag.wrap != WrapKind::Cjs
-                    && col_ref!(ast_flags_list)[source_index]
-                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                {
+                let is_lifted_commonjs = col_ref!(ast_flags_list)[source_index]
+                    .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                if is_lifted_commonjs && flag.wrap == WrapKind::Cjs {
+                    // The wrapper prints `exports.x = ...` again, so it takes `exports`.
+                    col!(ast_flags_list)[source_index].insert(AstFlags::USES_EXPORTS_REF);
+                } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {
+                    // Step 5 runs in parallel, so the export setters' parameter is made here.
                     col!(lifted_setter_params)[source_index] = this.graph.generate_new_symbol(
                         source_index_.get(),
                         SymbolKind::Other,
@@ -1522,6 +1521,7 @@ struct ExportStarContext<'a> {
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
+    ast_flags: *mut [AstFlags],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1541,6 +1541,11 @@ impl<'a> ExportStarContext<'a> {
         }
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
+
+        // A lifted file's export star was `module.exports = ns`: it hands over `default` too.
+        let reexports_default = self.source_index_stack[..stack_end_pos].iter().all(|i| {
+            col_ref!(self.ast_flags)[*i as usize].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+        });
 
         for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
@@ -1579,7 +1584,7 @@ impl<'a> ExportStarContext<'a> {
 
                 // ES6 export star statements ignore exports named "default"
                 let alias_slice: &[u8] = &alias;
-                if alias_slice == b"default" {
+                if alias_slice == b"default" && !reexports_default {
                     continue;
                 }
 

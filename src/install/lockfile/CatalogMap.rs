@@ -312,7 +312,7 @@ impl CatalogMap {
     ) -> Result<(), AllocError> {
         catalog.try_for_each_property(|dep_name_str, key_loc, value| {
             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
-            let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
+            let dep_name = builder.append::<String>(dep_name_str);
 
             let Some(version_str) = value.as_utf8_string_literal() else {
                 return Ok(());

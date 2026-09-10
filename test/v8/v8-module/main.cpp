@@ -383,6 +383,26 @@ void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(obj2->GetInternalField(1).As<Number>()->Value());
 }
 
+// create_objects_with_internal_fields(count, fieldCount): creates `count`
+// instances of an ObjectTemplate with `fieldCount` internal fields and drops
+// them all, so the caller can check that collecting them releases their
+// internal field storage.
+void create_objects_with_internal_fields(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  uint32_t count = info[0]->Uint32Value(context).FromJust();
+  int field_count = static_cast<int>(info[1]->Uint32Value(context).FromJust());
+
+  Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
+  obj_template->SetInternalFieldCount(field_count);
+  for (uint32_t i = 0; i < count; i++) {
+    HandleScope handle_scope(isolate);
+    obj_template->NewInstance(context).ToLocalChecked();
+  }
+  return ok(info);
+}
+
 void return_data_callback(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.Data());
 }
@@ -2085,6 +2105,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "return_this", return_this);
   NODE_SET_METHOD(exports, "create_object_with_holder_accessor",
                   create_object_with_holder_accessor);
+  NODE_SET_METHOD(exports, "create_objects_with_internal_fields",
+                  create_objects_with_internal_fields);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

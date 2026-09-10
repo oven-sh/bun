@@ -1115,7 +1115,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 // Page.frameNavigated {frame: {parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
-    auto* g = m_global;
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return;
 
@@ -1124,14 +1123,14 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
         view->m_chromeDocumentLoading = false;
+        // Reported once the error page has loaded (the page answers commands again by then),
+        // unless navigate() already failed with errorText for this loaderId.
         auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
-        if (loaderId != view->m_chromeFailedLoaderId) {
-            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate,
-                createError(g, makeString("Navigation to "_s, WTF::String::fromUTF8(unreachable), " failed"_s)));
-        }
+        if (loaderId != view->m_chromeFailedLoaderId) view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
         return;
     }
     view->m_chromeOnErrorPage = false;
+    view->m_chromeUnreportedFailure = WTF::String();
 
     // Chrome splits the fragment out of frame.url.
     auto url = jsonString(jsonField(frame, { "url", 3 }));
@@ -1232,10 +1231,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     else if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
         onNavigatedWithinDocument(view, params);
     else if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
-        if (view->m_chromeOnErrorPage) // its failure was reported at commit
-            view->m_loading = false;
-        else
+        if (!view->m_chromeOnErrorPage)
             finishNavigation(view);
+        else if (auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String()); !failedUrl.isNull())
+            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s)));
+        else
+            view->m_loading = false;
     }
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.

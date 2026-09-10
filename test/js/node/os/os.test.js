@@ -372,7 +372,7 @@ it("native os functions are rejected as a construct target", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: nativeOsFunctions.map(name => `${name} of=[1,2,3] from=[1] species=TypeError\n`).join(""),
     stderr: "",
     exitCode: 0,

@@ -404,7 +404,7 @@ test("util/types functions are rejected as a species constructor", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "of => [1,2,3]\nfrom => [1]\nslice => TypeError\nmap => TypeError\nconcat => TypeError\n",
     stderr: "",
     exitCode: 0,

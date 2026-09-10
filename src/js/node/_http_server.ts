@@ -15,6 +15,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateNumber,
   validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
@@ -67,7 +68,12 @@ const {
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
+const { kTlsConnectionListener } = require("internal/net/symbols");
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 let http1Fallback;
+let nodeTls;
+const lazyTls = () => (nodeTls ??= require("node:tls"));
+let tlsConnectionListener;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
@@ -252,12 +258,32 @@ function normalizeServerTls(tls) {
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
 function connectionListener(this: Server, socket) {
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
-  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
+  if (this[tlsSymbol]) {
+    // Node's https.Server is a tls.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L93-L99
+    tlsConnectionListener ??= lazyTls().Server.prototype[kTlsConnectionListener];
+    if (socket) tlsConnectionListener.$call(this, socket);
+    return;
+  }
+  httpConnectionListener(this, socket);
+}
+
+function secureConnectionListener(this: Server, socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
+  httpConnectionListener(this, socket);
+}
+
+function httpConnectionListener(server: Server, socket) {
+  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(server, socket, {
     http1Options: {
-      IncomingMessage: this[kIncomingMessage],
-      ServerResponse: this[kServerResponse],
+      IncomingMessage: server[kIncomingMessage],
+      ServerResponse: server[kServerResponse],
     },
   });
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L107-L110
+function onTlsClientError(this: Server, err, conn) {
+  if (!this.emit("clientError", err, conn)) conn.destroy(err);
 }
 
 function Server(options, callback): void {
@@ -353,7 +379,7 @@ function Server(options, callback): void {
         minVersion = tlsStringToProtocolVersion(options.minVersion);
         maxVersion = tlsStringToProtocolVersion(options.maxVersion);
       }
-      this[tlsSymbol] = normalizeServerTls({
+      const tls = (this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
         cert,
@@ -365,7 +391,24 @@ function Server(options, callback): void {
         ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
-      });
+      }));
+      // tls.Server state that tlsConnectionListener reads. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1391
+      this._requestCert = tls.requestCert;
+      this._rejectUnauthorized = tls.rejectUnauthorized;
+      const { SNICallback, ALPNCallback, ALPNProtocols } = options;
+      if (SNICallback != null) validateFunction(SNICallback, "options.SNICallback");
+      if (ALPNCallback != null) {
+        validateFunction(ALPNCallback, "options.ALPNCallback");
+        if (ALPNProtocols) throw $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS();
+      }
+      if (ALPNProtocols) lazyTls().convertALPNProtocols(ALPNProtocols, this);
+      this._SNICallback = SNICallback;
+      this._ALPNCallback = ALPNCallback;
+      const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(handshakeTimeout, "options.handshakeTimeout");
+      this._handshakeTimeout = handshakeTimeout;
+      this.on("secureConnection", secureConnectionListener);
+      this.on("tlsClientError", onTlsClientError);
     } else {
       this[tlsSymbol] = null;
     }
@@ -384,6 +427,18 @@ Server.prototype[kIncomingMessage] = undefined;
 Server.prototype[kServerResponse] = undefined;
 
 Server.prototype[kConnectionsCheckingInterval] = undefined;
+
+// tls.Server's _sharedCreds, for fed connections only: the native listener takes this[tlsSymbol].
+Server.prototype[kSharedCreds] = function () {
+  const options = this[optionsSymbol];
+  const { requestCert, rejectUnauthorized } = this[tlsSymbol];
+  return (this._sharedCreds ??= lazyTls().createSecureContext({
+    ...options,
+    requestCert,
+    rejectUnauthorized,
+    honorCipherOrder: options.honorCipherOrder !== false,
+  }));
+};
 
 function rethrowUncaught(err) {
   throw err;

@@ -22,7 +22,12 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const {
+  kArmHandshakeTimeout,
+  kSecureConnectDone,
+  kTlsConnectionListener,
+  kVerifyError,
+} = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -1497,27 +1502,7 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext;
-    try {
-      secureContext = this[kSharedCreds]();
-    } catch (err) {
-      socket.destroy();
-      this.emit("error", err);
-      return;
-    }
-    const wrapped = new TLSSocket(socket, {
-      secureContext,
-      isServer: true,
-      requestCert: this._requestCert,
-      rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
-      ALPNProtocols: this.ALPNProtocols,
-      ALPNCallback: this._ALPNCallback,
-    });
-    wrapped.server = this;
-    wrapped._requestCert = this._requestCert;
-    wrapped._rejectUnauthorized = this._rejectUnauthorized;
-    this[kArmHandshakeTimeout](wrapped);
+    tlsConnectionListener.$call(this, socket);
   });
 
   // Node registers the createServer callback as a plain "secureConnection"
@@ -1531,6 +1516,32 @@ $toClass(Server, "Server", NetServer);
 Server.prototype[kSharedCreds] = function () {
   return this._sharedCreds || buildSharedCreds(this);
 };
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1259-L1286
+function tlsConnectionListener(this: Server, socket) {
+  let secureContext;
+  try {
+    secureContext = this[kSharedCreds]();
+  } catch (err) {
+    socket.destroy();
+    this.emit("error", err);
+    return;
+  }
+  const wrapped = new TLSSocket(socket, {
+    secureContext,
+    isServer: true,
+    requestCert: this._requestCert,
+    rejectUnauthorized: this._rejectUnauthorized,
+    SNICallback: this._SNICallback,
+    ALPNProtocols: this.ALPNProtocols,
+    ALPNCallback: this._ALPNCallback,
+  });
+  wrapped.server = this;
+  wrapped._requestCert = this._requestCert;
+  wrapped._rejectUnauthorized = this._rejectUnauthorized;
+  NetServer.prototype[kArmHandshakeTimeout].$call(this, wrapped);
+}
+Server.prototype[kTlsConnectionListener] = tlsConnectionListener;
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

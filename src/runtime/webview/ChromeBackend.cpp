@@ -1180,7 +1180,18 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto root = JSON::Value::parseJSON(WTF::String::fromUTF8(params));
         auto o = root ? root->asObject() : nullptr;
         if (!o) return;
+        // CDP names four of its ConsoleAPICalled types differently from the
+        // console method that produced them. The callback contract (and the
+        // WebKit backend) use the method name.
         auto type = o->getString("type"_s);
+        if (type == "warning"_s)
+            type = "warn"_s;
+        else if (type == "startGroup"_s)
+            type = "group"_s;
+        else if (type == "startGroupCollapsed"_s)
+            type = "groupCollapsed"_s;
+        else if (type == "endGroup"_s)
+            type = "groupEnd"_s;
         auto argsArr = o->getArray("args"_s);
 
         // remoteToJS allocates (jsString/JSONParse). Both dispatch paths
@@ -1240,7 +1251,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             MessageLevel ml = MessageLevel::Log;
             if (type == "error"_s || type == "assert"_s)
                 ml = MessageLevel::Error;
-            else if (type == "warning"_s)
+            else if (type == "warn"_s)
                 ml = MessageLevel::Warning;
             else if (type == "debug"_s)
                 ml = MessageLevel::Debug;
@@ -1253,7 +1264,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
                 strongArgs.append(Strong<Unknown>(vm, args.at(i)));
             auto scriptArgs = Inspector::ScriptArguments::create(g, WTF::move(strongArgs));
             scope.release();
-            if (auto clientRef = g->consoleClient())
+            auto clientRef = g->consoleClient();
+            if (!clientRef) return;
+            // group/groupEnd go through their own entry points so the
+            // mirrored output nests like the page's console does.
+            if (type == "group"_s)
+                clientRef->group(g, WTF::move(scriptArgs));
+            else if (type == "groupCollapsed"_s)
+                clientRef->groupCollapsed(g, WTF::move(scriptArgs));
+            else if (type == "groupEnd"_s)
+                clientRef->groupEnd(g, WTF::move(scriptArgs));
+            else
                 clientRef->logWithLevel(g, WTF::move(scriptArgs), ml);
             return;
         }

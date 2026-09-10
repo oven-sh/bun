@@ -174,7 +174,10 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+//
+// Chrome refuses to start as root (containers) without --no-sandbox.
+const chromeArgv: string[] = process.platform !== "win32" && process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+const chrome = { type: "chrome" as const, url: false as const, argv: chromeArgv };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -571,7 +574,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -603,7 +606,7 @@ it("chrome: a new WebView respawns Chrome after the previous one died", async ()
       bunExe(),
       "-e",
       `
-        const backend = {type:"chrome", url:false};
+        const backend = {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}};
         const first = new Bun.WebView({ backend, width: 200, height: 200 });
         await first.navigate("data:text/html,<body>first</body>");
         const pending = first.evaluate("new Promise(() => {})");
@@ -748,7 +751,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -788,7 +791,7 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath, argv: chromeArgv }, width: 200, height: 200 });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -803,7 +806,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: [...${JSON.stringify(chromeArgv)}, "--user-agent=BunWebViewTest/1.0"] },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1118,11 +1121,31 @@ it("chrome: console callback receives (type, ...args)", async () => {
   await view.evaluate("console.error('boom')");
 
   expect(calls[0]).toEqual(["log", "hello", 42, true]);
-  expect(calls[1][0]).toBe("warning");
+  expect(calls[1][0]).toBe("warn");
   expect(calls[1][1]).toBe("warning");
   // Object arg is the RemoteObject — preview.properties has the structure.
   expect(calls[1][2]).toHaveProperty("type", "object");
   expect(calls[2]).toEqual(["error", "boom"]);
+});
+
+it("chrome: console callback type is the console method name, not the CDP name", async () => {
+  const calls: [string, ...unknown[]][] = [];
+  await using view = new Bun.WebView({
+    backend: chrome,
+    width: 200,
+    height: 200,
+    console: (type: string, ...args: unknown[]) => calls.push([type, ...args]),
+  });
+  await view.navigate(html("<body></body>"));
+  // Runtime.consoleAPICalled reports these four as "warning", "startGroup",
+  // "startGroupCollapsed" and "endGroup". Every other type already matches
+  // the method name.
+  await view.evaluate(
+    "(console.warn('w'), console.group('g'), console.groupCollapsed('gc'), console.groupEnd(), console.log('l'), console.info('i'), console.debug('d'), 0)",
+  );
+  expect(calls.map(c => c[0])).toEqual(["warn", "group", "groupCollapsed", "groupEnd", "log", "info", "debug"]);
+  expect(calls[1]).toEqual(["group", "g"]);
+  expect(calls[2]).toEqual(["groupCollapsed", "gc"]);
 });
 
 it("chrome: console: globalThis.console forwards to parent's stdout", async () => {
@@ -1134,7 +1157,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1154,6 +1177,35 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
   expect(stdout).toContain("1");
   expect(stdout).toContain("2");
   expect(stderr).toContain("page error");
+  expect(exit).toBe(0);
+});
+
+it("chrome: console: globalThis.console nests console.group output", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const view = new Bun.WebView({
+        backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200,
+        console: globalThis.console,
+      });
+      await view.navigate("data:text/html,<body></body>");
+      await view.evaluate("(console.log('before'), console.group('outer'), console.log('inside'), console.groupEnd(), console.log('after'), console.warn('careful'), 0)");
+      view.close();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // group() indents what follows and groupEnd() undoes it without printing
+  // V8's synthetic "console.groupEnd" argument. warn routes to stderr.
+  expect(stdout).toBe("before\nouter\n  inside\nafter\n");
+  expect(stderr).toContain("careful");
+  expect(stderr).not.toContain("console.groupEnd");
+  expect(stdout).not.toContain("careful");
   expect(exit).toBe(0);
 });
 
@@ -1194,7 +1246,7 @@ it("chrome: large evaluate result crosses the pipe", async () => {
 // resolved once per process, on the first spawn. The env var is consulted
 // right after backend.path, before $PATH and the install locations.
 const spawnWithEnv = `
-  const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: { type: "chrome", url: false, argv: ${JSON.stringify(chromeArgv)} }, width: 200, height: 200 });
   await view.navigate("data:text/html,<body>env</body>");
   console.log(await view.evaluate("document.body.textContent"));
   view.close();

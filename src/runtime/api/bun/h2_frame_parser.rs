@@ -3737,7 +3737,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_too_many_invalid_frames(&self) {
         // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
         // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
-        let Some(code_js) = self.or_stop(self.latin1_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"))
+        let global = self.global();
+        let Some(code_js) = self
+            .or_stop(bun_core::String::static_("ERR_HTTP2_TOO_MANY_INVALID_FRAMES").to_js(&global))
         else {
             return;
         };

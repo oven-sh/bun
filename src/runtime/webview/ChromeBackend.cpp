@@ -603,8 +603,7 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
-// m_sessions keys must never be null Strings (StringHash derefs the impl);
-// fromUTF8 returns one for a missing field or invalid UTF-8. Empty = unusable.
+// Never null (a null String can't be an m_sessions key); empty = unusable.
 static WTF::String decodeSessionId(std::span<const char> utf8)
 {
     if (utf8.empty()) return WTF::emptyString();
@@ -1066,8 +1065,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value = [cx, cy], the only shape kActionabilityIIFE
-        // returns. Anything else is a malformed reply.
+        // result.result.value = [cx, cy] from kActionabilityIIFE.
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonField(inner, { "value", 5 });
         auto root = value.empty() ? nullptr

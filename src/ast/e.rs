@@ -2372,8 +2372,7 @@ impl RegExp {
         self.pattern_and_flags().1
     }
 
-    /// Flags are identifier characters, so the last `/` closes the pattern
-    /// even when the pattern itself contains `\/` or `[/]`.
+    /// Flags never contain `/`, so the last `/` is the closing one.
     fn pattern_and_flags(&self) -> (&[u8], &[u8]) {
         let value: &[u8] = &self.value;
         match strings::last_index_of_char(value, b'/') {

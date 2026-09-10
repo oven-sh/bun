@@ -4,6 +4,10 @@ const RUN_COUNT = 5;
 import { Worker, isMainThread, workerData } from "worker_threads";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 const actions = {
   async ["Bun.connect"](port) {
@@ -76,7 +80,7 @@ if (isMainThread) {
     }
 
     await Promise.all(promises);
-    console.log(`Spawned ${CONCURRENCY} workers`, "RSS", (process.memoryUsage().rss / 1024 / 1024) | 0, "MB");
+    console.log(`Spawned ${CONCURRENCY} workers`, "RSS", (rss() / 1024 / 1024) | 0, "MB");
     Bun.gc(true);
   }
   server.stop(true);

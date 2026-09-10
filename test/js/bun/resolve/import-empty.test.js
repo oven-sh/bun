@@ -23,9 +23,9 @@ it("importing empty file with type file returns it path", async () => {
 
 // MARK: - web imports
 
-it("importing empty css file returns its path", async () => {
+it("importing empty css file returns an empty object", async () => {
   const empty_file_css = (await import("./empty-file", { with: { type: "css" } })).default;
-  expect(empty_file_css).toEqual(empty_file_path);
+  expect(empty_file_css).toEqual({});
 });
 
 it("importing empty html file returns HTMLBundle with its path", async () => {

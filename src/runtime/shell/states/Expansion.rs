@@ -15,13 +15,12 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 pub struct Expansion {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Atom>,
-    pub io: IO,
-    pub state: ExpansionState,
+    pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
     /// for `Atom::Compound` it walks `c.atoms`.
-    pub word_idx: u32,
+    pub(crate) word_idx: u32,
     /// Output sink the parent provided. The parent is reachable via
     /// `base.parent`, so the sink is just a buffer the parent reads back on
     /// `child_done`.
@@ -29,27 +28,30 @@ pub struct Expansion {
     /// Working buffer for the *current* word being assembled. When a word
     /// boundary is hit (IFS split / glob result), it is flushed into `out`
     /// via `push_current_out`.
-    pub current_out: Vec<u8>,
+    pub(crate) current_out: Vec<u8>,
     /// Byte offsets in `current_out` written by literal metacharacter atoms
     /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
     /// these positions may act as pattern syntax in `do_brace_expand` or
     /// `transition_to_glob_state`; metacharacter bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
-    pub meta_offsets: Vec<u32>,
-    pub child_script: Option<NodeId>,
+    pub(crate) meta_offsets: Vec<u32>,
+    pub(crate) child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
-    pub cmd_subst_quoted: bool,
+    pub(crate) cmd_subst_quoted: bool,
+    /// The atom is an assignment value (`A=v`, `export A=v`), so
+    /// command-substitution output is not field split (POSIX 2.9.1).
+    pub(crate) assign_ctx: bool,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
-    pub has_quoted_empty: bool,
+    pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
-    pub out_exit_code: ExitCode,
+    pub(crate) out_exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -68,44 +70,36 @@ pub enum ExpansionState {
 
 #[derive(Default)]
 pub struct ExpansionOut {
-    pub buf: Vec<u8>,
+    pub(crate) buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
-    pub bounds: Vec<u32>,
+    pub(crate) bounds: Vec<u32>,
     /// Set when the atom is a sole `$(…)`
     /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
     /// command's exit code when that substitution was argv0 and argv is
     /// otherwise empty.
-    pub out_exit_code: ExitCode,
+    pub(crate) out_exit_code: ExitCode,
     /// When `buf`/`bounds` are both
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
-    pub has_quoted_empty: bool,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ExpansionOpts {
-    pub for_spawn: bool,
-    pub single: bool,
+    pub(crate) has_quoted_empty: bool,
 }
 
 impl Expansion {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: *const ast::Atom,
         parent: NodeId,
-        io: IO,
-        _opts: ExpansionOpts,
+        assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
-            base: Base::new(StateKind::Expansion, parent, shell),
+            base: Base::new(parent, shell),
             // SAFETY: `node` is non-null and points into the AST arena
             // (`ShellArgs::__arena`), which the interpreter holds for its
             // entire lifetime — strictly outliving every state node (the
             // BackRef invariant). Callers pass `&raw const` only to escape
             // borrowck across the `&Interpreter` reborrow.
             node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Atom) },
-            io,
             state: ExpansionState::Idle,
             word_idx: 0,
             out: ExpansionOut::default(),
@@ -113,12 +107,13 @@ impl Expansion {
             meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
+            assign_ctx,
             has_quoted_empty: false,
             out_exit_code: 0,
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
@@ -126,7 +121,7 @@ impl Expansion {
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
             // field, so `expand_simple_no_io` can expand `$N` without aliasing.
@@ -472,7 +467,7 @@ impl Expansion {
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
@@ -596,7 +591,7 @@ impl Expansion {
         me.current_out.extend_from_slice(&s[a..]);
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -623,13 +618,16 @@ impl Expansion {
             ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
         );
 
-        let quoted = interp.as_expansion(this).cmd_subst_quoted;
+        let no_split = {
+            let me = interp.as_expansion(this);
+            me.cmd_subst_quoted || me.assign_ctx
+        };
         {
             let me = interp.as_expansion_mut(this);
             if exit_code != 0 && sole_cmd_subst {
                 me.out_exit_code = exit_code;
             }
-            if quoted {
+            if no_split {
                 let mut hi = stdout.len();
                 while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
                     hi -= 1;
@@ -649,7 +647,7 @@ impl Expansion {
     /// Main-thread re-entry for the
     /// off-thread glob walker — splice each match as a separate word into
     /// `out` then resume the atom-walk trampoline.
-    pub fn on_glob_walk_done(
+    pub(crate) fn on_glob_walk_done(
         interp: &Interpreter,
         this: NodeId,
         result: Vec<Vec<u8>>,
@@ -714,7 +712,7 @@ impl Expansion {
 
     /// Take the error out of `state == Err(_)` (called by the parent on
     /// `child_done(_, 1)` to print it). Leaves `state == Done`.
-    pub fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
+    pub(crate) fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
             ExpansionState::Err(e) => Some(*e),
@@ -725,7 +723,7 @@ impl Expansion {
         }
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Expansion {} deinit", this);
         let child = interp.as_expansion_mut(this).child_script.take();
         if let Some(c) = child {
@@ -735,11 +733,10 @@ impl Expansion {
         me.out.buf.clear();
         me.out.bounds.clear();
         me.current_out.clear();
-        me.base.end_scope();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).
-    pub fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
+    pub(crate) fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
         out.out_exit_code = me.out_exit_code;

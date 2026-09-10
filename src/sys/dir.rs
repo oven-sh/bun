@@ -25,7 +25,7 @@ impl Drop for Dir {
 pub struct CopyFileOptions {
     /// When set, the destination is created with this mode instead of the
     /// source file's mode.
-    pub override_mode: Option<Mode>,
+    pub(crate) override_mode: Option<Mode>,
 }
 
 /// Options for `Dir::make_open_path`.
@@ -44,6 +44,7 @@ impl Dir {
     pub fn fd(&self) -> Fd {
         self.fd
     }
+    /// Wraps the `Fd::cwd()` sentinel, which `Drop` skips.
     #[inline]
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }
@@ -52,12 +53,6 @@ impl Dir {
     #[inline]
     pub fn open(path: &[u8]) -> Maybe<Self> {
         open_dir_at(Fd::cwd(), path).map(Self::from_fd)
-    }
-    /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
-    /// always added.
-    #[inline]
-    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
-        openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
     }
     /// Open `sub_path` relative to this dir.
     #[inline]
@@ -301,7 +296,7 @@ pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
 
 /// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
 fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
     buf.0[len] = 0;
@@ -324,7 +319,7 @@ impl Dir {
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `EEXIST` for callers to branch on.
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
         buf.0[len] = 0;
@@ -342,14 +337,14 @@ impl Dir {
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
-        let mut tbuf = bun_paths::PathBuffer::default();
+        let mut tbuf = bun_paths::path_buffer_pool::get();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
         tbuf.0[tlen] = 0;
         // SAFETY: NUL-terminated above.
         let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
-        let mut lbuf = bun_paths::PathBuffer::default();
+        let mut lbuf = bun_paths::path_buffer_pool::get();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;

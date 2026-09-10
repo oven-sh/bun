@@ -31,25 +31,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#if 0
-#include "CommonCryptoUtilities.h"
-
-typedef CCRSACryptorRef PlatformRSAKey;
-namespace WebCore {
-struct CCRSACryptorRefDeleter {
-    void operator()(CCRSACryptorRef key) const { CCRSACryptorRelease(key); }
-};
-}
-typedef std::unique_ptr<typename std::remove_pointer<CCRSACryptorRef>::type, WebCore::CCRSACryptorRefDeleter> PlatformRSAKeyContainer;
-#endif
-
-#if USE(GCRYPT)
-#include <pal/crypto/gcrypt/Handle.h>
-
-typedef gcry_sexp_t PlatformRSAKey;
-typedef std::unique_ptr<typename std::remove_pointer<gcry_sexp_t>::type, PAL::GCrypt::HandleDeleter<gcry_sexp_t>> PlatformRSAKeyContainer;
-#endif
-
 #if USE(OPENSSL)
 #include "OpenSSLCryptoUniquePtr.h"
 typedef EVP_PKEY* PlatformRSAKey;
@@ -59,7 +40,6 @@ typedef WebCore::EvpPKeyPtr PlatformRSAKeyContainer;
 namespace WebCore {
 
 class CryptoKeyRSAComponents;
-class PromiseWrapper;
 class ScriptExecutionContext;
 
 struct CryptoKeyPair;

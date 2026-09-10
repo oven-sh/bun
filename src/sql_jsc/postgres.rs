@@ -24,7 +24,6 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 #[path = "postgres/SASL.rs"]
 pub mod sasl;
-pub use sasl::SASL;
 
 #[path = "postgres/AuthenticationState.rs"]
 pub mod authentication_state;
@@ -74,7 +73,3 @@ pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
 }
-
-// Re-exports of base-crate protocol/types modules.
-pub use bun_sql::postgres::postgres_protocol as base_protocol;
-pub use bun_sql::postgres::postgres_types as base_types;

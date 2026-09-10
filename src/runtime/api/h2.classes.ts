@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -31,6 +31,10 @@ export default [
       },
       getCurrentState: {
         fn: "getCurrentState",
+        length: 0,
+      },
+      getFrameCounters: {
+        fn: "getFrameCounters",
         length: 0,
       },
       settings: {
@@ -130,7 +134,7 @@ export default [
         length: 4,
       },
     },
-    finalize: true,
+    refCounted: true,
     construct: true,
     constructNeedsThis: true,
     klass: {},

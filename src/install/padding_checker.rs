@@ -36,16 +36,6 @@
 // module below pins every serialized type's size/align against the on-disk spec.
 // The free function here is kept as the call-site-compatible entry point.
 
-/// Marker trait asserting that `Self` is `#[repr(C)]` (or `#[repr(transparent)]`/packed),
-/// contains no pointer fields, and has no implicit padding bytes anywhere in its layout
-/// (recursively).
-///
-/// # Safety
-/// Implementing this by hand asserts the layout invariants above without compile-time
-/// checks. Only do so for primitives and manually-audited `#[repr(C)]` types whose
-/// explicit `_padding_*` fields are proven gap-free by `const` offset asserts.
-pub unsafe trait AssertNoUninitializedPadding {}
-
 /// Assertion that `T` has no uninitialized padding. See module docs.
 ///
 /// The actual layout checking lives in the per-struct `const` offset asserts
@@ -97,38 +87,6 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 //   - anything else         → ok
 //
 // Unions: recurse into field types but skip the offset-gap scan.
-
-// Blanket impls for leaf types.
-// SAFETY: u8 is a single value byte; no padding by definition.
-unsafe impl AssertNoUninitializedPadding for u8 {}
-// SAFETY: u16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for u16 {}
-// SAFETY: u32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for u32 {}
-// SAFETY: u64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for u64 {}
-// SAFETY: usize is a fixed-width integer; all bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for usize {}
-// SAFETY: i8 is a single value byte; no padding by definition.
-unsafe impl AssertNoUninitializedPadding for i8 {}
-// SAFETY: i16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for i16 {}
-// SAFETY: i32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for i32 {}
-// SAFETY: i64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for i64 {}
-// SAFETY: isize is a fixed-width integer; all bytes are value bytes, no padding.
-unsafe impl AssertNoUninitializedPadding for isize {}
-// SAFETY: bool occupies exactly one byte (value 0 or 1); no padding.
-unsafe impl AssertNoUninitializedPadding for bool {}
-
-// SAFETY: `[T; N]` has no inter-element padding when `T` itself has none
-// (array stride == size_of::<T>() always; any tail padding would be inside T and
-// already rejected by T's own impl).
-unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializedPadding
-    for [T; N]
-{
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-version layout pins

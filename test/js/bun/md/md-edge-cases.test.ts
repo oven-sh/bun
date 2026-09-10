@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
@@ -1337,4 +1337,48 @@ describe("documents whose block metadata the parser cannot address", () => {
     ]);
     expect(exitCode).toBe(0);
   }, 30_000);
+});
+
+// The runtime module loader for .md files (imports, not the Bun.markdown API).
+describe.concurrent("importing .md modules", () => {
+  test("default export is the rendered HTML", async () => {
+    using dir = tempDir("md-import", {
+      "doc.md": "# Hello\n\nSome *text*.\n",
+      "entry.ts": `
+        import html from "./doc.md";
+        const required = require("./doc.md");
+        console.log(JSON.stringify([html, required.default]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rendered = "<h1>Hello</h1>\n<p>Some <em>text</em>.</p>\n";
+    expect(JSON.parse(stdout)).toEqual([rendered, rendered]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty .md file produces a module with no default export", async () => {
+    using dir = tempDir("md-import-empty", {
+      "empty.md": "",
+      "entry.ts": `
+        import html from "./empty.md";
+        console.log(html);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing 'default' export");
+    expect(exitCode).not.toBe(0);
+  });
 });

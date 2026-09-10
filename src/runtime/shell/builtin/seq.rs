@@ -15,7 +15,6 @@ enum State {
 
 pub struct Seq {
     state: State,
-    buf: Vec<u8>,
     start: f32,
     end: f32,
     increment: f32,
@@ -23,20 +22,17 @@ pub struct Seq {
     /// argv outlives the builtin — `RawSlice` invariant.
     separator: bun_ptr::RawSlice<u8>,
     terminator: bun_ptr::RawSlice<u8>,
-    fixed_width: bool,
 }
 
 impl Default for Seq {
     fn default() -> Self {
         Self {
             state: State::Idle,
-            buf: Vec::new(),
             start: 1.0,
             end: 1.0,
             increment: 1.0,
             separator: bun_ptr::RawSlice::new(b"\n"),
             terminator: bun_ptr::RawSlice::EMPTY,
-            fixed_width: false,
         }
     }
 }
@@ -85,7 +81,6 @@ impl Seq {
                 continue;
             }
             if arg == b"-w" || arg == b"--fixed-width" {
-                Self::state_mut(interp, cmd).fixed_width = true;
                 idx += 1;
                 continue;
             }
@@ -193,15 +188,11 @@ impl Seq {
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {
-            Self::state_mut(interp, cmd).buf = out;
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            // NOTE: reshaped for borrowck — clone the slice so the &mut
-            // on stdout doesn't alias `buf`.
-            let buf = Self::state_mut(interp, cmd).buf.clone();
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &buf, safeguard);
+                .enqueue(child, &out, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)
@@ -213,8 +204,7 @@ impl Seq {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = e {
-            e.deref();
+        if let Some(_err) = e {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

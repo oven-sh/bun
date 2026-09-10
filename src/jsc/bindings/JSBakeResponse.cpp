@@ -23,16 +23,6 @@
 
 namespace Bun {
 
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetSymbolFor);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetType);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetKey);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetProps);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetStore);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetOwner);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
-
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*, JSC::EncodedJSValue);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -142,17 +132,12 @@ JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObj
 
 JSC::Structure* JSBakeResponse::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
 }
 
 JSC::GCClient::IsoSubspace* JSBakeResponse::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBakeResponse, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBakeResponse.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBakeResponse = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBakeResponse.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBakeResponse = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBakeResponse, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeResponse, m_subspaceForBakeResponse));
 }
 
 JSBakeResponse::JSBakeResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
@@ -173,9 +158,6 @@ void JSBakeResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSBakeResponse);
-
-JSC_DECLARE_HOST_FUNCTION(callBakeResponse);
-JSC_DECLARE_HOST_FUNCTION(constructBakeResponse);
 
 class JSBakeResponseConstructor final : public JSC::InternalFunction {
 public:
@@ -251,8 +233,6 @@ public:
 
         instance->m_ctx = ptr;
 
-        RETURN_IF_EXCEPTION(scope, {});
-
         auto size = Response__estimatedSize(ptr);
         vm.heap.reportExtraMemoryAllocated(instance, size);
 
@@ -267,7 +247,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -280,7 +260,7 @@ private:
     {
         Base::finishCreation(vm, 0, "Response"_s);
         putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-        reifyStaticProperties(vm, info(), JSBakeResponseConstructorTableValues, *this);
+        Bun::reifyStaticPropertyTable(vm, info(), JSBakeResponseConstructorTableValues, *this);
     }
 };
 
@@ -290,7 +270,7 @@ const JSC::ClassInfo JSBakeResponseConstructor::s_info = { ""_s, &JSC::InternalF
 Structure* createJSBakeResponseStructure(JSC::VM& vm, Zig::GlobalObject* globalObject, JSObject* prototype)
 {
 
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSBakeResponse::info(), NonArray, 0);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, 0), JSBakeResponse::info(), NonArray, 0);
 
     // Unfortunately we cannot use structure->addPropertyTransition as it does
     // not with with JSC::JSNonFinalObject

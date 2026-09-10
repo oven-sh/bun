@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunExe, tempDir } from "harness";
 import * as i from "./import_target";
 import { mile𐃘add1 as m, mile𐃘add1 } from "./import_target";
 
@@ -11,7 +11,7 @@ test("unicode imports", () => {
 });
 
 test("more unicode imports", async () => {
-  const dir = tempDirWithFiles("more-unicode-imports", {
+  await using dir = tempDir("more-unicode-imports", {
     "mod_importer.ts": `
       import { nထme as nထme𐃘1 } from "./mod\\u1011.ts";
       import { nထme as nထme𐃘2 } from "./modထ.ts";

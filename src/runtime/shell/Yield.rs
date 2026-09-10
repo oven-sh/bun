@@ -24,9 +24,6 @@ use crate::shell::states::pipeline::Pipeline;
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
-    /// Start the node at this id (`Interpreter::start_node`). Used when a
-    /// freshly-created child needs starting at top-of-stack.
-    Start(NodeId),
     /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
     /// the registered child at top-of-stack.
     OnIoWriterChunk {
@@ -47,20 +44,16 @@ pub enum Yield {
 
 impl Yield {
     #[inline]
-    pub const fn suspended() -> Yield {
+    pub(crate) const fn suspended() -> Yield {
         Yield::Suspended
     }
     #[inline]
-    pub const fn done() -> Yield {
+    pub(crate) const fn done() -> Yield {
         Yield::Done
     }
     #[inline]
-    pub const fn failed() -> Yield {
+    pub(crate) const fn failed() -> Yield {
         Yield::Failed
-    }
-
-    pub fn is_done(&self) -> bool {
-        matches!(self, Yield::Done)
     }
 }
 
@@ -102,7 +95,7 @@ impl Drop for DbgDepthGuard {
 
 impl Yield {
     /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub fn run(self, interp: &Interpreter) {
+    pub(crate) fn run(self, interp: &Interpreter) {
         let tag: &'static str = (&self).into();
         let _depth = DbgDepthGuard::enter(tag);
 
@@ -133,7 +126,6 @@ impl Yield {
                     }
                     interp.next_node(id)
                 }
-                Yield::Start(id) => interp.start_node(id),
                 Yield::OnIoWriterChunk {
                     child,
                     written,

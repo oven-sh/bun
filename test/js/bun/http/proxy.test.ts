@@ -518,6 +518,84 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
   }
 });
 
+// RFC 7617: the Basic credential is always `user-id ":" password`, so a proxy
+// URL with an empty password (`user:@host`) or an empty username (`:pass@host`)
+// must still send the colon. bun previously dropped the colon for empty
+// password and sent no header at all for empty username.
+//
+// Exercised via http_proxy in a subprocess (rather than the `{proxy}` option)
+// so the raw env string reaches bun_url::URL::parse without WHATWG
+// normalization first dropping the `:` and tripping the userinfo heuristic.
+describe.each([
+  { userinfo: "squidadmin:", decoded: "squidadmin:" },
+  { userinfo: ":hunter2", decoded: ":hunter2" },
+  { userinfo: "squidadmin:hunter2", decoded: "squidadmin:hunter2" },
+])("proxy Basic auth keeps the colon for userinfo $userinfo", ({ userinfo, decoded }) => {
+  const expected = `Basic ${Buffer.from(decoded).toString("base64")}`;
+  // Delete (not blank) every case variant: on Windows the child env is
+  // case-insensitive, so an `HTTP_PROXY: ""` alongside `http_proxy: <url>`
+  // collapses to "" and the proxy is bypassed.
+  const noProxyEnv = { ...bunEnv };
+  for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+
+  test.concurrent("http target (absolute-form)", async () => {
+    const proxy = await createAuthCapturingProxy();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.exitCode = (await fetch(${JSON.stringify(String(httpServer.url))})).status === 200 ? 0 : 1;`,
+        ],
+        env: { ...noProxyEnv, http_proxy: `http://${userinfo}@127.0.0.1:${proxy.port}` },
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(proxy.capturedAuths).toEqual([expected]);
+      expect(exitCode).toBe(0);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  test.concurrent("https target (CONNECT)", async () => {
+    const capturedAuths: string[] = [];
+    const server = net.createServer(socket => {
+      socket.once("data", data => {
+        const request = data.toString();
+        for (const line of request.split("\r\n")) {
+          if (line.toLowerCase().startsWith("proxy-authorization:")) {
+            capturedAuths.push(line.substring("proxy-authorization:".length).trim());
+          }
+        }
+        // Reject the tunnel so we don't need a real TLS origin.
+        socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `console.log((await fetch("https://example.invalid/")).status);`],
+        env: { ...noProxyEnv, https_proxy: `http://${userinfo}@127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("407");
+      expect(capturedAuths).toEqual([expected]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+});
+
 // Regression test for https://github.com/oven-sh/bun/issues/31780
 //
 // The Proxy-Authorization: Basic <...> credential must be encoded with the
@@ -703,6 +781,45 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
 });
 
+// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
+// direct connection: the ClientHello SNI and the certificate verification use
+// the URL host, and a caller-supplied Host header only travels as an HTTP
+// field on the tunneled request.
+test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+  const seen: { sni: string | null; host: string | undefined }[] = [];
+  const target = tls.createServer(
+    {
+      ...tlsCert,
+      SNICallback(servername, cb) {
+        if (servername !== "localhost") return cb(new Error(`unexpected SNI ${servername}`));
+        cb(null, tls.createSecureContext(tlsCert));
+      },
+    },
+    socket => {
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    },
+  );
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const res = await fetch(`https://localhost:${port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      headers: { Host: "other.example" },
+      tls: { ca: tlsCert.cert },
+    });
+    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 
@@ -776,6 +893,42 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   });
   expect(response.status).toBe(200);
   expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy reuses the tunnel across checkServerIdentity requests", async () => {
+  using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+  httpProxyServer.log.length = 0;
+  const verified: string[] = [];
+  const withCallback = () => ({
+    proxy: httpProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
+
+  for (let i = 0; i < 3; i++) {
+    expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  }
+  expect(verified).toEqual(["localhost"]);
+  expect(connects()).toBe(1);
+
+  // A strict request without a callback does not inherit the callback-approved
+  // tunnel, and vice versa.
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
+  expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
   expect(verified).toEqual(["localhost"]);
 });
 
@@ -2154,4 +2307,91 @@ test("non-200 CONNECT response from proxy is surfaced and its Location header is
     proxy.close();
     await once(proxy, "close");
   }
+});
+
+// RFC 3986 §3.1: the URL scheme is case-insensitive. The explicit
+// `fetch(url, { proxy })` option goes through the WHATWG URL parser, which
+// lowercases the scheme; the http_proxy / HTTP_PROXY environment variables go
+// through bun_url::URL::parse, which borrows the scheme as-is. Before the fix,
+// `http_proxy=HTTP://host:port` failed every request with
+// UnsupportedProxyProtocol while the identical string via `{ proxy }` worked.
+// curl and Node's undici EnvHttpProxyAgent both accept the uppercase form.
+describe("http_proxy env var scheme is case-insensitive", () => {
+  const cases = [
+    ["http_proxy", "HTTP"],
+    ["HTTP_PROXY", "Http"],
+    ["http_proxy", "hTtP"],
+  ] as const;
+
+  test.concurrent.each(cases)("%s=%s://... is accepted", async (envKey, scheme) => {
+    using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
+    const proxy = net.createServer(clientSocket => {
+      clientSocket.on("error", () => {});
+      clientSocket.once("data", data => {
+        const body = "PROXIED " + data.toString("latin1").split("\r\n")[0];
+        clientSocket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+    try {
+      const targetUrl = `http://127.0.0.1:${origin.port}/x`;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await fetch(${JSON.stringify(targetUrl)}, { keepalive: false }); console.log(r.status, await r.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+          [envKey]: `${scheme}://127.0.0.1:${proxyPort}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(`200 PROXIED GET ${targetUrl} HTTP/1.1`);
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+      await once(proxy, "close");
+    }
+  });
+
+  // An unrecognized scheme must still be rejected loudly instead of silently
+  // going direct.
+  test.concurrent("socks5:// is still rejected with UnsupportedProxyProtocol", async () => {
+    using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch(${JSON.stringify(`http://127.0.0.1:${origin.port}/x`)}); console.log("OK"); } catch (e) { console.log("ERR", e?.code ?? e?.name); }`,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: "socks5://127.0.0.1:1",
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ERR UnsupportedProxyProtocol");
+    expect(exitCode).toBe(0);
+  });
 });

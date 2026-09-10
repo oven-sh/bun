@@ -2262,7 +2262,7 @@ describe("net.Socket write buffering behind a stalled peer", () => {
       server.listen(0, "127.0.0.1", () => {
         const port = server.address().port;
         const c = net.connect(port, "127.0.0.1", () => {
-          Bun.gc(true);
+          globalThis.gc();
           const rss0 = process.memoryUsage().rss;
           const bufs = [];
           c.cork();
@@ -2272,7 +2272,7 @@ describe("net.Socket write buffering behind a stalled peer", () => {
             c.write(b);
           }
           c.uncork();
-          Bun.gc(true);
+          globalThis.gc();
           const rss1 = process.memoryUsage().rss;
           process.stdout.write(JSON.stringify({
             writableLength: c.writableLength,
@@ -2285,7 +2285,7 @@ describe("net.Socket write buffering behind a stalled peer", () => {
       });
     `;
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
+        cmd: [bunExe(), "--expose-gc", "-e", fixture],
         env: bunEnv,
         stderr: "pipe",
       });

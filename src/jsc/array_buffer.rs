@@ -726,26 +726,50 @@ impl PinnedArrayBuffer {
         self.slice_mut()
     }
 
-    /// Re-reads the range from the JS value, for every kind of buffer: a
-    /// `resize()` unmaps the pages it trims, and a `grow()` of a
-    /// bounds-checked `WebAssembly.Memory` frees the whole block and detaches
-    /// its fixed-length buffer, which JSC permits while the buffer is pinned
-    /// (`ArrayBuffer::detach`). Skipped for a
-    /// [`copy_if_resizable`](Self::copy_if_resizable) copy, which is this
-    /// value's own allocation.
-    fn refresh(&mut self) {
-        if self.copy.is_some() {
-            return;
+    /// [`slice`](ArrayBuffer::slice) for a reader that runs after user JS. The
+    /// `&self` form of [`live_slice_mut`](Self::live_slice_mut): it reads the
+    /// range without caching it.
+    pub fn live_slice(&self) -> &[u8] {
+        let Some((ptr, byte_len)) = self.live_extent() else {
+            return self.buffer.byte_slice();
+        };
+        if ptr.is_null() || byte_len == 0 {
+            return &[];
         }
-        let mut ptr = ptr::null_mut();
-        let mut byte_len = 0usize;
-        JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut byte_len);
+        // SAFETY: JSC reports the view's own range, and the pin plus the GC
+        // root hold the storage for as long as `self` lives.
+        unsafe { core::slice::from_raw_parts(ptr, byte_len) }
+    }
+
+    /// Re-reads the range from the JS value and caches it. See
+    /// [`live_extent`](Self::live_extent).
+    fn refresh(&mut self) {
+        let Some((ptr, byte_len)) = self.live_extent() else {
+            return;
+        };
         self.buffer.ptr = ptr;
         self.buffer.byte_len = byte_len;
         self.buffer.len = match self.buffer.bytes_per_element() {
             Some(size) => byte_len / size as usize,
             None => byte_len,
         };
+    }
+
+    /// The range JSC reports now, for every kind of buffer: a `resize()`
+    /// unmaps the pages it trims, and a `grow()` of a bounds-checked
+    /// `WebAssembly.Memory` frees the whole block and detaches its
+    /// fixed-length buffer, which JSC permits while the buffer is pinned
+    /// (`ArrayBuffer::detach`). `None` for a
+    /// [`copy_if_resizable`](Self::copy_if_resizable) copy, which is this
+    /// value's own allocation.
+    fn live_extent(&self) -> Option<(*mut u8, usize)> {
+        if self.copy.is_some() {
+            return None;
+        }
+        let mut ptr = ptr::null_mut();
+        let mut byte_len = 0usize;
+        JSC__JSValue__arrayBufferExtent(self.buffer.value, &mut ptr, &mut byte_len);
+        Some((ptr, byte_len))
     }
 
     /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`

@@ -3383,6 +3383,46 @@ test.skipIf(isWindows)(
   },
 );
 
+test.skipIf(isWindows)("a `2>&1 ${buf}` redirect tees only the bytes written, at the live length", async () => {
+  // `2>&1 ${buf}` is the one spelling that sets DUPLICATE_OUT with a buffer
+  // target. That inverts `redirects_elsewhere()` for stderr, so the command's
+  // close path tees the target through `BufferedOutput::slice()`. That reader
+  // has to re-read the range too, and stop at the cursor: the rest of the
+  // target holds the caller's own bytes, not output.
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  const gate = Promise.withResolvers<void>();
+  const childWaiting = Promise.withResolvers<void>();
+  await using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      childWaiting.resolve();
+      await gate.promise;
+      return new Response("ok");
+    },
+  });
+  const childCode = `
+    process.stdout.write("hi");
+    await fetch(${JSON.stringify(String(server.url))});
+  `;
+  const promise = $`${BUN} -e ${childCode} 2>&1 ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+
+  await Promise.race([
+    childWaiting.promise,
+    running.then(r => {
+      throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+    }),
+  ]);
+  ab.resize(0);
+  gate.resolve();
+
+  const result = await running;
+  expect(ab.byteLength).toBe(0);
+  expect(result.stderr.toString()).toBe("");
+  expect(result.exitCode).toBe(0);
+});
+
 test("a builtin output redirect fills a target buffer that shrank to a shorter length", async () => {
   // A shrink to a length the command has not reached yet. The output must stop
   // at the new end of the buffer, and every byte up to it must be written.

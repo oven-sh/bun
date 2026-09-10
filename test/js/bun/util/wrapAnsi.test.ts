@@ -1059,7 +1059,8 @@ describe("Bun.wrapAnsi", () => {
       }
     });
 
-    // The real limit needs the child to build 2 GiB of Latin-1 output: measured
+    // The real limit: a 1 MB URI re-emitted on 2300 rows is 2.3e9 characters.
+    // The child builds 2 GiB of Latin-1 output before the overflow: measured
     // 2.5 s and a 3.2 GiB peak under ASAN (the builder stops growing once it
     // records the overflow), 4.4 GiB for the abort it replaces. os.totalmem()
     // reports the host's RAM inside a container, process.constrainedMemory()
@@ -1074,7 +1075,7 @@ describe("Bun.wrapAnsi", () => {
             "-e",
             [
               `const uri = Buffer.alloc(1_000_000, "a").toString();`,
-              `const input = "\\x1b]8;;http://example.com/" + uri + "\\x07" + Buffer.alloc(4600, "a ").toString();`,
+              `const input = "\\x1b]8;;http://example.com/" + uri + "\\x07" + Buffer.alloc(2300 * 2, "a ").toString();`,
               `let result;`,
               `try {`,
               `  result = "UNEXPECTED_SUCCESS:" + Bun.wrapAnsi(input, 1).length;`,

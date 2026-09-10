@@ -848,9 +848,10 @@ async function runTests() {
         let testContent = "";
         try {
           testContent = readFileSync(absoluteTestPath, "utf-8");
-        } catch {
+        } catch (error) {
           // Gone since discovery (a wiped checkout). The step below fails on
           // it with bun's own error instead of this throw ending the whole run.
+          if (error?.code !== "ENOENT") throw error;
         }
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch

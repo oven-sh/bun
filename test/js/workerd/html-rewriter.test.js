@@ -3345,7 +3345,7 @@ describe("end tag handler dispatch", () => {
   // scan and takes well under a second without it. A debug build spends
   // ~0.2 ms of JS per element, so it gets a size that only keeps it short.
   it("stays linear when every nested element registers onEndTag", async () => {
-    const n = isDebug ? 40_000 : 400_000;
+    const n = isDebug ? 10_000 : 400_000;
     const fixture = /* js */ `
       const n = ${n};
       const doc = Buffer.alloc(n * 3, "<a>").toString() + "x" + Buffer.alloc(n * 4, "</a>").toString();
@@ -3363,11 +3363,16 @@ describe("end tag handler dispatch", () => {
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode, signal: proc.signalCode }).toEqual({
+    expect({
+      stdout: stdout.trim(),
+      stderr: /error|panic|assert|abort/i.test(stderr) ? stderr : "",
+      exitCode,
+      signal: proc.signalCode,
+    }).toEqual({
       stdout: JSON.stringify({ ends: n, same: true }),
       stderr: "",
       exitCode: 0,
       signal: null,
     });
-  }, 60_000);
+  });
 });

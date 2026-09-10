@@ -6671,6 +6671,63 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
   expect(exitCode).toBe(0);
 });
 
+it("fs.read keeps filling a by-length view when its storage is transferred while the read is pending", async () => {
+  using dir = tempDir("fs-read-transfer-oversize", {
+    "data.bin": Buffer.alloc(65536, 0x61).toString(),
+  });
+
+  // Same as the test above, with the destination allocated by length. Such a
+  // view owns its bytes directly and has no ArrayBuffer, so the borrow has to
+  // adopt one before it can pin it. Without the pin, `view.buffer` makes an
+  // ArrayBuffer nothing pins, the transfer moves the storage to an owner
+  // nothing references, and the pool thread writes into freed memory.
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    (async () => {
+      const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
+      const view = new Uint8Array(65536);
+      const pending = new Promise((resolve, reject) => {
+        fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
+      });
+      try {
+        view.buffer.transfer();
+      } catch {}
+      const bytesRead = await pending;
+      fs.closeSync(fd);
+      console.log(
+        JSON.stringify({
+          bytesRead,
+          viewByteLength: view.byteLength,
+          first: view[0] ?? null,
+          last: view[65535] ?? null,
+        }),
+      );
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    bytesRead: 65536,
+    viewByteLength: 65536,
+    first: 0x61,
+    last: 0x61,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
   using dir = tempDir("fs-writev-detach", {});
   const file = join(String(dir), "out.bin");

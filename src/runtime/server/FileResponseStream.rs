@@ -10,6 +10,8 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::Closer;
 #[cfg(windows)]
@@ -223,49 +225,59 @@ impl FileResponseStream {
             return;
         }
 
-        // BufferedReader path
-        this_ref.reader.with_mut(|reader| {
+        this_ref.start_reader(
+            opts.file_type,
+            opts.pollable,
+            (opts.offset > 0).then_some(opts.offset),
+            opts.length,
+        );
+    }
+
+    /// `pread` from `offset` when given, else `read` from the fd's position.
+    fn start_reader(
+        &self,
+        file_type: FileType,
+        pollable: bool,
+        offset: Option<u64>,
+        length: Option<u64>,
+    ) {
+        let fd = self.fd.get();
+        self.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
-            reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
+            reader.flags.set(ReaderFlags::POLLABLE, pollable);
             reader
                 .flags
-                .set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
+                .set(ReaderFlags::NONBLOCKING, file_type != FileType::File);
             #[cfg(unix)]
-            if opts.file_type == FileType::Socket {
+            if file_type == FileType::Socket {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
             // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
-            reader.set_limit(opts.length.map(|len| len as usize));
-            reader.set_parent(this.cast::<c_void>());
+            reader.set_limit(length.map(|len| len as usize));
+            reader.set_parent(self.as_ptr().cast::<c_void>());
         });
 
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
-        let reader = this_ref.reader_mut();
-        let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
-        } else {
-            reader.start(opts.fd, opts.pollable)
+        let reader = self.reader_mut();
+        let start_result = match offset {
+            Some(offset) => reader.start_file_offset(fd, pollable, offset as usize),
+            None => reader.start(fd, pollable),
         };
         if let Err(err) = start_result {
-            this_ref.fail_with(err);
+            self.fail_with(err);
             return;
         }
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
-        this_ref.reader_mut().update_ref(true);
+        self.reader_mut().update_ref(true);
 
         #[cfg(unix)]
-        if let Some(poll) = this_ref.reader.get().handle.get_poll() {
-            if this_ref
-                .reader
-                .get()
-                .flags
-                .contains(ReaderFlags::NONBLOCKING)
-            {
+        if let Some(poll) = self.reader.get().handle.get_poll() {
+            if self.reader.get().flags.contains(ReaderFlags::NONBLOCKING) {
                 poll.set_flag(FilePollFlag::Nonblocking);
             }
-            match opts.file_type {
+            match file_type {
                 FileType::Socket => poll.set_flag(FilePollFlag::Socket),
                 FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(FilePollFlag::Fifo),
                 FileType::File => {}
@@ -273,10 +285,10 @@ impl FileResponseStream {
         }
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
-        this_ref.hold_read_ref();
+        self.hold_read_ref();
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
         // raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
+        unsafe { BufferedReader::read(self.reader.as_ptr()) };
     }
 
     #[inline]
@@ -449,6 +461,20 @@ impl FileResponseStream {
                 }
                 sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
+                sys::E::EINVAL | sys::E::ENOSYS | sys::E::ENOTSUP | sys::E::EPERM => {
+                    bun_output::scoped_log!(
+                        FileResponseStream,
+                        "sendfile refused ({}), falling back to reader",
+                        errno
+                    );
+                    if errno == sys::E::ENOSYS {
+                        SENDFILE_UNAVAILABLE.store(true, Ordering::Relaxed);
+                    }
+                    self.mode.set(Mode::Reader);
+                    let sf = self.sendfile.get();
+                    self.start_reader(FileType::File, false, Some(sf.offset), Some(sf.remain));
+                    return true;
+                }
                 _ => {
                     self.fail_with(
                         sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
@@ -660,7 +686,14 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
             return false;
         }
         let Some(len) = length else { return false };
+        if SENDFILE_UNAVAILABLE.load(Ordering::Relaxed) {
+            return false;
+        }
         // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.
         len >= (1 << 20)
     }
 }
+
+/// Set once `sendfile(2)` answers `ENOSYS`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+static SENDFILE_UNAVAILABLE: AtomicBool = AtomicBool::new(false);

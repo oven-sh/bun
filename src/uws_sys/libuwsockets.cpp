@@ -1568,6 +1568,7 @@ __attribute__((callback (corker, ctx)))
       char *ptr = pair.first;
       ptr[0] = '\r';
       ptr[1] = '\n';
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_WRITE_CALLED;
       uwsRes->uncork();
     }
     else
@@ -1578,6 +1579,7 @@ __attribute__((callback (corker, ctx)))
       char *ptr = pair.first;
       ptr[0] = '\r';
       ptr[1] = '\n';
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_WRITE_CALLED;
       uwsRes->uncork();
     }
   }

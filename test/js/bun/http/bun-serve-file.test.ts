@@ -1,8 +1,9 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1513,4 +1514,207 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// A regular file of 1 MiB or more over plain TCP is sent with sendfile(2). A
+// kernel, seccomp policy or filesystem that refuses sendfile for the source fd
+// answers EINVAL, ENOSYS, EOPNOTSUPP or EPERM, after the head with its
+// Content-Length is already on the wire. The stream has to serve the declared
+// bytes with read+write instead. The broken build closed the socket, so the
+// client saw a 200 head and then a reset with no body.
+//
+// A seccomp filter installed in the server process makes sendfile(2) fail with
+// the errno under test. Linux only: the filter is a Linux API. With
+// SENDFILE_ALLOW_COUNT set, a call whose byte count equals it (the first call,
+// which asks for the whole file) is allowed and only the later calls fail, so
+// the fallback starts after partial progress.
+const seccompFixture = `
+const { dlopen, FFIType, ptr } = require("bun:ffi");
+
+function openLibc() {
+  for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1", "libc.so"]) {
+    try {
+      return dlopen(name, {
+        prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+      });
+    } catch {}
+  }
+  return null;
+}
+
+// Returns false when this environment does not allow a seccomp filter.
+function failSendfile(errno, allowCount) {
+  const libc = openLibc();
+  if (libc === null) return false;
+  const NR_SENDFILE = process.arch === "x64" ? 40 : 71;
+  const BPF_LD_W_ABS = 0x20, BPF_JMP_JEQ_K = 0x15, BPF_RET_K = 0x06;
+  const SECCOMP_RET_ALLOW = 0x7fff0000, SECCOMP_RET_ERRNO = 0x00050000;
+  const insns = [
+    [BPF_LD_W_ABS, 0, 0, 0], // A = seccomp_data.nr
+    [BPF_JMP_JEQ_K, 0, 3, NR_SENDFILE], // not sendfile: allow
+    [BPF_LD_W_ABS, 0, 0, 40], // A = low 32 bits of seccomp_data.args[3] (count)
+    [BPF_JMP_JEQ_K, 1, 0, allowCount], // count == allowCount: allow
+    [BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | errno],
+    [BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW],
+  ];
+  const prog = new Uint8Array(insns.length * 8);
+  const view = new DataView(prog.buffer);
+  insns.forEach(([code, jt, jf, k], i) => {
+    view.setUint16(i * 8, code, true);
+    view.setUint8(i * 8 + 2, jt);
+    view.setUint8(i * 8 + 3, jf);
+    view.setUint32(i * 8 + 4, k, true);
+  });
+  const fprog = new Uint8Array(16);
+  const fview = new DataView(fprog.buffer);
+  fview.setUint16(0, insns.length, true);
+  fview.setBigUint64(8, BigInt(ptr(prog)), true);
+  const PR_SET_NO_NEW_PRIVS = 38, PR_SET_SECCOMP = 22, SECCOMP_MODE_FILTER = 2;
+  if (libc.symbols.prctl(PR_SET_NO_NEW_PRIVS, 1n, 0n, 0n, 0n) !== 0) return false;
+  return libc.symbols.prctl(PR_SET_SECCOMP, BigInt(SECCOMP_MODE_FILTER), BigInt(ptr(fprog)), 0n, 0n) === 0;
+}
+
+// A count of 0 is never asked for, so the default filter rejects every call.
+if (!failSendfile(Number(process.env.SENDFILE_ERRNO), Number(process.env.SENDFILE_ALLOW_COUNT ?? 0))) {
+  process.exit(3);
+}
+if (process.env.SENDFILE_PROBE) process.exit(0);
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    if (new URL(req.url).pathname === "/probe") return new Response("ok");
+    return new Response(Bun.file(process.env.FILE));
+  },
+  error(e) {
+    console.log("error-handler " + e.code);
+    return new Response("error", { status: 500 });
+  },
+});
+console.log("port " + server.port);
+`;
+
+const seccompAvailable =
+  isLinux &&
+  Bun.spawnSync({
+    cmd: [bunExe(), "-e", seccompFixture],
+    env: { ...bunEnv, SENDFILE_ERRNO: "22", SENDFILE_PROBE: "1" },
+  }).exitCode === 0;
+
+describe.skipIf(!seccompAvailable)("Bun.serve falls back to read+write when sendfile(2) is refused", () => {
+  function patternFile(size: number) {
+    const content = Buffer.alloc(size);
+    for (let i = 0; i < size; i += 4) content.writeUInt32LE((i * 2654435761) >>> 0, i);
+    return content;
+  }
+
+  async function startServer(dir: string, env: Record<string, string>) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", seccompFixture],
+      cwd: dir,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    let port: RegExpMatchArray | null = null;
+    while ((port = stdout.match(/^port (\d+)$/m)) === null) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`server exited before it printed its port: ${stdout}`);
+      stdout += Buffer.from(value).toString();
+    }
+    return { proc, port: Number(port[1]) };
+  }
+
+  for (const [name, errno] of [
+    ["EINVAL", 22],
+    ["ENOSYS", 38],
+    ["EOPNOTSUPP", 95],
+    ["EPERM", 1],
+  ] as const) {
+    test.concurrent(name, async () => {
+      const SIZE = 2 * 1024 * 1024;
+      using dir = tempDir("serve-sendfile-fallback", {});
+      const filePath = join(String(dir), "large.bin");
+      const content = patternFile(SIZE);
+      await Bun.write(filePath, content);
+
+      const { proc, port } = await startServer(String(dir), { FILE: filePath, SENDFILE_ERRNO: String(errno) });
+      await using _proc = proc;
+
+      // Two requests on one keep-alive connection: the second only parses if
+      // the first body was framed by the declared Content-Length.
+      const results = [];
+      for (let i = 0; i < 2; i++) {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        const body = Buffer.from(await res.arrayBuffer());
+        results.push({
+          status: res.status,
+          contentLength: res.headers.get("content-length"),
+          bodyLength: body.length,
+          bodyMatches: body.equals(content),
+        });
+      }
+      expect(results).toEqual(
+        Array(2).fill({ status: 200, contentLength: String(SIZE), bodyLength: SIZE, bodyMatches: true }),
+      );
+    });
+  }
+
+  // The first sendfile(2) call moves as much as the socket buffers take and
+  // then reports EAGAIN. The client does not read until then, so the call
+  // stops well short of the file. Every later call is refused, and the
+  // fallback has to continue from the bytes already sent.
+  test.concurrent("after partial progress", async () => {
+    const SIZE = 16 * 1024 * 1024;
+    using dir = tempDir("serve-sendfile-fallback-partial", {});
+    const filePath = join(String(dir), "large.bin");
+    const content = patternFile(SIZE);
+    await Bun.write(filePath, content);
+
+    const { proc, port } = await startServer(String(dir), {
+      FILE: filePath,
+      SENDFILE_ERRNO: "22",
+      SENDFILE_ALLOW_COUNT: String(SIZE),
+    });
+    await using _proc = proc;
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<Buffer>();
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let headEnd = -1;
+    let bodyStart = 0;
+    const client = net.connect(port, "127.0.0.1");
+    client.pause();
+    client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+    client.on("data", chunk => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (headEnd === -1) {
+        const wire = Buffer.concat(chunks);
+        headEnd = wire.indexOf("\r\n\r\n");
+        if (headEnd !== -1) {
+          bodyStart = headEnd + 4;
+          const head = wire.subarray(0, headEnd).toString("latin1");
+          if (!/^content-length:\s*16777216$/im.test(head)) reject(new Error(`unexpected head: ${head}`));
+        }
+      }
+      if (headEnd !== -1 && received >= bodyStart + SIZE) client.end();
+    });
+    client.on("close", () => resolve(Buffer.concat(chunks)));
+    client.on("error", reject);
+
+    // The probe is handled after the file request on the server's event loop,
+    // so once it answers, the first sendfile(2) call has returned.
+    expect(await fetch(`http://127.0.0.1:${port}/probe`).then(r => r.text())).toBe("ok");
+    client.resume();
+
+    const wire = await done;
+    const body = wire.subarray(bodyStart);
+    expect({ bodyLength: body.length, bodyMatches: body.equals(content) }).toEqual({
+      bodyLength: SIZE,
+      bodyMatches: true,
+    });
+  });
 });

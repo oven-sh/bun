@@ -127,6 +127,17 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
+Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+{
+    // Every UnlinkedFunctionExecutable that decodeCodeBlock() produces keeps the Decoder and
+    // an offset into the payload, and decodes its code block the first time the function runs
+    // (the UnlinkedFunctionExecutable(Decoder&) constructor in CachedTypes.cpp). It does that
+    // for a borrowed payload too, so the bytes must outlive the decode, not this call.
+    auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
+    WTF::memcpySpan(payload.mutableSpan(), bytes);
+    return JSC::CachedBytecode::create(WTF::move(payload), {});
+}
+
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
 {
     ASSERT(scope);
@@ -219,7 +230,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
+        cachedBytecode = createOwnedCachedBytecode(options.cachedData.span());
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
         if (unlinkedProgramCodeBlock == nullptr) {

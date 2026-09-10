@@ -2297,15 +2297,11 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
-// Wire a transport the stream-level TLS engine drives (a generic Duplex, a
-// named pipe, a socket with unflushed writes) to `self`, the TLS socket over
-// it. events[0..3] are the engine's data/end/drain/close thunks.
-//
-// The destroy stays ahead of the 'close' thunk: the engine's close unwinds the
-// pending handshake, and a socket destroyed first reports neither that
-// handshake nor a second 'close'. Node destroys from the same event:
+// `events` are the stream-level TLS engine's data/end/drain/close thunks.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function attachUpgradedDuplex(self, connection, events) {
+  // Ahead of events[3], so the engine's close finds the socket already
+  // destroyed and reports neither the aborted handshake nor a second 'close'.
   connection.on("close", () => self.destroy());
   connection.on("data", events[0]);
   connection.on("end", events[1]);

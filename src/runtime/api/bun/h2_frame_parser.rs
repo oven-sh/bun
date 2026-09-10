@@ -156,8 +156,7 @@ impl NativeSocket {
 
     /// Releases whatever `attach` took. `Closed` is sticky: only `attach` clears it.
     fn detach(&self) {
-        // Each arm sets the cell before its release call, which re-enters through
-        // `NewSocket::detach_native_callback`.
+        // Each arm sets the cell before its release call: that call re-enters here.
         match self.0.get() {
             BunSocket::Tcp(socket) => {
                 self.0.set(BunSocket::None);
@@ -180,8 +179,7 @@ impl NativeSocket {
         }
     }
 
-    /// The socket's close dispatch detached this parser. `Closed`, not the `None`
-    /// `detach` leaves: a frame written after the close must not go out through JS.
+    /// `detach`, then `Closed`: a write after the close must not fall back to JS.
     fn mark_closed(&self) {
         self.detach();
         self.0.set(BunSocket::Closed);

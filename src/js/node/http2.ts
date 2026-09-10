@@ -4491,6 +4491,7 @@ class ServerHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
+    watchGenericTransportEnd(socket);
     initHttp2SessionPerf(this, "server");
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
@@ -4855,6 +4856,30 @@ function destroySessionSocketDelayedNT(socket, error) {
 }
 function endThenDestroySessionSocket(socket, error) {
   socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
+}
+// Node wraps a transport that is not a net.Socket (an options.createConnection Duplex, a stream
+// handed to server.emit('connection')) in a JSStreamSocket: a net.Socket with allowHalfOpen off.
+// The transport's EOF then ends its writable side and destroys it (net's destroySoon), and that
+// 'close' is what tears the session down. A net.Socket applies its own allowHalfOpen. The
+// wrapper acts a tick after the transport's own 'end' listeners have run.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js (onReadableStreamEnd, destroySoon)
+function destroyGenericTransportSoonNT(socket) {
+  if (socket.destroyed) return;
+  if (socket.writable) socket.end();
+  if (socket.writableFinished) {
+    socket.destroy();
+  } else {
+    socket.once("finish", socket.destroy);
+  }
+}
+function onGenericTransportEnd() {
+  process.nextTick(destroyGenericTransportSoonNT, this);
+}
+function watchGenericTransportEnd(socket) {
+  if (!(socket instanceof net.Socket)) {
+    socket.on("end", onGenericTransportEnd);
+  }
 }
 // node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
 // flight and bytes have reached the wire since the previous expiry, the session is not idle —
@@ -5723,6 +5748,7 @@ class ClientHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
+    watchGenericTransportEnd(socket);
     initHttp2SessionPerf(this, "client");
     if (connectOnNextTick) {
       // Queued only now that the session is fully built: the parser's construction

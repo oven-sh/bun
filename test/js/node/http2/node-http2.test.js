@@ -5705,6 +5705,105 @@ it("client connects over a user Duplex that already has a 'data' listener", asyn
   server.close();
 });
 
+describe.concurrent("a session over a user-supplied Duplex tears down when the transport reports EOF", () => {
+  // The transport's readable side ending is the peer going away. Node wraps a transport that is
+  // not a net.Socket in a JSStreamSocket (allowHalfOpen off), so the EOF ends the transport's
+  // writable side, destroys it, and that close tears the session down. Bun subscribed to
+  // data/drain/close/error/timeout only, so a pending request over an in-memory pair, an SSH
+  // channel or a proxy tunnel never settled.
+  async function settle(done) {
+    for (let turn = 0; turn < 200 && !done(); turn++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+  // Per object the order is fixed ('aborted' precedes 'close'), so each object's events are
+  // asserted on their own. How the stream's 'close' interleaves with the session's is not part
+  // of this behaviour, and it already differs from node for every transport, sockets included.
+  const eventsFor = (events, prefix) => events.filter(event => event.startsWith(prefix));
+
+  it("client side: a pending request closes when the peer ends its side", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    const requested = Promise.withResolvers();
+    // Never respond: the request is still pending when the peer goes away.
+    server.on("stream", () => requested.resolve());
+    server.emit("connection", serverSide);
+
+    const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+    const events = [];
+    client.on("error", e => events.push("session.error:" + e.code));
+    client.on("close", () => events.push("session.close"));
+    const req = client.request({ ":path": "/" });
+    req.on("error", e => events.push("stream.error:" + e.code));
+    req.on("close", () => events.push("stream.close"));
+    req.end();
+    await requested.promise;
+
+    serverSide.end();
+    await settle(() => events.includes("session.close") && events.includes("stream.close"));
+
+    expect(eventsFor(events, "stream.")).toEqual(["stream.close"]);
+    expect(eventsFor(events, "session.")).toEqual(["session.close"]);
+    expect({
+      sessionDestroyed: client.destroyed,
+      streamDestroyed: req.destroyed,
+      rstCode: req.rstCode,
+      transportDestroyed: clientSide.destroyed,
+    }).toEqual({
+      sessionDestroyed: true,
+      streamDestroyed: true,
+      rstCode: http2.constants.NGHTTP2_CANCEL,
+      transportDestroyed: true,
+    });
+    server.close();
+  });
+
+  it("server side: an injected connection's stream aborts when the client ends its side", async () => {
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    const events = [];
+    const serverStream = Promise.withResolvers();
+    const serverSession = Promise.withResolvers();
+    server.on("session", session => {
+      session.on("error", e => events.push("session.error:" + e.code));
+      session.on("close", () => events.push("session.close"));
+      serverSession.resolve(session);
+    });
+    server.on("stream", stream => {
+      stream.on("aborted", () => events.push("stream.aborted"));
+      stream.on("error", e => events.push("stream.error:" + e.code));
+      stream.on("close", () => events.push("stream.close"));
+      serverStream.resolve(stream);
+    });
+    server.emit("connection", serverSide);
+
+    const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+    client.on("error", () => {});
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.end();
+    const [stream, session] = await Promise.all([serverStream.promise, serverSession.promise]);
+
+    clientSide.end();
+    await settle(() => events.includes("session.close") && events.includes("stream.close"));
+
+    expect(eventsFor(events, "stream.")).toEqual(["stream.aborted", "stream.close"]);
+    expect(eventsFor(events, "session.")).toEqual(["session.close"]);
+    expect({
+      sessionDestroyed: session.destroyed,
+      streamDestroyed: stream.destroyed,
+      rstCode: stream.rstCode,
+      transportDestroyed: serverSide.destroyed,
+    }).toEqual({
+      sessionDestroyed: true,
+      streamDestroyed: true,
+      rstCode: http2.constants.NGHTTP2_CANCEL,
+      transportDestroyed: true,
+    });
+    server.close();
+  });
+});
+
 // node's Http2Session.remoteSettings/localSettings getters return `{}` while the session is
 // connecting or destroyed and a cached Settings object once the handle is live, so
 // `session.remoteSettings.maxConcurrentStreams` is always a safe read. Bun previously returned

@@ -344,7 +344,7 @@ it("native os functions are rejected as a construct target", async () => {
       bunExe(),
       "-e",
       `
-        const os = require("os");
+        import * as os from "os";
         for (const name of ${JSON.stringify(nativeOsFunctions)}) {
           const f = os[name];
           const out = [];

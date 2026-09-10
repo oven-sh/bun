@@ -567,6 +567,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Fix up each chunk's module_info; every chunk's strings go into one
         // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
         let mut table_ids: Vec<Vec<u32>> = Vec::new();
+        let unique_key_prefix: &[u8] = &c.unique_key_prefix;
+        let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -576,11 +578,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             };
 
             // In place, so the per-build placeholder does not survive as an extra string.
-            mi.rewrite_strings(|s| {
-                if !s.starts_with(&c.unique_key_prefix) {
+            mi.rewrite_strings(move |s| {
+                if !s.starts_with(unique_key_prefix) {
                     return None;
                 }
-                unique_key_to_path.get(s).map(|path| &path[..])
+                paths.get(s).map(|path| &path[..])
             });
 
             if mi.finalize().is_err() {

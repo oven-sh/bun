@@ -1522,9 +1522,7 @@ impl BufferedOutput {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
-                // `live_slice_mut`, not `slice_mut`: the redirect target is
-                // pinned for the whole command, and user JS between two chunks
-                // can shrink a resizable backing store.
+                // `live_slice_mut`: JS between two chunks can resize the target.
                 let array_buf_slice = buf.live_slice_mut();
                 let idx = *i as usize;
                 // TODO: We should probably throw error here?

@@ -3619,13 +3619,10 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
-// Re-reads the live byte range of a pinned ArrayBuffer or view.
-//
-// A pin stops a detach, but it does not stop a resize. `ArrayBuffer::resize`
-// marks the pages it trims PROT_NONE, so the pointer and the length captured
-// when the pin was taken can name unmapped memory once JS has run again. A
-// borrower that outlives the call re-reads the range before each access.
-// Reports a null pointer and a zero length for a detached value.
+// The live byte range of `v` (null and 0 when detached). `pinArrayBuffer`
+// stops a detach but not a resize, and `ArrayBuffer::resize` marks the pages
+// it trims PROT_NONE, so a borrower that outlives the call re-reads the range
+// instead of keeping the one it got when it took the pin.
 CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);

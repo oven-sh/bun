@@ -138,8 +138,7 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    // safe: by-value `JSValue` plus two out-params the callee always fills
-    // (null/0 for a value with no live storage).
+    // safe: by-value `JSValue`; the callee always fills both out-params.
     safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
 
@@ -719,22 +718,16 @@ impl PinnedArrayBuffer {
         self.buffer.byte_slice_mut()
     }
 
-    /// [`slice_mut`](Self::slice_mut) with the byte range re-read from the JS
-    /// value first.
-    ///
-    /// A pin stops a detach but not a shrink: `ArrayBuffer.prototype.resize`
-    /// marks the pages it trims PROT_NONE, so a write through the range
-    /// captured at [`root`](Self::root) time faults. A writer that runs after
-    /// user JS (an async redirect target, for example) uses this instead.
+    /// [`slice_mut`](Self::slice_mut) for a writer that runs after user JS: a
+    /// pin stops a detach but not a `resize()`, so the range is re-read first.
     pub fn live_slice_mut(&mut self) -> &mut [u8] {
         self.refresh();
         self.slice_mut()
     }
 
-    /// Re-reads `ptr` and the lengths from the JS value. Only a resizable
-    /// buffer can change: a fixed-length one cannot move or shrink while it is
-    /// pinned, and a [`copy_if_resizable`](Self::copy_if_resizable) copy is
-    /// this value's own allocation.
+    /// Re-reads the range from the JS value. Skipped unless it can change: a
+    /// [`copy_if_resizable`](Self::copy_if_resizable) copy is this value's own
+    /// allocation.
     fn refresh(&mut self) {
         if !self.buffer.resizable || self.copy.is_some() {
             return;

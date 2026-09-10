@@ -350,12 +350,9 @@ impl BuiltinIO {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                // `live_slice_mut`, not `slice_mut`: the redirect target is
-                // pinned for the whole command, and user JS between two chunks
-                // can shrink a resizable backing store.
-                //
-                // `total` stays usize so `idx + write_len` is computed at usize
-                // width and cannot overflow; only the stored cursor is u32.
+                // `live_slice_mut`: JS between two chunks can resize the
+                // target. `total` stays usize so `idx + write_len` is computed
+                // at usize width and cannot overflow; the cursor is u32.
                 let dst_all = arraybuf.live_slice_mut();
                 let idx = *i as usize;
                 let total = dst_all.len();

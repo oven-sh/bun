@@ -3857,6 +3857,41 @@ describe("direct stream edge cases", () => {
       });
     });
 
+    // The hook's error is the consumer's result even when pull() catches whatever close()/end() rethrows (the
+    // reader path defers the close past pull(), the buffer consumers run it inline): the buffer consumers used
+    // to stay pending forever.
+    test.each(["readableStreamToText", "readableStreamToBytes", "readableStreamToArrayBuffer"])(
+      "the source's close() hook throwing fails %s even when pull() swallows the rethrow",
+      async method => {
+        for (const finish of ["close", "end"]) {
+          const t = tally();
+          const rs = direct(
+            t,
+            c => {
+              c.write("a");
+              try {
+                c[finish]();
+              } catch {}
+            },
+            {
+              close() {
+                t.closes.push(finish);
+                throw new Error("close hook");
+              },
+            },
+          );
+          // Awaited directly, not through expect().rejects: a consumer that never settles is then a plain test timeout.
+          const result = await settle(Bun[method](rs));
+          expect({ finish, pulls: t.pulls, closes: t.closes, result }).toEqual({
+            finish,
+            pulls: 1,
+            closes: [finish],
+            result: { err: "close hook" },
+          });
+        }
+      },
+    );
+
     test("the source's close() hook calling controller.close() again does not recurse", async () => {
       let controller;
       const t = tally();
@@ -3977,6 +4012,34 @@ describe("direct stream edge cases", () => {
           pulls: 1,
           cancels: 0,
         });
+      },
+    );
+  });
+
+  describe("close(error) while an async pull() is pending", () => {
+    // close(error) from a still pending async pull() is the consumer's rejection and nothing else: the buffer
+    // consumers also reported it as an unhandled rejection of an internal promise (exit code 1 with the
+    // rejection handled). Sequential on purpose, so a stray rejection is pinned on the cell that caused it.
+    test.each([
+      ["new Response(s).bytes()", s => new Response(s).bytes()],
+      ["new Response(s).arrayBuffer()", s => new Response(s).arrayBuffer()],
+      ["new Response(s).blob()", s => new Response(s).blob()],
+      ["readableStreamToBytes", s => readableStreamToBytes(s)],
+      ["readableStreamToArrayBuffer", s => readableStreamToArrayBuffer(s)],
+    ])(
+      "close(error) before an async pull() settles rejects %s once, with no unhandled rejection",
+      async (_, consume) => {
+        for (const tail of ["resolve", "reject"]) {
+          const t = tally();
+          const rs = direct(t, async c => {
+            const error = new Error("source failed");
+            c.write("partial");
+            c.close(error);
+            await later();
+            if (tail === "reject") throw error;
+          });
+          expect({ tail, result: await settle(consume(rs)) }).toEqual({ tail, result: { err: "source failed" } });
+        }
       },
     );
   });

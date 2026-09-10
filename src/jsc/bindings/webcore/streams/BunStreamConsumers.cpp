@@ -1093,9 +1093,14 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
             readableStreamError(globalObject, stream, exception->value());
             RETURN_IF_EXCEPTION(scope, {});
         }
+        // A close(error) before the throw rejected the capability, which nothing returns now: the throw is the result.
+        markPromiseAsHandled(vm, capability);
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
+        // The capability stays internal from here: `derived` adopts it once pull() settles, so a close(error)
+        // that rejects it earlier is not an unhandled rejection of its own.
+        markPromiseAsHandled(vm, capability);
         auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), derived, sink);
         return derived;
@@ -1636,29 +1641,36 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     if (sink->m_closed)
         return;
     sink->m_closed = true;
+    // A close() hook that throws fails the consumer with its error (even if pull() catches the rethrow) and is rethrown.
+    JSC::Exception* hookException = nullptr;
     if (auto* source = sink->source()) {
         sink->clearSource();
         source->close(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, );
+        if ((hookException = scope.exception())) [[unlikely]] {
+            TRY_CLEAR_EXCEPTION(scope, );
+            reason = hookException->value();
+        }
     }
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
     auto* capability = sink->capabilityPromise();
-    if (!capability || capability->status() != JSPromise::Status::Pending)
-        return;
-    if (reason.toBoolean(globalObject)) {
-        if (auto* stream = sink->stream()) {
-            stream->m_lockedWithoutReader = false;
-            if (stream->m_state == ReadableStreamState::Readable) {
-                Bun::WebStreams::readableStreamError(globalObject, stream, reason);
-                RETURN_IF_EXCEPTION(scope, );
+    if (capability && capability->status() == JSPromise::Status::Pending) {
+        if (hookException || reason.toBoolean(globalObject)) {
+            if (auto* stream = sink->stream()) {
+                stream->m_lockedWithoutReader = false;
+                if (stream->m_state == ReadableStreamState::Readable) {
+                    Bun::WebStreams::readableStreamError(globalObject, stream, reason);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
             }
+            capability->reject(vm, reason);
+        } else {
+            capability->fulfill(vm, endResult);
         }
-        capability->reject(vm, reason);
-        return;
     }
-    capability->fulfill(vm, endResult);
+    if (hookException) [[unlikely]]
+        scope.throwException(globalObject, hookException);
 }
 
 // pull() runs once here: its promise resolving without close()/end() is the end of the body.

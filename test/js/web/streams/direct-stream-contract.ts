@@ -200,6 +200,38 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
+  // close(error) while the async pull() is still pending: the consumer rejects with it once, and nothing else
+  // reports it (no unhandled rejection from a promise the consumer never saw).
+  "async pull: write, close(error) before the first await": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, async c => {
+        c.write("partial");
+        c.close(new Error("source failed"));
+        await later();
+      }),
+  },
+  "async pull: close(error), then rejects with it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, async c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        await later();
+        throw error;
+      }),
+  },
+  "sync pull: close(error), then throws it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        throw error;
+      }),
+  },
 };
 
 // Each falsy argument as the first close(): a clean close, not close(error).

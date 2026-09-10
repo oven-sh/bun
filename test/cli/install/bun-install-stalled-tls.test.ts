@@ -35,7 +35,11 @@ test("bun install times out when the registry accepts TCP but never completes th
         version: "1.0.0",
         dependencies: { lodash: "4.17.21" },
       }),
-      "bunfig.toml": `[install]\nregistry = "https://127.0.0.1:${port}/"\n`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `https://127.0.0.1:${port}/`,
+        },
+      }),
     });
 
     await using proc = Bun.spawn({

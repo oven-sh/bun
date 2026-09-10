@@ -32,9 +32,8 @@ export async function run() {
     req.pipe(proxyRequest); // Use pipe instead of manual data handling
   });
 
-  // Pin one address family: a bare "localhost" can bind ::1 while the client
-  // resolves 127.0.0.1 first (neither Node nor Bun falls back across
-  // families), which fails with ECONNREFUSED on dual-stack hosts.
+  // Bind and connect on the same concrete address. "localhost" can resolve to
+  // ::1 for listen and 127.0.0.1 for connect on a dual-stack host.
   proxyServer.listen(0, "127.0.0.1", async () => {
     const address = proxyServer.address();
 

@@ -20,7 +20,9 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
+/** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
+export const isAndroid = process.platform === "android";
+export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -74,6 +76,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // The `bun install` "Slow filesystem detected" warning is timing-dependent
+  // and flakes stderr assertions on slow CI filesystems.
+  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -332,6 +337,35 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
   expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
+
+/**
+ * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
+ * line) under bun with ASAN quarantine disabled, and asserts the delta is below
+ * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ */
+export async function expectRssDeltaBelow(
+  cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
+  bounds: { release: number; debug: number },
+): Promise<void> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? bounds.debug : bounds.release);
+  expect(exitCode).toBe(0);
+}
+
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
   return (emptyBunMaxRSS ??= (async () => {
@@ -1168,6 +1202,7 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
+    "mariadb_plain": 3306,
     "mysql:8": 3306, // Map mysql:8 to mysql_plain
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
@@ -1495,7 +1530,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = stderrForInstall(await stderr.text());
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1506,14 +1541,8 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out: string = await stdout.text();
-  expect(await exited).toBe(options?.expectedExitCode ?? 0);
+  expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
-}
-
-// stderr with `slow filesystem` warning removed
-export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1845,8 +1874,12 @@ export function libcPathForDlopen() {
       }
     case "darwin":
       return "libc.dylib";
+    case "android":
+      return "libc.so";
+    case "freebsd":
+      return "libc.so.7";
     default:
-      throw new Error("TODO");
+      throw new Error(`libcPathForDlopen: unsupported platform ${process.platform}`);
   }
 }
 
@@ -1975,11 +2008,12 @@ export class VerdaccioRegistry {
 
   async authBunfig(user: string) {
     const authToken = await this.generateUser(user, user);
-    return `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
-        `;
+    return Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${this.port}/`, token: authToken },
+      },
+    });
   }
 
   async createTestDir(
@@ -1998,41 +2032,21 @@ export class VerdaccioRegistry {
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    let bunfig = `
-[install]
-cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-`;
-    if ("saveTextLockfile" in opts) {
-      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-`;
-    }
-    if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"\n`;
-    }
-    if (opts.linker) {
-      bunfig += `linker = "${opts.linker}"\n`;
-    }
-    if (opts.globalStore !== undefined) {
-      bunfig += `globalStore = ${opts.globalStore}\n`;
-    }
-    if (opts.publicHoistPattern !== undefined) {
-      if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = ${JSON.stringify(opts.publicHoistPattern)}\n`;
-      } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
-      }
-    }
-    if (opts.hoistPattern !== undefined) {
-      if (typeof opts.hoistPattern === "string") {
-        bunfig += `hoistPattern = ${JSON.stringify(opts.hoistPattern)}\n`;
-      } else {
-        bunfig += `hoistPattern = [${opts.hoistPattern.map(p => JSON.stringify(p)).join(", ")}]\n`;
-      }
-    }
-    if (opts.hoist !== undefined) {
-      bunfig += `hoist = ${opts.hoist}\n`;
-    }
-    await write(join(dir, "bunfig.toml"), bunfig);
+    await write(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(dir, ".bun-cache"),
+          saveTextLockfile: opts.saveTextLockfile,
+          registry: opts.npm ? undefined : this.registryUrl(),
+          linker: opts.linker,
+          globalStore: opts.globalStore,
+          publicHoistPattern: opts.publicHoistPattern,
+          hoistPattern: opts.hoistPattern,
+          hoist: opts.hoist,
+        },
+      }),
+    );
   }
 }
 
@@ -2294,3 +2308,63 @@ export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? (Bun.unsafe.memoryFootprint as () => number)
     : process.memoryUsage.rss;
+
+/** Read exactly `len` bytes from `fd` at absolute `offset`. */
+export function preadExact(fd: number, offset: number, len: number): Buffer {
+  const buf = Buffer.alloc(len);
+  let got = 0;
+  while (got < len) {
+    const n = fs.readSync(fd, buf, got, len - got, offset + got);
+    if (n === 0) throw new Error(`short read at ${offset}`);
+    got += n;
+  }
+  return buf;
+}
+
+/** One ELF64 program header, fields as in Elf64_Phdr. */
+export interface Elf64ProgramHeader {
+  type: number;
+  flags: number;
+  offset: bigint;
+  vaddr: bigint;
+  paddr: bigint;
+  filesz: bigint;
+  memsz: bigint;
+  align: bigint;
+}
+
+/** Program headers of an ELF64 binary (either endianness). */
+export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
+  const fd = openSync(path, "r");
+  try {
+    const ehdr = preadExact(fd, 0, 64);
+    if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not ELF");
+    if (ehdr[4] !== 2) throw new Error("only ELF64 supported"); // EI_CLASS
+    const le = ehdr[5] === 1; // EI_DATA
+    const u16 = (b: Buffer, o: number) => (le ? b.readUInt16LE(o) : b.readUInt16BE(o));
+    const u32 = (b: Buffer, o: number) => (le ? b.readUInt32LE(o) : b.readUInt32BE(o));
+    const u64 = (b: Buffer, o: number) => (le ? b.readBigUInt64LE(o) : b.readBigUInt64BE(o));
+
+    const e_phoff = Number(u64(ehdr, 32));
+    const e_phentsize = u16(ehdr, 54);
+    const e_phnum = u16(ehdr, 56);
+
+    const headers: Elf64ProgramHeader[] = [];
+    for (let i = 0; i < e_phnum; i++) {
+      const ph = preadExact(fd, e_phoff + i * e_phentsize, e_phentsize);
+      headers.push({
+        type: u32(ph, 0),
+        flags: u32(ph, 4),
+        offset: u64(ph, 8),
+        vaddr: u64(ph, 16),
+        paddr: u64(ph, 24),
+        filesz: u64(ph, 32),
+        memsz: u64(ph, 40),
+        align: u64(ph, 48),
+      });
+    }
+    return headers;
+  } finally {
+    closeSync(fd);
+  }
+}

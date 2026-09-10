@@ -62,4 +62,43 @@ describe("yield", async () => {
       { stdout: "f1\nf2\nf3\nf4\n", exitCode: 0 },
     );
   });
+
+  test.if(isLinux)("builtin cat completing on a synchronous write error leaves the shell usable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { $ } from "bun";
+        $.nothrow();
+        const results = [];
+        for (const run of [
+          () => $\`echo hello | cat > /dev/full || echo write_failed\`,
+          () => $\`echo again | cat > /dev/full || echo write_failed_again\`,
+          () => $\`echo next | cat\`,
+        ]) {
+          const r = await run().quiet();
+          results.push({ stdout: r.stdout.toString(), exitCode: r.exitCode });
+        }
+        console.log(JSON.stringify(results));
+        `,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+      result: JSON.stringify([
+        { stdout: "write_failed\n", exitCode: 0 },
+        { stdout: "write_failed_again\n", exitCode: 0 },
+        { stdout: "next\n", exitCode: 0 },
+      ]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

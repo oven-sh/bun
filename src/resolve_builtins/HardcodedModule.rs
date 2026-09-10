@@ -165,6 +165,8 @@ pub enum HardcodedModule {
     NodeStreamWritableInternal,
     #[strum(serialize = "node:_tls_common")]
     NodeTlsCommonInternal,
+    #[strum(serialize = "node:_tls_wrap")]
+    NodeTlsWrapInternal,
     #[strum(serialize = "node:_http_agent")]
     NodeHttpAgentInternal,
     #[strum(serialize = "node:_http_client")]
@@ -180,6 +182,8 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    #[strum(serialize = "internal:cluster/RoundRobinHandle")]
+    InternalClusterRoundRobinHandle,
     // Node internal modules exposed for the vendored Node.js test suite.
     // Gated like `bun:internal-for-testing` (debug builds / --expose-internals).
     #[strum(serialize = "internal:repl")]
@@ -211,6 +215,7 @@ bun_core::comptime_string_map! {
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
         b"internal/repl" => HardcodedModule::NodeInternalRepl,
         b"internal/repl/await" => HardcodedModule::NodeInternalReplAwait,
         b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
@@ -282,6 +287,7 @@ bun_core::comptime_string_map! {
         b"node:_stream_wrap" => HardcodedModule::NodeStreamWrapInternal,
         b"node:_stream_writable" => HardcodedModule::NodeStreamWritableInternal,
         b"node:_tls_common" => HardcodedModule::NodeTlsCommonInternal,
+        b"node:_tls_wrap" => HardcodedModule::NodeTlsWrapInternal,
         b"node:_http_agent" => HardcodedModule::NodeHttpAgentInternal,
         b"node:_http_client" => HardcodedModule::NodeHttpClientInternal,
         b"node:_http_common" => HardcodedModule::NodeHttpCommonInternal,
@@ -319,17 +325,6 @@ pub struct Alias {
     pub tag: import_record::Tag,
     pub node_builtin: bool,
     pub node_only_prefix: bool,
-}
-
-impl Default for Alias {
-    fn default() -> Self {
-        Self {
-            path: zstr!(""),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        }
-    }
 }
 
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
@@ -615,7 +610,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"node:_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
@@ -687,7 +682,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
@@ -722,6 +717,15 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    (
+        b"internal/cluster/round_robin_handle",
+        Alias {
+            path: zstr!("internal:cluster/RoundRobinHandle"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     // Node internal modules for the vendored Node.js test suite (gated in
     // jsc_hooks like bun:internal-for-testing: debug / --expose-internals).
     entry!("internal/repl"),

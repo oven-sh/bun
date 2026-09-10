@@ -50,8 +50,8 @@ use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
-    GotoVariant, HirFunction, HirVec, IdentifierId, IdentifierName, Instruction, InstructionId,
-    InstructionKind, InstructionValue, LValue, Place, Terminal,
+    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
+    InstructionValue, LValue, Place, Terminal,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
@@ -241,7 +241,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                         // Promote the temporary with a name as we require this to persist
                         let identifier_id = result.identifier;
                         if env.identifiers[identifier_id.0 as usize].name.is_none() {
-                            promote_temporary(env, identifier_id);
+                            env.promote_temporary(identifier_id);
                         }
 
                         // Take blocks and instructions from inner function
@@ -410,18 +410,4 @@ fn declare_temporary(
         .unwrap()
         .instructions
         .push(instr_id);
-}
-
-/// Promote a temporary identifier to a named identifier.
-fn promote_temporary(env: &mut Environment, identifier_id: IdentifierId) {
-    let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
-    let mut itoa = bun_core::fmt::ItoaBuf::new();
-    let digits = itoa.format(decl_id.0).as_bytes();
-    let mut buf = [0u8; 16];
-    buf[0] = b'#';
-    buf[1] = b't';
-    buf[2..2 + digits.len()].copy_from_slice(digits);
-    env.identifiers[identifier_id.0 as usize].name = Some(IdentifierName::Promoted(
-        crate::hir::StoreStr::new(bun_ast::data_store_dupe_str(&buf[..2 + digits.len()])),
-    ));
 }

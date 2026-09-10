@@ -525,10 +525,8 @@ function closeAllHttp1Connections(server) {
 }
 
 export default {
-  createHttp1FallbackResponseHandle,
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
   closeAllHttp1Connections,
   kHttp1Connections,
-  kHttp1ActiveRequests,
 };

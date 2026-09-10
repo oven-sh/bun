@@ -53,7 +53,7 @@ struct ApplyState {
 impl ApplyState {
     fn new() -> Self {
         Self {
-            pathbuf: PathBuffer::uninit(),
+            pathbuf: PathBuffer::ZEROED,
             patch_dir_abs_path: None,
         }
     }
@@ -228,7 +228,7 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let joined_absfilepath =
                             paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                                 &mut buf[..],
@@ -299,7 +299,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let file_line_count: usize;
     let lines_count: usize = {
         let mut count: usize = 0;
-        for _ in filebuf.split(|b| *b == b'\n') {
+        for _ in strings::split(&filebuf, b"\n") {
             count += 1;
         }
         file_line_count = count;
@@ -333,7 +333,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let mut lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
     {
         let mut i: usize = 0;
-        for line in filebuf.split(|b| *b == b'\n') {
+        for line in strings::split(&filebuf, b"\n") {
             lines.push(line);
             i += 1;
         }
@@ -1038,11 +1038,9 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
-        && !path.contains(&0)
+        && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|part| part == b"..")
+        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1171,7 +1169,7 @@ impl<'a> PatchLinesParser<'a> {
         let end = 'brk: {
             // Peek at the last segment after the final '\n'.
             let mut prev: usize = file_.len();
-            let last_nl = file_.iter().rposition(|b| *b == b'\n');
+            let last_nl = strings::last_index_of_char(file_, b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
                 None => file_,
@@ -1760,7 +1758,7 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = PathBuffer::uninit();
+    let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,
         bun_core::env_var::PATH.get().unwrap_or(b""),

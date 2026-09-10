@@ -25,7 +25,6 @@ pub enum CondExprState {
     },
     WaitingStat,
     WaitingWriteErr,
-    Done,
 }
 
 impl CondExpr {
@@ -67,15 +66,11 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
                 CondExprState::WaitingWriteErr => return Yield::suspended(),
-                CondExprState::Done => {
-                    let parent = interp.as_condexpr(this).base.parent;
-                    return interp.child_done(parent, this, 0);
-                }
             }
         }
     }
@@ -332,7 +327,6 @@ impl CondExpr {
         log!("CondExpr {} deinit", this);
         let me = interp.as_condexpr_mut(this);
         me.args.clear();
-        me.base.end_scope();
     }
 }
 
@@ -340,6 +334,15 @@ impl CondExpr {
 // the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
 impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
+    /// A stat the pool finished whose result will not be applied: drop the
+    /// keep-alive and the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `do_stat` scheduled.
+        unsafe {
+            (*this).task.task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx

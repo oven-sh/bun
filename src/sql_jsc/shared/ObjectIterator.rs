@@ -67,19 +67,18 @@ impl<'a> ObjectIterator<'a> {
                 )));
             }
 
-            // `get_own_by_value` maps the C++ empty (zero) return to `None`,
-            // so the `Some(JSValue::ZERO)` comparison below is defensively dead
-            // (an unwrapped value is never zero).
-            let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
-            if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
-                if !global_object.has_exception() {
-                    break 'out Err(global_object.throw(format_args!(
-                        "Expected a value at index {} in row {}",
-                        cell_i, row_i
-                    )));
+            let value = match self.current_row.get_own_by_value(global_object, property) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.any_failed = true;
+                    break 'out Ok(None);
                 }
-                self.any_failed = true;
-                break 'out Ok(None);
+            };
+            if value.is_some_and(|v| v.is_undefined()) {
+                break 'out Err(global_object.throw(format_args!(
+                    "Expected a value at index {} in row {}",
+                    cell_i, row_i
+                )));
             }
             Ok(value)
         };

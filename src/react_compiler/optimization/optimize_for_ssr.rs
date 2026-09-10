@@ -184,7 +184,7 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                 InstructionValue::JsxExpression { tag, .. } => {
                     if let crate::hir::JsxTag::Builtin(builtin) = tag {
                         // Only optimize non-custom-element builtin tags
-                        if !builtin.name.contains(&b'-') {
+                        if !bun_core::strings::contains_char(&builtin.name, b'-') {
                             let tag_name = builtin.name;
                             // Retain only props that are not known event handlers and not "ref"
                             if let InstructionValue::JsxExpression { props, .. } = &mut instr.value

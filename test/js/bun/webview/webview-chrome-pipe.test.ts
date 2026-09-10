@@ -397,7 +397,7 @@ test.concurrent("the temporary profile directory is deleted with its browser", a
   using tmp = tempDir("webview-chrome-profile", {});
   const profileDirs = (dir: string) => readdirSync(dir).filter(name => name.endsWith(".bun-chrome"));
   const probe = /* js */ `
-    const { readdirSync } = require("node:fs");
+    import { readdirSync } from "node:fs";
     const profileDirs = () => readdirSync(process.env.BUN_TMPDIR).filter(name => name.endsWith(".bun-chrome"));
   `;
 

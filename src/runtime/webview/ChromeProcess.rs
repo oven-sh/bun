@@ -586,7 +586,7 @@ fn kill_and_wait(pid: bun_spawn::PidT) {
         return;
     }
     TerminateProcess(handle, 1);
-    w::WaitForSingleObject(handle, 5000);
+    w::kernel32::WaitForSingleObject(handle, 5000);
     // SAFETY: `handle` came from OpenProcess above.
     unsafe { w::CloseHandle(handle) };
 }

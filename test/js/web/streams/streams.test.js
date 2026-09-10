@@ -2132,66 +2132,64 @@ describe("ReadableStream for a File that fails to open", () => {
       : { directory: [() => file(import.meta.dir).stream(), expect.objectContaining({ code: "EISDIR" })] }),
   };
 
-  for (const [label, [makeStream, expected]] of Object.entries(doors)) {
-    describe(label, () => {
-      it("getReader() returns a reader whose read() rejects", async () => {
-        const stream = makeStream();
-        const reader = stream.getReader();
-        expect(stream.locked).toBe(true);
-        await expect(reader.read()).rejects.toEqual(expected);
-        await expect(reader.closed).rejects.toEqual(expected);
-        // Later consumers see the same error instead of a read that never settles.
-        reader.releaseLock();
-        const second = stream.getReader();
-        await expect(second.read()).rejects.toEqual(expected);
-        second.releaseLock();
-        await expect(Array.fromAsync(stream)).rejects.toEqual(expected);
-      });
-
-      it("tee() returns two errored branches", async () => {
-        const [a, b] = makeStream().tee();
-        await expect(a.getReader().read()).rejects.toEqual(expected);
-        await expect(b.getReader().read()).rejects.toEqual(expected);
-      });
-
-      it("promise-returning consumers reject instead of throwing", async () => {
-        let result;
-        expect(() => {
-          result = makeStream().text();
-        }).not.toThrow();
-        await expect(result).rejects.toEqual(expected);
-        expect(() => {
-          result = makeStream().pipeTo(new WritableStream());
-        }).not.toThrow();
-        await expect(result).rejects.toEqual(expected);
-        expect(() => {
-          result = makeStream().pipeThrough(new TransformStream()).getReader().read();
-        }).not.toThrow();
-        await expect(result).rejects.toEqual(expected);
-        expect(() => {
-          result = new Response(makeStream()).bytes();
-        }).not.toThrow();
-        await expect(result).rejects.toEqual(expected);
-        expect(() => {
-          result = readableStreamToArrayBuffer(makeStream());
-        }).not.toThrow();
-        await expect(result).rejects.toEqual(expected);
-      });
-
-      it("Readable.fromWeb() after the failed start emits the error", async () => {
-        const stream = makeStream();
-        stream.getReader().releaseLock();
-        const readable = Readable.fromWeb(stream);
-        const { promise, resolve, reject } = Promise.withResolvers();
-        readable
-          .on("error", resolve)
-          .on("end", () => reject(new Error("ended without an error")))
-          .on("close", () => reject(new Error("closed without an error")));
-        readable.resume();
-        expect(await promise).toEqual(expected);
-      });
+  describe.each(Object.entries(doors))("%s", (label, [makeStream, expected]) => {
+    it("getReader() returns a reader whose read() rejects", async () => {
+      const stream = makeStream();
+      const reader = stream.getReader();
+      expect(stream.locked).toBe(true);
+      await expect(reader.read()).rejects.toEqual(expected);
+      await expect(reader.closed).rejects.toEqual(expected);
+      // Later consumers see the same error instead of a read that never settles.
+      reader.releaseLock();
+      const second = stream.getReader();
+      await expect(second.read()).rejects.toEqual(expected);
+      second.releaseLock();
+      await expect(Array.fromAsync(stream)).rejects.toEqual(expected);
     });
-  }
+
+    it("tee() returns two errored branches", async () => {
+      const [a, b] = makeStream().tee();
+      await expect(a.getReader().read()).rejects.toEqual(expected);
+      await expect(b.getReader().read()).rejects.toEqual(expected);
+    });
+
+    it("promise-returning consumers reject instead of throwing", async () => {
+      let result;
+      expect(() => {
+        result = makeStream().text();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = makeStream().pipeTo(new WritableStream());
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = makeStream().pipeThrough(new TransformStream()).getReader().read();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = new Response(makeStream()).bytes();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = readableStreamToArrayBuffer(makeStream());
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+    });
+
+    it("Readable.fromWeb() after the failed start emits the error", async () => {
+      const stream = makeStream();
+      stream.getReader().releaseLock();
+      const readable = Readable.fromWeb(stream);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      readable
+        .on("error", resolve)
+        .on("end", () => reject(new Error("ended without an error")))
+        .on("close", () => reject(new Error("closed without an error")));
+      readable.resume();
+      expect(await promise).toEqual(expected);
+    });
+  });
 });
 
 it("ReadableStream for empty blob closes immediately", async () => {

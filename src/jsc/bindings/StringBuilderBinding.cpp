@@ -5,6 +5,9 @@
 static_assert(sizeof(WTF::StringBuilder) == 24, "src/jsc/StringBuilder.rs assumes WTF::StringBuilder is 24 bytes");
 static_assert(alignof(WTF::StringBuilder) == 8, "src/jsc/StringBuilder.rs assumes WTF::StringBuilder is 8-byte aligned");
 
+// RecordOverflow: an append past String::MaxLength, or a failed allocation, marks the builder
+// instead of crashing, and StringBuilder__toString throws for it. length() and capacity()
+// release-assert !hasOverflowed(), so a function below that can reach them checks it first.
 extern "C" void StringBuilder__init(WTF::StringBuilder* ptr)
 {
     new (ptr) WTF::StringBuilder(OverflowPolicy::RecordOverflow);
@@ -42,6 +45,9 @@ extern "C" void StringBuilder__appendUsize(WTF::StringBuilder* builder, size_t n
 
 extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const BunString* str)
 {
+    // A 16-bit string makes an 8-bit builder upconvert, and that reads capacity().
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
     str->appendToBuilder(*builder);
 }
 
@@ -77,5 +83,7 @@ extern "C" JSC::EncodedJSValue StringBuilder__toString(WTF::StringBuilder* build
 
 extern "C" void StringBuilder__ensureUnusedCapacity(WTF::StringBuilder* builder, size_t additional)
 {
+    if (builder->hasOverflowed()) [[unlikely]]
+        return;
     builder->reserveCapacity(builder->length() + additional);
 }

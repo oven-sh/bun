@@ -3365,7 +3365,14 @@ test.skipIf(isWindows)(
     const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).quiet().nothrow();
     const running = promise.then(o => o);
 
-    await childWaiting.promise;
+    // If the child exits before it fetches, fail with its output instead of
+    // waiting on `childWaiting` until the test times out.
+    await Promise.race([
+      childWaiting.promise,
+      running.then(r => {
+        throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
     ab.resize(0);
     gate.resolve();
 

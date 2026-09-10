@@ -2685,3 +2685,105 @@ describe("pauseOnConnect", () => {
     }
   });
 });
+
+describe("an accepted socket whose stream state changes before or during its handshake", () => {
+  // Bun hands the same TLSSocket to 'connection', before the handshake, and to
+  // 'secureConnection'. A pause() from either listener may only hold the decrypted
+  // bytes back: Node's TLSWrap reads whatever the stream's paused state is, so the
+  // handshake completes and the bytes wait in the stream's buffer until resume().
+  // A pause that stopped the native reads would stall the handshake forever.
+  async function accept(options: {
+    pauseOnConnect?: boolean;
+    on?: Partial<Record<"connection" | "secureConnection", (socket: TLSSocket) => void>>;
+  }) {
+    const server = createServer({ ...COMMON_CERT, pauseOnConnect: options.pauseOnConnect });
+    const accepted = Promise.withResolvers<TLSSocket>();
+    for (const [event, listener] of Object.entries(options.on ?? {})) server.on(event, listener);
+    server.on("secureConnection", accepted.resolve);
+    server.on("tlsClientError", accepted.reject);
+    let client: TLSSocket | undefined;
+    const dispose = () => {
+      client?.destroy();
+      server.close();
+    };
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      client = connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+      });
+      const [socket] = await Promise.all([accepted.promise, once(client, "secureConnect")]);
+      return { client, socket, [Symbol.dispose]: dispose };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  async function untilBuffered(socket: TLSSocket, length: number) {
+    const deadline = performance.now() + 10_000;
+    while (socket.readableLength < length) {
+      if (performance.now() > deadline) throw new Error(`readableLength stayed at ${socket.readableLength}`);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+  }
+
+  async function endBothSides(client: TLSSocket, socket: TLSSocket) {
+    const clientClosed = once(client, "close");
+    socket.end();
+    client.end();
+    await clientClosed;
+  }
+
+  // The 'secureConnection' case also pins that the pause holds once the listener returned.
+  it.each(["connection", "secureConnection"] as const)(
+    "s.pause() in a '%s' listener completes the handshake and buffers the bytes until resume()",
+    async event => {
+      using t = await accept({ on: { [event]: socket => socket.pause() } });
+      const { client, socket } = t;
+      expect({ paused: socket.isPaused(), flowing: socket.readableFlowing }).toEqual({ paused: true, flowing: false });
+      const chunks: string[] = [];
+      // A 'data' listener leaves a paused stream paused.
+      socket.on("data", chunk => chunks.push(String(chunk)));
+      await new Promise<void>((resolve, reject) => client.write("hello", err => (err ? reject(err) : resolve())));
+      // The stream's buffer fills because the handle still reads. Like Node, 'data' waits for resume().
+      await untilBuffered(socket, 5);
+      expect({ chunks, flowing: socket.readableFlowing, readableLength: socket.readableLength }).toEqual({
+        chunks: [],
+        flowing: false,
+        readableLength: 5,
+      });
+      const received = once(socket, "data");
+      socket.resume();
+      await received;
+      expect(chunks).toEqual(["hello"]);
+      await endBothSides(client, socket);
+    },
+  );
+
+  it("pauseOnConnect: a resume() in the 'secureConnection' listener is not undone afterwards", async () => {
+    using t = await accept({ pauseOnConnect: true, on: { secureConnection: socket => socket.resume() } });
+    const { client, socket } = t;
+    expect({ paused: socket.isPaused(), flowing: socket.readableFlowing }).toEqual({ paused: false, flowing: true });
+    const received = once(socket, "data");
+    client.write("hello");
+    expect(String((await received)[0])).toBe("hello");
+    await endBothSides(client, socket);
+  });
+
+  // Node's TLSWrap reads ahead, so the paused socket sees the peer's close_notify and emits
+  // 'end' at once. Ours stops reading once the handshake completed, and a close_notify that
+  // arrives after that waits in the kernel until resume(). Plain net sockets behave like
+  // ours in both runtimes.
+  it.todo("pauseOnConnect: a socket still paused emits 'end' when the peer ends", async () => {
+    using t = await accept({ pauseOnConnect: true });
+    const { client, socket } = t;
+    const ended = once(socket, "end");
+    client.end();
+    await ended;
+    expect(socket.isPaused()).toBe(true);
+    socket.end();
+    await once(client, "close");
+  });
+});

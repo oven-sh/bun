@@ -1130,6 +1130,71 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   });
 });
 
+describe("a TLS socket over a Duplex transport reports that transport's error", () => {
+  // Node re-emits the transport's 'error' on its JSStreamSocket wrap, and
+  // TLSSocket._init routes the wrap's error through _emitTLSError:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+  // Without a listener on the transport, node:stream throws the error.
+
+  // WHEN=early destroys the transport in the tick of the upgrade, before the
+  // engine exists; WHEN=late once the engine has written its ClientHello.
+  const transportErrorFixture = `
+    const tls = require("tls");
+    const { Duplex } = require("stream");
+    const seen = [];
+    let started = false;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        callback();
+        if (started) return;
+        started = true;
+        if (process.env.WHEN === "late") process.nextTick(kill);
+      },
+    });
+    function kill() {
+      transport.destroy(new Error("transport failed"));
+    }
+    const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+    socket.on("error", err => seen.push("error:" + err.message));
+    socket.on("close", () => {
+      seen.push("close");
+      console.log(seen.join("|"));
+      process.exit(0);
+    });
+    if (process.env.WHEN === "early") kill();
+  `;
+
+  it("listens for the transport's 'error'", () => {
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+    // Exactly one, like node's wrap: the forward to the TLS socket.
+    expect(transport.listenerCount("error")).toBe(1);
+    socket.destroy();
+    transport.destroy();
+  });
+
+  it.each(["early", "late"])("a transport error %s reaches the TLS socket", async when => {
+    // Out of process: with nothing listening on the transport the error is
+    // thrown, which takes the process down.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", transportErrorFixture],
+      env: { ...bunEnv, WHEN: when },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("error:transport failed|close");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

@@ -54,6 +54,9 @@ let pageLoadOnHistoryLookup: string | undefined;
 // before its reply: the way events already in the pipe reach the runtime
 // after it wrote the command (see __fake_fragment_link_on_next_navigate).
 let fragmentLinkOnNextNavigate: string | undefined;
+// One URL the page loads whole as the next Page.reload is read, before its
+// reply; that reload then never commits (see __fake_page_load_on_next_reload).
+let pageLoadOnNextReload: string | undefined;
 // One URL the page "replaceState"s to right after the next same-document
 // commit, the way a hashchange handler canonicalizing the URL does.
 let replaceStateAfterNextCommit: string | undefined;
@@ -102,6 +105,11 @@ Object.assign(globalThis, {
   // the way a hashchange handler that rewrites the URL produces.
   __fake_replace_state_after_next_commit(url: string) {
     replaceStateAfterNextCommit = url;
+  },
+  // The page finishes a load of its own after the runtime wrote the next
+  // Page.reload and before Chrome answered it. That reload never commits.
+  __fake_page_load_on_next_reload(url: string) {
+    pageLoadOnNextReload = url;
   },
   // How many document.title fetches the runtime has sent so far.
   __fake_title_fetches() {
@@ -272,6 +280,12 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.reload": {
       const current = history[historyIndex];
       if (current === undefined) return reply({});
+      if (pageLoadOnNextReload !== undefined) {
+        pageLoad(pageLoadOnNextReload);
+        event("Page.loadEventFired", { timestamp: loads });
+        pageLoadOnNextReload = undefined;
+        return reply({});
+      }
       startNavigating(current.url, "reload");
       current.loaderId = "L" + ++loads;
       reply({});

@@ -885,7 +885,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
     case Method::PageReload:
-        // Same as navigate: don't settle, Page.loadEventFired does.
+        // Empty {} on success: the reload is underway, and it always loads the document again.
+        if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested)
+            view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
         return;
 
     case Method::PageTitle: {
@@ -1872,8 +1874,8 @@ JSPromise* goForward(JSGlobalObject* g, JSWebView* view) { return historyGo(g, v
 JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 {
     auto& t = transport();
-    // A reload always loads the document again.
-    startNavigation(view, ChromeNavigationKind::CrossDocument);
+    // Chrome answers Page.reload with {}, so the reply is what puts the reload underway.
+    startNavigation(view, ChromeNavigationKind::Requested);
     uint32_t id = t.nextId();
     // Navigate slot — reload IS a navigation. Page.loadEventFired only
     // settles PendingSlot::Navigate; using Misc would hang waiting for a

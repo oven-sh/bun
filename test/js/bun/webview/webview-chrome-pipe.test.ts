@@ -260,6 +260,30 @@ test.concurrent("a second same-document commit does not fetch the title again", 
   expect(result).toEqual({ url: "http://fake/page#canonical", titleFetches: 1 });
 });
 
+// Chrome answers Page.reload with `{}`, so a reload is like a history
+// traversal: no commit counts as its own until Chrome has answered the
+// command. A document the page finished loading in that window is the page's,
+// and the reload here never commits, so the promise has to stay pending.
+test.concurrent("reload() is not settled by the load of a document the page committed first", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    await view.evaluate("__fake_page_load_on_next_reload('http://fake/own')");
+    const started = view.reload();
+    // The fake answers in order, so this resolves after it answered the reload:
+    // the page's load is handled, and a title fetch that load queued is ahead
+    // of the race's evaluate below.
+    await view.evaluate("1");
+    const first = await Promise.race([
+      started.then(() => "reload() settled", () => "reload() rejected"),
+      view.evaluate("'reload() still pending'"),
+    ]);
+    print({ first, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "reload() still pending", url: "http://fake/own" });
+});
+
 // After a load fails, Chrome commits its own error page
 // (chrome-error://chromewebdata/, with frame.unreachableUrl naming the page it
 // stands in for) and fires that page's load event. Neither is a navigation of

@@ -1352,13 +1352,11 @@ it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
 });
 
 it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
-  // A byte length of 2^31 or more does not fit sqlite3_bind_blob()'s int
-  // length, and a negative length makes SQLite treat the buffer as a
-  // NUL-terminated string. The 64-bit bind API reports SQLITE_TOOBIG instead.
-  // Run in a subprocess so the 2 GiB reservation does not stay in the test
-  // runner. The buffer is never written, so RSS stays small.
+  // A 2^31 byte length overflowed sqlite3_bind_blob()'s int length and bound
+  // an empty TEXT value. The subprocess keeps the 2 GiB reservation out of the
+  // test runner. The buffer is never written, so RSS stays small.
   const script = `
-    const { Database } = require("bun:sqlite");
+    import { Database } from "bun:sqlite";
     let big;
     try {
       big = new Uint8Array(2 ** 31);

@@ -887,11 +887,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
     // for a later parameter can free the backing store first (detaching an
     // ArrayBuffer, or triggering a GC that collects an otherwise-unrooted
     // string).
-    //
-    // The *64 bind variants take the byte length as sqlite3_uint64 and fail
-    // with SQLITE_TOOBIG past the length limit. The int variants would see a
-    // >= 2^31 byte length as negative, which means "NUL-terminated" and
-    // silently binds a truncated value.
+    // The *64 variants take a 64-bit length: the int ones read >= 2^31 as negative ("NUL-terminated").
     if (value.isUndefinedOrNull()) {
         CHECK_BIND(sqlite3_bind_null(stmt, i));
     } else if (value.isBoolean()) {
@@ -949,10 +945,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 
     } else if (JSC::JSArrayBufferView* buffer = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = buffer->span();
-        // A detached view's span() is {nullptr, 0}, and a null data pointer
-        // makes sqlite3_bind_blob64() bind NULL. Pass a non-null sentinel so a
-        // detached view binds a zero-length BLOB like a live empty view does
-        // (same as node:sqlite's bindValue() in NodeSqlite.cpp).
+        // A detached view has a null data(), which would bind NULL. "" binds a zero-length BLOB instead (as in NodeSqlite.cpp).
         CHECK_BIND(sqlite3_bind_blob64(stmt, i, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));

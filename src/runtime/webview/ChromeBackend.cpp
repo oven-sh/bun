@@ -461,7 +461,10 @@ static void wsOnClose(void* ctx, unsigned short code)
         // false; rejectAllAndMarkDead's guard would short-circuit and
         // the pending promises would hang. Clear it so reject runs.
         t.m_dead = false;
-        spawnFailure = makeString("; spawning a new Chrome failed too: "_s, errorMessageOf(t.m_global, spawnError));
+        // No error object means no Chrome was found at all.
+        spawnFailure = makeString("; spawning a new Chrome failed too: "_s,
+            spawnError ? errorMessageOf(t.m_global, spawnError)
+                       : "no Chrome found (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);
     }
 
     // rejectAllAndMarkDead settles every pending promise with an error.
@@ -1360,6 +1363,8 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
         if (!v) continue;
         rejectViewSlots(g, v, err);
         v->m_closed = true;
+        // A view with nothing in flight has no promise to carry the reason.
+        v->m_closedReason = reason;
     }
     updateKeepAlive();
 }

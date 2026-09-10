@@ -137,7 +137,11 @@ static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, Ca
         return nullptr;
     }
     if (thisObject->m_closed) {
-        Bun::ERR::INVALID_STATE(scope, globalObject, makeString("WebView."_s, method, ": view is closed"_s));
+        const auto& reason = thisObject->m_closedReason;
+        Bun::ERR::INVALID_STATE(scope, globalObject,
+            reason.isEmpty()
+                ? makeString("WebView."_s, method, ": view is closed"_s)
+                : makeString("WebView."_s, method, ": "_s, reason));
         return nullptr;
     }
     return thisObject;

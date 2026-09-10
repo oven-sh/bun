@@ -83,6 +83,8 @@ public:
     // does Target.createTarget. WebKit: held in the child.
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
+    // Why the transport closed the view; empty when the user closed it.
+    WTF::String m_closedReason;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
     // synchronous but the real values live in the child.
     WTF::String m_url;

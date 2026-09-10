@@ -5,7 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 
@@ -205,50 +205,6 @@ pub(crate) fn on_internal_message_primary(
     Ok(JSValue::UNDEFINED)
 }
 
-fn take_ack_callback(queue: &JsCell<InternalMsgHolder>, ack: i32) -> Option<(JSValue, JSValue)> {
-    queue.with_mut(|q| {
-        let (_, callback) = q.callbacks.fetch_swap_remove(&ack)?;
-        callback.get().zip(q.worker.get())
-    })
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_as_array::<2>();
-    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
-        return Ok(JSValue::FALSE);
-    };
-    let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::FALSE);
-    };
-    if !ipc_data.internal_msg_queue.get().is_ready() {
-        return Ok(JSValue::FALSE);
-    }
-    let message = arguments[1];
-    let Some(p) = message.get(global, "ack")? else {
-        return Ok(JSValue::FALSE);
-    };
-    if !p.is_int32() {
-        return Ok(JSValue::FALSE);
-    }
-    let ack = p.as_int32();
-    let entry = take_ack_callback(&ipc_data.internal_msg_queue, ack);
-    let Some((cb, worker)) = entry else {
-        return Ok(JSValue::FALSE);
-    };
-    let event_loop = global.bun_vm().event_loop_mut();
-    event_loop.run_callback(
-        cb,
-        global,
-        worker,
-        &[
-            message,
-            JSValue::NULL, // handle
-        ],
-    );
-    Ok(JSValue::TRUE)
-}
-
 pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,
@@ -268,7 +224,13 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if p.is_int32() {
             let ack = p.as_int32();
-            let entry = take_ack_callback(&ipc_data.internal_msg_queue, ack);
+            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
+                let cb = q.callbacks.get(&ack).and_then(|s| s.get());
+                if q.callbacks.contains_key(&ack) {
+                    q.callbacks.swap_remove(&ack);
+                }
+                cb.zip(q.worker.get())
+            });
             if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
                     cb,

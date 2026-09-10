@@ -1389,31 +1389,6 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test("a malformed external ack from a worker does not crash the primary", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
-const cluster = require("node:cluster");
-if (cluster.isPrimary) {
-  const worker = cluster.fork();
-  worker.on("message", m => {
-    if (m !== "sent") return;
-    console.log("primary alive"); worker.kill(); process.exit(0);
-  });
-} else {
-  process.send({ cmd: "NODE_CLUSTER", ack: null });
-  process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
-  process.send({ cmd: "NODE_CLUSTER", ack: {} });
-  process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
-  const server = require("node:net").createServer();
-  server.listen(0, "127.0.0.1", () => { server.close(); process.send("sent"); });
-}
-`,
-  });
-  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("primary alive");
-  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-});
-
 test("an out-of-range worker port throws in the worker and leaves the primary alive", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
@@ -1530,64 +1505,6 @@ if (cluster.isPrimary) {
   const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "main.ts"), bunEnv);
   expect({ report: JSON.parse(stdout), stderr, exitCode }).toEqual({
     report: { closedServerEvents: [], closedServerListening: false },
-    stderr: expect.any(String),
-    exitCode: 0,
-  });
-}, 30_000);
-
-test("externally-framed cluster acks settle the primary's parked reply callbacks", async () => {
-  using dir = tempDir("cluster-external-ack", {
-    "main.ts": `
-const cluster = require("node:cluster");
-const net = require("node:net");
-if (cluster.isPrimary) {
-  cluster.schedulingPolicy = cluster.SCHED_RR;
-  const worker = cluster.fork();
-  worker.on("message", async (m) => {
-    if (!m || !m.port) return;
-    const roundTrip = () =>
-      new Promise((resolve, reject) => {
-        const c = net.connect(m.port, "127.0.0.1");
-        c.on("close", resolve);
-        c.on("error", reject);
-        setTimeout(() => reject(new Error("connection never settled")), 5000).unref();
-      });
-    await roundTrip();
-    await roundTrip();
-    console.log("OK");
-    worker.kill();
-    process.exit(0);
-  });
-  worker.on("error", (e) => { console.error(e); process.exit(1); });
-} else {
-  const server = net.createServer(() => {});
-  server.listen(0, "127.0.0.1", () => {
-    const port = server.address().port;
-    process.removeAllListeners("internalMessage");
-    process.on("internalMessage", (m, handle) => {
-      if (m && m.cmd === "NODE_CLUSTER" && m.act === "newconn") {
-        process.send({ cmd: "NODE_CLUSTER", ack: m.seq, accepted: true });
-        if (handle) {
-          if (typeof handle.destroy === "function") handle.destroy();
-          else if (typeof handle.close === "function") handle.close();
-        }
-      }
-    });
-    process.send({ port });
-  });
-}
-`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "OK",
     stderr: expect.any(String),
     exitCode: 0,
   });

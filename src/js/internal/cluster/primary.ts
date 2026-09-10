@@ -3,7 +3,6 @@ const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClusterAck", 2);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 const validateFd = $newRustFunction("node_cluster_binding.rs", "clusterValidateFd", 1);
 const { UV_EBADF, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
@@ -168,15 +167,6 @@ cluster.fork = function (env) {
   });
 
   onInternalMessage(worker.process[kHandle], worker, onmessage);
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L31-L51
-  worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
-    if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
-      if (Number.isInteger(message.ack) && settleClusterAck(worker.process[kHandle], message)) {
-        return;
-      }
-      onmessage.$call(worker, message, handle);
-    }
-  });
   process.nextTick(emitForkNT, worker);
   cluster.workers[worker.id] = worker;
   return worker;

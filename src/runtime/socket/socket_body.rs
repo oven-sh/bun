@@ -81,13 +81,9 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// The code a transport that a failed `send()` killed is closed with. One RST
-/// gives a different send errno per platform: linux reports `ECONNRESET`,
-/// darwin `EPIPE`. The read side reports `ECONNRESET` everywhere (libuv
-/// collapses `ECONNABORTED` into it too, see `read_error_from_close_code`),
-/// and that is the code Node surfaces for a peer that vanished, so the
-/// peer-gone errnos that mean the same thing report as one. Every other errno
-/// (`ETIMEDOUT`, `EHOSTUNREACH`, ...) keeps its identity.
+/// One peer reset gives a different send errno per platform: linux reports
+/// `ECONNRESET`, darwin `EPIPE`. Report the one code the read side reports
+/// everywhere. Any other errno keeps its identity.
 #[cfg(not(windows))]
 fn dead_transport_close_code(errno: c_int) -> c_int {
     if errno == sys::SystemErrno::EPIPE as c_int || errno == sys::SystemErrno::ECONNABORTED as c_int
@@ -97,8 +93,7 @@ fn dead_transport_close_code(errno: c_int) -> c_int {
     errno
 }
 
-/// Windows reports a WSA code. `read_error_from_close_code` already collapses
-/// a reset, an abort, and any code its table cannot name into `ECONNRESET`.
+/// `read_error_from_close_code` already collapses the Windows codes.
 #[cfg(windows)]
 fn dead_transport_close_code(errno: c_int) -> c_int {
     errno
@@ -931,21 +926,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// A `send()` the kernel rejected outright (peer gone, classified by
-    /// `us_socket_write_check_error`) takes the connection down. That errno is
-    /// the only report of the failure: the bytes are dropped, and the read
-    /// side is not polled again before the close, so a plain close reaches JS
-    /// as a clean EOF and the peer's reset is never reported. Close with the
-    /// errno as the close code instead, which is what uSockets' loop does for
-    /// a `recv()` that failed: `on_close` turns a code above the `CloseCode`
-    /// range into the JS error, and the close handlers shape it like Node's
-    /// `read ECONNRESET` (and keep their teardown-noise rules). Closes WITHOUT
-    /// detaching, so `on_close` still dispatches.
+    /// A `send()` the kernel rejected outright takes the connection down. Close
+    /// with that errno, the way uSockets' loop closes a failed `recv()`:
+    /// `on_close` reports a code above the `CloseCode` range as the error that
+    /// ended the connection. A plain close would reach JS as a clean EOF.
     pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
         let socket = self.socket.get();
-        // 0, 1 and 2 are the self-initiated `CloseCode`s that `on_close`
-        // filters out; a Windows send failure it could not classify arrives
-        // as 1. Those close plain, as before.
+        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out. A
+        // Windows send failure it could not classify arrives as 1.
         if errno > 2 {
             socket.close_with_error_code(dead_transport_close_code(errno));
         } else {

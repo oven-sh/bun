@@ -354,10 +354,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Close reporting the platform error code that ended the connection (an
-    /// errno on POSIX, a WSA code on Windows), the way the loop closes a
-    /// socket whose `recv()` failed. Only a connected socket carries a code:
-    /// the other kinds own their own failure delivery and close plain.
+    /// Close reporting the error that ended the connection (see
+    /// [`us_socket_t::close_with_error_code`]). Only a connected socket carries
+    /// a code: the other kinds own their own failure delivery.
     pub fn close_with_error_code(&self, code: c_int) {
         on_socket!(self.socket;
             connected s => s.close_with_error_code(code),

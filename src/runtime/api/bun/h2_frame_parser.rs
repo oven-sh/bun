@@ -1137,8 +1137,7 @@ pub struct H2FrameParser {
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
-    /// The errno behind `transport_write_fatal`, reported on the socket when the deferred
-    /// tick closes the transport.
+    /// The errno behind `transport_write_fatal`: the code the deferred tick closes with.
     transport_write_errno: Cell<i32>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
@@ -2963,10 +2962,8 @@ impl H2FrameParser {
         result < -1
     }
 
-    /// `result` is the negated errno `write_maybe_corked` returned. It is kept:
-    /// the session has no other source for the failure, and reporting the
-    /// transport as a clean close ended a request with no 'error' and no
-    /// 'response' (node reports the peer's reset as ECONNRESET).
+    /// `result` is the negated errno. Keep it: the session has no other source
+    /// for the failure, and a clean close ends the request with no 'error'.
     fn note_transport_write_fatal(&self, result: i32) {
         if !self.transport_write_fatal.get() {
             self.transport_write_fatal.set(true);
@@ -2975,12 +2972,12 @@ impl H2FrameParser {
         }
     }
 
-    /// Runs from the deferred tick (never under a write): reports the send errno on the
-    /// native socket and closes it, so the normal socket-close teardown runs (native
-    /// callback detach, JS 'error' then 'close', session destroy) - the same path a peer
-    /// disconnect takes. Closes WITHOUT detaching: a close_and_detach here severed the JS
-    /// wrapper before on_close could dispatch, so the session saw neither 'error' nor
-    /// 'close' and callers waiting on the failure hung (grpc-js against a refused server).
+    /// Runs from the deferred tick (never under a write): closes the native socket with
+    /// the send errno so the normal socket-close teardown runs (native callback detach,
+    /// JS 'error' then 'close', session destroy) - the same path a peer disconnect takes.
+    /// Closes WITHOUT detaching: a close_and_detach here severed the JS wrapper before
+    /// on_close could dispatch, so the session saw neither 'error' nor 'close' and
+    /// callers waiting on the failure hung (grpc-js against a refused server).
     /// Not-yet-established sockets are left alone entirely - the connect-error path owns
     /// their failure delivery, and closing a semi-connected socket runs no terminal
     /// callback (stranding its refs, see the close host_fn in socket_body).

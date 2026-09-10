@@ -636,9 +636,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 // Main Implementation
 // ============================================================================
 
-// Every row re-emits the open hyperlink, so the output can pass
-// StringImpl::MaxLength. The builders record the overflow and the caller
-// throws ERR_STRING_TOO_LONG. nullopt means that throw.
+// Rows re-emit the open hyperlink, so the output can pass MaxLength. nullopt: throw ERR_STRING_TOO_LONG.
 static std::optional<WTF::String> finishWrapAnsi(StringBuilder& result)
 {
     if (result.hasOverflowed() || result.length() > Bun__stringSyntheticAllocationLimit) [[unlikely]]

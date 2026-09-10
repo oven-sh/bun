@@ -106,6 +106,9 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// `require()` of an ES module that exports `module.exports`: `__toCommonJS(exports_foo, 1)`.
+        const REQUIRE_MODULE_EXPORTS_EXPORT = 1 << 19;
     }
 }
 

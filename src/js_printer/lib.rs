@@ -2872,6 +2872,14 @@ pub(crate) mod __gated_printer {
                         }
                         self.print_symbol(meta.exports_ref);
                         if wrap_with_to_cjs {
+                            if record
+                                .flags
+                                .contains(ImportRecordFlags::REQUIRE_MODULE_EXPORTS_EXPORT)
+                            {
+                                self.print(b",");
+                                self.print_space();
+                                self.print(b"1");
+                            }
                             self.print(b")");
                         }
                     }

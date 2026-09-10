@@ -675,13 +675,35 @@ export function callbackify(original) {
 
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
-export default {
-  TextEncoder,
-  TextDecoder,
-  promisify,
+const util = {
+  format,
+  deprecate,
+  debuglog,
+  inspect,
+  types,
+  isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp,
+  isObject,
+  isDate,
+  isError,
+  isFunction,
+  isPrimitive,
+  isBuffer,
   log,
   inherits,
   _extend,
+  promisify,
   callbackifyOnRejected,
   callbackify,
+  TextEncoder,
+  TextDecoder,
 };
+export default util;
+export { util as "module.exports" };

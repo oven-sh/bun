@@ -738,12 +738,13 @@ export {
   URLSearchParams,
   Url as Url,
   urlFormat as format,
+  urlModule as "module.exports",
   urlParse as parse,
   urlResolve as resolve,
   urlResolveObject as resolveObject,
 };
 
-export default {
+const urlModule = {
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,
@@ -756,3 +757,4 @@ export default {
   URL,
   URLSearchParams,
 };
+export default urlModule;

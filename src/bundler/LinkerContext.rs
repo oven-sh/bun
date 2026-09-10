@@ -4319,10 +4319,15 @@ impl<'a> LinkerContext<'a> {
         // Its own chunk: the name is a binding of the loaded module.
         record.source_index.is_valid()
             && !self.is_external_dynamic_import(record, source_index)
-            // `require()` returns this export, not the namespace.
-            && !(record.kind == ImportKind::Require
-                && self.graph.meta.items_resolved_exports()[record.source_index.get() as usize]
-                    .contains(b"module.exports"))
+            && !self.require_returns_module_exports_export(record)
+    }
+
+    /// `require()` of an ES module that exports `module.exports` returns that export, not the namespace.
+    pub(crate) fn require_returns_module_exports_export(&self, record: &ImportRecord) -> bool {
+        record.kind == ImportKind::Require
+            && record.source_index.is_valid()
+            && self.graph.meta.items_resolved_exports()[record.source_index.get() as usize]
+                .contains(b"module.exports")
     }
 
     /// Whether the export an item of such a record matched can stand in for it.

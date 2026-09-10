@@ -684,6 +684,8 @@ pub(crate) fn scan_imports_and_exports(
                 || !record.source_index.is_valid()
                 || col_ref!(flags)[record.source_index.get() as usize].wrap != WrapKind::Esm
                 || col_ref!(exports_kind)[record.source_index.get() as usize] != ExportsKind::Esm
+                // The value is that export, and `typeof` or `if (x)` observes it.
+                || this.require_returns_module_exports_export(record)
             {
                 continue;
             }
@@ -1253,10 +1255,18 @@ pub(crate) fn scan_imports_and_exports(
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
+                                let mut record_flags = ImportRecordFlags::WRAP_WITH_TO_COMMONJS;
+                                if this.require_returns_module_exports_export(
+                                    &col_ref!(import_records_list)[id].as_slice()
+                                        [import_record_index as usize],
+                                ) {
+                                    record_flags |=
+                                        ImportRecordFlags::REQUIRE_MODULE_EXPORTS_EXPORT;
+                                }
                                 col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags
-                                    .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
+                                    .insert(record_flags);
                                 to_common_js_uses += 1;
                             }
                         }

@@ -859,11 +859,18 @@ class AsyncImportError extends Error {
   }
 }
 
-/** See `runtime.js`'s `__toCommonJS`. This omits the cache. */
+/** See `runtime.js`'s `__toCommonJS` (with `useModuleExports`). This omits the cache. */
 function toCommonJS(from: any) {
   var desc,
+    moduleExports,
     entry = Object.defineProperty({}, "__esModule", { value: true });
-  if ((from && typeof from === "object") || typeof from === "function")
+  if ((from && typeof from === "object") || typeof from === "function") {
+    if (Object.prototype.hasOwnProperty.call(from, "module.exports")) {
+      try {
+        moduleExports = from["module.exports"];
+      } catch {}
+      if (moduleExports != null) return moduleExports;
+    }
     Object.getOwnPropertyNames(from).map(
       key =>
         !Object.prototype.hasOwnProperty.call(entry, key) &&
@@ -872,6 +879,7 @@ function toCommonJS(from: any) {
           enumerable: !(desc = Object.getOwnPropertyDescriptor(from, key)) || desc.enumerable,
         }),
     );
+  }
   return entry;
 }
 

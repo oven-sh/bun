@@ -125,6 +125,10 @@ public:
     // handler receiving a user-script wrap of console.*.
     JSC::WriteBarrier<JSC::JSObject> m_onConsole;
     bool m_consoleIsGlobal = false;
+    // Chrome, m_consoleIsGlobal: console.group() calls mirrored into the
+    // parent's console that the page has not ended yet. Unwound when the
+    // page goes away so the parent's own output is not left indented.
+    uint16_t m_consoleGroupDepth = 0;
     // One slot per operation type. The req_id map in HostClient has no JS
     // refs — just {req_id → viewId, slot}. If GC collects this object
     // (user dropped both view and the awaited promise), the reply finds a

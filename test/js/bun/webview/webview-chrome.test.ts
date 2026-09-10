@@ -1195,8 +1195,16 @@ it("chrome: console: globalThis.console nests console.group output", async () =>
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
-      await view.evaluate("(console.log('before'), console.group('outer'), console.log('inside'), console.groupEnd(), console.log('after'), console.warn('careful'), 0)");
+      // A stray groupEnd() from the page must not dedent the parent's groups.
+      await view.evaluate("(console.groupEnd(), console.log('before'), console.group('outer'), console.log('inside'), console.groupEnd(), console.log('after'), console.warn('careful'), 0)");
+      // A group the page never ends is ended for it when the page goes away:
+      // by a new document, and by close().
+      await view.evaluate("(console.group('left open'), console.log('nested'), 0)");
+      await view.navigate("data:text/html,<body>two</body>");
+      console.log("parent after navigate");
+      await view.evaluate("(console.group('left open 2'), 0)");
       view.close();
+      console.log("parent after close");
       `,
     ],
     env: bunEnv,
@@ -1206,7 +1214,9 @@ it("chrome: console: globalThis.console nests console.group output", async () =>
   const [stdout, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // group() indents what follows and groupEnd() undoes it without printing
   // V8's synthetic "console.groupEnd" argument. warn routes to stderr.
-  expect(stdout).toBe("before\nouter\n  inside\nafter\n");
+  expect(stdout).toBe(
+    "before\nouter\n  inside\nafter\nleft open\n  nested\nparent after navigate\nleft open 2\nparent after close\n",
+  );
   expect(stderr).toContain("careful");
   expect(stderr).not.toContain("console.groupEnd");
   expect(stdout).not.toContain("careful");

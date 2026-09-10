@@ -1715,6 +1715,10 @@ impl FileSink {
                 let result = self.assign_to_js_stream(stream, controller, global_this);
                 if let Some(err) = result.to_error() {
                     self.stream_bytes.set(None);
+                    // The caller reports `err`; a close(error) inside pull() may already have rejected the done-promise nobody gets.
+                    if let Some(done) = promise.as_any_promise() {
+                        done.set_handled(global_this.vm());
+                    }
                     return err;
                 }
                 // A pump that already failed reports through the done-promise.

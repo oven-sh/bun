@@ -7228,8 +7228,8 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory", () => {
     `;
   }
 
-  async function run(fixtureBody: string, env: Record<string, string>) {
-    using dir = tempDir("fs-read-wasm-grow", { "run.mjs": fixture(fixtureBody) });
+  async function run(source: string, env: Record<string, string>) {
+    using dir = tempDir("fs-read-wasm-grow", { "run.mjs": source });
     const fifo = join(String(dir), "fifo");
     mkfifo(fifo, 0o666);
     await using proc = Bun.spawn({
@@ -7246,7 +7246,10 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory", () => {
     // `toResizableBuffer()` tracks the memory, so the view survives the grow and
     // must hold what the read produced. Without the fix those bytes went into
     // the block the grow freed.
-    const { stdout, exitCode } = await run(`const view = new Uint8Array(mem.toResizableBuffer());`, boundsCheckedEnv);
+    const { stdout, exitCode } = await run(
+      fixture(`const view = new Uint8Array(mem.toResizableBuffer());`),
+      boundsCheckedEnv,
+    );
     expect(stdout).toBe("read 4096, 4096 of 4096 in the view");
     expect(exitCode).toBe(0);
   });
@@ -7256,11 +7259,51 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory", () => {
     // of parked on a cage free list. Without the fix the kernel reports EFAULT
     // for the write, and with the Gigacage on it writes into whatever took the
     // block. `mem.buffer` is detached by the grow, so nothing is copied back.
-    const { stdout, exitCode } = await run(`const view = new Uint8Array(mem.buffer);`, {
+    const { stdout, exitCode } = await run(fixture(`const view = new Uint8Array(mem.buffer);`), {
       ...boundsCheckedEnv,
       Malloc: "1",
     });
     expect(stdout).toBe("read 4096, 0 of 4096 in the view");
+    expect(exitCode).toBe(0);
+  });
+
+  it("touches only the bytes the read returned", async () => {
+    // A short read must leave the rest of the requested range alone, and a JS
+    // write anywhere else in the memory must survive the write-back.
+    const source = `
+      import fs from "node:fs";
+      const fd = fs.openSync(process.argv[2], fs.constants.O_RDWR);
+      const mem = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+      const view = new Uint8Array(mem.toResizableBuffer());
+      view.fill(0x2e);
+      const { promise, resolve } = Promise.withResolvers();
+      fs.read(fd, view, 64, 4096, null, (err, bytesRead) => resolve({ err, bytesRead }));
+      mem.grow(1);
+      view[50000] = 0x5a;
+      fs.writeSync(fd, Buffer.alloc(100, 0x41));
+      const { err, bytesRead } = await promise;
+      const payload = view.subarray(64, 164).every(b => b === 0x41);
+      const beforeOffset = view.subarray(0, 64).every(b => b === 0x2e);
+      const shortReadTail = view.subarray(164, 4160).every(b => b === 0x2e);
+      console.log(JSON.stringify({
+        err: err?.code ?? null,
+        bytesRead,
+        payload,
+        beforeOffset,
+        shortReadTail,
+        outsideTheRange: view[50000] === 0x5a,
+      }));
+      fs.closeSync(fd);
+    `;
+    const { stdout, exitCode } = await run(source, boundsCheckedEnv);
+    expect(JSON.parse(stdout)).toEqual({
+      err: null,
+      bytesRead: 100,
+      payload: true,
+      beforeOffset: true,
+      shortReadTail: true,
+      outsideTheRange: true,
+    });
     expect(exitCode).toBe(0);
   });
 });

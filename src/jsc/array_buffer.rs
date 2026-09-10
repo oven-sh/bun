@@ -659,8 +659,20 @@ pub struct PinnedArrayBuffer {
     /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable)
     /// or [`copy_out_for_write`](Self::copy_out_for_write) replaced the JS storage.
     copy: Option<Vec<u8>>,
-    /// `copy` is a write scratch, not a read-only snapshot.
-    writes_back: bool,
+    /// Where in the view [`write_back`](Self::write_back) puts `copy`. `None` when
+    /// `copy` is a read-only snapshot.
+    write_back_at: Option<usize>,
+}
+
+/// What [`PinnedArrayBuffer::copy_out_for_write`] arranged for the job.
+#[derive(PartialEq, Eq)]
+pub enum WriteTarget {
+    /// The view's own storage, at the caller's own offset.
+    InPlace,
+    /// Scratch space that starts at index 0 and is exactly the requested length.
+    Scratch,
+    /// The scratch space could not be allocated.
+    OutOfMemory,
 }
 
 impl PinnedArrayBuffer {
@@ -680,7 +692,7 @@ impl PinnedArrayBuffer {
             buffer,
             rooted: false,
             copy: None,
-            writes_back: false,
+            write_back_at: None,
         })
     }
 
@@ -719,42 +731,46 @@ impl PinnedArrayBuffer {
         true
     }
 
-    /// [`copy_if_resizable`](Self::copy_if_resizable) for a job that WRITES through the
-    /// borrow. A pin does not hold wasm memory: a non-shared `grow()` can move the block
-    /// and free the old one, and `ArrayBuffer::detach` ignores the pin count there by
-    /// design, so the job (or the kernel on its behalf) writes into freed pages. The copy
-    /// starts as the view's bytes, so a short write leaves the rest correct, and
-    /// [`write_back`](Self::write_back) returns it. `false` if it cannot be allocated.
-    pub fn copy_out_for_write(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.wasm_memory
-            || self.buffer.shared
-            || self.buffer.byte_len == 0
-            || self.copy.is_some()
-        {
-            return true;
+    /// [`copy_if_resizable`](Self::copy_if_resizable) for a job that WRITES `len` bytes
+    /// at `offset`. A pin does not hold wasm memory: a non-shared `grow()` can move the
+    /// block and free the old one, and `ArrayBuffer::detach` ignores the pin count there
+    /// by design, so the job (or the kernel on its behalf) writes into freed pages.
+    ///
+    /// On [`WriteTarget::Scratch`] the borrow now describes `len` bytes of scratch space,
+    /// so the job drops its own offset and writes from index 0.
+    /// [`write_back`](Self::write_back) puts the result at `offset` in the view.
+    pub fn copy_out_for_write(
+        &mut self,
+        global: &JSGlobalObject,
+        offset: usize,
+        len: usize,
+    ) -> WriteTarget {
+        if !self.buffer.wasm_memory || self.buffer.shared || len == 0 || self.copy.is_some() {
+            return WriteTarget::InPlace;
         }
-        let bytes = self.buffer.byte_slice();
         let mut copy = Vec::new();
-        if copy.try_reserve_exact(bytes.len()).is_err() {
-            return false;
+        if copy.try_reserve_exact(len).is_err() {
+            return WriteTarget::OutOfMemory;
         }
-        copy.extend_from_slice(bytes);
-        global.vm().report_extra_memory(copy.len());
+        copy.resize(len, 0);
+        global.vm().report_extra_memory(len);
         self.buffer.ptr = copy.as_mut_ptr();
+        self.buffer.len = len;
+        self.buffer.byte_len = len;
         self.copy = Some(copy);
-        self.writes_back = true;
-        true
+        self.write_back_at = Some(offset);
+        WriteTarget::Scratch
     }
 
-    /// JS thread, once the job is done: copy what it wrote into the view's own storage.
-    /// The view can be gone (a grow detaches it) or shorter (a resize), so take its
-    /// extent from the JS value again and copy what still fits. A no-op without
+    /// JS thread, once the job is done: copy the `len` bytes it wrote into the view, and
+    /// nothing else, so a JS write elsewhere in the view survives. The view can be gone
+    /// (a grow detaches it) or shorter (a resize), so take its extent from the JS value
+    /// again and clamp. A no-op without
     /// [`copy_out_for_write`](Self::copy_out_for_write).
-    pub fn write_back(&mut self, global: &JSGlobalObject) {
-        if !self.writes_back {
+    pub fn write_back(&mut self, global: &JSGlobalObject, len: usize) {
+        let Some(offset) = self.write_back_at.take() else {
             return;
-        }
-        self.writes_back = false;
+        };
         let Some(scratch) = self.copy.take() else {
             return;
         };
@@ -764,17 +780,19 @@ impl PinnedArrayBuffer {
         self.buffer.ptr = live.ptr;
         self.buffer.len = live.len;
         self.buffer.byte_len = live.byte_len;
-        if self.buffer.is_detached() {
+        let n = len
+            .min(scratch.len())
+            .min(self.buffer.byte_len.saturating_sub(offset));
+        if n == 0 {
             return;
         }
-        let n = self.buffer.byte_len.min(scratch.len());
-        self.buffer.byte_slice_mut()[..n].copy_from_slice(&scratch[..n]);
+        self.buffer.byte_slice_mut()[offset..offset + n].copy_from_slice(&scratch[..n]);
     }
 
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [u8] {
         debug_assert!(
-            self.copy.is_none() || self.writes_back,
+            self.copy.is_none() || self.write_back_at.is_some(),
             "a read-only root is not writable"
         );
         self.buffer.byte_slice_mut()
@@ -786,7 +804,7 @@ impl PinnedArrayBuffer {
         self.buffer = ArrayBuffer::default();
         self.rooted = false;
         self.copy = None;
-        self.writes_back = false;
+        self.write_back_at = None;
     }
 }
 

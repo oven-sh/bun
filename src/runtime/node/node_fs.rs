@@ -18,7 +18,7 @@ use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
-    StringJsc as _,
+    StringJsc as _, WriteTarget,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
@@ -947,10 +947,11 @@ mod _async_tasks {
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+            let bytes_written = result.as_ref().ok().and_then(FsReturn::bytes_written);
             // The field, not the `&self` method: only a field borrow is disjoint
             // from the `&mut self.args` that `write_back` takes.
             let global_object = self.global_object.get();
-            self.args.write_back(global_object);
+            self.args.write_back(global_object, bytes_written);
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();
             let promise = self.promise.get();
@@ -1018,7 +1019,7 @@ mod _async_tasks {
         }
         /// JS thread, before the result reaches JS: hand back a write destination's
         /// scratch copy ([`jsc::PinnedArrayBuffer::write_back`]). Only `fs.read` has one.
-        fn write_back(&mut self, _global: &JSGlobalObject) {}
+        fn write_back(&mut self, _global: &JSGlobalObject, _bytes_written: Option<u64>) {}
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
@@ -1076,9 +1077,10 @@ mod _async_tasks {
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::Read::from_js(ctx, arguments)
         }
-        fn write_back(&mut self, global: &JSGlobalObject) {
+        fn write_back(&mut self, global: &JSGlobalObject, bytes_written: Option<u64>) {
+            let len = bytes_written.unwrap_or(0).min(self.length) as usize;
             if let args::ReadBuffer::PinnedBuffer(buffer) = &mut self.buffer {
-                buffer.write_back(global);
+                buffer.write_back(global, len);
             }
         }
     }
@@ -1130,6 +1132,10 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+        /// Bytes the job wrote into a destination buffer. `None` unless it has one.
+        fn bytes_written(&self) -> Option<u64> {
+            None
+        }
     }
     impl FsReturn for JSValue {
         #[inline]
@@ -1183,6 +1189,10 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(self.to_js(global))
+        }
+        #[inline]
+        fn bytes_written(&self) -> Option<u64> {
+            Some(self.bytes_read)
         }
     }
     impl FsReturn for ret::Write {
@@ -1271,7 +1281,8 @@ mod _async_tasks {
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
             let _dispatch = js.tracker.dispatch(global_object);
-            this.args.write_back(global_object);
+            let bytes_written = this.result.as_ref().ok().and_then(FsReturn::bytes_written);
+            this.args.write_back(global_object, bytes_written);
 
             let success = this.result.is_ok();
             let promise_value = js.promise.value();
@@ -3770,13 +3781,10 @@ pub mod args {
                 ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
             })?;
             let buffer = if arguments.will_be_async {
-                let mut pinned = PinnedArrayBuffer::root(ctx, buffer_value)
-                    .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // The pool thread writes into this buffer after JS has run again.
-                if !pinned.copy_out_for_write(ctx) {
-                    return Err(ctx.throw_out_of_memory());
-                }
-                ReadBuffer::PinnedBuffer(pinned)
+                ReadBuffer::PinnedBuffer(
+                    PinnedArrayBuffer::root(ctx, buffer_value)
+                        .ok_or_else(|| ctx.throw_out_of_memory())?,
+                )
             } else {
                 ReadBuffer::Buffer(buffer)
             };
@@ -3901,6 +3909,19 @@ pub mod args {
             } else {
                 None
             };
+
+            // A non-shared `WebAssembly.Memory` can free the bytes under the pin, so the
+            // job writes into scratch space. It holds the requested range and nothing
+            // else, so the job starts at 0.
+            let mut buffer = buffer;
+            let mut offset = offset;
+            if let ReadBuffer::PinnedBuffer(pinned) = &mut buffer {
+                match pinned.copy_out_for_write(ctx, offset as usize, length as usize) {
+                    WriteTarget::InPlace => {}
+                    WriteTarget::Scratch => offset = 0,
+                    WriteTarget::OutOfMemory => return Err(ctx.throw_out_of_memory()),
+                }
+            }
 
             Ok(Read {
                 fd,

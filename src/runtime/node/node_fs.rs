@@ -948,6 +948,7 @@ mod _async_tasks {
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
             let global_object = self.global_object();
+            self.args.write_back(global_object);
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();
             let promise = self.promise.get();
@@ -1013,6 +1014,11 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
+        /// JS thread, before the result reaches JS: return to its view whatever the
+        /// job wrote into a scratch copy
+        /// ([`PinnedArrayBuffer::copy_out_for_write`](jsc::PinnedArrayBuffer::copy_out_for_write)).
+        /// Only an argument set with a write destination overrides this.
+        fn write_back(&mut self, _global: &JSGlobalObject) {}
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
@@ -1050,7 +1056,6 @@ mod _async_tasks {
         args::Readdir<'static>,
         args::Open<'static>,
         args::Write<'static>,
-        args::Read,
         args::Exists<'static>,
         args::Access<'static>,
         args::CopyFile<'static>,
@@ -1063,6 +1068,20 @@ mod _async_tasks {
         args::FdataSync,
         args::Fsync,
     );
+    // `fs.read` is the one argument set whose buffer is a write destination.
+    // SAFETY: as for `impl_fs_argument!`; the buffer is pinned and GC-rooted.
+    unsafe impl ThreadIsolatedArg for args::Read {}
+    impl FsArgument for args::Read {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::Read::from_js(ctx, arguments)
+        }
+        fn write_back(&mut self, global: &JSGlobalObject) {
+            if let args::ReadBuffer::PinnedBuffer(buffer) = &mut self.buffer {
+                buffer.write_back(global);
+            }
+        }
+    }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
@@ -1252,6 +1271,7 @@ mod _async_tasks {
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
             let _dispatch = js.tracker.dispatch(global_object);
+            this.args.write_back(global_object);
 
             let success = this.result.is_ok();
             let promise_value = js.promise.value();
@@ -3750,10 +3770,13 @@ pub mod args {
                 ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
             })?;
             let buffer = if arguments.will_be_async {
-                ReadBuffer::PinnedBuffer(
-                    PinnedArrayBuffer::root(ctx, buffer_value)
-                        .ok_or_else(|| ctx.throw_out_of_memory())?,
-                )
+                let mut pinned = PinnedArrayBuffer::root(ctx, buffer_value)
+                    .ok_or_else(|| ctx.throw_out_of_memory())?;
+                // The pool thread writes into this buffer after JS has run again.
+                if !pinned.copy_out_for_write(ctx) {
+                    return Err(ctx.throw_out_of_memory());
+                }
+                ReadBuffer::PinnedBuffer(pinned)
             } else {
                 ReadBuffer::Buffer(buffer)
             };

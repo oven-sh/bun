@@ -7191,6 +7191,80 @@ describe("fs.Utf8Stream", () => {
   });
 });
 
+describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory", () => {
+  // `WebAssembly.Memory.prototype.grow()` on a bounds-checked memory allocates a
+  // new block, copies into it, and frees the old one. `fs.read` gave the pool
+  // thread a pointer into that old block, so the kernel writes the file bytes
+  // into freed memory.
+  //
+  // `BUN_JSC_useWasmFastMemory=0` makes every memory bounds-checked. The default
+  // configuration reaches the same mode once the process holds more fast
+  // memories than the platform reserves slots for (8, or 3 without a large
+  // Gigacage).
+  const boundsCheckedEnv = { ...bunEnv, BUN_JSC_useWasmFastMemory: "0" };
+
+  // The read target is a fifo with no data in it, so the pool thread waits in
+  // read(2) until the grow has already happened.
+  function fixture(body: string) {
+    return `
+      import fs from "node:fs";
+      const fifo = process.argv[2];
+      const fd = fs.openSync(fifo, fs.constants.O_RDWR);
+      const mem = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+      ${body}
+      const { promise, resolve } = Promise.withResolvers();
+      fs.read(fd, view, 0, 4096, null, (err, bytesRead) => resolve({ err, bytesRead }));
+      mem.grow(1);
+      fs.writeSync(fd, Buffer.alloc(4096, 0x41));
+      const { err, bytesRead } = await promise;
+      if (err) {
+        console.log("error " + err.code);
+      } else {
+        let seen = 0;
+        for (let i = 0; i < Math.min(4096, view.byteLength); i++) if (view[i] === 0x41) seen++;
+        console.log("read " + bytesRead + ", " + seen + " of 4096 in the view");
+      }
+      fs.closeSync(fd);
+    `;
+  }
+
+  async function run(fixtureBody: string, env: Record<string, string>) {
+    using dir = tempDir("fs-read-wasm-grow", { "run.mjs": fixture(fixtureBody) });
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o666);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.mjs", fifo],
+      env,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("keeps the bytes the read produced when the grow moves the memory", async () => {
+    // `toResizableBuffer()` tracks the memory, so the view survives the grow and
+    // must hold what the read produced. Without the fix those bytes went into
+    // the block the grow freed.
+    const { stdout, exitCode } = await run(`const view = new Uint8Array(mem.toResizableBuffer());`, boundsCheckedEnv);
+    expect(stdout).toBe("read 4096, 4096 of 4096 in the view");
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not hand the kernel an address the grow unmapped", async () => {
+    // `Malloc=1` turns off the Gigacage, so the freed block is unmapped instead
+    // of parked on a cage free list. Without the fix the kernel reports EFAULT
+    // for the write, and with the Gigacage on it writes into whatever took the
+    // block. `mem.buffer` is detached by the grow, so nothing is copied back.
+    const { stdout, exitCode } = await run(`const view = new Uint8Array(mem.buffer);`, {
+      ...boundsCheckedEnv,
+      Malloc: "1",
+    });
+    expect(stdout).toBe("read 4096, 0 of 4096 in the view");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("module init", () => {
   it("fs.promises is a lazy getter that resolves to node:fs/promises", () => {
     const desc = Object.getOwnPropertyDescriptor(fs, "promises")!;

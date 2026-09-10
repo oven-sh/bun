@@ -32,6 +32,7 @@ export type AbortSignalLeakResult = {
 type Round = {
   arrived: number;
   aborted: number;
+  settled: number;
   allArrived: PromiseWithResolvers<void>;
   allAborted: PromiseWithResolvers<void>;
   gate: PromiseWithResolvers<void>;
@@ -41,6 +42,7 @@ function createRound(): Round {
   return {
     arrived: 0,
     aborted: 0,
+    settled: 0,
     allArrived: Promise.withResolvers(),
     allAborted: Promise.withResolvers(),
     gate: Promise.withResolvers(),
@@ -48,9 +50,28 @@ function createRound(): Round {
 }
 
 /**
+ * A round waits for requests, abort events and responses, not for time. If one
+ * of them never happens the runner reports only "test timed out", which does
+ * not say which one. This bound turns that into the counts. A case takes about
+ * 1 s on a debug ASAN build, so only a hang reaches it.
+ */
+const DEADLINE_MS = 60_000;
+
+async function withDeadline<T>(work: Promise<T>, state: () => string): Promise<T> {
+  const { promise: expired, reject } = Promise.withResolvers<never>();
+  const timer = setTimeout(() => reject(new Error(`no progress in ${DEADLINE_MS} ms: ${state()}`)), DEADLINE_MS);
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Full GC, then count the refs in each group that still point at a live
- * object. One collection is enough in practice; the extra event-loop turns
- * only give a straggler a chance to drop out before the caller's bound applies.
+ * object. One collection is enough in practice. On the first pass a signal can
+ * still be reachable from a pending JIT compilation plan for the handler
+ * (`ROOT[JITWorkList]` in a heap snapshot), so retry a few event-loop turns.
  */
 async function countAlive(...groups: WeakRef<object>[][]): Promise<number[]> {
   let alive = groups.map(group => group.length);
@@ -102,41 +123,52 @@ export async function runAbortSignalLeakCase({
 
   const url = server.url.href;
   const fetchOptions = http2 ? ({ protocol: "http2", tls: { rejectUnauthorized: false } } as const) : {};
-  const settle = (response: Promise<Response>) =>
-    response.then(
-      async res => `${res.status} body=${JSON.stringify(await res.text())}`,
-      err => `${err?.name}`,
+  const settle = (response: Promise<Response>) => {
+    const current = round;
+    return response.then(
+      async res => {
+        current.settled++;
+        return `${res.status} body=${JSON.stringify(await res.text())}`;
+      },
+      err => {
+        current.settled++;
+        return `${err?.name}`;
+      },
     );
+  };
 
   // One round per call, so nothing from a finished round stays reachable
   // through this function's frame while the next one runs.
-  async function runRound(): Promise<string[]> {
+  async function runRound(index: number): Promise<string[]> {
     round = createRound();
+    const current = round;
+    const state = () =>
+      `${http2 ? "http/2" : "http/1.1"} ${mode} round ${index + 1} of ${rounds}: ${current.arrived} of ${batchSize} requests arrived, ${current.aborted} aborted, ${current.settled} settled`;
     let responses: Promise<string>[];
     if (mode === "response-only") {
       responses = Array.from({ length: batchSize }, () => settle(fetch(url, fetchOptions)));
-      await round.allArrived.promise;
-      round.gate.resolve();
+      await withDeadline(current.allArrived.promise, state);
+      current.gate.resolve();
     } else {
       const controllers = Array.from({ length: batchSize }, () => new AbortController());
       for (const controller of controllers) clientSignals.push(new WeakRef(controller.signal));
       responses = controllers.map(({ signal }) => settle(fetch(url, { ...fetchOptions, signal })));
-      await round.allArrived.promise;
+      await withDeadline(current.allArrived.promise, state);
       for (const controller of controllers) controller.abort();
-      if (mode === "abort-before-response") await round.allAborted.promise;
-      round.gate.resolve();
+      if (mode === "abort-before-response") await withDeadline(current.allAborted.promise, state);
+      current.gate.resolve();
     }
     // A collection while the batch is still in flight on both ends.
     Bun.gc();
-    return await Promise.all(responses);
+    return await withDeadline(Promise.all(responses), state);
   }
 
   for (let i = 0; i < rounds; i++) {
-    for (const outcome of await runRound()) outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    for (const outcome of await runRound(i)) outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
   }
   // Resolves once every request has finished and every connection is closed,
   // so nothing the server still works on can hold a signal past this point.
-  await server.stop();
+  await withDeadline(server.stop(), () => `${http2 ? "http/2" : "http/1.1"} ${mode}: server.stop() did not drain`);
 
   const [serverAlive, clientAlive] = await countAlive(serverSignals, clientSignals);
   return {

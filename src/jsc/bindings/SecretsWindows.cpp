@@ -177,8 +177,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     cred.UserName = nameNameWide.data();
     cred.CredentialBlobSize = password.length();
     cred.CredentialBlob = (LPBYTE)password.data();
-    // Per-user, per-machine persistence, matching the macOS keychain backend.
-    // CRED_PERSIST_ENTERPRISE would roam the entry with a domain profile.
+    // Per-user, per-machine persistence, to match the macOS keychain backend.
     cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
 
     if (!framework->CredWriteW(&cred, 0)) {

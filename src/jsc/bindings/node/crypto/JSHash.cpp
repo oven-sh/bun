@@ -132,8 +132,7 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
 
 bool JSHash::update(std::span<const uint8_t> input)
 {
-    // Zero-length input succeeds even after digest() released the state, as
-    // in Node, where OpenSSL returns before its finalized check:
+    // Succeeds even once digest() freed the state, as in OpenSSL (and so Node):
     // https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/evp/digest.c#L387-L393
     if (input.empty()) {
         return true;
@@ -236,9 +235,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
     }
 
-    // Hash.prototype._flush passes `false`. Like Node's _flush it skips the
-    // finalized check and does not finalize, so end() works after digest()
-    // and one digest() works after end() (https://github.com/nodejs/node/issues/28245):
+    // Hash.prototype._flush passes `false`: no finalized check and no finalizing, as in Node.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hash.js#L129-L160
     bool finalize = true;
     JSValue finalizeValue = callFrame->argument(1);
@@ -264,9 +261,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     uint32_t len = hash->m_mdLen;
 
-    // Finalizing leaves the native state unusable (EVP_DigestFinal_ex cleanses
-    // the EVP_MD_CTX; EVP_DigestUpdate on a cleansed SHA-3 context never
-    // returns), so release it now and serve every later call from m_digest.
+    // EVP_DigestFinal_ex cleanses the context (SHA-3 then spins in EVP_DigestUpdate),
+    // so free the native state here and serve later calls from m_digest.
     if (!hash->m_digest && len > 0) {
         if (hash->m_zigHasher) {
             size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
@@ -337,9 +333,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     const EVP_MD* md = nullptr;
     std::unique_ptr<ExternZigHash::Hasher, decltype(&ExternZigHash::destroy)> zigHasher(nullptr, ExternZigHash::destroy);
     if ((original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue))) {
-        // m_digest without m_finalized means the stream's _flush took the
-        // digest. Node hands back a copy there whose update() and digest()
-        // both throw; there is no live state to copy, so throw here instead.
+        // m_digest alone: _flush took the digest. No live state to copy (Node returns an unusable copy).
         if (original->m_finalized || original->m_digest) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }

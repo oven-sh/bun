@@ -129,6 +129,26 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
+/// The `code` of `scan` and `transformSync`, with a buffer copied: a macro runs in the middle of the parse and can write, shrink or detach it. A fixed, unshared source over [`bun_ast::Source::MAX_PARSEABLE_LEN`] stays borrowed: the parser rejects it before a macro can run.
+fn code_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<StringOrBuffer<'static>>> {
+    let parsed = StringOrBuffer::from_js(global, value)?;
+    let Some(StringOrBuffer::Buffer(buffer)) = &parsed else {
+        return Ok(parsed);
+    };
+    if !buffer.buffer.can_change_under_borrow()
+        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+    {
+        return Ok(parsed);
+    }
+    match buffer.buffer.try_copy_bytes() {
+        Some(copy) => Ok(Some(StringOrBuffer::owned(copy))),
+        None => Err(global.throw_out_of_memory()),
+    }
+}
+
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
@@ -1270,7 +1290,7 @@ impl JSTranspiler {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
         let code = code_holder.slice();
@@ -1359,7 +1379,9 @@ impl JSTranspiler {
         };
 
         let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
-            let bytes = buffer.byte_slice().to_vec();
+            let Some(bytes) = buffer.try_copy_bytes() else {
+                return Err(global.throw_out_of_memory());
+            };
             global.vm().report_extra_memory(bytes.len());
             StringOrBuffer::owned_isolated(bytes)
         } else if let Some(code) = StringOrBuffer::from_js_async(global, code_arg)? {
@@ -1412,7 +1434,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = code_from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
@@ -1615,7 +1637,7 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        let Some(code_holder) = StringOrBuffer::from_js_stable(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type(
                 "scanImports",
                 "code",

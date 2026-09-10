@@ -123,7 +123,7 @@ pub(crate) fn render_to_ansi(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
@@ -191,7 +191,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
@@ -294,7 +294,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
@@ -387,7 +387,7 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };

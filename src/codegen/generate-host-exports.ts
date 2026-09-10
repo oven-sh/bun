@@ -144,9 +144,20 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
         `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
     };
   }
-  // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
+  // `&mut [T]` — C passes `(T* name, size_t name_len)`; as above, writable.
+  const sliceMut = /^&\s*mut\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
+  if (sliceMut) {
+    const elem = sliceMut[1].trim();
+    return {
+      cTy: `*mut ${elem}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live, exclusively borrowed elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice_mut(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // Other slice shapes (`&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` / \`&mut [T]\` or (ptr, len)`);
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
@@ -564,6 +575,34 @@ const importCandidates: Array<[string, string]> = [
   ["crate::bake::dev_server::inspector_agent", "InspectorBunFrontendDevServerAgentHandle"],
   ["bun_jsc::debugger", "LifecycleHandle"],
   ["bun_jsc::debugger", "TestReporterHandle"],
+  ["core::mem", "ManuallyDrop"],
+  ["core::mem", "MaybeUninit"],
+  ["bun_ptr", "ThisPtr"],
+  ["bun_ptr", "RefPtr"],
+  ["bun_jsc", "JSPromiseStrong"],
+  ["bun_jsc", "NapiEnv"],
+  ["bun_jsc", "NapiHandleScope"],
+  // Node-API ABI types (`crate::napi`'s exported entry points).
+  ...[
+    "Out",
+    "ThreadSafeFunction",
+    "char16_t",
+    "napi_async_complete_callback",
+    "napi_async_execute_callback",
+    "napi_async_work",
+    "napi_deferred",
+    "napi_escapable_handle_scope",
+    "napi_event_loop",
+    "napi_finalize",
+    "napi_handle_scope",
+    "napi_node_version",
+    "napi_status",
+    "napi_threadsafe_function_call_js",
+    "napi_threadsafe_function_call_mode",
+    "napi_threadsafe_function_release_mode",
+    "napi_typedarray_type",
+    "napi_value",
+  ].map(n => ["crate::napi::napi_body", n] as [string, string]),
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {

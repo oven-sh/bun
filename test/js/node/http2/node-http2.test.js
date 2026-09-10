@@ -6098,4 +6098,4 @@ it("a client session constructor that throws drops the socket it was connecting"
     stderr: "",
     exitCode: 0,
   });
-}, 45_000);
+});

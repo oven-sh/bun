@@ -1195,8 +1195,12 @@ it("chrome: console: globalThis.console nests console.group output", async () =>
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
-      // A stray groupEnd() from the page must not dedent the parent's groups.
-      await view.evaluate("(console.groupEnd(), console.log('before'), console.group('outer'), console.log('inside'), console.groupEnd(), console.log('after'), console.warn('careful'), 0)");
+      // A stray groupEnd() from the page must not dedent the parent's groups,
+      // and a groupCollapsed()/groupEnd() pair must leave them balanced.
+      console.group("parent");
+      await view.evaluate("(console.groupEnd(), console.groupCollapsed('collapsed'), console.log('in collapsed'), console.groupEnd(), console.log('still in parent'), 0)");
+      console.groupEnd();
+      await view.evaluate("(console.log('before'), console.group('outer'), console.log('inside'), console.groupEnd(), console.log('after'), console.warn('careful'), 0)");
       // A group the page never ends is ended for it when the page goes away:
       // by a new document, and by close().
       await view.evaluate("(console.group('left open'), console.log('nested'), 0)");
@@ -1215,11 +1219,10 @@ it("chrome: console: globalThis.console nests console.group output", async () =>
   // group() indents what follows and groupEnd() undoes it without printing
   // V8's synthetic "console.groupEnd" argument. warn routes to stderr.
   expect(stdout).toBe(
-    "before\nouter\n  inside\nafter\nleft open\n  nested\nparent after navigate\nleft open 2\nparent after close\n",
+    "parent\n  collapsed\n    in collapsed\n  still in parent\n" +
+      "before\nouter\n  inside\nafter\nleft open\n  nested\nparent after navigate\nleft open 2\nparent after close\n",
   );
-  expect(stderr).toContain("careful");
-  expect(stderr).not.toContain("console.groupEnd");
-  expect(stdout).not.toContain("careful");
+  expect(stderr).toBe("careful\n");
   expect(exit).toBe(0);
 });
 

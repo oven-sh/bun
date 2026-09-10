@@ -1279,12 +1279,11 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             auto clientRef = g->consoleClient();
             if (!clientRef) return;
             if (type == "group"_s || type == "groupCollapsed"_s) {
+                // A terminal cannot collapse: both open a plain group, so the
+                // depth counted here is exactly the parent's indent.
                 if (view->m_consoleGroupDepth == UINT16_MAX) return;
                 ++view->m_consoleGroupDepth;
-                if (type == "group"_s)
-                    clientRef->group(g, WTF::move(scriptArgs));
-                else
-                    clientRef->groupCollapsed(g, WTF::move(scriptArgs));
+                clientRef->group(g, WTF::move(scriptArgs));
             } else if (type == "groupEnd"_s) {
                 if (!view->m_consoleGroupDepth) return; // not the parent's own groups
                 --view->m_consoleGroupDepth;

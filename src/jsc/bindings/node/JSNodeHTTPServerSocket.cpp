@@ -16,10 +16,10 @@
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
+extern "C" void Bun__NodeHTTPResponse_spillPendingPinnedWrite(void* ctx);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, void* responseCtx, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 
@@ -242,6 +242,12 @@ bool JSNodeHTTPServerSocket::isClosed() const
     return !socket || us_socket_is_closed(socket);
 }
 
+void* JSNodeHTTPServerSocket::currentResponseCtx() const
+{
+    auto* res = currentResponseObject.get();
+    return res ? res->m_ctx : nullptr;
+}
+
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
@@ -261,10 +267,37 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
+    /* A zero-copy res.write() tail is not in the send buffer until spilled. */
+    if (void* ctx = currentResponseCtx()) {
+        Bun__NodeHTTPResponse_spillPendingPinnedWrite(ctx);
+    }
     if (is_ssl) {
         return deferShutdownUntilResponseDrains<true>(socket);
     }
     return deferShutdownUntilResponseDrains<false>(socket);
+}
+
+JSC::EncodedJSValue JSNodeHTTPServerSocket::shutdownNow(JSC::JSGlobalObject* globalObject)
+{
+    if (!socket) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
+    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
+    // re-add), without which macOS 26 does not deliver the peer's close.
+    // An existing pause is someone else's to resume (which re-adds it).
+    bool cycleRead = !upgraded && !us_socket_is_paused(socket);
+    if (cycleRead) {
+        us_socket_pause(socket);
+    }
+    auto result = us_socket_buffered_js_write(socket, is_ssl, ended, &streamBuffer, currentResponseCtx(), globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    // Undo the pause above after the shutdown so the unread body drains
+    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
+    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    if (cycleRead) {
+        us_socket_resume(socket);
+    }
+    return result;
 }
 
 template<bool SSL>
@@ -373,7 +406,6 @@ JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
             clearSocketData<false>(this->upgraded, socket);
         }
     }
-    us_socket_free_stream_buffer(&streamBuffer);
 }
 
 JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -701,27 +733,14 @@ void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    if (!functionToCallOnDrain) {
-        return;
+
+    // Retry a socket.end() whose FIN was deferred behind buffered bytes.
+    if (this->ended && this->socket && !us_socket_is_shut_down(this->socket)) {
+        shutdownNow(globalObject);
     }
 
-    auto bufferedSize = this->streamBuffer.bufferedSize();
-    if (bufferedSize > 0) {
-        auto* globalObject = defaultGlobalObject(this->globalObject());
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-        bufferedSize = this->streamBuffer.bufferedSize();
-
-        if (bufferedSize > 0) {
-            // need to drain more
-            return;
-        }
+    if (!functionToCallOnDrain) {
+        return;
     }
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 

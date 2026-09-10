@@ -129,6 +129,8 @@ pub mod api {
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,
+        /// from `--no-ffi-cc`. `None` == `true`.
+        pub allow_ffi_cc: Option<bool>,
         /// from `--unhandled-rejections`; default is `Bun`.
         pub unhandled_rejections: Option<UnhandledRejections>,
 
@@ -363,7 +365,6 @@ pub mod api {
         _none = 0,
         Automatic = 1,
         Classic = 2,
-        Solid = 3,
     }
 
     /// JSX transform configuration (factory, fragment, runtime, …).

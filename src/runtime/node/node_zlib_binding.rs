@@ -3,12 +3,13 @@ use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use bun_ptr::ParentRef;
+use bun_ptr::{ParentRef, RefPtr};
 
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
@@ -102,7 +103,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_as_array::<2>();
 
     let data_view;
-    let data: ZigStringSlice = 'blk: {
+    let data_buffer;
+    let data: Utf8Bytes = 'blk: {
         let data: JSValue = arguments[0];
 
         if callframe.arguments_count() < 1 {
@@ -128,7 +130,8 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
                 )
                 .throw());
         };
-        break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
+        data_buffer = buffer;
+        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
     };
 
     let value: u32 = 'blk: {
@@ -192,7 +195,9 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
-pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
+pub(crate) trait CompressionStreamImpl:
+    Sized + Taskable + bun_ptr::CellRefCounted + bun_ptr::AnyRefCounted + 'static
+{
     type Stream: CompressionContext;
 
     // Field accessors (interior-mutability cells; all `&self`).
@@ -240,25 +245,6 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Recover `*mut Self` from the embedded `WorkPoolTask`.
     /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
-
-    // Intrusive refcount.
-    fn ref_(&self);
-    /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
-    /// `heap::take`) when it hits zero.
-    ///
-    /// Raw-pointer receiver so the destroy path keeps the
-    /// allocation's full write provenance (routing through `&self` and casting
-    /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
-    /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
-    /// `finalize`) holds a `*mut T` derived from the original `m_ctx`
-    /// allocation; the bracketed `ref_()`/`deref()` in `write_sync` can never
-    /// hit zero while the JS wrapper's +1 is still live, so its
-    /// `(&T as *const T).cast_mut()` provenance is sufficient (only the
-    /// `Cell<u32>` is touched).
-    ///
-    /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
-    /// in `constructor()`. After this returns, `*this` may have been freed.
-    unsafe fn deref(this: *mut Self);
 
     // Per-class codegen (`T.js.*` cached-property accessors).
     fn write_result_get_cached(this_value: JSValue) -> Option<JSValue>;
@@ -717,7 +703,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         Self::throw_unless_idle(this, global_this)?;
         this.write_in_progress().set(true);
-        this.ref_();
+        // Can never hit zero while the JS wrapper's +1 is live (we are
+        // synchronously inside a host-fn invoked through that wrapper).
+        // SAFETY: `this` is the live m_ctx payload.
+        let _guard = unsafe { RefPtr::init_ref(std::ptr::from_ref::<T>(this).cast_mut()) };
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);
@@ -730,13 +719,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             this.flush_write_result(global_this, this_value);
             this.write_in_progress().set(false);
         }
-        // SAFETY: matching `ref_()` above. The bracketed `ref_()`/`deref()`
-        // can never hit zero while the JS wrapper's +1 is live (we are
-        // synchronously inside a host-fn invoked through that wrapper), so the
-        // `(&T as *const T).cast_mut()` provenance is sufficient — only the
-        // `Cell<u32>` refcount is touched.
-        unsafe { T::deref(std::ptr::from_ref::<T>(this).cast_mut()) };
-
         Ok(JSValue::UNDEFINED)
     }
 
@@ -852,7 +834,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let msg_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
+        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -864,7 +846,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let code_value = match jsc::bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
+        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -886,13 +868,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if this.pending_close().get() {
             Self::close_internal(this);
         }
-    }
-
-    pub(crate) fn finalize(this: Box<T>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `this` was the unique GC-owned m_ctx; `deref` frees on count==0.
-        unsafe { T::deref(Box::into_raw(this)) };
     }
 }
 
@@ -965,10 +940,6 @@ macro_rules! __compression_stream_mixin_reexports {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::get_on_error(
                     this, this_value, global,
                 )
-            }
-            #[inline]
-            pub fn finalize(self: Box<Self>) {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::finalize(self)
             }
         }
     };
@@ -1054,18 +1025,6 @@ macro_rules! __impl_compression_stream {
                 // `from_field_ptr!`
                 // computes the byte offset via `offset_of!(Self, task)`.
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
-            }
-
-            // All three `Native*` structs `#[derive(bun_ptr::CellRefCounted)]`
-            // with their own `#[ref_count(destroy = …)]` (or the default
-            // `Box::from_raw` drop) — delegate so the macro doesn't hard-code
-            // a `Self::deinit(*mut Self)` signature that only one of them has.
-            #[inline] fn ref_(&self) { <Self as ::bun_ptr::CellRefCounted>::ref_(self) }
-            #[inline] unsafe fn deref(this: *mut Self) {
-                // SAFETY: forwarded trait contract — `this` is live; the
-                // derived `CellRefCounted::deref` routes zero to the per-type
-                // `destroy`.
-                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
             }
 
             #[inline] fn write_result_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {

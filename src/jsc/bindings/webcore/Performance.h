@@ -114,12 +114,6 @@ public:
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
-
-    // EventTargetData* eventTargetData() override;
-    // EventTargetData* eventTargetDataConcurrently() override;
-    // EventTargetData& ensureEventTargetData() override;
-
 private:
     Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);
 

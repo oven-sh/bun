@@ -64,23 +64,19 @@
 namespace WebCore {
 using namespace JSC;
 
-String convertEnumerationToString(CryptoKey::Type enumerationValue)
-{
-    static const NeverDestroyed<String> values[] = {
-        MAKE_STATIC_STRING_IMPL("public"),
-        MAKE_STATIC_STRING_IMPL("private"),
-        MAKE_STATIC_STRING_IMPL("secret"),
-    };
-    static_assert(static_cast<size_t>(CryptoKey::Type::Public) == 0, "CryptoKey::Type::Public is not 0 as expected");
-    static_assert(static_cast<size_t>(CryptoKey::Type::Private) == 1, "CryptoKey::Type::Private is not 1 as expected");
-    static_assert(static_cast<size_t>(CryptoKey::Type::Secret) == 2, "CryptoKey::Type::Secret is not 2 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
-    return values[static_cast<size_t>(enumerationValue)];
-}
-
 template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, CryptoKey::Type enumerationValue)
 {
-    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
+    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
+    switch (enumerationValue) {
+    case CryptoKey::Type::Public:
+        return commonStrings.keyTypePublicString();
+    case CryptoKey::Type::Private:
+        return commonStrings.keyTypePrivateString();
+    case CryptoKey::Type::Secret:
+        return commonStrings.keyTypeSecretString();
+    }
+    ASSERT_NOT_REACHED();
+    return jsEmptyString(lexicalGlobalObject.vm());
 }
 
 // Attributes

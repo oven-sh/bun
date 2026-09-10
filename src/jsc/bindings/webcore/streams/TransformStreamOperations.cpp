@@ -258,6 +258,7 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     // The readable is closed: a codec chunk (or, with a close in flight, flush) still being
     // drained into it can no longer finish.
     nativeCodecAbandon(globalObject, stream);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (auto* finishPromise = controller->m_finishPromise.get())
         return finishPromise;
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -334,6 +335,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelFulfilled, (JSGl
     const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
     if (auto* readableController = transformReadableController(stream)) {
@@ -359,6 +361,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkAbortCancelRejected, (JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -372,6 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushFulfilled, (JSGlo
     const auto* readable = stream->m_readable.get();
     if (readable->m_state == ReadableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, readable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
     if (auto* readableController = transformReadableController(stream)) {
@@ -397,6 +401,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSinkCloseFlushRejected, (JSGlob
         RETURN_IF_EXCEPTION(scope, {});
     }
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
@@ -412,6 +417,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelFulfilled, (JSGloba
     const auto* writable = stream->m_writable.get();
     if (writable->m_state == WritableStreamState::Errored) {
         rejectPromise(globalObject, finishPromise, writable->m_storedError.get());
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
     writableStreamDefaultControllerErrorIfNeeded(globalObject, writable->m_controller.get(), reason);
@@ -437,6 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSSourceCancelRejected, (JSGlobal
     transformStreamUnblockWrite(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     rejectPromise(globalObject, finishPromise, rejection);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

@@ -17,9 +17,6 @@
   "src/runtime/node/node_fs.rs": {
     "discarded result of a call that enters script": 1
   },
-  "src/runtime/test_runner/timers/FakeTimers.rs": {
-    "discarded result of a call that enters script": 1
-  },
   "src/runtime/webcore/Request.rs": {
     "JsResult collapsed on the spot": 1
   },

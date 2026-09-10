@@ -3,6 +3,8 @@ use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
+use bun_core::Utf8Bytes;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
@@ -11,7 +13,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
-    JsError, JsRef, JsResult, ZigStringSlice,
+    JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -507,7 +509,7 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
@@ -760,7 +762,7 @@ impl ServerWebSocket {
                 }
             }
 
-            let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
+            let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
                     let err = global_object.take_error(e);
@@ -1343,14 +1345,14 @@ impl ServerWebSocket {
             break 'brk args[0].coerce_to_i32(global_this)?;
         };
 
-        let message_value: ZigStringSlice = 'brk: {
+        let message_value: Utf8Bytes = 'brk: {
             if args[1].is_undefined() {
-                break 'brk ZigStringSlice::empty();
+                break 'brk Utf8Bytes::EMPTY;
             }
-            break 'brk args[1].to_slice(global_this)?;
+            break 'brk args[1].to_utf8(global_this)?;
         };
 
-        // `to_slice` can run user `toString()`, which may re-entrantly
+        // `to_utf8` can run user `toString()`, which may re-entrantly
         // `ws.close()` and already decrement the count; re-check the guard.
         if self.is_closed() {
             return Ok(JSValue::UNDEFINED);
@@ -1532,7 +1534,7 @@ impl ServerWebSocket {
             _ => return Ok(JSValue::UNDEFINED),
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, text)
+        bun_string_jsc::create_utf8_for_js(global_this, text)
     }
 }
 

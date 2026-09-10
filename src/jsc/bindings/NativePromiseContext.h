@@ -42,8 +42,10 @@ public:
         HTTPSServerRequestContext,
         DebugHTTPServerRequestContext,
         DebugHTTPSServerRequestContext,
-        HTTPSServerH3RequestContext,
-        DebugHTTPSServerH3RequestContext,
+        HTTPServerMuxRequestContext,
+        HTTPSServerMuxRequestContext,
+        DebugHTTPServerMuxRequestContext,
+        DebugHTTPSServerMuxRequestContext,
         HTMLRewriterSuspension,
         // Task-only tag on the Rust side; never stored in a context cell.
         HTMLRewriterPipeFree,

@@ -102,16 +102,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
             return;
         }
-
-        //                 // Capture "this" inside arrow functions that will be lowered into normal
-        // // function expressions for older language environments
-        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
-        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
-        // }
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -252,7 +247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
+            p.record_assignment(result.r#ref);
         }
 
         let mut original_name: Option<&[u8]> = None;
@@ -692,8 +687,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if e_.tag.is_some() {
-            p.visit_expr(e_.tag.as_mut().unwrap());
+        if let Some(tag) = e_.tag.as_mut() {
+            p.template_tag = tag.data;
+            p.visit_expr(tag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -885,6 +881,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
@@ -1003,6 +1000,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
                     if !s.is_utf16 {
+                        // A folded `"a" + "b"` is a rope whose `data` is only "a".
+                        s.resolve_rope_if_needed(p.arena);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.arena) {
@@ -1034,20 +1034,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
+                            let opts = IdentifierOpts::default()
+                                .with_is_call_target(is_call_target)
+                                .with_is_template_tag(is_template_tag)
+                                .with_is_delete_target(is_delete_target)
+                                .with_assign_target(in_.assign_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
                                 s.data.slice(),
                                 unwrapped.loc,
-                                IdentifierOpts::default()
-                                    .with_is_call_target(is_call_target)
-                                    // .is_template_tag = is_template_tag,
-                                    .with_is_delete_target(is_delete_target)
-                                    .with_assign_target(in_.assign_target),
+                                opts,
                             ) {
                                 *e = rewrite;
                                 return;
                             }
+                            e_.is_import_property_use =
+                                p.record_import_property_use(&e_.target, s.data.slice(), opts);
                         }
                     }
                 }
@@ -1178,6 +1181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
+                p.ignore_namespace_local_test_use(&e_.value);
 
                 // The expression "typeof (0, x)" must not become "typeof x" if "x"
                 // is unbound because that could suppress a ReferenceError from "x"
@@ -1224,6 +1228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
@@ -1239,6 +1244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Post-process the unary expression
                 match e_.op {
                     Op::UnNot => {
+                        p.ignore_namespace_local_test_use(&e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
@@ -1341,12 +1347,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
         // while iterating without laundering.
         let defines = p.define;
-        if let Some(parts) = defines.dots.get(e_.name.slice()) {
+        if let Some(parts) = defines.dots_for(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
@@ -1402,6 +1409,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_catch: p.then_catch_chain.has_catch || p.then_catch_chain.has_multiple_args,
                     has_multiple_args: false,
                 };
+            } else if e_.name == b"finally" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: p.then_catch_chain.has_catch,
+                    has_multiple_args: false,
+                };
             }
         }
 
@@ -1425,21 +1438,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // `ns?.foo` on an import()/require() namespace local reads `foo`.
+        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+            && let Data::EIdentifier(id) = e_.target.data
+            && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
+            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                map.put(
+                    e_.name.slice(),
+                    js_ast::LocRef {
+                        loc: e_.name_loc,
+                        ref_: js_ast::Ref::NONE,
+                    },
+                )
+                .expect("oom");
+                p.note_tracked_namespace_use(id.ref_);
+            }
+        }
+
         if e_.optional_chain.is_none() {
+            let opts = IdentifierOpts::default()
+                .with_is_call_target(is_call_target)
+                .with_is_template_tag(is_template_tag)
+                .with_assign_target(in_.assign_target)
+                .with_is_delete_target(is_delete_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
                 e_.name.slice(),
                 e_.name_loc,
-                IdentifierOpts::default()
-                    .with_is_call_target(is_call_target)
-                    .with_assign_target(in_.assign_target)
-                    .with_is_delete_target(is_delete_target),
-                // .is_template_tag = p.template_tag != null,
+                opts,
             ) {
                 *e = _expr;
                 return;
             }
+            e_.is_import_property_use =
+                p.record_import_property_use(&e_.target, e_.name.slice(), opts);
 
             if Self::ALLOW_MACROS {
                 if !p.options.features.is_macro_runtime {
@@ -1471,6 +1507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.in_branch_condition = true;
         p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
+        p.ignore_namespace_local_test_use(&e_.test);
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
@@ -1809,6 +1846,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
 
+        // Already transposed (this is a re-visit, e.g. after the minifier
+        // substituted the expression into a later use): the import record and
+        // its namespace tracking stand; transposing again would mint a second
+        // record for the same call.
+        if e_.import_record_index != u32::MAX {
+            p.should_fold_typescript_constant_expressions =
+                prev_should_fold_typescript_constant_expressions;
+            return;
+        }
+
         // Import transposition is able to duplicate the options structure, so
         // only perform it if the expression is side effect free.
         //
@@ -1918,6 +1965,126 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
+        }
+
+        // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
+        'promise_all_then: {
+            if !p.options.bundle {
+                break 'promise_all_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'promise_all_then;
+            };
+            if dot.name.slice() != b"then" || dot.optional_chain.is_some() {
+                break 'promise_all_then;
+            }
+            let Data::ECall(inner) = dot.target.data else {
+                break 'promise_all_then;
+            };
+            let Some(items) = p.promise_all_import_items(&inner) else {
+                break 'promise_all_then;
+            };
+            let args = e_.args.slice();
+            if args.is_empty() || args.len() > 2 {
+                break 'promise_all_then;
+            }
+            let Data::EArrow(arrow) = args[0].data else {
+                break 'promise_all_then;
+            };
+            if arrow.has_rest_arg {
+                break 'promise_all_then;
+            }
+            let fn_args = arrow.args.slice();
+            match fn_args.first() {
+                None => {
+                    for item in items.items.slice() {
+                        if let Data::EImport(im) = item.data {
+                            if im.namespace_ref.is_valid() {
+                                p.note_tracked_namespace_use(im.namespace_ref);
+                            }
+                        }
+                    }
+                }
+                Some(first) => {
+                    if first.default.is_some() {
+                        break 'promise_all_then;
+                    }
+                    let js_ast::binding::Data::BArray(pattern) = first.binding.data else {
+                        break 'promise_all_then;
+                    };
+                    p.track_promise_all_destructure(items, &pattern);
+                }
+            }
+        }
+
+        // `import("str").then(<fn>)` — record which exports the callback
+        // observes so the linker can drop the rest. The call is left as written.
+        'dyn_import_then: {
+            if !p.options.bundle {
+                break 'dyn_import_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'dyn_import_then;
+            };
+            if dot.name.slice() != b"then" {
+                break 'dyn_import_then;
+            }
+            let Data::EImport(im) = dot.target.data else {
+                break 'dyn_import_then;
+            };
+            if !im.namespace_ref.is_valid() {
+                break 'dyn_import_then;
+            }
+            let args = e_.args.slice();
+            if args.is_empty() || args.len() > 2 {
+                break 'dyn_import_then;
+            }
+            // Only arrows are safe: a `function(m){…}` body can reach the
+            // namespace via `arguments[0]` without ever referencing `m`.
+            let Data::EArrow(arrow) = args[0].data else {
+                break 'dyn_import_then;
+            };
+            // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
+            if arrow.has_rest_arg {
+                break 'dyn_import_then;
+            }
+            match arrow.args.slice().first() {
+                None => {
+                    // `.then(() => …)` — no exports observed.
+                    p.note_tracked_namespace_use(im.namespace_ref);
+                }
+                Some(first_param) => {
+                    if first_param.default.is_some() {
+                        break 'dyn_import_then;
+                    }
+                    match first_param.binding.data {
+                        js_ast::binding::Data::BObject(obj) => {
+                            if p.try_track_dynamic_import_destructure(
+                                im.namespace_ref,
+                                &[im.import_record_index],
+                                obj.properties(),
+                                false,
+                            )
+                            .is_some()
+                            {
+                                p.note_tracked_namespace_use(im.namespace_ref);
+                                p.note_destructured_locals(obj.properties());
+                            }
+                        }
+                        js_ast::binding::Data::BIdentifier(id) => {
+                            // The body is visited *after* this block so the
+                            // registration is observed there.
+                            p.register_dynamic_import_namespace_local(
+                                id.r#ref,
+                                first_param.binding.loc,
+                                im.import_record_index,
+                            );
+                            p.note_tracked_namespace_use(im.namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         let is_macro_ref: bool = if Self::ALLOW_MACROS {
@@ -2556,7 +2723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly
         // uses open_parens_loc.)
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
 
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
@@ -2622,7 +2789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
+        let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::exception_list;
 use bun_core::String as BunString;
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
 use crate::SourceProvider;
@@ -112,12 +112,12 @@ pub(crate) struct SourceLineIterator<'a> {
     pub(crate) i: i32,
 }
 
-pub(crate) struct SourceLine {
+pub(crate) struct SourceLine<'a> {
     pub line: i32,
-    pub text: ZigStringSlice,
+    pub text: Utf8Bytes<'a>,
 }
 
-impl SourceLine {
+impl SourceLine<'_> {
     /// The line as it should be displayed: surrounding newlines and trailing
     /// indentation removed.
     pub(crate) fn trimmed_text(&self) -> &[u8] {
@@ -140,7 +140,7 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
+    pub(crate) fn until_last(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 1 {
             return None;
         }
@@ -148,7 +148,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub(crate) fn next(&mut self) -> Option<SourceLine> {
+    pub(crate) fn next(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 0 {
             return None;
         }

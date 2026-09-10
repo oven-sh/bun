@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -118,9 +118,7 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// When the reader has read a chunk of data
-    /// and hasMore is true, it means that there might be more data to read.
-    /// Returning false prevents the reader from reading more data.
+    /// Returning false ends only the current read loop. To stop the reader, call `pause()`.
     fn on_read_chunk(&self, chunk: Chunk<'_>, has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }
@@ -241,6 +239,10 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
+        // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
+        if value && !poll.is_watching() {
+            return;
+        }
         poll.set_keeping_process_alive(self.vtable.event_loop(), value);
     }
 
@@ -531,9 +533,8 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        // Re-applied on every arm: `pause()` unregisters, which drops it.
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 

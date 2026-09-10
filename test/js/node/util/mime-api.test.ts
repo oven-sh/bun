@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, expectRssDeltaBelow } from "harness";
 import { MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
@@ -435,4 +435,25 @@ test("ERR_INVALID_MIME_SYNTAX message matches Node.js", () => {
     "text/": 'The MIME syntax for a subtype in "text/" is invalid',
     "texthtml": 'The MIME syntax for a type in "texthtml" is invalid',
   });
+});
+
+test("MIMEType releases its type and subtype strings when garbage-collected", async () => {
+  // 128 KiB type + 128 KiB subtype, so each instance owns 256 KiB of lowercased copies.
+  // The count stays low because a debug ASAN build validates these at ~45 ns per byte.
+  const code = /* js */ `
+    const { MIMEType } = require("node:util");
+    const input = Buffer.alloc(128 * 1024, "a").toString() + "/" + Buffer.alloc(128 * 1024, "b").toString();
+    for (let i = 0; i < 20; i++) new MIMEType(input);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 160; i++) {
+      new MIMEType(input);
+      if (i % 20 === 19) Bun.gc(true);
+    }
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~42 MiB (160 x 256 KiB). Fixed: 1 to 4 MiB of allocator slack.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 25 });
 });

@@ -1115,6 +1115,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
+// A Navigate-slot command (navigate/reload/goBack/goForward or the attach chain) Chrome has not replied to.
+bool Transport::hasUnansweredNavigation(JSWebView* view)
+{
+    for (auto& entry : m_pending.values()) {
+        if (entry.viewId == view->m_viewId && entry.slot == PendingSlot::Navigate && entry.method != Method::PageTitle) return true;
+    }
+    return false;
+}
+
 // Page.frameNavigated {frame: {parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
@@ -1131,6 +1140,9 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
         if (loaderId != view->m_chromeFailedLoaderId) {
             view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
             view->m_chromeUnreportedFailureGeneration = view->m_chromeNavGeneration;
+            // A navigation command Chrome has not answered yet did not produce this page (its
+            // reply would have come first), so the failure is not that command's to settle.
+            view->m_chromeUnreportedFailureSettles = !hasUnansweredNavigation(view);
         }
         return;
     }
@@ -1160,12 +1172,9 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
     if (view->m_chromeDocumentLoading) return; // folded into that load's single onNavigated
     // An unanswered navigation command settles from its reply instead (see PageNavigate).
-    bool commandInFlight = false, titleFetchInFlight = false;
+    bool commandInFlight = hasUnansweredNavigation(view), titleFetchInFlight = false;
     for (auto& entry : m_pending.values()) {
-        if (entry.viewId != view->m_viewId || entry.slot != PendingSlot::Navigate) continue;
-        if (entry.method != Method::PageTitle)
-            commandInFlight = true;
-        else if (entry.navGeneration == view->m_chromeNavGeneration)
+        if (entry.viewId == view->m_viewId && entry.method == Method::PageTitle && entry.navGeneration == view->m_chromeNavGeneration)
             titleFetchInFlight = true;
     }
     if (commandInFlight)
@@ -1240,8 +1249,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             finishNavigation(view);
         else if (auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String()); !failedUrl.isNull()) {
             JSValue err = createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s));
-            // A navigation issued since that commit owns the slot now; it only hears the callback.
-            if (view->m_chromeUnreportedFailureGeneration == view->m_chromeNavGeneration)
+            // A navigation issued around that commit owns the slot now; it only hears the callback.
+            if (view->m_chromeUnreportedFailureSettles && view->m_chromeUnreportedFailureGeneration == view->m_chromeNavGeneration)
                 settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, err);
             else
                 fireOnNavigationFailed(g, view, err);

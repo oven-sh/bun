@@ -274,6 +274,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
     uint8_t quality = 80; // CDP default for jpeg/webp. Ignored for png.
 
     JSValue optsVal = callFrame->argument(0);
+    if (!optsVal.isUndefined() && (!optsVal.isObject() || optsVal.isCallable()))
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optsVal);
     if (optsVal.isObject()) {
         JSObject* opts = optsVal.getObject();
         JSValue fmtVal = opts->get(globalObject, Identifier::fromString(vm, "format"_s));
@@ -566,10 +568,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scroll"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    double dx = callFrame->argument(0).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double dy = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!callFrame->argument(0).isNumber())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "dx"_s, "number"_s, callFrame->argument(0));
+    if (!callFrame->argument(1).isNumber())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "dy"_s, "number"_s, callFrame->argument(1));
+    double dx = callFrame->argument(0).asNumber();
+    double dy = callFrame->argument(1).asNumber();
     // NaN/Inf permanently poison the m_pendingScrollDx/Dy accumulators
     // in the host (NaN + anything = NaN), and static_cast<int32_t>(NaN)
     // at the CGEvent call site is UB.

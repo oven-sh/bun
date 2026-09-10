@@ -919,6 +919,15 @@ it("chrome: method arguments are type- and range-checked", async () => {
   expect(code(() => v.click(1, 2, () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");
   expect(code(() => v.scrollTo("#a", () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");
 
+  expect(code(() => v.screenshot("png"))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type string ('png')`,
+  );
+  expect(code(() => v.scroll("100", 0))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "dx" argument must be of type number. Received type string ('100')`,
+  );
+  expect(code(() => v.scroll(0, null))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "dy" argument must be of type number. Received null`,
+  );
   expect(code(() => v.scrollTo("#a", { block: 5 }))).toBe(
     `ERR_INVALID_ARG_VALUE: The property 'options.block' must be "start", "center", "end", or "nearest". Received 5`,
   );

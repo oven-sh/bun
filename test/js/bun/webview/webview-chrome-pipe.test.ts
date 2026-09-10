@@ -11,6 +11,7 @@
 // { resolved } or { rejected: message }.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "fake-chrome-fixture.ts");
@@ -38,10 +39,10 @@ const prelude = /* js */ `
   const big = ${BIG};
 `;
 
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, env: Record<string, string> = {}): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", prelude + body],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -386,6 +387,55 @@ test.concurrent("bun test --isolate retires the transport with the file that spa
   ]);
   expect(stderr).toContain(" 2 pass");
   expect(exitCode).toBe(0);
+});
+
+// Without a dataStore directory, each browser gets a fresh --user-data-dir
+// under the temp dir (BUN_TMPDIR here). It is deleted once that browser is
+// gone: when the browser dies while Bun keeps running, and at exit for a
+// browser that is still up then (the usual case; close() does not stop it).
+test.concurrent("the temporary profile directory is deleted with its browser", async () => {
+  using tmp = tempDir("webview-chrome-profile", {});
+  const profileDirs = (dir: string) => readdirSync(dir).filter(name => name.endsWith(".bun-chrome"));
+  const probe = /* js */ `
+    const { readdirSync } = require("node:fs");
+    const profileDirs = () => readdirSync(process.env.BUN_TMPDIR).filter(name => name.endsWith(".bun-chrome"));
+  `;
+
+  // Still running at exit.
+  const atExit = await runScenario(
+    probe +
+      `
+    const view = newView();
+    await view.navigate("http://fake/");
+    print({ whileRunning: profileDirs().length });
+    view.close();
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result: atExit, afterExit: profileDirs(String(tmp)) }).toEqual({
+    result: { whileRunning: 1 },
+    afterExit: [],
+  });
+
+  // Dies while Bun keeps running: gone as soon as the exit has been reaped,
+  // which is also when its pending operations reject.
+  const reaped = await runScenario(
+    probe +
+      `
+    const view = newView();
+    await view.navigate("http://fake/");
+    const whileRunning = profileDirs().length;
+    await outcome(view.evaluate("__fake_exit(0)"));
+    let afterDeath = profileDirs();
+    for (const deadline = Date.now() + 5000; afterDeath.length && Date.now() < deadline; ) {
+      await Bun.sleep(10);
+      afterDeath = profileDirs();
+    }
+    print({ whileRunning, afterDeath });
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect(reaped).toEqual({ whileRunning: 1, afterDeath: [] });
 });
 
 // On POSIX fd 3 and fd 4 are one socket, so losing a single direction is not

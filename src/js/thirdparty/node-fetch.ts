@@ -129,6 +129,7 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+const ObjectHasOwn = Object.hasOwn;
 
 const kAgentTlsKeys = [
   "ca",
@@ -157,7 +158,7 @@ function tlsFromAgent(agent, url) {
   }
   if (!$isObject(agent)) return undefined;
   // Node's https.Agent applies `agent.options` to every tls.connect it makes
-  const options = Object.hasOwn(agent, "options") ? agent.options : undefined;
+  const options = ObjectHasOwn(agent, "options") ? agent.options : undefined;
   if (!$isObject(options)) return undefined;
   const opts = { __proto__: null, ...options };
   let tls;
@@ -228,7 +229,7 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  const initAgent = init && Object.hasOwn(init, "agent") ? (init as any).agent : undefined;
+  const initAgent = init && ObjectHasOwn(init, "agent") ? (init as any).agent : undefined;
   if (initAgent && (init as any).tls === undefined) {
     const tls = tlsFromAgent(initAgent, url);
     if (tls !== undefined) init = { ...init, tls } as any;

@@ -107,13 +107,21 @@ describe("node-fetch applies TLS options from the agent", () => {
     }
   });
 
-  test("accepts string minVersion and maxVersion on the agent", async () => {
-    await using server = await serveSelfSigned();
+  test("applies string minVersion and maxVersion from the agent", async () => {
+    await using server = await serve({ key: serverKey, cert: serverCert, minVersion: "TLSv1.3" });
     const agent = new https.Agent({ ca: ca1, servername, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
+    // A client capped at TLS 1.2 cannot talk to a server that requires TLS 1.3.
+    const cappedAgent = new https.Agent({ ca: ca1, servername, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" });
     try {
       assert.deepStrictEqual(await fetchWith(server.port, agent), { authorized: false });
+      await assert.rejects(fetchWith(server.port, cappedAgent), (err: Error & { code?: string }) => {
+        // Node reports the handshake alert as EPROTO, Bun's fetch as a verification error.
+        assert.match(String(err.code), /EPROTO|PROTOCOL_VERSION|UNKNOWN_CERTIFICATE_VERIFICATION_ERROR/);
+        return true;
+      });
     } finally {
       agent.destroy();
+      cappedAgent.destroy();
     }
   });
 

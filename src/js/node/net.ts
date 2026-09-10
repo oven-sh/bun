@@ -67,6 +67,14 @@ const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "s
  */
 let tlsKeylogPath: string | undefined;
 let tlsKeylogWarned = false;
+
+let netClientSocketChannel, netServerSocketChannel, netServerListen;
+function initNetChannels() {
+  const dc = require("node:diagnostics_channel");
+  netClientSocketChannel = dc.channel("net.client.socket");
+  netServerSocketChannel = dc.channel("net.server.socket");
+  netServerListen = dc.tracingChannel("net.server.listen");
+}
 function appendTlsKeylog(line: Buffer) {
   if (!tlsKeylogWarned) {
     tlsKeylogWarned = true;
@@ -1238,6 +1246,11 @@ function onconnection(err, clientHandle) {
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
   self.emit("connection", _socket);
+  if (netServerSocketChannel.hasSubscribers) {
+    netServerSocketChannel.publish({
+      socket: _socket,
+    });
+  }
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
@@ -1899,9 +1912,20 @@ Socket.prototype.connect = function connect(...args) {
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
+
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+
+    // connect({ fd }) is Bun's equivalent of Node's `new Socket({ handle })`
+    // (cluster-worker accepts, IPC-transferred handles, child stdio pipes),
+    // which never goes through Node's connect() and so never publishes here.
+    if (!netClientSocketChannel) initNetChannels();
+    if (fd == null && netClientSocketChannel.hasSubscribers) {
+      netClientSocketChannel.publish({
+        socket: this,
+      });
+    }
     this.servername = options.servername;
     if (socket) {
       connection = socket;
@@ -3649,6 +3673,7 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
+  const listenArg0 = port;
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -3805,6 +3830,17 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  if (!netServerListen) initNetChannels();
+  if (netServerListen.hasSubscribers) {
+    const options =
+      typeof listenArg0 === "object" && listenArg0 !== null
+        ? listenArg0
+        : path != null
+          ? { path }
+          : { port, host: hostname };
+    netServerListen.asyncStart.publish({ server: this, options });
+  }
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3865,11 +3901,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    const error = formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port);
+    if (netServerListen.hasSubscribers) {
+      netServerListen.error.publish({ server: this, error });
+    }
+    process.nextTick(emitErrorNextTick, this, error);
   }
   return this;
 };
@@ -3971,6 +4007,10 @@ Server.prototype[kRealListen] = function (
       // the native SSL_CTX wrapper at `.context`.
       addServerName(this._handle, name, context.context ?? context);
     }
+  }
+
+  if (netServerListen.hasSubscribers) {
+    netServerListen.asyncEnd.publish({ server: this });
   }
 
   // Unref the handle if the server was unref'ed prior to listening
@@ -4165,6 +4205,10 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
+        // Node's setupListenHandle publishes the listen failure in workers too.
+        if (netServerListen.hasSubscribers) {
+          netServerListen.error.publish({ server, error: err });
+        }
         process.nextTick(emitErrorNextTick, server, err);
       }
       return;
@@ -4188,6 +4232,11 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle.onconnection = onClusterConnection;
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
+  // The round-robin analog of setupListenHandle's asyncEnd; listen() already
+  // published asyncStart and [kRealListen] is never reached on this path.
+  if (netServerListen.hasSubscribers) {
+    netServerListen.asyncEnd.publish({ server: this });
+  }
   if (this._unref) this.unref();
   process.nextTick(emitListeningNextTick, this);
 };
@@ -4232,6 +4281,11 @@ function onClusterConnection(err, clientHandle) {
   socket._server = self;
   self._connections++;
   self.emit("connection", socket);
+  if (netServerSocketChannel.hasSubscribers) {
+    netServerSocketChannel.publish({
+      socket,
+    });
+  }
 }
 
 function createServer(options, connectionListener) {

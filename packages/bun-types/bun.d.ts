@@ -9560,6 +9560,12 @@ declare module "bun" {
      * symbols, `undefined` itself) resolve to `undefined`. Circular
      * references reject.
      *
+     * If the script throws (or its promise rejects), the returned promise
+     * rejects with an error rebuilt from the page-side exception. A standard
+     * class (`TypeError`, `RangeError`, ...) stays that class with the
+     * page's message. Chrome backend: other `Error` subclasses keep the
+     * page's `name`, and `stack` is the page-side stack trace.
+     *
      * Only one `evaluate()` may be in flight at a time per view; a second
      * concurrent call throws `ERR_INVALID_STATE`.
      */

@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "JSEventTarget.h"
 #include "WebViewEventTarget.h"
+#include <JavaScriptCore/ErrorType.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
@@ -243,6 +244,14 @@ void settleSlot(JSC::JSGlobalObject*, JSWebView*,
 // unhandled rejection. For user-initiated close() teardown (#40991).
 void rejectSlotAsHandled(JSC::JSGlobalObject*, JSWebView*,
     JSC::WriteBarrier<JSC::JSPromise>& slot, JSC::JSValue);
+
+// The JSC class for a page-side error name; ErrorType::Error for anything but the standard ones.
+JSC::ErrorType pageErrorType(const WTF::String& name);
+
+// An evaluate() rejection from the page exception's string form, `${name}: ${message}` for an
+// Error (all WebKit reports). A standard class keeps its class; anything else is an Error with
+// the whole text as its message.
+JSC::JSValue errorFromPageExceptionString(JSC::JSGlobalObject*, const WTF::String&);
 
 // Implemented in JSWebViewPrototype.cpp / JSWebViewConstructor.cpp.
 // setupJSWebViewClassStructure calls these.

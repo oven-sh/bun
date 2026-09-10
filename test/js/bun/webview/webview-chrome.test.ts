@@ -853,6 +853,56 @@ it("chrome: evaluate() rejected Promise carries rejection reason", async () => {
   await expect(view.evaluate("Promise.reject(new TypeError('bad'))")).rejects.toThrow(/bad/);
 });
 
+it("chrome: evaluate() rejections keep the page error's class, name and whole message", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  const caught = (script: string) =>
+    view.evaluate(script).then(
+      () => {
+        throw new Error("should have rejected");
+      },
+      e => e,
+    );
+
+  const typeError = await caught("null.x");
+  expect(typeError).toBeInstanceOf(TypeError);
+  expect(typeError.name).toBe("TypeError");
+
+  const rangeError = await caught("Promise.reject(new RangeError('first line\\nsecond line'))");
+  expect(rangeError).toBeInstanceOf(RangeError);
+  expect(rangeError.message).toBe("first line\nsecond line");
+
+  const syntaxError = await caught("JSON.parse('{')");
+  expect(syntaxError).toBeInstanceOf(SyntaxError);
+
+  // A page-side subclass has no counterpart here: plain Error, page's name.
+  const custom = await caught(
+    "(() => { class QuotaError extends Error { constructor(m) { super(m); this.name = 'QuotaError'; } } throw new QuotaError('over quota'); })()",
+  );
+  expect(Object.getPrototypeOf(custom)).toBe(Error.prototype);
+  expect({ name: custom.name, message: custom.message, string: String(custom) }).toEqual({
+    name: "QuotaError",
+    message: "over quota",
+    string: "QuotaError: over quota",
+  });
+
+  const emptyMessage = await caught("(() => { throw new TypeError(); })()");
+  expect(emptyMessage).toBeInstanceOf(TypeError);
+  expect(emptyMessage.message).toBe("");
+
+  // A thrown string is not an Error: the message is the string, verbatim.
+  const thrownString = await caught("(() => { throw 'reason: plain string'; })()");
+  expect(Object.getPrototypeOf(thrownString)).toBe(Error.prototype);
+  expect(thrownString.message).toBe("reason: plain string");
+});
+
+it("chrome: evaluate() accepts a script that ends in a line comment", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  expect(await view.evaluate("1 + 1 // the answer")).toBe(2);
+  expect(await view.evaluate("// leading comment\n6 * 7")).toBe(42);
+});
+
 it("chrome: evaluate() with circular reference throws", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body></body>"));

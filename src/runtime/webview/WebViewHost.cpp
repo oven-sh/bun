@@ -269,7 +269,8 @@ void WebViewHost::evaluateIPC(const WTF::String& script)
     // JSON.stringify(undefined) evaluates to undefined (the value, not
     // the string) → callAsync returns nil → parent resolves jsUndefined().
     // Functions/symbols become undefined. Circular refs throw → rejection.
-    auto body = makeString("return JSON.stringify(await ("_s, script, "))"_s);
+    // The newline ends a trailing `// comment` in the script before our `)`.
+    auto body = makeString("return JSON.stringify(await ("_s, script, "\n))"_s);
     m_webview.callAsync(objc::NSString::fromWTF(body), nullptr,
         makeHostBlock<&WebViewHost::onEvalComplete, id, id>(*this));
 }

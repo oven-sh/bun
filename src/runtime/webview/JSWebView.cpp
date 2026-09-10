@@ -12,6 +12,7 @@
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "ScriptWrappableInlines.h"
+#include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
@@ -74,6 +75,31 @@ void rejectSlotAsHandled(JSGlobalObject* g, JSWebView* v,
     slot.clear();
     v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
     p->rejectAsHandled(g->vm(), err);
+}
+
+ErrorType pageErrorType(const WTF::String& name)
+{
+    if (name == "TypeError"_s) return ErrorType::TypeError;
+    if (name == "RangeError"_s) return ErrorType::RangeError;
+    if (name == "SyntaxError"_s) return ErrorType::SyntaxError;
+    if (name == "ReferenceError"_s) return ErrorType::ReferenceError;
+    if (name == "URIError"_s) return ErrorType::URIError;
+    if (name == "EvalError"_s) return ErrorType::EvalError;
+    if (name == "AggregateError"_s) return ErrorType::AggregateError;
+    return ErrorType::Error;
+}
+
+JSValue errorFromPageExceptionString(JSGlobalObject* g, const WTF::String& text)
+{
+    // Only a standard name is split off: the text alone cannot tell `throw "a: b"` from an Error.
+    auto colon = text.find(": "_s);
+    if (colon != WTF::notFound) {
+        auto name = text.left(colon);
+        auto type = pageErrorType(name);
+        if (type != ErrorType::Error || name == "Error"_s)
+            return createError(g, type, text.substring(colon + 2));
+    }
+    return createError(g, text);
 }
 
 // --- WebViewEventTarget ----------------------------------------------------

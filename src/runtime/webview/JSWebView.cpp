@@ -85,20 +85,19 @@ ErrorType pageErrorType(const WTF::String& name)
     if (name == "ReferenceError"_s) return ErrorType::ReferenceError;
     if (name == "URIError"_s) return ErrorType::URIError;
     if (name == "EvalError"_s) return ErrorType::EvalError;
-    if (name == "AggregateError"_s) return ErrorType::AggregateError;
+    // An AggregateError cannot be rebuilt from text: it needs its `errors`.
     return ErrorType::Error;
 }
 
 JSValue errorFromPageExceptionString(JSGlobalObject* g, const WTF::String& text)
 {
     // Only a standard name is split off: the text alone cannot tell `throw "a: b"` from an Error.
+    // With an empty message Error.prototype.toString() is the bare name.
     auto colon = text.find(": "_s);
-    if (colon != WTF::notFound) {
-        auto name = text.left(colon);
-        auto type = pageErrorType(name);
-        if (type != ErrorType::Error || name == "Error"_s)
-            return createError(g, type, text.substring(colon + 2));
-    }
+    auto name = colon == WTF::notFound ? text : text.left(colon);
+    auto type = pageErrorType(name);
+    if (type != ErrorType::Error || name == "Error"_s)
+        return createError(g, type, colon == WTF::notFound ? emptyString() : text.substring(colon + 2));
     return createError(g, text);
 }
 

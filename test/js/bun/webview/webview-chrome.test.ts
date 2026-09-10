@@ -890,6 +890,11 @@ it("chrome: evaluate() rejections keep the page error's class, name and whole me
   expect(emptyMessage).toBeInstanceOf(TypeError);
   expect(emptyMessage.message).toBe("");
 
+  // AggregateError needs its errors array, so it arrives as a plain Error that keeps the name.
+  const aggregate = await caught("Promise.any([])");
+  expect(Object.getPrototypeOf(aggregate)).toBe(Error.prototype);
+  expect(aggregate.name).toBe("AggregateError");
+
   // A thrown string is not an Error: the message is the string, verbatim.
   const thrownString = await caught("(() => { throw 'reason: plain string'; })()");
   expect(Object.getPrototypeOf(thrownString)).toBe(Error.prototype);

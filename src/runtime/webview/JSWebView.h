@@ -245,7 +245,7 @@ void settleSlot(JSC::JSGlobalObject*, JSWebView*,
 void rejectSlotAsHandled(JSC::JSGlobalObject*, JSWebView*,
     JSC::WriteBarrier<JSC::JSPromise>& slot, JSC::JSValue);
 
-// The JSC class for a page-side error name; ErrorType::Error for anything but the standard ones.
+// The JSC class for a page-side error name; ErrorType::Error for anything createError() cannot build from a message.
 JSC::ErrorType pageErrorType(const WTF::String& name);
 
 // An evaluate() rejection from the page exception's string form, `${name}: ${message}` for an

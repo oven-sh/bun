@@ -267,6 +267,14 @@ it("evaluate() rejections keep a standard error class and its message", async ()
   const rangeError = await caught("Promise.reject(new RangeError('out of range'))");
   expect(rangeError).toBeInstanceOf(RangeError);
   expect(rangeError.message).toBe("out of range");
+  // An empty message stringifies to the bare name.
+  const emptyMessage = await caught("(() => { throw new TypeError(); })()");
+  expect(emptyMessage).toBeInstanceOf(TypeError);
+  expect(emptyMessage.message).toBe("");
+  // AggregateError needs its errors array, so it stays a plain Error with the text.
+  const aggregate = await caught("Promise.any([])");
+  expect(Object.getPrototypeOf(aggregate)).toBe(Error.prototype);
+  expect(aggregate.message).toStartWith("AggregateError");
   // A thrown string is not an Error: plain Error, the string as the message.
   const thrownString = await caught("(() => { throw 'reason: plain string'; })()");
   expect(Object.getPrototypeOf(thrownString)).toBe(Error.prototype);

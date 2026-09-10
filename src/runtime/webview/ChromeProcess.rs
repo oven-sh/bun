@@ -560,7 +560,7 @@ fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
         libc::kill(pid, libc::SIGKILL);
         let mut status = 0;
         // Returns once the child is reaped here, or fails with ECHILD if it already was.
-        while libc::waitpid(pid, &mut status, 0) == -1 && bun_sys::last_errno() == libc::EINTR {}
+        while libc::waitpid(pid, &raw mut status, 0) == -1 && bun_sys::last_errno() == libc::EINTR {}
     }
     true
 }

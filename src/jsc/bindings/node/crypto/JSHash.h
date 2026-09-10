@@ -2,21 +2,17 @@
 
 #include "root.h"
 #include "BunClientData.h"
-#include <JavaScriptCore/ArrayBuffer.h>
-#include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include "ncrypto.h"
 #include "CryptoUtil.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
-#include <JavaScriptCore/LazyProperty.h>
-#include <JavaScriptCore/LazyPropertyInlines.h>
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(callHash);
-JSC_DECLARE_HOST_FUNCTION(constructHash);
-
+// node:crypto `Hash`: the object returned by createHash(). Its prototype chain is
+// Hash.prototype -> Transform.prototype (JS) -> ...; the Transform half is constructed lazily
+// (LazyTransform.h) and the digest state lives directly on this cell.
 class JSHash final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -54,81 +50,10 @@ public:
     size_t m_sizeForGC { 0 };
 };
 
-class JSHashPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+// Shared by the constructor and Hash.prototype.copy(): create a Hash in `structure` for
+// `md`/`zigHasher` (cloning `original` when given) with options.outputLength applied. Throws on failure.
+JSHash* createHash(JSC::JSGlobalObject*, JSC::Structure*, const EVP_MD* md, std::unique_ptr<ExternZigHash::Hasher, decltype(&ExternZigHash::destroy)> zigHasher, JSHash* original, JSC::JSValue options);
 
-    static JSHashPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSHashPrototype* prototype = new (NotNull, JSC::allocateCell<JSHashPrototype>(vm)) JSHashPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-private:
-    JSHashPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm);
-};
-
-class JSHashConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSHashConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
-    {
-        JSHashConstructor* constructor = new (NotNull, JSC::allocateCell<JSHashConstructor>(vm)) JSHashConstructor(vm, structure);
-        constructor->finishCreation(vm, prototype);
-        return constructor;
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return &vm.internalFunctionSpace();
-    }
-
-private:
-    JSHashConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, callHash, constructHash)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
-    {
-        Base::finishCreation(vm, 2, "Hash"_s, PropertyAdditionMode::WithStructureTransition);
-    }
-};
-
-JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncUpdate);
-JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncDigest);
-
-void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init);
+void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer&);
 
 } // namespace Bun

@@ -1,31 +1,32 @@
 // Native crypto prototype methods must not segfault when called with an invalid `this`.
 // Before these fixes, jsDynamicCast returned null and the code dereferenced it anyway.
 import { expect, test } from "bun:test";
-import { createHmac, getDiffieHellman } from "node:crypto";
+import { Hash, Hmac, createHash, createHmac, getDiffieHellman } from "node:crypto";
 
-function getNativeHandle(obj: any) {
-  const sym = Object.getOwnPropertySymbols(obj).find(s => s.description === "kHandle");
-  return obj[sym!];
-}
-
-test("Hmac native digest() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
-  const hmac = createHmac("sha256", "key");
-  const native = getNativeHandle(hmac);
-  const nativeDigest = native.digest;
-
-  expect(() => nativeDigest.call({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
-  expect(() => nativeDigest.call(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
-  expect(() => nativeDigest.call(42)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+test("Hmac digest() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
+  const digest = Hmac.prototype.digest;
+  expect(() => digest.call({})).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => digest.call(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => digest.call(42)).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => digest.call(createHash("sha256"))).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
-test("Hmac native update() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
-  const hmac = createHmac("sha256", "key");
-  const native = getNativeHandle(hmac);
-  const nativeUpdate = native.update;
+test("Hmac update() throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {
+  const update = Hmac.prototype.update;
+  expect(() => update.call({}, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => update.call(null, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+  expect(() => update.call(42, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+});
 
-  expect(() => nativeUpdate.call({}, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
-  expect(() => nativeUpdate.call(null, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
-  expect(() => nativeUpdate.call(42, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+test("Hash methods throw ERR_INVALID_THIS on bad this", () => {
+  for (const name of ["update", "digest", "copy", "_transform", "_flush"]) {
+    expect(() => Hash.prototype[name].call({}, "x", "utf8", () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+    );
+    expect(() => Hash.prototype[name].call(createHmac("sha256", "k"), "x", "utf8", () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+    );
+  }
 });
 
 test("DiffieHellmanGroup verifyError getter throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {

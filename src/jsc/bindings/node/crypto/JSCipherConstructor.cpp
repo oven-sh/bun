@@ -11,6 +11,7 @@
 #include "openssl/err.h"
 #include "ncrypto.h"
 #include "KeyObject.h"
+#include "ZigGlobalObject.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -20,17 +21,16 @@ namespace Bun {
 
 const JSC::ClassInfo JSCipherConstructor::s_info = { "Cipher"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCipherConstructor) };
 
+// Node's Cipheriv/Decipheriv are plain functions: calling without `new` constructs anyway.
 JSC_DEFINE_HOST_FUNCTION(callCipher, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* constructor = globalObject->m_JSCipherClassStructure.constructor(globalObject);
-
+    JSObject* constructor = callFrame->jsCallee();
     ArgList args = ArgList(callFrame);
-    auto callData = JSC::getConstructData(constructor);
-    JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    auto constructData = JSC::getConstructData(constructor);
+    JSC::JSValue result = JSC::construct(lexicalGlobalObject, constructor, constructData, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
@@ -84,19 +84,28 @@ void initAuthenticated(JSGlobalObject* globalObject, ThrowScope& scope, CipherCt
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// new Cipheriv(cipher, key, iv[, options]) / new Decipheriv(cipher, key, iv[, options])
+static EncodedJSValue constructCipher(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, CipherKind cipherKind)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue isDecipherValue = callFrame->argument(0);
-    ASSERT(isDecipherValue.isBoolean());
-    CipherKind cipherKind = isDecipherValue.asBoolean() ? CipherKind::Decipher : CipherKind::Cipher;
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto& classStructure = cipherKind == CipherKind::Cipher ? zigGlobalObject->m_JSCipherClassStructure : zigGlobalObject->m_JSDecipherClassStructure;
+    JSC::Structure* structure = classStructure.get(zigGlobalObject);
+    JSValue newTarget = callFrame->newTarget();
+    if (classStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+        auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
+        RETURN_IF_EXCEPTION(scope, {});
+        auto& baseClassStructure = cipherKind == CipherKind::Cipher ? functionGlobalObject->m_JSCipherClassStructure : functionGlobalObject->m_JSDecipherClassStructure;
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), baseClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
-    JSValue cipherValue = callFrame->argument(1);
-    JSValue keyValue = callFrame->argument(2);
-    JSValue ivValue = callFrame->argument(3);
-    JSValue optionsValue = callFrame->argument(4);
+    JSValue cipherValue = callFrame->argument(0);
+    JSValue keyValue = callFrame->argument(1);
+    JSValue ivValue = callFrame->argument(2);
+    JSValue optionsValue = callFrame->argument(3);
 
     V::validateString(scope, globalObject, cipherValue, "cipher"_s);
     RETURN_IF_EXCEPTION(scope, {});
@@ -224,10 +233,21 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         return {};
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSCipherClassStructure.get(zigGlobalObject);
+    JSCipher* result = JSCipher::create(vm, structure, globalObject, cipherKind, WTF::move(ctx), authTagLength, maxMessageSize);
+    // Transform is constructed lazily (see LazyTransform.h); it reads `this._options` then.
+    if (!optionsValue.isUndefined())
+        result->putDirect(vm, Identifier::fromString(vm, "_options"_s), optionsValue);
+    return JSC::JSValue::encode(result);
+}
 
-    return JSC::JSValue::encode(JSCipher::create(vm, structure, globalObject, cipherKind, WTF::move(ctx), authTagLength, maxMessageSize));
+JSC_DEFINE_HOST_FUNCTION(constructCipheriv, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return constructCipher(globalObject, callFrame, CipherKind::Cipher);
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructDecipheriv, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return constructCipher(globalObject, callFrame, CipherKind::Decipher);
 }
 
 } // namespace Bun

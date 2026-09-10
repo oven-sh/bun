@@ -4,6 +4,9 @@
 #include "CryptoUtil.h"
 #include "NodeValidator.h"
 #include "JSBufferEncodingType.h"
+#include "JSStringDecoder.h"
+#include "LazyTransform.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 
@@ -12,49 +15,57 @@ using namespace JSC;
 using namespace WebCore;
 using namespace ncrypto;
 
-// Declare host function prototypes
 JSC_DECLARE_HOST_FUNCTION(jsCipherUpdate);
 JSC_DECLARE_HOST_FUNCTION(jsCipherFinal);
 JSC_DECLARE_HOST_FUNCTION(jsCipherSetAutoPadding);
 JSC_DECLARE_HOST_FUNCTION(jsCipherGetAuthTag);
 JSC_DECLARE_HOST_FUNCTION(jsCipherSetAuthTag);
 JSC_DECLARE_HOST_FUNCTION(jsCipherSetAAD);
+JSC_DECLARE_HOST_FUNCTION(jsCipherTransform);
+JSC_DECLARE_HOST_FUNCTION(jsCipherFlush);
 
 const JSC::ClassInfo JSCipherPrototype::s_info = { "Cipher"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCipherPrototype) };
 
-static const JSC::HashTableValue JSCipherPrototypeTableValues[] = {
-    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherUpdate, 2 } },
-    { "final"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherFinal, 0 } },
+// Enumerable, like the prototype assignments in Node's lib/internal/crypto/cipher.js.
+static const JSC::HashTableValue JSCipherivPrototypeTableValues[] = {
+    { "_transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherTransform, 3 } },
+    { "_flush"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherFlush, 1 } },
+    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherUpdate, 3 } },
+    { "final"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherFinal, 1 } },
     { "setAutoPadding"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAutoPadding, 1 } },
     { "getAuthTag"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherGetAuthTag, 0 } },
-    { "setAuthTag"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAuthTag, 1 } },
     { "setAAD"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAAD, 2 } },
+    { "_readableState"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
+    { "_writableState"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
 };
 
-void JSCipherPrototype::finishCreation(JSC::VM& vm)
+static const JSC::HashTableValue JSDecipherivPrototypeTableValues[] = {
+    { "_transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherTransform, 3 } },
+    { "_flush"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherFlush, 1 } },
+    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherUpdate, 3 } },
+    { "final"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherFinal, 1 } },
+    { "setAutoPadding"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAutoPadding, 1 } },
+    { "setAuthTag"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAuthTag, 2 } },
+    { "setAAD"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), JSC::NoIntrinsic, { HashTableValue::NativeFunctionType, jsCipherSetAAD, 2 } },
+    { "_readableState"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
+    { "_writableState"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
+};
+
+void JSCipherPrototype::finishCreation(JSC::VM& vm, CipherKind kind)
 {
     Base::finishCreation(vm);
-    Bun::reifyStaticPropertyTable(vm, JSCipherPrototype::info(), JSCipherPrototypeTableValues, *this);
-    Bun::putToStringTagWithoutTransition(vm, this, info());
+    if (kind == CipherKind::Cipher)
+        Bun::reifyStaticPropertyTable(vm, JSCipherPrototype::info(), JSCipherivPrototypeTableValues, *this);
+    else
+        Bun::reifyStaticPropertyTable(vm, JSCipherPrototype::info(), JSDecipherivPrototypeTableValues, *this);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// The Buffer produced by feeding `data` to the cipher (undefined when a CCM message is over the length limit).
+static EncodedJSValue cipherUpdate(JSC::JSGlobalObject* lexicalGlobalObject, JSCipher* cipher, JSValue dataValue, JSValue encodingValue)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
-    if (!cipher) {
-        throwThisTypeError(*lexicalGlobalObject, scope, "Cipher"_s, "update"_s);
-        return {};
-    }
-
-    JSValue dataValue = callFrame->argument(0);
-    JSValue encodingValue = callFrame->argument(1);
-
-    WTF::String dataString = WTF::nullString();
-    WTF::String encodingString = WTF::nullString();
 
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
@@ -124,19 +135,14 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(outBuf), 0, bufLen)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// The Buffer holding any remaining output; finalizes the cipher.
+static EncodedJSValue cipherFinal(JSC::JSGlobalObject* lexicalGlobalObject, JSCipher* cipher)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     MarkPopErrorOnReturn popError;
-
-    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
-    if (!cipher) {
-        throwThisTypeError(*lexicalGlobalObject, scope, "Cipher"_s, "final"_s);
-        return {};
-    }
 
     if (!cipher->m_ctx) {
         // Node throws the bare "Invalid state" here (CipherBase::Final in crypto_cipher.cc);
@@ -212,7 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalOb
         return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAutoPadding"_s);
     }
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(callFrame->thisValue());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherGetAuthTag, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -282,7 +288,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
     memset(cipher->m_authTag, 0, sizeof(cipher->m_authTag));
     memcpy(cipher->m_authTag, authTag->vector(), *cipher->m_authTagLen);
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(callFrame->thisValue());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -372,5 +378,188 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Invalid state for operation setAAD"_s);
     }
 
+    return JSValue::encode(callFrame->thisValue());
+}
+
+// update()/final() with an outputEncoding: run the bytes through this._decoder (a StringDecoder
+// created on first use, as in Node) so multi-byte characters split across calls decode correctly.
+static EncodedJSValue encodeCipherOutput(JSC::JSGlobalObject* lexicalGlobalObject, JSCipher* cipher, JSValue output, JSValue outputEncodingValue, bool end)
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* outputView = dynamicDowncast<JSArrayBufferView>(output);
+    if (!outputView)
+        return JSValue::encode(output);
+
+    auto outputEncodingString = outputEncodingValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto outputEncoding = parseEnumerationFromString<BufferEncodingType>(outputEncodingString);
+
+    Identifier decoderName = Identifier::fromString(vm, "_decoder"_s);
+    JSValue decoderValue = cipher->get(lexicalGlobalObject, decoderName);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (decoderValue.isUndefinedOrNull()) {
+        if (!outputEncoding)
+            return ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, outputEncodingString);
+        decoderValue = JSStringDecoder::create(vm, lexicalGlobalObject, globalObject->JSStringDecoderStructure(), *outputEncoding);
+        cipher->putDirect(vm, decoderName, decoderValue, 0);
+    }
+
+    if (auto* decoder = dynamicDowncast<JSStringDecoder>(decoderValue)) {
+        if (!outputEncoding || decoder->m_encoding != *outputEncoding) {
+            if (!outputEncoding)
+                return ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, outputEncodingString);
+            // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/lib/internal/crypto/cipher.js#L100
+            return throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INTERNAL_ASSERTION, "Cannot change encoding"_s);
+        }
+        auto* bytes = static_cast<uint8_t*>(outputView->vector());
+        uint32_t length = outputView->byteLength();
+        JSString* result = end ? decoder->end(vm, lexicalGlobalObject, bytes, length) : decoder->write(vm, lexicalGlobalObject, bytes, length);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(result);
+    }
+
+    // Someone replaced this._decoder: use it like Node would.
+    JSValue method = decoderValue.get(lexicalGlobalObject, Identifier::fromString(vm, end ? "end"_s : "write"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(method);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(lexicalGlobalObject, scope, end ? "this._decoder.end is not a function"_s : "this._decoder.write is not a function"_s);
+    MarkedArgumentBuffer args;
+    args.append(output);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, method, callData, decoderValue, args)));
+}
+
+static bool wantsStringOutput(JSC::JSGlobalObject* globalObject, JSValue outputEncodingValue)
+{
+    // `if (outputEncoding && outputEncoding !== "buffer")`
+    if (!outputEncodingValue.toBoolean(globalObject))
+        return false;
+    if (!outputEncodingValue.isString())
+        return true;
+    auto encoding = asString(outputEncodingValue)->tryGetValue();
+    return !WTF::equal(static_cast<const WTF::String&>(encoding), "buffer"_s);
+}
+
+// cipher.update(data[, inputEncoding][, outputEncoding])
+JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
+    if (!cipher) {
+        throwThisTypeError(*globalObject, scope, "Cipher"_s, "update"_s);
+        return {};
+    }
+
+    JSValue output = JSValue::decode(cipherUpdate(globalObject, cipher, callFrame->argument(0), callFrame->argument(1)));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue outputEncoding = callFrame->argument(2);
+    if (!wantsStringOutput(globalObject, outputEncoding))
+        return JSValue::encode(output);
+    RELEASE_AND_RETURN(scope, encodeCipherOutput(globalObject, cipher, output, outputEncoding, false));
+}
+
+// cipher.final([outputEncoding])
+JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
+    if (!cipher) {
+        throwThisTypeError(*globalObject, scope, "Cipher"_s, "final"_s);
+        return {};
+    }
+
+    JSValue output = JSValue::decode(cipherFinal(globalObject, cipher));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue outputEncoding = callFrame->argument(0);
+    if (!wantsStringOutput(globalObject, outputEncoding))
+        return JSValue::encode(output);
+    RELEASE_AND_RETURN(scope, encodeCipherOutput(globalObject, cipher, output, outputEncoding, true));
+}
+
+static void callWith(JSC::JSGlobalObject* globalObject, JSValue function, JSValue thisValue, JSValue argument, ASCIILiteral notCallableMessage)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, notCallableMessage);
+        return;
+    }
+    MarkedArgumentBuffer args;
+    if (argument)
+        args.append(argument);
+    JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, thisValue, args);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
+// Transform hook: _transform(chunk, encoding, callback) — this.push(this.update(chunk, encoding)); callback()
+JSC_DEFINE_HOST_FUNCTION(jsCipherTransform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSCipher* cipher = dynamicDowncast<JSCipher>(thisValue);
+    if (!cipher) {
+        throwThisTypeError(*globalObject, scope, "Cipher"_s, "_transform"_s);
+        return {};
+    }
+
+    JSValue output = JSValue::decode(cipherUpdate(globalObject, cipher, callFrame->argument(0), callFrame->argument(1)));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue push = cipher->get(globalObject, Identifier::fromString(vm, "push"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    callWith(globalObject, push, thisValue, output, "this.push is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    callWith(globalObject, callFrame->argument(2), jsUndefined(), JSValue(), "callback is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// Transform hook: _flush(callback) — push this.final(); an error from final() goes to the callback.
+JSC_DEFINE_HOST_FUNCTION(jsCipherFlush, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSCipher* cipher = dynamicDowncast<JSCipher>(thisValue);
+    if (!cipher) {
+        throwThisTypeError(*globalObject, scope, "Cipher"_s, "_flush"_s);
+        return {};
+    }
+    JSValue callback = callFrame->argument(0);
+
+    JSValue output = JSValue::decode(cipherFinal(globalObject, cipher));
+    if (JSC::Exception* exception = scope.exception()) {
+        if (!scope.tryClearException())
+            return {};
+        callWith(globalObject, callback, jsUndefined(), exception->value(), "callback is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue push = cipher->get(globalObject, Identifier::fromString(vm, "push"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    callWith(globalObject, push, thisValue, output, "this.push is not a function"_s);
+    if (JSC::Exception* exception = scope.exception()) {
+        if (!scope.tryClearException())
+            return {};
+        callWith(globalObject, callback, jsUndefined(), exception->value(), "callback is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+
+    callWith(globalObject, callback, jsUndefined(), JSValue(), "callback is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

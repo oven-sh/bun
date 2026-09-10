@@ -2197,20 +2197,24 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// Stack a check leaves unused, for the work the caller does before it
+    /// reaches the next check. One heap allocation needs most of it: a
+    /// `WTF::StringBuilder` growth reallocates through `libpas`, and that
+    /// thread-local-cache slow path is ~35 frames. A sanitizer build pads
+    /// every frame in it, so the same path measures ~160 KB there against a
+    /// few KB in a release build. The sanitizer reserve is 3x that measured
+    /// depth, and it only costs recursion depth in builds nobody ships.
+    const THRESHOLD: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 }
+        + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+
     /// Is there enough stack space to safely recurse?
-    /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.
     #[inline]
     pub fn is_safe_to_recurse(self) -> bool {
         // Saturating sub: if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold
+        remaining > Self::THRESHOLD
     }
 
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
@@ -2221,12 +2225,7 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold.saturating_add(extra)
+        remaining > Self::THRESHOLD.saturating_add(extra)
     }
 
     /// Approximate the current stack position. Reads the stack-pointer

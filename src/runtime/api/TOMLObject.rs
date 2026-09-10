@@ -1,4 +1,5 @@
 use bun_collections::HashMap;
+use bun_collections::smallvec::SmallVec;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
@@ -423,12 +424,25 @@ impl Stringifier {
         self.wrote = true;
     }
 
+    /// The chain is one link per table nesting level, and the caller already
+    /// holds one checked `stringify_table_body` frame per level, so this walks
+    /// the chain instead of recursing over it: recursing here doubles the
+    /// depth the stack check accounted for.
     fn append_path(&mut self, path: &Path<'_>) {
-        if let Some(parent) = path.parent {
-            self.append_path(parent);
-            self.builder.append_lchar(b'.');
+        // A header path is a handful of segments in any real document; a
+        // deeper one spills to the heap.
+        let mut chain: SmallVec<[&BunString; 16]> = SmallVec::new();
+        let mut next = Some(path);
+        while let Some(link) = next {
+            chain.push(link.key);
+            next = link.parent;
         }
-        self.append_key_segment(path.key);
+        for (i, key) in chain.iter().rev().copied().enumerate() {
+            if i > 0 {
+                self.builder.append_lchar(b'.');
+            }
+            self.append_key_segment(key);
+        }
     }
 
     fn append_key_segment(&mut self, name: &BunString) {

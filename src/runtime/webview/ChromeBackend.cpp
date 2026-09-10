@@ -603,11 +603,8 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
-// Every session id that reaches m_sessions goes through here, never through
-// String::fromUTF8 directly. fromUTF8 answers with a NULL String for a
-// missing field (jsonField returns a span with a null pointer) and for
-// invalid UTF-8, and a null String has no StringImpl for StringHash::hash to
-// read. The result is always hashable; empty means "no usable session id".
+// m_sessions keys must never be null Strings (StringHash derefs the impl);
+// fromUTF8 returns one for a missing field or invalid UTF-8. Empty = unusable.
 static WTF::String decodeSessionId(std::span<const char> utf8)
 {
     if (utf8.empty()) return WTF::emptyString();
@@ -803,8 +800,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"sessionId":"<base64ish>"}
         auto session = decodeSessionId(jsonString(jsonField(result, { "sessionId", 9 })));
         if (session.isEmpty()) {
-            // Nothing addresses the page without a session id, so the load
-            // can never complete. Fail the navigation now.
+            // No session id, no way to address the page: the load can't finish.
             settleFailure(g, view, entry.slot, entry.method,
                 createError(g, "malformed attach response"_s));
             return;
@@ -1070,10 +1066,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value = [cx, cy] — the only shape kActionabilityIIFE
-        // returns. WTF::JSON parses the two numbers to a C++ tree: no
-        // JSValue allocation for a pair we read once, and a reply that is
-        // not that pair fails the parse instead of the click.
+        // result.result.value = [cx, cy], the only shape kActionabilityIIFE
+        // returns. Anything else is a malformed reply.
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonField(inner, { "value", 5 });
         auto root = value.empty() ? nullptr
@@ -1083,8 +1077,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto point = root ? root->asArray() : nullptr;
         auto px = point && point->length() == 2 ? point->get(0)->asDouble() : std::nullopt;
         auto py = px ? point->get(1)->asDouble() : std::nullopt;
-        // "1e999" parses to infinity, which Command::num would put on the
-        // wire as a bare `Infinity` token.
+        // isfinite: "1e999" parses to infinity, which is not JSON on the wire.
         if (!py || !std::isfinite(*px) || !std::isfinite(*py)) {
             settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
             return;

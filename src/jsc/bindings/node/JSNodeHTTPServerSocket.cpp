@@ -248,8 +248,7 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
     if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* onWritable sends the FIN once this drains. Stop parsing so a pipelined
-     * request's resetResponseState() cannot clear HTTP_CONNECTION_CLOSE first. */
+    // onWritable sends the FIN after the drain; PARSING_STOPPED keeps a pipelined request's resetResponseState() from clearing CONNECTION_CLOSE first.
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE
         | uWS::HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;

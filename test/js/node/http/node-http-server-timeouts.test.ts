@@ -189,11 +189,8 @@ describe("node:http server timeout enforcement", () => {
       return promise;
     };
     try {
-      // Three stalled connections opened one headersTimeout apart. By the time
-      // each later one expires, every earlier one has been through several
-      // more sweeps with its socket still open (the listener never destroyed
-      // it). The first connection also trickles more header bytes after its
-      // timeout to cover the slowloris case.
+      // Three stalled sockets, one headersTimeout apart; the first also trickles
+      // more header bytes after its timeout (slowloris).
       const first = await stall();
       await nextDistinctSocket();
       first.write("X-Slow: v\r\n");
@@ -207,9 +204,8 @@ describe("node:http server timeout enforcement", () => {
         fires: [1, 1, 1],
       });
 
-      // The reported bit clears at message completion: finish the first
-      // request, read its response, then stall a second request on the same
-      // keep-alive connection and expect a fresh timeout for it.
+      // Completing the message re-arms: a second stalled request on the same
+      // keep-alive socket gets its own timeout.
       let response = "";
       first.on("data", d => (response += d.toString("latin1")));
       first.write("\r\n");

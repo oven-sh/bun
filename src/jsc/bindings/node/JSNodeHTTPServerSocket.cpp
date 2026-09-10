@@ -278,11 +278,7 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
         return false;
     }
     if (httpResponseData->requestTimeoutReported) {
-        // Already reported for the current message. Node's
-        // ConnectionsList::Expired() removes the parser from its active set on
-        // return and only on_message_begin re-adds it, so a 'clientError'
-        // listener that keeps the socket open sees the timeout exactly once per
-        // stalled message even if the client keeps trickling bytes.
+        // Report once per message, like Node's ConnectionsList::Expired().
         return false;
     }
     uint64_t start = httpResponseData->lastMessageStartMs;

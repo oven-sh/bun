@@ -998,6 +998,9 @@ describe.skipIf(!isASAN)("a compile from cachedData keeps the payload alive", ()
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // stderr first: the failure this test guards against aborts the child, so the sanitizer
+    // report is the diagnostic. An empty-stdout diff is not.
+    expect(stderr).not.toContain("ERROR: AddressSanitizer");
     expect(stdout).toBe(
       [
         "compileFunction rejected=false call=1235",
@@ -1007,7 +1010,6 @@ describe.skipIf(!isASAN)("a compile from cachedData keeps the payload alive", ()
         "",
       ].join("\n"),
     );
-    expect(stderr).not.toContain("ERROR: AddressSanitizer");
     expect(exitCode).toBe(0);
   });
 });

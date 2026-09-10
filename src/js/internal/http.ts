@@ -27,7 +27,6 @@ const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
@@ -503,7 +502,6 @@ export {
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
-  isTlsSymbol,
   kAbortController,
   kCloseCallback,
   kHandle,

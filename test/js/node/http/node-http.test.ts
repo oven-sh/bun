@@ -1433,6 +1433,70 @@ describe("node https server", async () => {
   });
 });
 
+// Node's http.Server ignores TLS material in its options and always serves
+// plaintext. Node's https.Server is a tls.Server: it speaks TLS even when no
+// key/cert is given (handshakes then fail).
+describe.concurrent("http.Server vs https.Server TLS mode", () => {
+  const handler = (req, res) => res.end(`proto=${req.socket.encrypted ? "TLS" : "plain"}`);
+
+  function plaintextGet(port: number): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = connect({ port, host: "127.0.0.1" }, () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+    return promise;
+  }
+
+  it.each([
+    ["key and cert", { key: tlsCert.key, cert: tlsCert.cert }],
+    ["ca only", { ca: tlsCert.cert }],
+  ])("http.createServer with %s serves plaintext", async (_, options) => {
+    const server = createServer(options, handler);
+    try {
+      const url = await listen(server);
+      expect(server instanceof https.Server).toBe(false);
+      const res = await fetch(url);
+      expect(await res.text()).toBe("proto=plain");
+      expect(await plaintextGet(Number(url.port))).toStartWith("HTTP/1.1 200");
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each([
+    ["no options", undefined],
+    ["empty options", {}],
+  ])("https.createServer with %s refuses plaintext", async (_, options) => {
+    const server = options === undefined ? createHttpsServer(handler) : createHttpsServer(options, handler);
+    try {
+      const url = await listen(server);
+      expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
+      expect(await plaintextGet(Number(url.port))).not.toStartWith("HTTP/1.1");
+      await expect(fetch(`https://127.0.0.1:${url.port}/`, { tls: { rejectUnauthorized: false } })).rejects.toThrow();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("https.createServer with key and cert serves TLS only", async () => {
+    const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, handler);
+    try {
+      const url = await listen(server, "https");
+      expect(server instanceof https.Server).toBe(true);
+      const res = await fetch(url, { tls: { rejectUnauthorized: false } });
+      expect(await res.text()).toBe("proto=TLS");
+      expect(await plaintextGet(Number(url.port))).not.toStartWith("HTTP/1.1");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("server.address should be valid IP", () => {
   it("should return null before listening", done => {
     const server = createServer((req, res) => {});

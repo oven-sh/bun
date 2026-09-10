@@ -178,7 +178,96 @@ function processPfxOptions(options) {
   return out;
 }
 
+// Node.js only requests a client certificate when `requestCert: true`.
+// The uSockets SSL context treats `ca` alone as "verify peer", so without
+// these two flags an `https.Server({ ca })` would reject every client that
+// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
+// to false and, when not requesting, force `rejectUnauthorized` to false so
+// the CA is loaded into the trust store without requiring a client cert.
+function normalizeServerTls(tls) {
+  const requestCert = !!tls.requestCert;
+  tls.requestCert = requestCert;
+  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  return tls;
+}
+
+// Bun.serve `tls` config for https.Server. Never null: without key/cert the listener still speaks TLS.
+function httpsServerTlsOptions(options) {
+  // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
+  // them into plain key/cert/ca so the native TLS config sees PEM material.
+  let tlsOptions = options;
+  if (options.pfx) {
+    tlsOptions = processPfxOptions(options);
+  }
+
+  let cert = tlsOptions.cert;
+  if (cert) {
+    throwOnInvalidTLSArray("options.cert", cert);
+  }
+
+  let key = tlsOptions.key;
+  if (key) {
+    throwOnInvalidTLSArray("options.key", key);
+  }
+
+  let ca = tlsOptions.ca;
+  // PKCS#12-embedded CAs extend the trust set; the server path hands raw
+  // {key, cert, ca} to the native config and has no addCACert hook, so fold
+  // them into `ca` (mirrors tls.Server.setSecureContext).
+  const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  }
+  if (ca) {
+    throwOnInvalidTLSArray("options.ca", ca);
+  }
+
+  let passphrase = options.passphrase;
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+
+  let serverName = options.servername;
+  if (serverName && typeof serverName !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
+  }
+
+  let secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
+
+  // Translate minVersion/maxVersion/secureProtocol into the integer
+  // protocol range the native layer applies (secureProtocol wins, like
+  // Node's SecureContext::Init); 0 keeps the native defaults.
+  validateSecureProtocol(options.secureProtocol);
+  let minVersion, maxVersion;
+  const range = secureProtocolToVersionRange(options.secureProtocol);
+  if (range) {
+    minVersion = range[0];
+    maxVersion = range[1];
+  } else {
+    minVersion = tlsStringToProtocolVersion(options.minVersion);
+    maxVersion = tlsStringToProtocolVersion(options.maxVersion);
+  }
+  return normalizeServerTls({
+    serverName,
+    key,
+    cert,
+    ca,
+    passphrase,
+    secureOptions,
+    minVersion,
+    maxVersion,
+    ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+    requestCert: options.requestCert,
+    rejectUnauthorized: options.rejectUnauthorized,
+  });
+}
+
 export {
+  httpsServerTlsOptions,
+  normalizeServerTls,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

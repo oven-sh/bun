@@ -6671,6 +6671,56 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
   expect(exitCode).toBe(0);
 });
 
+it("a by-length path argument keeps its bytes while an async call is pending", async () => {
+  using dir = tempDir("fs-path-transfer-oversize", {
+    "a.txt": "AAAA",
+    "b.txt": "BBBBBB",
+  });
+
+  // The path is borrowed the same way the data buffers are, so a by-length
+  // view holding a file name has the same hazard: without the pin the
+  // transfer below frees the name under the pool thread, which then opens
+  // whatever landed in the freed block. The path is padded with "/." segments
+  // so that every byte of the view is part of the name.
+  const script = `
+    const fs = require("node:fs");
+    const cwd = process.cwd();
+    const N = 3000;
+    const name = n => {
+      const pad = N - cwd.length - 1 - n.length;
+      const u = new Uint8Array(N);
+      u.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + "/.".repeat(pad >> 1) + "/" + n));
+      return u;
+    };
+    (async () => {
+      for (let i = 0; i < 400; i++) fs.stat(cwd, () => {}); // park the pool
+      const p = name("a.txt");
+      const pending = fs.promises.readFile(p, "latin1");
+      try {
+        p.buffer.transfer(0);
+      } catch {}
+      globalThis.keep = Array.from({ length: 64 }, () => name("b.txt"));
+      console.log(JSON.stringify({ byteLength: p.byteLength, contents: await pending }));
+    })().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ byteLength: 3000, contents: "AAAA" });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.read keeps filling a by-length view when its storage is transferred while the read is pending", async () => {
   using dir = tempDir("fs-read-transfer-oversize", {
     "data.bin": Buffer.alloc(65536, 0x61).toString(),

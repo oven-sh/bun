@@ -6080,4 +6080,28 @@ describe.concurrent("session.closed after the transport goes away", () => {
       server.close();
     }
   });
+
+  it("a client session torn down by a transport error leaves closed false", async () => {
+    const server = await rawPeer(() => {});
+    try {
+      const socket = net.connect(server.address().port, "127.0.0.1");
+      socket.on("error", () => {});
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { createConnection: () => socket });
+      const errors = [];
+      client.on("error", err => errors.push(err.message));
+      await new Promise(resolve => client.once("remoteSettings", resolve));
+      const closed = new Promise(resolve => client.once("close", resolve));
+      // Node's socketOnError destroys the session with the error and detaches it, so the socket
+      // 'close' that follows finds no session to mark closed.
+      socket.destroy(new Error("transport blew up"));
+      await closed;
+      expect({ closed: client.closed, destroyed: client.destroyed, errors }).toEqual({
+        closed: false,
+        destroyed: true,
+        errors: ["transport blew up"],
+      });
+    } finally {
+      server.close();
+    }
+  });
 });

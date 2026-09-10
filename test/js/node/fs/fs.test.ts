@@ -113,6 +113,82 @@ it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading opt
   expect(arrayBuffer.detached).toBe(true);
 });
 
+describe("a Buffer path an async call copies at call time", () => {
+  // Both names exist and differ in one byte, so the result says which one the
+  // job opened instead of only failing.
+  const twoFiles = { "a.txt": "AAAA", "b.txt": "BBBB" };
+
+  it("fs.promises.readFile", async () => {
+    using dir = tempDir("fs-async-buffer-path-promises", twoFiles);
+    const a = join(String(dir), "a.txt");
+    for (let i = 0; i < 20; i++) {
+      const p = Buffer.from(a);
+      const read = fs.promises.readFile(p, "utf8");
+      p[p.length - 5] = 0x62; // "a.txt" -> "b.txt", after the call returned
+      expect(await read).toBe("AAAA");
+    }
+  });
+
+  it("fs.readFile", async () => {
+    using dir = tempDir("fs-async-buffer-path-callback", twoFiles);
+    const a = join(String(dir), "a.txt");
+    for (let i = 0; i < 20; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const p = Buffer.from(a);
+      readFile(p, "utf8", (err, data) => (err ? reject(err) : resolve(data as string)));
+      p[p.length - 5] = 0x62;
+      expect(await promise).toBe("AAAA");
+    }
+  });
+
+  it("one scratch buffer, three queued unlinks", async () => {
+    using dir = tempDir("fs-async-buffer-path-scratch", {
+      "tmp-0": "0",
+      "tmp-1": "1",
+      "tmp-2": "2",
+      "keep!": "keep",
+    });
+    // Every name is 5 bytes, so each write overwrites the whole buffer.
+    const scratch = Buffer.alloc(String(dir).length + 6);
+    const jobs = [];
+    for (const name of ["tmp-0", "tmp-1", "tmp-2"]) {
+      scratch.write(join(String(dir), name));
+      jobs.push(
+        fs.promises.unlink(scratch).then(
+          () => "ok",
+          err => err.code,
+        ),
+      );
+    }
+    scratch.write(join(String(dir), "keep!")); // the buffer's next use
+    expect(await Promise.all(jobs)).toEqual(["ok", "ok", "ok"]);
+    expect(readdirSync(String(dir)).sort()).toEqual(["keep!"]);
+  });
+
+  // A NUL written after the call used to truncate the name the job opened. On a
+  // build with debug assertions it aborted the process, so run it in a child.
+  it("a NUL written after the call", async () => {
+    using dir = tempDir("fs-async-buffer-path-nul", { "a.txt": "AAAA", "a.txt.png": "PNG" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const p = Buffer.from(require("path").join(process.argv[1], "a.txt.png"));
+        fs.readFile(p, "utf8", (err, data) => console.log(err ? err.code : data));
+        p[p.length - 4] = 0;`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("PNG");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
   using dir = tempDir("fs-chmod-special-bits", {});
   const dirPath = join(String(dir), "subdir");
@@ -6947,7 +7023,7 @@ it("fs.writeFile (callback) keeps the source buffer attached while the write is 
   expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
 });
 
-it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
+it("fs.promises.writeFile copies a buffer path argument before options are read", async () => {
   using dir = tempDir("fs-writefile-path-pin", {});
   const file = join(String(dir), "out.txt");
   const pathBytes = new TextEncoder().encode(file);
@@ -6958,9 +7034,9 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 
   let detachedDuringOptions: boolean | undefined;
   await fs.promises.writeFile(pathBuf as any, "hello world", {
-    // Reading the options object re-enters JavaScript after the native call
-    // captured a pointer into the path buffer; the backing store must not be
-    // detachable out from under it.
+    // Reading the options object re-enters JavaScript after the path was
+    // parsed. The call owns a copy of the name, so detaching the backing store
+    // here neither faults nor moves the write.
     get flag() {
       pathBuf.buffer.transfer();
       detachedDuringOptions = pathBuf.buffer.detached;
@@ -6968,7 +7044,7 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
     },
   });
 
-  expect(detachedDuringOptions).toBe(false);
+  expect(detachedDuringOptions).toBe(true);
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
 

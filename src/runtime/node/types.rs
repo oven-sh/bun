@@ -1105,20 +1105,9 @@ impl PathLikeExt for PathLike<'_> {
         use jsc::JSType;
         let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
-                    PinnedArrayBuffer::root(ctx, arg)
-                } else {
-                    PinnedArrayBuffer::pin(ctx, arg)
-                }
-                .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
-                if !buffer.copy_if_resizable(ctx) {
-                    return Err(ctx.throw_out_of_memory());
-                }
-                Valid::path_buffer(buffer.slice(), ctx)?;
-                Valid::path_null_bytes(buffer.slice(), ctx)?;
+                let path = path_like_from_buffer(ctx, arg, arguments.will_be_async)?;
                 arguments.eat();
-                PathLike::Buffer(buffer)
+                path
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
@@ -1186,6 +1175,43 @@ impl PathLikeExt for PathLike<'_> {
             None => Ok(path),
         }
     }
+}
+
+/// `value`'s bytes as a `PathLike`, NUL-checked; the caller checks the length
+/// ([`Valid::path_length`]).
+///
+/// An async op copies the bytes, like node's `BufferValue`: the name is the one
+/// the call was made with, not whatever the buffer holds when a pool thread
+/// reads it. The copy is also what the NUL check validates, so a NUL written
+/// after the check cannot truncate the name.
+fn path_like_from_buffer(
+    global: &JSGlobalObject,
+    value: jsc::JSValue,
+    will_be_async: bool,
+) -> JsResult<PathLike<'static>> {
+    let mut buffer =
+        PinnedArrayBuffer::pin(global, value).ok_or_else(|| global.throw_out_of_memory())?;
+
+    if will_be_async {
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(buffer.slice().len()).is_err() {
+            return Err(global.throw_out_of_memory());
+        }
+        copy.extend_from_slice(buffer.slice());
+        drop(buffer);
+        Valid::path_buffer(&copy, global)?;
+        Valid::path_null_bytes(&copy, global)?;
+        global.vm().report_extra_memory(copy.len());
+        return Ok(PathLike::owned(copy));
+    }
+
+    // Read after this call (a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
+    if !buffer.copy_if_resizable(global) {
+        return Err(global.throw_out_of_memory());
+    }
+    Valid::path_buffer(buffer.slice(), global)?;
+    Valid::path_null_bytes(buffer.slice(), global)?;
+    Ok(PathLike::Buffer(buffer))
 }
 
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).

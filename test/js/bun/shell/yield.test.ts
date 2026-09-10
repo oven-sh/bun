@@ -101,4 +101,76 @@ describe("yield", async () => {
       exitCode: 0,
     });
   });
+
+  // A `${value}` redirect target the command cannot use (an in-memory Blob or
+  // Response as stdout) is a JS error thrown inside the state machine. When the
+  // command is not the first thing the script runs, the trampoline is driven
+  // by an event-loop callback (the previous command's exit), not by the
+  // `.run()` host call. The promise must still reject with the error, nothing
+  // may stay pending on the VM, and the process must exit on its own.
+  describe("a state that throws a JS error rejects the shell promise", () => {
+    async function run(shell: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { $ } from "bun";
+          const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.constructor.name + ": " + e.message);
+          const bun = process.execPath;
+          const out = [await settle(${shell})];
+          // The VM is still usable: no exception was left pending on it.
+          out.push(await settle($\`echo ok\`.quiet()));
+          console.log(JSON.stringify(out));
+          `,
+          "--debug-crash-handler-use-trace-string",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: stdout.trim() === "" ? stderr : JSON.parse(stdout.trim()), exitCode };
+    }
+
+    const external = "rejected TypeError: Blobs are immutable, and cannot be used for stdout/stderr";
+    const builtin = "rejected Error: Cannot redirect stdout/stderr to an immutable blob. Expected a file";
+
+    test.concurrent("external command after another command", async () => {
+      expect(await run("$`${bun} --version; ${bun} --version > ${new Response('r')}`.quiet().nothrow()")).toEqual({
+        out: [external, "resolved 0"],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("builtin after another command", async () => {
+      expect(await run("$`${bun} --version; echo hi > ${new Blob(['x'])}`.quiet().nothrow()")).toEqual({
+        out: [builtin, "resolved 0"],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("in an && chain after another command", async () => {
+      expect(await run("$`${bun} --version && echo hi > ${new Blob(['x'])} && echo no`.quiet()")).toEqual({
+        out: [builtin, "resolved 0"],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("last member of a pipeline", async () => {
+      expect(await run("$`${bun} --version | ${bun} --version > ${new Response('r')}`.quiet().nothrow()")).toEqual({
+        out: [external, "resolved 0"],
+        exitCode: 0,
+      });
+    });
+
+    // This one always rejected (the error comes straight out of `.run()`), but
+    // the interpreter was never finished and kept the event loop alive forever.
+    test.concurrent("first command, and the process still exits", async () => {
+      expect(await run("$`echo hi > ${new Blob(['x'])}; echo no`.quiet().nothrow()")).toEqual({
+        out: [builtin, "resolved 0"],
+        exitCode: 0,
+      });
+    });
+  });
 });

@@ -1257,6 +1257,9 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize,
             exit_code
         );
+        // A node that returned `Yield::Failed` never reports to its parent, so
+        // the root script cannot complete after the promise was rejected.
+        debug_assert!(!self.flags.get().failed());
         // Decrement pending activity unconditionally on exit. Paired with the
         // increment in `run_from_js`; harmless wrap on the mini path (flag is
         // only read from the JS GC `hasPendingActivity()` hook).
@@ -1365,18 +1368,26 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize
         );
 
-        // A termination exception (`worker.terminate()`) is not the script's
-        // error and cannot be taken; it keeps unwinding on its own.
-        let terminating = global_this.has_pending_termination_exception();
-        let exception = if terminating {
+        // The VM's termination (`worker.terminate()`) is not the script's
+        // error: it stays pending and keeps unwinding, and settles nothing.
+        let error = if global_this.has_pending_termination_exception() {
             None
         } else {
-            global_this.try_take_exception()
+            Some(
+                global_this
+                    .try_take_exception()
+                    .and_then(JSValue::to_error)
+                    .unwrap_or_else(|| {
+                        debug_assert!(false, "Yield::Failed without a pending JS exception");
+                        global_this
+                            .create_error_instance(format_args!("The shell interpreter failed"))
+                    }),
+            )
         };
 
         if self.flags.get().failed() {
             // Another pipeline member, started before the first one failed,
-            // failed too. The promise is already rejected; the exception taken
+            // failed too. The promise is already rejected; the error taken
             // above is dropped.
             return;
         }
@@ -1384,17 +1395,10 @@ impl Interpreter {
         self.keep_alive.with_mut(|k| k.disable());
 
         let this_jsvalue = self.this_jsvalue.get();
-        if this_jsvalue != JSValue::ZERO && !terminating {
+        if let Some(error) = error
+            && this_jsvalue != JSValue::ZERO
+        {
             if let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) {
-                debug_assert!(
-                    exception.is_some(),
-                    "Yield::Failed without a pending JS exception"
-                );
-                let error = match exception {
-                    Some(exception) => exception.to_error().unwrap_or(exception),
-                    None => global_this
-                        .create_error_instance(format_args!("The shell interpreter failed")),
-                };
                 let _entered = self.event_loop.entered();
                 global_this.bun_vm().event_loop_mut().run_callback(
                     reject,

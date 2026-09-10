@@ -5708,8 +5708,8 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
+    // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({
-      native: nativeSocket,
       context: this,
       settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,

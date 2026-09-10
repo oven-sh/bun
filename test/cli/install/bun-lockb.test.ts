@@ -492,39 +492,104 @@ for (const [what, column, poke] of [
     lockb.writeUInt32LE(poke, columnStart + 2 * 8);
     await write(lockbPath, lockb);
 
-    // `bun bun.lockb` dereferences every package's dependency list to print
-    // the yarn lockfile; it must report a parse error instead of crashing.
-    {
+    // Each command is a separate door into the corrupt lockfile, and a
+    // command that re-resolves rewrites the file, so restore the corrupt
+    // bytes before each run. Run all three before asserting: one door that
+    // crashes must not hide what the others do.
+    const corrupt = Buffer.from(lockb);
+    const run = async (args: string[]) => {
+      await write(lockbPath, corrupt);
       const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "bun.lockb"],
+        cmd: [bunExe(), ...args],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
         env,
       });
       const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-      expect(err).toContain("error parsing lockfile: InvalidLockfile");
-      expect(out).toBe("");
-      expect(code).toBe(1);
-    }
+      return { out, err, code };
+    };
+    const print = await run(["bun.lockb"]);
+    const install = await run(["install", "--no-progress"]);
+    const frozen = await run(["install", "--no-progress", "--frozen-lockfile"]);
 
     // An install must ignore the invalid lockfile and fall back to a fresh
     // resolve (which then fails: these packages only exist in the lockfile).
-    {
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install", "--no-progress"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    // `--frozen-lockfile` reads the lockfile through the same path. Both are
+    // asserted before the printer: they are the commands the crash reports
+    // name, and an unfixed binary panics in all three.
+    for (const { err, out, code } of [install, frozen]) {
       expect(err).toContain("Ignoring lockfile");
       expect(out).toBeDefined();
       expect(code).not.toBe(0);
     }
+
+    // `bun bun.lockb` dereferences every package's dependency list to print
+    // the yarn lockfile; it must report a parse error instead of crashing.
+    expect(print.err).toContain("error parsing lockfile: InvalidLockfile");
+    expect(print.out).toBe("");
+    expect(print.code).toBe(1);
   });
 }
+
+it("rejects a binary lockfile whose resolution names a package id past the package count", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "corrupt-lockb-resolution-id",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // Each buffer is written as a 16-byte (start, end) header, a type-name
+  // prefix, then the aligned payload. `hoisted_dependencies` and
+  // `resolutions` are both `u32` arrays, written in that order, so the second
+  // occurrence of the `u32` prefix belongs to `resolutions`.
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const N = Number(lockb.readBigUInt64LE(86));
+  const u32Prefix = "\n<u32> 4 sizeof, 4 alignof\n";
+  const hoisted = lockb.indexOf(u32Prefix);
+  const resolutionsPrefix = lockb.indexOf(u32Prefix, hoisted + 1);
+  expect(resolutionsPrefix).toBeGreaterThan(hoisted);
+  const resolutionsStart = Number(lockb.readBigUInt64LE(resolutionsPrefix - 16));
+  const resolutionsEnd = Number(lockb.readBigUInt64LE(resolutionsPrefix - 8));
+  expect(resolutionsEnd - resolutionsStart).toBeGreaterThanOrEqual(4);
+  expect(lockb.readUInt32LE(resolutionsStart)).toBeLessThan(N);
+  lockb.writeUInt32LE(N, resolutionsStart);
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // A resolution element indexes the package list. One id past the end is in
+  // range for every window check, so only the element check rejects it.
+  // Unvalidated, the id reached `Package::clone` and the install gave up with
+  // a bogus "failed to resolve" instead of re-resolving.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  expect(err).toContain("Ignoring lockfile");
+  expect(err).not.toContain("failed to resolve");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(out).toContain("a-dep@1.0.1");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
+});
 
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });

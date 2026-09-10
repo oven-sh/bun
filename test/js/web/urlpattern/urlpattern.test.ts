@@ -1,5 +1,6 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import testData from "./urlpatterntestdata.json";
 
@@ -205,5 +206,29 @@ describe("URLPattern", () => {
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
+  });
+
+  // The tokenizer keeps one 40-byte token per code point in a WTF::Vector,
+  // which holds at most 2^31 - 1 bytes. A pattern near 52 million characters
+  // used to abort the process when that Vector could not grow. The bound
+  // follows the synthetic allocation limit, so 1 MiB puts it at 26214 tokens.
+  test("a pattern with more tokens than the token list can hold throws", () => {
+    const tooLong = Buffer.alloc(64 * 1024, ".").toString();
+    const fits = Buffer.alloc(8 * 1024, ".").toString();
+    const message = "URLPattern constructor: Failed to create URLPattern (from input string)";
+
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      for (const component of ["username", "password", "hostname", "pathname", "search", "hash"] as const) {
+        expect(() => new URLPattern({ [component]: tooLong })).toThrow(message);
+      }
+      expect(() => new URLPattern("https://example.com/" + tooLong)).toThrow(message);
+      expect(() => new URLPattern({ search: "a", baseURL: "https://example.com/" + tooLong })).toThrow(message);
+
+      expect(new URLPattern({ pathname: fits }).pathname).toBe(fits);
+      expect(new URLPattern("https://example.com/" + fits).test("https://example.com/" + fits)).toBe(true);
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
   });
 });

@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, bunRun, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -1380,6 +1380,19 @@ describe("node:http", () => {
     });
   });
 
+  test.each([["80.5"], ["1e9"], [""], [{ port: "80.5" }], [{ port: "1e9" }], [{ port: "" }]])(
+    "listen(%j) throws ERR_SOCKET_BAD_PORT synchronously",
+    arg => {
+      const server = createServer();
+      server.on("error", () => {});
+      try {
+        expect(() => server.listen(arg)).toThrow(expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }));
+      } finally {
+        server.close();
+      }
+    },
+  );
+
   test("error event not fired, issue#4651", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const server = createServer((req, res) => {
@@ -1579,6 +1592,34 @@ it("should propagate exception in async data handler", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
+});
+
+describe("a 'request' listener that fails", () => {
+  async function rawExchangeWithThrowingHandler(
+    handler: string,
+    request = "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
+  ) {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "request-listener-throws.js"),
+      { HANDLER: handler, RAW_REQUEST: request },
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout).raw as string;
+  }
+
+  it("throwing with nothing written responds 500, never an empty 200", async () => {
+    const raw = await rawExchangeWithThrowingHandler("throw-before-write");
+    expect(raw).toStartWith("HTTP/1.1 500 ");
+    expect(raw).not.toContain("HTTP/1.1 200");
+  });
+
+  it("throwing after body bytes were written never completes or corrupts the chunked framing", async () => {
+    const raw = await rawExchangeWithThrowingHandler("throw-after-write", "GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(raw).not.toContain("\r\n0\r\n\r\n");
+    const body = raw.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+    const afterFirstChunk = body.replace(/^7\r\npartial\r\n/, "");
+    expect(afterFirstChunk === "" || /^[0-9a-fA-F]+[;\r]/.test(afterFirstChunk)).toBe(true);
+  });
 });
 
 // This test is disabled because it can OOM the CI

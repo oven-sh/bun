@@ -48,6 +48,14 @@ function safeGetenv(name: string) {
 
 let cachedUvBinding: Record<string, unknown> | undefined;
 
+function nghttp2ErrorString(code: number) {
+  const { NghttpError } = require("node:http2")[Symbol.for("::bunhttp2internals::")].util;
+  return new NghttpError(code).message;
+}
+
+class Http2Session {}
+class Http2Stream {}
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -86,6 +94,13 @@ function internalBinding(name: string) {
       const { kMaxLength, kStringMaxLength } = require("node:buffer");
       return { kMaxLength, kStringMaxLength };
     }
+    case "http2":
+      return {
+        Http2Session,
+        Http2Stream,
+        constants: require("node:http2").constants,
+        nghttp2ErrorString,
+      };
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":

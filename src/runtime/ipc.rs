@@ -1674,6 +1674,18 @@ impl SendQueue {
         }
     }
 
+    pub fn channel_fd(&self) -> Option<Fd> {
+        #[cfg(not(windows))]
+        {
+            let fd = self.get_socket()?.fd();
+            fd.is_valid().then_some(fd)
+        }
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
     #[cfg(windows)]
     pub fn ipc_peer_pid(&self) -> u32 {
         match *self.socket.get() {
@@ -2577,9 +2589,10 @@ pub fn ipc_serialize(
     message: JSValue,
     handle: JSValue,
     options: JSValue,
+    target: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options)
+    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options, target)
 }
 
 #[track_caller]

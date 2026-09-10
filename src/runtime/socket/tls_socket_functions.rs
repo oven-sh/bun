@@ -385,14 +385,14 @@ pub(super) fn get_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_tls_version(
-    this: &This,
+pub(crate) fn get_tls_version(
+    ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::NULL);
     };
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -439,8 +439,8 @@ pub(super) fn set_max_send_fragment(
     ))
 }
 
-pub(super) fn get_peer_certificate(
-    this: &This,
+pub(crate) fn get_peer_certificate(
+    ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -455,7 +455,7 @@ pub(super) fn get_peer_certificate(
         abbreviated = arg.to_boolean();
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::UNDEFINED);
     };
     let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
@@ -777,12 +777,12 @@ pub(super) fn get_shared_sigalgs(
     Ok(array)
 }
 
-pub(super) fn get_cipher(
-    this: &This,
+pub(crate) fn get_cipher(
+    ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = ssl else {
         return Ok(JSValue::UNDEFINED);
     };
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));

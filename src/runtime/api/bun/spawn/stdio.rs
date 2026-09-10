@@ -509,6 +509,22 @@ impl Stdio {
             return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
         }
 
+        let shared = if let Some(sock) = value.as_class_ref::<crate::socket::TCPSocket>() {
+            Some(sock.socket.get().fd())
+        } else if let Some(sock) = value.as_class_ref::<crate::socket::TLSSocket>() {
+            Some(sock.socket.get().fd())
+        } else {
+            webcore::file_sink::JSSink::from_js(value).map(|sink| {
+                // SAFETY: `from_js` returned the live sink behind `value`,
+                // kept alive by its JS wrapper for this call.
+                unsafe { &*sink }.sink.fd.get()
+            })
+        };
+        if let Some(fd) = shared.filter(|fd| fd.is_valid()) {
+            *out_stdio = Stdio::Fd(fd);
+            return Ok(());
+        }
+
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
             let mut stream = stream_;
             if let Some(blob) = stream.to_any_blob(global) {

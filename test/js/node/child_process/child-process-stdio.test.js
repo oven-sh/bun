@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import path from "node:path";
+import { Readable } from "node:stream";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -163,6 +165,26 @@ describe("child.stdin", () => {
     expect({ ret, cbCode: cbErr?.code }).toEqual({
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
+    });
+  });
+});
+
+describe("stream stdio entries", () => {
+  it("rejects a stream with no underlying descriptor like node", () => {
+    const source = new Readable({ read() {} });
+    expect(() => spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [source, "ignore", "ignore"] })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it.skipIf(isWindows)("leaves a shared stdout's bytes for the consumer when the producer exits first", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "child-process-stdio-share-stdout-producer-exits.js"),
+    );
+    expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: { consumerRead: 4096 },
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

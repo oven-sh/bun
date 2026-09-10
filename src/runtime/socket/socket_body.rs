@@ -3852,7 +3852,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_cipher(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_cipher(Self::as_tls(this), g, f)
+            tls_socket_functions::get_cipher(this.socket.get().ssl(), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -3900,7 +3900,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_version(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_version(this.socket.get().ssl(), g, f)
         } else {
             Ok(JSValue::NULL)
         }
@@ -3924,7 +3924,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_peer_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_peer_certificate(this.socket.get().ssl(), g, f)
         } else {
             Ok(JSValue::NULL)
         }
@@ -3999,6 +3999,40 @@ pub type TLSSocket = NewSocket<true>;
 /// dispatches between the two modules at monomorphization time; see
 /// `to_js` / `data_{get,set}_cached` above.
 use crate::generated_classes::{js_TCPSocket, js_TLSSocket};
+
+macro_rules! node_http_server_socket_tls_fn {
+    ($export:literal, $name:ident, $inner:path) => {
+        #[unsafe(export_name = $export)]
+        extern "C" fn $name(
+            global: &JSGlobalObject,
+            socket: *mut uws::us_socket_t,
+            is_ssl: bool,
+            frame: &CallFrame,
+        ) -> JSValue {
+            let ssl = if is_ssl && !socket.is_null() {
+                uws::NewSocketHandler::<true>::from(socket).ssl()
+            } else {
+                None
+            };
+            jsc::host_fn::to_js_host_fn_result(global, $inner(ssl, global, frame))
+        }
+    };
+}
+node_http_server_socket_tls_fn!(
+    "Bun__NodeHTTPServerSocket__getCipher",
+    node_http_server_socket_get_cipher,
+    tls_socket_functions::get_cipher
+);
+node_http_server_socket_tls_fn!(
+    "Bun__NodeHTTPServerSocket__getPeerCertificate",
+    node_http_server_socket_get_peer_certificate,
+    tls_socket_functions::get_peer_certificate
+);
+node_http_server_socket_tls_fn!(
+    "Bun__NodeHTTPServerSocket__getTLSVersion",
+    node_http_server_socket_get_tls_version,
+    tls_socket_functions::get_tls_version
+);
 
 // ── JsClass impls (manual — `#[bun_jsc::JsClass]` derive can't handle the
 // const-generic split into two codegen classes `JSTCPSocket` / `JSTLSSocket`).

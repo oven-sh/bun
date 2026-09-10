@@ -26,6 +26,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_BROTLI_INVALID_PARAM", RangeError],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError],
   ["ERR_BUFFER_TOO_LARGE", RangeError],
+  ["ERR_CHILD_CLOSED_BEFORE_REPLY", Error],
   ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
   ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", RangeError],
   ["ERR_CLOSED_MESSAGE_PORT", Error],

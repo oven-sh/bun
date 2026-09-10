@@ -348,6 +348,9 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) {
     return;
   }
+  if (us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return;
+  }
   struct us_ssl_pending_session_t *pending =
       SSL_get_ex_data(s->ssl, us_ssl_pending_keylog_idx);
   if (!pending) {
@@ -554,6 +557,15 @@ int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
 
 int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
   return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+}
+
+void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) {
+  ls->keylog_enabled = 1;
+}
+
+int us_socket_pop_keylog(struct us_socket_t *s, unsigned char *out, int out_cap) {
+  if (!s->ssl) return 0;
+  return us_ssl_pop_pending_keylog((SSL *)s->ssl, out, out_cap);
 }
 
 /* The resumable session most recently delivered via the new-session callback,
@@ -1372,12 +1384,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                     : SSL_VERIFY_PEER,
         us_verify_callback);
 
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * any client certificate that chains to a public root. A `ca` list with
+     * no entries (node's `ca: []`) leaves the store empty: nothing is trusted. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
@@ -1392,10 +1405,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       return NULL;
     }
     ERR_clear_error();
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
+    if (options.ca_count > 0 || options.request_cert) {
+      SSL_CTX_set_verify(ssl_context,
+          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                      : SSL_VERIFY_PEER,
+          us_verify_callback);
+    }
   } else {
     /* No user CA: seed the shared default root store, like Node's
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
@@ -1757,7 +1772,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
    * sockets lives in accept_kind and may not have been copied onto `s` yet
    * when its SSL is initialized. */
   if (ssl && (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
-              (listener && listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS))) {
+              (listener && (listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
+                            listener->keylog_enabled)))) {
     /* The very first TLS attach in a process can be a client connection, and
      * nothing on that path has registered the ex_data indices yet - using the
      * still--1 index would make CRYPTO_set_ex_data grow its slot array toward
@@ -1786,15 +1802,16 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      us_ex_idx_ensure();
-      if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
-        /* Default context: give this socket the process-shared root bundle.
-         * A context whose store holds user-provided CAs (ca/caFile options or
-         * addCACert) keeps using its own store - overriding it here would
-         * hide those CAs from chain verification. */
-        X509_STORE *roots = us_get_shared_default_ca_store();
-        if (roots) SSL_set0_verify_cert_store(ssl, roots);
-      }
+    }
+    if (!us_ssl_ctx_has_user_ca(ctx)) {
+      /* Default context: give this socket the process-shared root bundle as
+       * it is now, so a tls.setDefaultCACertificates() after the CTX was built
+       * (fetch's thread CTX, an interned SecureContext) still applies. A
+       * context whose store holds user-provided CAs (ca/caFile options or
+       * addCACert) keeps using its own store - overriding it here would hide
+       * those CAs from chain verification. */
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
     }
   } else {
     SSL_set_accept_state(ssl);
@@ -3334,6 +3351,22 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
+}
+
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+                                          SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+  SSL_CTX_up_ref(ctx);
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+  }
+  ls->ssl_ctx = ctx;
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,

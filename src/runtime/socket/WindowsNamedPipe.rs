@@ -1015,6 +1015,16 @@ impl WindowsNamedPipe {
             .map(|p| p.as_ptr())
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__fd", no_catch)]
+    pub fn fd(&self) -> Fd {
+        use bun_sys::windows::libuv::UvHandle as _;
+        // SAFETY: `uv_pipe()` is the live `uv_pipe_t` this socket drives.
+        match self.uv_pipe().map(|pipe| unsafe { &*pipe }.fd()) {
+            Some(h) if h != bun_sys::windows::libuv::INVALID_HANDLE_VALUE => Fd::from_system(h),
+            _ => Fd::INVALID,
+        }
+    }
+
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         let err = self.ssl_error.get();

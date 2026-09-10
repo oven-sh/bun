@@ -156,8 +156,8 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
-            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_CTX_get_verify_mode,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
             SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio,
@@ -430,6 +430,8 @@ pub mod ssl_wrapper {
                             boring_sys::SSL_VERIFY_PEER,
                             Some(always_continue_verify),
                         );
+                    }
+                    if us_ssl_ctx_has_user_ca(ctx.as_ptr()) == 0 {
                         if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
                             let _ = boring_sys::SSL_set0_verify_cert_store(
                                 ssl.as_ptr(),
@@ -1271,6 +1273,7 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        fn us_ssl_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> core::ffi::c_int;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
@@ -1345,6 +1348,7 @@ pub mod SocketContext {
     /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
     /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;
+    pub use bun_uws_sys::socket_context::c;
 }
 /// Snake-case module alias.
 pub use SocketContext as socket_context;

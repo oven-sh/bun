@@ -1107,6 +1107,9 @@ impl readable_stream::SourceContext for FileReader {
     fn set_flowing(&mut self, flag: bool) {
         Self::set_flowing(self, flag)
     }
+    fn fd(&self) -> Fd {
+        self.reader().get_fd()
+    }
     // toBufferedValue: null
 }
 

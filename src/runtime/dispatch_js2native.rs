@@ -71,6 +71,37 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
+pub(crate) fn bun_set_default_ca_certificates(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let mut certs: Vec<std::ffi::CString> = Vec::new();
+    let mut iter = frame.argument(0).array_iterator(global)?;
+    while let Some(item) = iter.next()? {
+        let bytes = item.to_bun_string(global)?.to_owned_slice();
+        debug_assert!(!bun_core::strings::contains_char(&bytes, 0));
+        if let Ok(cert) = std::ffi::CString::new(bytes) {
+            certs.push(cert);
+        }
+    }
+    let ptrs: Vec<*const core::ffi::c_char> = certs.iter().map(|c| c.as_ptr()).collect();
+    // SAFETY: `ptrs` addresses NUL-terminated strings that outlive the call; C copies what it keeps.
+    let ok =
+        unsafe { bun_uws::SocketContext::c::us_set_default_ca_certs(ptrs.as_ptr(), ptrs.len()) };
+    if ok == 0 {
+        if crate::server::throw_ssl_error_if_necessary(global) {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        return Err(global
+            .err(
+                bun_jsc::ErrorCode::CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to load the provided CA certificates"),
+            )
+            .throw());
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

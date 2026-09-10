@@ -287,6 +287,17 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+pub(crate) fn end_failed_node_http_response(raw: uws::AnyResponse) {
+    let state = raw.state();
+    if state.is_http_status_called() || state.is_http_write_called() {
+        raw.end_without_body(true);
+        raw.close_if_done_and_marked();
+    } else {
+        raw.write_status(b"500 Internal Server Error");
+        raw.end_stream(true);
+    }
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -523,6 +534,17 @@ impl NodeHTTPResponse {
         );
     }
 
+    pub(crate) fn can_upgrade(&self) -> bool {
+        let mut server = self.server;
+        !self
+            .flags
+            .get()
+            .intersects(Flags::ENDED | Flags::SOCKET_CLOSED | Flags::UPGRADED)
+            && !self.upgrade_context.get().context.is_null()
+            && server.web_socket_handler().is_some()
+            && !self.get_server_socket_value().is_empty()
+    }
+
     /// Empty `sec_websocket_*` slices fall back to the request's headers.
     pub(crate) fn upgrade(
         &self,
@@ -530,10 +552,10 @@ impl NodeHTTPResponse {
         sec_websocket_protocol: &[u8],
         sec_websocket_extensions: &[u8],
     ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() {
+        if !self.can_upgrade() {
             return false;
         }
+        let upgrade_ctx = self.upgrade_context.get().context;
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
         // `&mut self`-taking accessor can be called from this `&self` body.
         // The pointee is the long-lived server, not `*self`.
@@ -545,10 +567,6 @@ impl NodeHTTPResponse {
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
             unsafe { &mut *std::ptr::from_mut(ws_handler) };
-        let socket_value = self.get_server_socket_value();
-        if socket_value.is_empty() {
-            return false;
-        }
         self.resume_socket();
 
         data_value.ensure_still_alive();
@@ -1516,10 +1534,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
-            }
-            raw_response.end_stream(raw_response.state().is_http_connection_close());
+            end_failed_node_http_response(raw_response);
         }
 
         this.on_request_complete();

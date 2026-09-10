@@ -877,6 +877,8 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
+                // The child expects blocking stdio; libuv clears O_NONBLOCK the same way.
+                let _ = bun_sys::update_nonblocking(*fd, false);
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }

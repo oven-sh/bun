@@ -296,6 +296,7 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn WindowsNamedPipe__fd(this: &WindowsNamedPipe) -> bun_core::Fd;
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(
@@ -332,6 +333,10 @@ impl WindowsNamedPipe {
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn fd(&self) -> bun_core::Fd {
+        WindowsNamedPipe__fd(self)
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {

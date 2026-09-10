@@ -1,5 +1,6 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <atomic>
 #include <mutex>
 #include <string.h>
 #include <string_view>
@@ -291,12 +292,19 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+static X509_STORE *us_new_flagged_store() {
   X509_STORE *store = X509_STORE_new();
+  if (store != NULL) {
+    X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+  }
+  return store;
+}
+
+static X509_STORE *us_build_base_default_ca_store() {
+  X509_STORE *store = us_new_flagged_store();
   if (store == NULL) {
     return NULL;
   }
-  X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
 
   X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
   if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
@@ -346,14 +354,85 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return store;
 }
 
+// tls.setDefaultCACertificates(): the user root set that replaces the base
+// store for every context built afterwards.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1064-L1076
+// Node keeps it thread_local; Bun's fetch() verifies on the HTTP thread, so the
+// set is published to all threads through one atomic pointer. A published set
+// is immutable and is not freed when a later call supersedes it: a reader that
+// loaded the pointer just before the swap keeps valid memory, at the cost of
+// one set per setDefaultCACertificates() call.
+struct us_user_root_set {
+  STACK_OF(X509) *certs;
+  X509_STORE *shared;
+  // Keeps a superseded (never freed) set reachable, or LeakSanitizer reports it.
+  us_user_root_set *prev;
+};
+static std::atomic<us_user_root_set *> us_user_roots{nullptr};
+
+static X509_STORE *us_build_user_root_store(STACK_OF(X509) *certs) {
+  X509_STORE *store = us_new_flagged_store();
+  if (store == NULL) {
+    return NULL;
+  }
+  for (size_t i = 0; i < sk_X509_num(certs); i++) {
+    X509_STORE_add_cert(store, sk_X509_value(certs, i));
+  }
+  return store;
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1261-L1310
+extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
+  STACK_OF(X509) *certs = sk_X509_new_null();
+  if (certs == NULL) {
+    return 0;
+  }
+  for (size_t i = 0; i < count; i++) {
+    BIO *in = BIO_new_mem_buf(pem[i], -1);
+    if (in == NULL) {
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    X509 *x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
+    BIO_free(in);
+    if (x == NULL) {
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    sk_X509_push(certs, x);
+  }
+  X509_STORE *shared = us_build_user_root_store(certs);
+  if (shared == NULL) {
+    sk_X509_pop_free(certs, X509_free);
+    return 0;
+  }
+  us_user_root_set *set = new us_user_root_set{certs, shared, us_user_roots.load(std::memory_order_relaxed)};
+  while (!us_user_roots.compare_exchange_weak(set->prev, set, std::memory_order_release, std::memory_order_relaxed)) {
+  }
+  return 1;
+}
+
+extern "C" X509_STORE *us_get_default_ca_store() {
+  us_user_root_set *user = us_user_roots.load(std::memory_order_acquire);
+  if (user != nullptr) {
+    return us_build_user_root_store(user->certs);
+  }
+  return us_build_base_default_ca_store();
+}
+
 // Process-wide immutable default store. Safe to share across SSL_CTXs that
 // don't add per-config CAs (the user-`ca` path in build_raw populates the
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for
 // one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
+  us_user_root_set *user = us_user_roots.load(std::memory_order_acquire);
+  if (user != nullptr) {
+    X509_STORE_up_ref(user->shared);
+    return user->shared;
+  }
   static X509_STORE *shared = nullptr;
   static std::once_flag once;
-  std::call_once(once, []() { shared = us_get_default_ca_store(); });
+  std::call_once(once, []() { shared = us_build_base_default_ca_store(); });
   if (shared) X509_STORE_up_ref(shared);
   return shared;
 }

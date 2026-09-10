@@ -222,8 +222,8 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
-            let ack = p.to_int32();
+        if p.is_int32() {
+            let ack = p.as_int32();
             let entry = ipc_data.internal_msg_queue.with_mut(|q| {
                 let cb = q.callbacks.get(&ack).and_then(|s| s.get());
                 if q.callbacks.contains_key(&ack) {
@@ -264,6 +264,20 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 //
+
+#[bun_jsc::host_fn]
+pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = global.bun_vm().as_mut();
+    let Some(instance) = crate::ipc_host::get_ipc_instance(vm) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: get_ipc_instance returned a live instance; JS-thread only.
+    let fd = unsafe { (*instance).data().channel_fd() };
+    Ok(match fd {
+        Some(fd) => JSValue::from(fd.native() as i32),
+        None => JSValue::UNDEFINED,
+    })
+}
 
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

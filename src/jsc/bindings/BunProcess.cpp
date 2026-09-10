@@ -189,6 +189,7 @@ extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
+BUN_DECLARE_HOST_FUNCTION(Bun__Process__internalSend);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
@@ -3109,6 +3110,15 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     return jsUndefined();
 }
 
+static JSValue constructProcessInternalSend(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("_send"_s), Bun__Process__internalSend, ImplementationVisibility::Public);
+    }
+    return jsUndefined();
+}
+
 #if OS(WINDOWS)
 #define getpid _getpid
 #endif
@@ -4950,6 +4960,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        constructRawDebug                                   PropertyCallback
+  _send                            constructProcessInternalSend                        PropertyCallback
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback

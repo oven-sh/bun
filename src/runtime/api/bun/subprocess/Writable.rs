@@ -207,6 +207,9 @@ impl<'a> Writable<'a> {
                     )));
                 }
                 Stdio::Fd(fd) => {
+                    if fd.kind() == bun_sys::FdKind::System {
+                        return Ok(Writable::Ignore);
+                    }
                     return Ok(Writable::Fd(*fd));
                 }
                 Stdio::Dup2(dup2) => {

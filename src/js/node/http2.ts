@@ -1849,6 +1849,7 @@ const kNghttp2ErrorMessages = {
   [-502]: "Out of buffer space",
   [-505]: "Protocol error",
   [-510]: "Stream was already closed or invalid",
+  [-517]: "GOAWAY has already been sent",
   [-522]: "The length of the frame is invalid",
   [-523]: "Header compression/decompression error",
   [-524]: "Flow control error",

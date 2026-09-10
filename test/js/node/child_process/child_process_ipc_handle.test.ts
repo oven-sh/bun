@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, nodeExe, tempDir, tls } from "harness";
+import path from "node:path";
 
 const node = nodeExe();
 
@@ -632,6 +633,46 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
+  // node: once the child reports its sockets closed the server's count is reset to 0 and
+  // 'close' fires; a local socket closing later takes the count to -1, which is truthy, so
+  // 'close' does not fire again. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2472
+  test.concurrent("server 'close' fires once when a local socket outlives a sent one", async () => {
+    using dir = tempDir("ipc-handle-close-once", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+let closes = 0, accepted = 0, local;
+const server = net.createServer(sock => {
+  if (++accepted === 1) { child.send('sock', sock); return; }
+  local = sock;
+  server.close();
+});
+server.on('close', () => {
+  if (++closes > 1) return;
+  local.on('close', () => setImmediate(() => { console.log(JSON.stringify({ closes })); child.disconnect(); }));
+  local.destroy();
+});
+server.listen(0, '127.0.0.1', () => {
+  const port = server.address().port;
+  const first = net.connect(port, '127.0.0.1', () => net.connect(port, '127.0.0.1').on('error', () => {}));
+  first.on('error', () => {});
+});
+`,
+      "child.js": `process.on('message', (m, sock) => { if (sock) sock.destroy(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({ out: { closes: 1 }, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
@@ -779,5 +820,19 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "child-process-http-listen-fd0-parent.js"),
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("child alive: true"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(stdout).toContain("response: hello-fd0");
   });
 });

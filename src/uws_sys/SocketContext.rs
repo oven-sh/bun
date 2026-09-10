@@ -332,6 +332,10 @@ pub mod c {
             ctx: *mut SSL_CTX,
             content: *const core::ffi::c_char,
         ) -> core::ffi::c_int;
+        pub fn us_set_default_ca_certs(
+            pem: *const *const core::ffi::c_char,
+            count: usize,
+        ) -> core::ffi::c_int;
         /// Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (the
         /// caller frees them with libc free); returns 0 with a static
         /// `err_reason` tag on failure.

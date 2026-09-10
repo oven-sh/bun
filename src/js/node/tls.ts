@@ -621,14 +621,6 @@ var InternalSecureContext = class SecureContext {
   servername;
 
   constructor(options, cached = false) {
-    // When tls.setDefaultCACertificates() has installed an override and no
-    // explicit `ca` was given, use the override as the default CA set so the
-    // process-wide default applies on every construction path (the public
-    // createSecureContext(), the connect/TLSSocket path, addContext and
-    // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
-    }
     if (options) {
       validateSecureContextOptions(options);
       const cert = options.cert;
@@ -678,8 +670,6 @@ function SecureContext(options): void {
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
-  // The setDefaultCACertificates() override is applied inside the
-  // InternalSecureContext constructor so every construction path honors it.
   // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
@@ -1312,15 +1302,6 @@ function Server(options, secureConnectionListener): void {
       }
 
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
       // PKCS#12-embedded CAs are stashed separately so createSecureContext can
       // extend (not replace) the default trust set via addCACert. The server
       // path hands raw {key, cert, ca} to the native listener and has no
@@ -1594,6 +1575,11 @@ function connect(...args) {
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
 
+  // Node spreads the default so an explicit `undefined` throws. BoringSSL negotiates no FFDHE
+  // suites, so the option is vacuous. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1731-L1745
+  const minDHSize = ObjectPrototypeHasOwnProperty.$call(options, "minDHSize") ? options.minDHSize : 1024;
+  validateNumber(minDHSize, "options.minDHSize", 1);
+
   if (servername && net.isIP(servername)) {
     throw $ERR_INVALID_ARG_VALUE(
       "options.servername",
@@ -1615,6 +1601,14 @@ function connect(...args) {
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, connectOptions);
+  }
+
+  // Node calls `tls.createSecureContext` off the module object so overriding the export (proxy/MITM
+  // libs) affects tls.connect(). Skip when unchanged: TLSSocket reaches the same memoised SSL_CTX.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1746
+  const createContext = tlsExports.createSecureContext;
+  if (createContext !== createSecureContext && connectOptions.secureContext === undefined) {
+    connectOptions.secureContext = createContext(connectOptions);
   }
 
   const tlssock = new TLSSocket(connectOptions);
@@ -1691,6 +1685,7 @@ function cacheBundledRootCertificates(): string[] {
   return bundledRootCertificates;
 }
 const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
+const setDefaultCACertificatesNative = $newRustFunction("bun.rs", "setDefaultCACertificates", 1);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
@@ -1800,6 +1795,10 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
+  // Resets the process-wide root store (node's resetRootCertStore); throws for a
+  // certificate BoringSSL rejects, so the cache below is set only after it returns.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L215
+  setDefaultCACertificatesNative(normalized);
   _defaultCACertificatesOverride = normalized;
 }
 
@@ -1845,7 +1844,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tlsExports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1896,3 +1895,5 @@ export default {
   },
   getCACertificates,
 } as any as typeof import("node:tls");
+
+export default tlsExports;

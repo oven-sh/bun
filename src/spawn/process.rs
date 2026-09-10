@@ -2068,7 +2068,13 @@ mod spawn_process_body {
                     }
                     WindowsStdio::Pipe(fd) => {
                         stdio.flags = uv::UV_INHERIT_FD;
-                        stdio.data.fd = fd.uv();
+                        stdio.data.fd = match inherit_fd(*fd, &mut uv_files_to_close) {
+                            Ok(crt) => crt,
+                            Err(err) => {
+                                cleanup_uv_files(&uv_files_to_close, loop_);
+                                return Ok(Err(err));
+                            }
+                        };
                     }
                 }
             }
@@ -2163,7 +2169,13 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Pipe(fd) => {
                     stdio.flags = uv::UV_INHERIT_FD;
-                    stdio.data.fd = fd.uv();
+                    stdio.data.fd = match inherit_fd(*fd, &mut uv_files_to_close) {
+                        Ok(crt) => crt,
+                        Err(err) => {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(err));
+                        }
+                    };
                 }
             }
         }
@@ -2326,6 +2338,18 @@ mod spawn_process_body {
         cleanup_dup(false);
         cleanup_uv_files(&uv_files_to_close, loop_);
         Ok(Ok(result))
+    }
+
+    #[cfg(windows)]
+    fn inherit_fd(fd: Fd, uv_files_to_close: &mut Vec<uv::uv_file>) -> Maybe<uv::uv_file> {
+        if fd.kind() == bun_sys::FdKind::Uv {
+            return Ok(fd.uv());
+        }
+        let crt = bun_sys::dup(fd)?
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::uv_spawn, bun_sys::ErrorCase::CloseOnFail)?
+            .uv();
+        uv_files_to_close.push(crt);
+        Ok(crt)
     }
 
     #[cfg(windows)]

@@ -367,6 +367,7 @@ typedef struct {
     uint8_t cell_type;
     bool shared;
     bool resizable;
+    bool wasm_memory;
     bool pinned;
 } Bun__ArrayBuffer;
 

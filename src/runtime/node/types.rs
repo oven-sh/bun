@@ -342,7 +342,9 @@ impl StringOrBuffer<'static> {
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
-    /// pinned and GC-rooted for `Async`.
+    /// pinned and GC-rooted for `Async`. An `Async` parse is read after the
+    /// call returns, so storage the pin does not keep mapped is copied
+    /// ([`PinnedArrayBuffer::root_read_only`]).
     pub(crate) fn buffer_from_js(
         global: &JSGlobalObject,
         value: JSValue,
@@ -351,7 +353,7 @@ impl StringOrBuffer<'static> {
         if flavor == Flavor::Sync {
             return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
         }
-        match PinnedArrayBuffer::root(global, value) {
+        match PinnedArrayBuffer::root_read_only(global, value) {
             Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
             None => Err(global.throw_out_of_memory()),
         }
@@ -454,19 +456,13 @@ impl StringOrBuffer<'static> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
-    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
+    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted (see [`buffer_from_js`](Self::buffer_from_js)).
     #[inline]
     pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let mut parsed =
-            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
-        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
-            && !buffer.copy_if_resizable(global)
-        {
-            return Err(global.throw_out_of_memory());
-        }
+        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
         // SAFETY: parsed with `Flavor::Async`.
         Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }
@@ -1111,8 +1107,8 @@ impl PathLikeExt for PathLike<'_> {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
-                if !buffer.copy_if_resizable(ctx) {
+                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink or a wasm-memory grow in between frees the pages.
+                if !buffer.copy_if_pin_cannot_hold(ctx) {
                     return Err(ctx.throw_out_of_memory());
                 }
                 Valid::path_buffer(buffer.slice(), ctx)?;

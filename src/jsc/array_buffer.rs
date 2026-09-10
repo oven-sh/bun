@@ -31,6 +31,8 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
+    /// True when the bytes belong to a `WebAssembly.Memory`. See [`pin_cannot_hold`](Self::pin_cannot_hold).
+    pub wasm_memory: bool,
     /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
 }
@@ -45,6 +47,7 @@ impl Default for ArrayBuffer {
             typed_array_type: JSType::Cell,
             shared: false,
             resizable: false,
+            wasm_memory: false,
             pinned: false,
         }
     }
@@ -157,6 +160,23 @@ impl ArrayBuffer {
         if self.pinned {
             self.value.unpin_array_buffer();
         }
+    }
+
+    /// True when a pin does not keep these bytes mapped, so a borrower that
+    /// reads or writes them after the call returns must copy them:
+    ///
+    /// - a resizable non-shared ArrayBuffer: `resize()` unmaps the trimmed pages.
+    /// - a non-shared `WebAssembly.Memory`: `grow()` on a bounds-checked memory
+    ///   allocates a new block, copies into it, and frees the old one. JSC
+    ///   detaches a wasm memory's buffer whatever its pin count ("We allow
+    ///   detaching wasm memory ArrayBuffers even though they are locked",
+    ///   `ArrayBuffer::detach`), and the detached contents hold the last ref on
+    ///   the block, so the pages go away under the borrow.
+    ///
+    /// A SharedArrayBuffer (including a shared wasm memory) only ever grows in
+    /// place, so a borrow of one stays valid and needs no copy.
+    pub fn pin_cannot_hold(&self) -> bool {
+        !self.shared && (self.resizable || self.wasm_memory)
     }
 
     // require('buffer').kMaxLength.
@@ -300,6 +320,7 @@ impl ArrayBuffer {
         typed_array_type: JSType::Uint8Array,
         shared: false,
         resizable: false,
+        wasm_memory: false,
         pinned: false,
     };
 
@@ -651,7 +672,7 @@ impl ArrayBuffer {
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
-    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
+    /// The bytes `buffer.ptr` points at when [`copy_if_pin_cannot_hold`](Self::copy_if_pin_cannot_hold) took a copy.
     copy: Option<Vec<u8>>,
 }
 
@@ -683,19 +704,18 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_pin_cannot_hold`](Self::copy_if_pin_cannot_hold).
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
         let mut this = Self::root(global, value)?;
-        this.copy_if_resizable(global).then_some(this)
+        this.copy_if_pin_cannot_hold(global).then_some(this)
     }
 
-    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
-    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
-        if !self.buffer.resizable
-            || self.buffer.shared
-            || self.buffer.byte_len == 0
-            || self.copy.is_some()
-        {
+    /// Copies the bytes when the pin does not keep them mapped
+    /// ([`ArrayBuffer::pin_cannot_hold`]), so that a read of them after the
+    /// call returns cannot fault or see another object's memory. `false` if the
+    /// copy cannot be allocated.
+    pub fn copy_if_pin_cannot_hold(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.pin_cannot_hold() || self.buffer.byte_len == 0 || self.copy.is_some() {
             return true;
         }
         let bytes = self.buffer.byte_slice();

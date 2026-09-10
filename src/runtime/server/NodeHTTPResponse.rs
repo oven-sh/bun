@@ -2066,11 +2066,12 @@ impl NodeHTTPResponse {
                     bytes_len
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
-                // Resizable (non-shared) buffers are spilled: `resize()` mprotect()s
-                // trimmed pages PROT_NONE and `pin()` doesn't prevent it.
+                // Storage a pin does not keep mapped is spilled instead
+                // (copied into backpressure now): see
+                // `ArrayBuffer::pin_cannot_hold`.
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
-                        Some(ab) if ab.resizable && !ab.shared => {
+                        Some(ab) if ab.pin_cannot_hold() => {
                             ab.unpin();
                             None
                         }

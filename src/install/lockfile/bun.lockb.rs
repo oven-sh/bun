@@ -953,9 +953,14 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
             || (tree_index == 0
                 && (tree.dependency_id == super::tree::ROOT_DEP_ID
                     || tree.dependency_id == invalid_dependency_id));
-        // The builder appends each tree after its parent: ids are positions
-        // and a parent precedes its child, which also rules out parent cycles.
-        let parent_valid = tree.parent == Tree::INVALID_ID || (tree.parent as usize) < tree_index;
+        // The builder appends each tree after its parent: ids are positions,
+        // only the root has no parent, and a parent precedes its child, which
+        // also rules out parent cycles.
+        let parent_valid = if tree_index == 0 {
+            tree.parent == Tree::INVALID_ID
+        } else {
+            (tree.parent as usize) < tree_index
+        };
         if tree.id as usize != tree_index
             || !dependency_id_valid
             || !parent_valid

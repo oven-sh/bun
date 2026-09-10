@@ -2,6 +2,7 @@ import { file, gunzipSync, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
+import { closeSync, constants, openSync } from "fs";
 import { chmod, exists, lstat, readdir, rm, symlink } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
@@ -523,13 +524,18 @@ describe.concurrent("flags", () => {
       "package.json": JSON.stringify({ name: "pack-fifo-test", version: "1.1.1" }),
       "index.js": indexJs,
     });
-    mkfifo(join(dir, "out.fifo"));
+    const fifo = join(dir, "out.fifo");
+    mkfifo(fifo);
 
-    // Read and pack together: the FIFO read only settles once a writer opens the FIFO.
-    const [packed, { out, err, exitCode }] = await Promise.all([
-      file(join(dir, "out.fifo")).bytes(),
-      runPack(dir, ["--filename=out.fifo"]),
-    ]);
+    // `cat` is the reader: a blocking open(2) of the FIFO, which pack's single write completes.
+    await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: "pipe", stderr: "ignore", env: bunEnv });
+    const { out, err, exitCode } = await runPack(dir, ["--filename=out.fifo"]);
+    // If pack exited without opening the FIFO, `cat` is still blocked in open(2). A non-blocking
+    // write-side open connects to it (ENXIO when `cat` already read its EOF), so the read settles.
+    try {
+      closeSync(openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK));
+    } catch {}
+    const packed = await reader.stdout.bytes();
     expect(err).toBe("");
     expect(out.split("\n")).toEqual([
       "bun pack <version> (<revision>)",
@@ -549,7 +555,7 @@ describe.concurrent("flags", () => {
 
     await write(join(dir, "out.tgz"), packed);
     expect(tarballEntries(join(dir, "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
-    expect((await lstat(join(dir, "out.fifo"))).isFIFO()).toBeTrue();
+    expect((await lstat(fifo)).isFIFO()).toBeTrue();
   });
 
   test("--filename and --destination", async () => {

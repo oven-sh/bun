@@ -34,6 +34,21 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--malformed=<kind>`: leave out a field, or corrupt one, that real Chrome
+// always fills in. Only a broken or hostile executable at backend.path
+// produces these. One kind per run:
+//   attach-no-session-id   Target.attachToTarget answers {}
+//   attach-bad-utf8        ... answers a sessionId that is not valid UTF-8
+//   click-no-value         the click(selector) check answers without result.value
+//   detach-no-session-id   Target.detachedFromTarget arrives with params {}
+//   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
+const malformed = process.argv.find(a => a.startsWith("--malformed="))?.slice("--malformed=".length);
+
+// Stands in for a session id until sendInvalidSessionId() overwrites its
+// first byte. JSON.stringify cannot emit invalid UTF-8, so the byte goes in
+// after the encode.
+const BAD_SESSION_ID = "not-utf8";
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
@@ -56,12 +71,29 @@ Object.assign(globalThis, {
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
   },
+  // Every Input.dispatchMouseEvent this process has seen, in order.
+  __fake_mouse_events() {
+    return mouseEvents;
+  },
 });
 
-function send(message: unknown) {
-  const bytes = Buffer.from(JSON.stringify(message) + "\0");
+const mouseEvents: { type: string; x: number; y: number }[] = [];
+
+function sendBytes(bytes: Buffer) {
   let written = 0;
   while (written < bytes.length) written += writeSync(REPLIES, bytes, written, bytes.length - written);
+}
+
+function send(message: unknown) {
+  sendBytes(Buffer.from(JSON.stringify(message) + "\0"));
+}
+
+// The message with BAD_SESSION_ID wherever it appears turned into bytes that
+// are not valid UTF-8: 0xff is never a legal UTF-8 byte.
+function sendInvalidSessionId(message: unknown) {
+  const bytes = Buffer.from(JSON.stringify(message) + "\0");
+  bytes[bytes.indexOf(BAD_SESSION_ID)] = 0xff;
+  sendBytes(bytes);
 }
 
 let targets = 0;
@@ -81,6 +113,8 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.createTarget":
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
+      if (malformed === "attach-no-session-id") return reply({});
+      if (malformed === "attach-bad-utf8") return sendInvalidSessionId({ id, result: { sessionId: BAD_SESSION_ID } });
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
@@ -88,14 +122,28 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
       event("Page.loadEventFired", { timestamp: loads });
+      // One stray event per load, addressed to a session nothing can name.
+      if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
+      if (malformed === "event-bad-utf8") {
+        sendInvalidSessionId({ method: "Page.loadEventFired", params: {}, sessionId: BAD_SESSION_ID });
+      }
       return;
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
+    case "Input.dispatchMouseEvent":
+      mouseEvents.push({ type: params.type, x: params.x, y: params.y });
+      return reply({});
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
         if (noTitleReply) return;
         return reply({ result: { type: "string", value: "fake chrome" } });
+      }
+      // The click(selector) actionability check. It needs a DOM, so this
+      // process cannot run it; answer the [cx, cy] the page would return.
+      if (params.expression.includes("elementFromPoint")) {
+        if (malformed === "click-no-value") return reply({ result: { type: "undefined" } });
+        return reply({ result: { type: "object", value: [12, 34] } });
       }
       let value: unknown;
       try {

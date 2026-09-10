@@ -336,6 +336,79 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// The browser addresses a page by the sessionId that Target.attachToTarget
+// hands back. Without a usable one the page is unreachable, so the load can
+// never finish. The reply handler used to store the sessionId whatever came
+// back and route the rest of the chain with it.
+for (const kind of ["attach-no-session-id", "attach-bad-utf8"]) {
+  test.concurrent(`an attach reply with no usable sessionId fails the navigation (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      const held = await outcome(view.navigate("http://fake/"));
+      const loadingAfterFail = view.loading;
+      view.close();
+      print({ held, loadingAfterFail });
+    `);
+    expect(result).toEqual({ held: { rejected: "malformed attach response" }, loadingAfterFail: false });
+  });
+}
+
+// An event names its page with a sessionId too. One that names no page the
+// transport knows is dropped, and the views it was not addressed to keep
+// working.
+for (const kind of ["detach-no-session-id", "event-bad-utf8"]) {
+  test.concurrent(`an event with no usable sessionId is ignored (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/");
+      print({ url: view.url, value: await view.evaluate("6 * 7") });
+      view.close();
+    `);
+    expect(result).toEqual({ url: "http://fake/", value: 42 });
+  });
+}
+
+// click(selector) waits for the element page-side and gets its center back as
+// [cx, cy]. Those two numbers go straight into Input.dispatchMouseEvent.
+test.concurrent("click(selector) sends the position the page reported", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    await view.click("#target", { timeout: 100 });
+    print(await view.evaluate("__fake_mouse_events()"));
+    view.close();
+  `);
+  expect(result).toEqual([
+    { type: "mousePressed", x: 12, y: 34 },
+    { type: "mouseReleased", x: 12, y: 34 },
+  ]);
+});
+
+// The same reply without result.value. The handler used to read the position
+// with strtof() straight off the pointer jsonField returns, which is null
+// when the field is absent.
+test.concurrent("a click reply with no position rejects", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--malformed=click-no-value"] },
+      width: 100,
+      height: 100,
+    });
+    await view.navigate("http://fake/");
+    print(await outcome(view.click("#target", { timeout: 100 })));
+    view.close();
+  `);
+  expect(result).toEqual({ rejected: "malformed click response" });
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

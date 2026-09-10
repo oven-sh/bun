@@ -602,6 +602,19 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
+// Every session id that reaches m_sessions goes through here, never through
+// String::fromUTF8 directly. fromUTF8 answers with a NULL String for a
+// missing field (jsonField returns a span with a null pointer) and for
+// invalid UTF-8, and a null String has no StringImpl for StringHash::hash to
+// read. The result is always hashable; empty means "no usable session id".
+static WTF::String decodeSessionId(std::span<const char> utf8)
+{
+    if (utf8.empty()) return WTF::emptyString();
+    auto decoded = WTF::String::fromUTF8(utf8);
+    if (decoded.isNull()) return WTF::emptyString();
+    return decoded;
+}
+
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
 // takes a string: "none", "left", "middle", "right".
 static constexpr ASCIILiteral cdpButton(uint8_t b)
@@ -787,8 +800,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
     case Method::TargetAttachToTarget: {
         // {"sessionId":"<base64ish>"}
-        auto sid = jsonString(jsonField(result, { "sessionId", 9 }));
-        view->m_sessionId = WTF::String::fromUTF8(sid);
+        auto session = decodeSessionId(jsonString(jsonField(result, { "sessionId", 9 })));
+        if (session.isEmpty()) {
+            // Nothing addresses the page without a session id, so the load
+            // can never complete. Fail the navigation now.
+            settleFailure(g, view, entry.slot, entry.method,
+                createError(g, "malformed attach response"_s));
+            return;
+        }
+        view->m_sessionId = WTF::move(session);
         // Route events to this view via its viewId — m_views holds the one
         // Weak per view. A view with a slot set is rooted via the owner
         // predicate reading m_pendingActivityCount.
@@ -1049,22 +1069,25 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value = [cx, cy]. jsonField gives us the array
-        // slice "[<cx>,<cy>]"; scan for the comma.
+        // result.result.value = [cx, cy] — the only shape kActionabilityIIFE
+        // returns. WTF::JSON parses the two numbers to a C++ tree: no
+        // JSValue allocation for a pair we read once, and a reply that is
+        // not that pair fails the parse instead of the click.
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonField(inner, { "value", 5 });
-        // Skip leading '['
-        const char* p = value.data();
-        const char* end = p + value.size();
-        while (p < end && (*p == '[' || *p == ' '))
-            ++p;
-        // Parse cx (float until comma)
-        char* ep;
-        float cx = strtof(p, &ep);
-        p = ep;
-        while (p < end && (*p == ',' || *p == ' '))
-            ++p;
-        float cy = strtof(p, nullptr);
+        auto root = value.empty() ? nullptr
+                                  : JSON::Value::parseJSON(
+                                        StringView::fromLatin1(std::span<const Latin1Character>(
+                                            reinterpret_cast<const Latin1Character*>(value.data()), value.size())));
+        auto point = root ? root->asArray() : nullptr;
+        auto px = point && point->length() == 2 ? point->get(0)->asDouble() : std::nullopt;
+        auto py = px ? point->get(1)->asDouble() : std::nullopt;
+        if (!py) {
+            settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
+            return;
+        }
+        float cx = static_cast<float>(*px);
+        float cy = static_cast<float>(*py);
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
@@ -1110,8 +1133,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     if (sessionId.empty()) {
         if (method.size() != 25 || memcmp(method.data(), "Target.detachedFromTarget", 25) != 0)
             return;
-        auto sid = jsonString(jsonField(params, { "sessionId", 9 }));
-        auto sidStr = WTF::String::fromUTF8(sid);
+        auto sidStr = decodeSessionId(jsonString(jsonField(params, { "sessionId", 9 })));
         auto it = m_sessions.find(sidStr);
         if (it == m_sessions.end()) return;
         uint32_t vid = it->value;
@@ -1126,7 +1148,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         updateKeepAlive();
         return;
     }
-    auto sidStr = WTF::String::fromUTF8(sessionId);
+    auto sidStr = decodeSessionId(sessionId);
     auto it = m_sessions.find(sidStr);
     if (it == m_sessions.end()) return;
     JSWebView* view = viewFor(it->value);

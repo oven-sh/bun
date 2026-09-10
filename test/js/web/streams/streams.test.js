@@ -2101,14 +2101,67 @@ it("ReadableStream for File", async () => {
   expect(output).toBe(input);
 });
 
-it("ReadableStream for File errors", async () => {
-  try {
-    var blob = file(import.meta.dir + "/fetch.js.txt.notfound");
-    blob.stream().getReader();
-    throw new Error("should not reach here");
-  } catch (e) {
-    expect(e.code).toBe("ENOENT");
-    expect(e.syscall).toBe("open");
+describe("ReadableStream for a File that fails to open", () => {
+  // The native file source opens the file when the stream is first consumed. A failure
+  // there errors the stream: consumers do not throw synchronously, and every read settles.
+  const missing = import.meta.dir + "/fetch.js.txt.notfound";
+  const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
+  const streams = {
+    "Bun.file().stream()": () => file(missing).stream(),
+    "new Response(Bun.file()).body": () => new Response(file(missing)).body,
+    "new Request({ body: Bun.file() }).body": () =>
+      new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
+  };
+
+  for (const [label, makeStream] of Object.entries(streams)) {
+    describe(label, () => {
+      it("getReader() returns a reader whose read() rejects", async () => {
+        const stream = makeStream();
+        const reader = stream.getReader();
+        expect(stream.locked).toBe(true);
+        await expect(reader.read()).rejects.toEqual(enoent);
+        await expect(reader.closed).rejects.toEqual(enoent);
+        // A second consumer sees the same error instead of a read that never settles.
+        reader.releaseLock();
+        await expect(stream.getReader().read()).rejects.toEqual(enoent);
+      });
+
+      it("tee() returns two errored branches", async () => {
+        const [a, b] = makeStream().tee();
+        await expect(a.getReader().read()).rejects.toEqual(enoent);
+        await expect(b.getReader().read()).rejects.toEqual(enoent);
+      });
+
+      it("promise-returning consumers reject instead of throwing", async () => {
+        let result;
+        expect(() => {
+          result = makeStream().text();
+        }).not.toThrow();
+        await expect(result).rejects.toEqual(enoent);
+        expect(() => {
+          result = makeStream().pipeTo(new WritableStream());
+        }).not.toThrow();
+        await expect(result).rejects.toEqual(enoent);
+        expect(() => {
+          result = new Response(makeStream()).bytes();
+        }).not.toThrow();
+        await expect(result).rejects.toEqual(enoent);
+        expect(() => {
+          result = readableStreamToArrayBuffer(makeStream());
+        }).not.toThrow();
+        await expect(result).rejects.toEqual(enoent);
+      });
+
+      it("Readable.fromWeb() after the failed start emits the error", async () => {
+        const stream = makeStream();
+        stream.getReader().releaseLock();
+        const readable = Readable.fromWeb(stream);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        readable.on("error", resolve).on("end", () => reject(new Error("ended without an error")));
+        readable.resume();
+        expect(await promise).toEqual(enoent);
+      });
+    });
   }
 });
 

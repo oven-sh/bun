@@ -159,6 +159,20 @@ impl ArrayBuffer {
         }
     }
 
+    /// True for a `SharedArrayBuffer`, which another thread writes during the call, and for a resizable buffer, whose `resize()` unmaps pages as soon as the call runs JS.
+    pub fn can_change_under_borrow(&self) -> bool {
+        self.shared || self.resizable
+    }
+
+    /// A private copy of the bytes. `None` if it cannot be allocated.
+    pub fn try_copy_bytes(&self) -> Option<Vec<u8>> {
+        let bytes = self.byte_slice();
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(bytes.len()).ok()?;
+        copy.extend_from_slice(bytes);
+        Some(copy)
+    }
+
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
@@ -698,12 +712,9 @@ impl PinnedArrayBuffer {
         {
             return true;
         }
-        let bytes = self.buffer.byte_slice();
-        let mut copy = Vec::new();
-        if copy.try_reserve_exact(bytes.len()).is_err() {
+        let Some(mut copy) = self.buffer.try_copy_bytes() else {
             return false;
-        }
-        copy.extend_from_slice(bytes);
+        };
         global.vm().report_extra_memory(copy.len());
         self.buffer.ptr = copy.as_mut_ptr();
         self.copy = Some(copy);

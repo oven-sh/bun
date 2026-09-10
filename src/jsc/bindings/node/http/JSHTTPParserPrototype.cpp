@@ -137,11 +137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
 
         std::span<const uint8_t> input = buffer->span();
 
-        // llhttp reads these bytes for the whole run, and the parser's callbacks run user JS in
-        // the middle of it. A pin makes a transfer() copy instead of freeing the bytes, but it
-        // stops neither resize() on a resizable ArrayBuffer nor the detach that a
-        // WebAssembly.Memory grow() performs. Either one unmaps the bytes llhttp is still
-        // reading, so copy them into memory that lives for the whole call.
+        // A pin stops transfer(), not resize() or a WebAssembly.Memory grow(), which a callback can call.
         WTF::Vector<uint8_t> owned;
         bool copied = !input.empty() && (backingBuffer->isResizableNonShared() || backingBuffer->isWasmMemory());
         if (copied) {

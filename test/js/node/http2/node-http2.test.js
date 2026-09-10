@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6145,9 +6145,11 @@ server.listen(0, "127.0.0.1", async () => {
 });
 `;
 
-// Windows drops the data still in the receive queue when the reset arrives, so the request never
-// reaches the 'stream' handler there and the server has nothing queued when the socket closes.
-it.skipIf(isWindows)("a peer reset reports no ERR_SOCKET_CLOSED on a server session or its streams", async () => {
+// Linux only. The reproduction needs the kernel to hand over the buffered request and then report
+// a plain close, which is what epoll does. kqueue and IOCP report the reset as a socket error and
+// drop the bytes still in the receive queue, so the request never reaches the 'stream' handler and
+// the server has nothing queued when the socket closes.
+it.skipIf(!isLinux)("a peer reset reports no ERR_SOCKET_CLOSED on a server session or its streams", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", peerResetChild],
     env: bunEnv,

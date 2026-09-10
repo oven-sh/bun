@@ -575,8 +575,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             };
 
-            // The placeholder bytes are rewritten in place: interning the final path as a
-            // new string would leave the per-build placeholder in the table the executable embeds.
+            // In place, so the per-build placeholder does not survive as an extra string.
             mi.rewrite_strings(|s| unique_key_to_path.get(s).map(|path| &path[..]));
 
             if mi.finalize().is_err() {
@@ -1463,9 +1462,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(result)
 }
 
-/// The linker prints `unique_key` placeholders (a per-build random prefix) wherever a final
-/// chunk path is not known yet. One that survives into an output makes two builds of the same
-/// input differ, so debug builds check every in-memory output for the prefix.
+/// A `unique_key` placeholder (per-build random prefix) left in an output makes builds of the
+/// same input differ; debug builds check every in-memory output for the prefix.
 fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputFile]) {
     if !cfg!(debug_assertions) || c.unique_key_prefix.is_empty() {
         return;

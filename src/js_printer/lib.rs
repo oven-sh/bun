@@ -644,16 +644,13 @@ pub mod analyze_transpiled_module {
             self.exported_names.insert(name, ()).is_some()
         }
 
-        /// Read-only view of the interned string table, `(buf, lens)`. Unlike
-        /// `as_deserialized()` this does not assert `finalized`.
+        /// The interned string table, `(buf, lens)`; usable before `finalize()`.
         pub fn strings(&self) -> (&[u8], &[u32]) {
             (&self.strings_buf, &self.strings_lens)
         }
 
-        /// Rewrites interned strings in place: `replace` returns the new bytes for a
-        /// string, or `None` to keep it. Ids do not change, so every record and requested
-        /// module that named the old string names the new one. The linker uses this to
-        /// turn cross-chunk placeholder specifiers into final chunk paths.
+        /// Rewrites interned strings in place (`None` keeps one). Ids do not change, so
+        /// records and requested modules keep naming the same entries.
         pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
             debug_assert!(!self.finalized);
             let mut buf: Vec<u8> = Vec::with_capacity(self.strings_buf.len());

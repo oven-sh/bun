@@ -588,6 +588,87 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// JSC has three kinds of arguments objects: DirectArguments (sloppy function), ScopedArguments
+// (sloppy function with a parameter captured by a closure) and ClonedArguments (strict function).
+// The first two keep the arguments outside the regular indexed property storage. `new Function`
+// bodies are sloppy even though this module is strict.
+const argumentsObjectKinds = [
+  ["direct", new Function("return arguments")],
+  ["scoped", new Function("a", "const f = () => a; return arguments")],
+  [
+    "cloned",
+    function () {
+      return arguments;
+    },
+  ],
+];
+
+it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and extra indexes", (kind, args) => {
+  let a = args(1, 2, 3);
+  delete a[1];
+  expect(Bun.inspect(a)).toBe("[ 1, empty item, 3 ]");
+  a = args(1, 2, 3);
+  delete a[2];
+  expect(Bun.inspect(a)).toBe("[ 1, 2, empty item ]");
+  a = args(1, 2, 3);
+  Object.defineProperty(a, 1, { value: "x", enumerable: false });
+  expect(Bun.inspect(a)).toBe('[ 1, "x", 3 ]');
+  a = args(1, 2, 3);
+  a.length = 2;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 ]");
+  a = args();
+  a.length = 3;
+  expect(Bun.inspect(a)).toBe("[ 3 x empty items ]");
+  // An index past the arguments themselves lands in the regular indexed storage
+  // and only shows once `length` covers it, like any other array-like.
+  a = args(1, 2, 3);
+  a[5] = 6;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3 ]");
+  a.length = 8;
+  expect(Bun.inspect(a)).toBe("[ 1, 2, 3, 2 x empty items, 6, 2 x empty items ]");
+  delete a[2];
+  a[1_000_000] = "far";
+  a.length = 1_000_002;
+  expect(Bun.inspect(a)).toBe('[\n  1, 2, 3 x empty items, 6, 999994 x empty items, "far", empty item\n]');
+});
+
+// Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
+// anything at all (past 2^32 - 1, a getter) with only a handful of elements behind it, so it must
+// not drive an index-by-index probe either. In a child for the same reason as above.
+it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
+  const code = `
+    function direct() { return arguments; }
+    function scoped(a) { scoped.f = () => a; return arguments; }
+    class K { static cloned() { return arguments; } }
+    for (const args of [direct, scoped, K.cloned]) {
+      const a = args(1, 2, 3);
+      a.length = 2 ** 32;
+      console.log(a);
+      const b = args(1, 2, 3);
+      delete b[1];
+      b[70] = 70;
+      b[4294967294] = "max";
+      Object.defineProperty(b, "length", { get: () => 2 ** 50 });
+      console.log(Bun.inspect({ b }));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: (
+      "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
+      '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n'
+    ).repeat(3),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // A property lookup that throws while an object is being formatted (a Proxy trap in the
 // prototype chain, a lazily initialized property whose initializer throws, a module namespace
 // export that is still in its temporal dead zone) used to leave the exception pending: the

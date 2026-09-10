@@ -38,6 +38,8 @@
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DirectArguments.h"
+#include "JavaScriptCore/ScopedArguments.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -7055,57 +7057,50 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
 }
 
-// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
-// when every index from `start` to the end of the array is a hole. Mirrors the
-// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
-// a run of holes without probing each index of a huge sparse array.
-extern "C" uint64_t Bun__JSArray__nextPresentIndex(
-    JSC::EncodedJSValue encodedValue,
-    uint32_t start)
+static constexpr uint64_t noPresentIndex = std::numeric_limits<uint64_t>::max();
+
+// Mirrors the butterfly walk in JSObject::getOwnIndexedPropertyNames.
+static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
 {
-    static constexpr uint64_t notFound = std::numeric_limits<uint64_t>::max();
-
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(JSC::JSValue::decode(encodedValue).asCell());
-
-    switch (array->indexingType()) {
+    switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
     case ALL_UNDECIDED_INDEXING_TYPES:
-        return notFound;
+        return noPresentIndex;
 
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
+        JSC::Butterfly* butterfly = object->butterfly();
         unsigned usedLength = butterfly->publicLength();
         for (unsigned i = start; i < usedLength; ++i) {
-            if (butterfly->contiguous().at(array, i))
+            if (butterfly->contiguous().at(object, i))
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_DOUBLE_INDEXING_TYPES: {
-        JSC::Butterfly* butterfly = array->butterfly();
+        JSC::Butterfly* butterfly = object->butterfly();
         unsigned usedLength = butterfly->publicLength();
         for (unsigned i = start; i < usedLength; ++i) {
-            double value = butterfly->contiguousDouble().at(array, i);
+            double value = butterfly->contiguousDouble().at(object, i);
             // In DoubleShape storage the hole is NaN. A real NaN element can
             // never be stored there: JSObject::putByIndex / putDirectIndex
-            // convert the array to ContiguousShape first.
+            // convert the object to ContiguousShape first.
             if (value == value)
                 return i;
         }
-        return notFound;
+        return noPresentIndex;
     }
 
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
-        JSC::ArrayStorage* storage = array->butterfly()->arrayStorage();
+        JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
         for (unsigned i = start; i < usedVectorLength; ++i) {
             if (storage->m_vector[i])
                 return i;
         }
 
-        uint64_t result = notFound;
+        uint64_t result = noPresentIndex;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
             for (const auto& entry : *map) {
                 if (entry.index() >= start && entry.index() < result)
@@ -7118,6 +7113,39 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     default:
         ASSERT_NOT_REACHED();
         return start;
+    }
+}
+
+// DirectArguments and ScopedArguments keep the arguments themselves outside the
+// butterfly; a deleted one is unmapped. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
+template<typename Arguments>
+static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
+{
+    for (unsigned i = start; i < arguments->internalLength(); ++i) {
+        if (arguments->isMappedArgument(i))
+            return i;
+    }
+    return noPresentIndex;
+}
+
+// Smallest own present index of an array, arguments object or ordinary object
+// that is >= `start`, or UINT64_MAX when every index from `start` on is a hole.
+// Walks the backing storage so the caller can skip a run of holes without
+// probing each index up to a huge `length`.
+extern "C" uint64_t Bun__JSObject__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    uint64_t result = nextPresentButterflyIndex(object, start);
+
+    switch (object->type()) {
+    case JSC::DirectArgumentsType:
+        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::DirectArguments>(object), start));
+    case JSC::ScopedArgumentsType:
+        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::ScopedArguments>(object), start));
+    default:
+        return result;
     }
 }
 

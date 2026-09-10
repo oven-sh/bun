@@ -947,7 +947,9 @@ mod _async_tasks {
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            let global_object = self.global_object();
+            // Read the back-reference field, not the `&self` method: `write_back` takes
+            // `&mut self.args`, and only a field borrow is disjoint from it.
+            let global_object = self.global_object.get();
             self.args.write_back(global_object);
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();

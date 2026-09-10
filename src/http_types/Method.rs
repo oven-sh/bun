@@ -173,8 +173,10 @@ impl Method {
         }
     }
 
+    /// Response side. RFC 9112 §6.3 ends only a HEAD response at the header
+    /// section; a TRACE response echoes the request (RFC 9110 §9.3.8).
     pub fn has_body(self) -> bool {
-        !matches!(self, Method::HEAD | Method::TRACE)
+        !matches!(self, Method::HEAD)
     }
 
     /// RFC 9110: GET/HEAD have no defined body semantics; TRACE "MUST NOT

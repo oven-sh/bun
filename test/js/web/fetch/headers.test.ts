@@ -393,7 +393,8 @@ describe("Headers", () => {
     test("names the invalid header the same way get() and delete() do", () => {
       const headers = new Headers();
       for (const method of ["has", "get", "delete"] as const) {
-        expect(() => headers[method]("a b")).toThrow("Invalid header name: 'a b'");
+        // An Error argument compares the whole message, not a substring.
+        expect(() => headers[method]("a b")).toThrow(new TypeError("Invalid header name: 'a b'"));
       }
     });
   });

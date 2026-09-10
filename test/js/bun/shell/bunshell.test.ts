@@ -3376,6 +3376,44 @@ test.skipIf(isWindows)(
   },
 );
 
+test("a builtin output redirect fills a target buffer that shrank to a shorter length", async () => {
+  // A shrink to a length the command has not reached yet. The output must stop
+  // at the new end of the buffer, and every byte up to it must be written.
+  const SHRUNK = 1 << 16;
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  const promise = $`yes > ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+  await Promise.resolve();
+  ab.resize(SHRUNK);
+
+  const result = await running;
+  expect(buffer.byteLength).toBe(SHRUNK);
+  // `yes` writes "y\n", so an untouched byte is still the zero it was created
+  // with.
+  expect(buffer.indexOf(0)).toBe(-1);
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+test("a builtin output redirect fills the capacity a target buffer gained", async () => {
+  // The other direction: a grow commits pages past the length the command
+  // started with, and the output uses them.
+  const GROWN = 1 << 20;
+  const ab = new ArrayBuffer(1 << 16, { maxByteLength: GROWN });
+  const buffer = new Uint8Array(ab);
+  const promise = $`yes > ${buffer}`.env(bunEnv).quiet().nothrow();
+  const running = promise.then(o => o);
+  await Promise.resolve();
+  ab.resize(GROWN);
+
+  const result = await running;
+  expect(buffer.byteLength).toBe(GROWN);
+  expect(buffer.indexOf(0)).toBe(-1);
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.

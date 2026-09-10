@@ -2438,7 +2438,9 @@ describe("BLOB Edge Cases and Binary Data", () => {
     await sql`INSERT INTO detached_blob_test VALUES (1, ${new Uint8Array(0)})`;
     await sql`INSERT INTO detached_blob_test VALUES (2, ${detached})`;
 
-    expect(await sql`SELECT id, typeof(data) AS type, length(data) AS length FROM detached_blob_test ORDER BY id`).toEqual([
+    expect(
+      await sql`SELECT id, typeof(data) AS type, length(data) AS length FROM detached_blob_test ORDER BY id`,
+    ).toEqual([
       { id: 1, type: "blob", length: 0 },
       { id: 2, type: "blob", length: 0 },
     ]);

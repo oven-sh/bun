@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6092,6 +6092,78 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
     client?.destroy();
     server.close();
   }
+});
+
+// A peer that resets the connection in the same breath as its request leaves the server session
+// with the response frames still queued. Node tears that session down silently: the socket is
+// gone, so the frames go nowhere. Bun handed them to socket.write() on a net.Socket whose handle
+// the close had already detached, and the failed write reported ERR_SOCKET_CLOSED on the session
+// and on a stream with no 'error' listener, which is an uncaught exception.
+// The child process keeps the scenario out of the test runner's own uncaught-exception handling.
+const peerResetChild = `
+const http2 = require("node:http2");
+const net = require("node:net");
+
+const observed = { streams: 0, sessionErrors: [], uncaught: [] };
+process.on("uncaughtException", err => observed.uncaught.push(err.code || err.message));
+
+const server = http2.createServer();
+server.on("session", session => session.on("error", err => observed.sessionErrors.push(err.code || err.message)));
+server.on("stream", stream => {
+  observed.streams++;
+  stream.respond({ ":status": 200 });
+  stream.end("hello");
+});
+
+const PREFACE = Buffer.from("505249202a20485454502f322e300d0a0d0a534d0d0a0d0a", "hex");
+// :method GET, :scheme http and :path / from the static table, then a literal :authority.
+const REQUEST_BLOCK = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+function frame(type, flags, streamId, payload) {
+  const header = Buffer.alloc(9);
+  header.writeUIntBE(payload.length, 0, 3);
+  header[3] = type;
+  header[4] = flags;
+  header.writeUInt32BE(streamId, 5);
+  return Buffer.concat([header, payload]);
+}
+
+server.listen(0, "127.0.0.1", async () => {
+  for (let i = 0; i < 5; i++) {
+    const closed = Promise.withResolvers();
+    server.once("session", session => session.once("close", closed.resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(PREFACE);
+      socket.write(frame(4, 0, 0, Buffer.alloc(0)));
+      socket.write(frame(1, 0x4 | 0x1, 1, REQUEST_BLOCK));
+      socket.resetAndDestroy();
+    });
+    socket.on("error", () => {});
+    await closed.promise;
+  }
+  console.log(JSON.stringify(observed));
+  server.close();
+});
+`;
+
+// Windows drops the data still in the receive queue when the reset arrives, so the request never
+// reaches the 'stream' handler there and the server has nothing queued when the socket closes.
+it.skipIf(isWindows)("a peer reset reports no ERR_SOCKET_CLOSED on a server session or its streams", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", peerResetChild],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const observed = JSON.parse(stdout);
+  // A reset can beat the request out of the receive queue, so an iteration can end before the
+  // request is read. At least one of the five has to reach the 'stream' handler.
+  expect(observed.streams).toBeGreaterThan(0);
+  // The read side can see the reset itself, which node reports as ECONNRESET. Any other code
+  // here is the session erroring on its own write.
+  expect([...observed.sessionErrors, ...observed.uncaught].filter(code => code !== "ECONNRESET")).toEqual([]);
+  expect(exitCode).toBe(0);
 });
 
 // node's ServerHttp2Session exposes the Http2Server/Http2SecureServer that accepted the connection

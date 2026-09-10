@@ -411,7 +411,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     for (const auto& header : internalHeaders.commonHeaders()) {
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
+        const WTF::String& value = header.value.string();
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
         // Otherwise, you get this when using Fastify;
@@ -460,7 +460,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
-        const auto& value = header.value;
+        const WTF::String& value = header.value.string();
 
         writeResponseHeader<isSSL>(res, name, value);
     }
@@ -864,11 +864,11 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
         }
         // No Transfer-Encoding on these transports; if a user header reaches
         // here it was already stripped by doWriteHeaders().
-        writeOne(WebCore::httpHeaderNameString(header.key), header.value);
+        writeOne(WebCore::httpHeaderNameString(header.key), header.value.string());
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        writeOne(header.key, header.value);
+        writeOne(header.key, header.value.string());
     }
 }
 

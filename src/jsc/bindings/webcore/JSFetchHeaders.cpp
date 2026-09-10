@@ -633,7 +633,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.commonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            const auto& value = it.value;
+            const WTF::String& value = it.value.string();
             obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
         }
     }
@@ -661,7 +661,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.uncommonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            const auto& value = it.value;
+            const WTF::String& value = it.value.string();
             obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, lowercaseHeaderName(name)), jsString(vm, value));
             RETURN_IF_EXCEPTION(throwScope, {});
         }

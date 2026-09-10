@@ -67,7 +67,7 @@ static inline const String& trimHTTPSpaceIfNeeded(const String& value, String& s
     return storage;
 }
 
-static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
+static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, FetchHeaders::Guard guard)
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
@@ -77,7 +77,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
     return true;
 }
 
-static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
+static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, FetchHeaders::Guard guard)
 {
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
@@ -93,57 +93,32 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 {
     // The common path here is a brand-new header with no leading/trailing HTTP
     // whitespace. Avoid taking ownership (and the atomic ref-count round-trip
-    // that comes with it) of the value String unless we actually have to trim
-    // or merge with an existing header.
+    // that comes with it) of the value String unless we actually have to trim.
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(value, trimStorage);
-    String combinedTemp;
-    const String* valueToSet = &normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
-        auto index = headers.indexOf(headerName);
-
-        if (headerName != HTTPHeaderName::SetCookie) {
-            if (index.isValid()) {
-                auto existing = headers.getIndex(index);
-                if (headerName == HTTPHeaderName::Cookie) {
-                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
-                } else {
-                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
-                }
-                valueToSet = &combinedTemp;
-            }
-        }
-
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
-
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, guard);
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
         if (!canWriteResult.releaseReturnValue())
             return {};
 
-        if (headerName != HTTPHeaderName::SetCookie) {
-            if (!headers.setIndex(index, *valueToSet))
-                headers.set(headerName, *valueToSet);
-        } else {
-            headers.add(headerName, normalizedValue);
-        }
-
+        // The combined value does not fit in a String. This is the error JSC
+        // throws for an over-long string: RangeError: Out of memory.
+        if (!headers.add(headerName, normalizedValue))
+            return Exception { OutOfMemoryError };
         return {};
     }
-    auto index = headers.indexOf(name);
-    if (index.isValid()) {
-        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
-        valueToSet = &combinedTemp;
-    }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
+
+    auto canWriteResult = canWriteHeader(name, normalizedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.setIndex(index, *valueToSet))
-        headers.set(name, *valueToSet);
+    if (!headers.addUncommonHeader(name, normalizedValue))
+        return Exception { OutOfMemoryError };
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -155,15 +130,16 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
 {
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(header.value, trimStorage);
-    auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
+    auto canWriteResult = canWriteHeader(header.key, normalizedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    if (header.keyAsHTTPHeaderName)
-        headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-    else
-        headers.add(header.key, header.value);
+    bool stored = header.keyAsHTTPHeaderName
+        ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
+        : headers.add(header.key, header.value);
+    if (!stored)
+        return Exception { OutOfMemoryError };
 
     return {};
 }
@@ -287,7 +263,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& value)
 {
     String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
@@ -305,7 +281,7 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, m_guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())

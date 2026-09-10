@@ -28,6 +28,7 @@
 
 #include "HTTPHeaderNames.h"
 #include <utility>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -41,11 +42,100 @@ namespace WebCore {
 // behavior.
 String lowercaseHeaderName(const String&);
 
+// The value of one header, and the buffer that `append` grows.
+//
+// A name with a single value holds it in `m_string` and costs what a String
+// costs. The second value for the same name moves into a StringBuilder, so N
+// appends copy O(N) bytes in total instead of O(N^2): the builder over-allocates
+// and writes each new value into the spare capacity. `string()` hands readers
+// the combined value without a copy, as a substring of that buffer.
+class HeaderValue {
+public:
+    HeaderValue() = default;
+    HeaderValue(const String& value)
+        : m_string(value)
+    {
+    }
+    HeaderValue(String&& value)
+        : m_string(WTF::move(value))
+    {
+    }
+
+    // A copy takes the combined value but never the builder: two header maps
+    // must not append into one buffer.
+    HeaderValue(const HeaderValue& other)
+        : m_string(other.string())
+    {
+    }
+    HeaderValue& operator=(const HeaderValue& other)
+    {
+        *this = other.string();
+        return *this;
+    }
+    HeaderValue(HeaderValue&&) = default;
+    HeaderValue& operator=(HeaderValue&&) = default;
+
+    HeaderValue& operator=(const String& value)
+    {
+        // Assign before dropping the builder. `value` can be the String the
+        // builder owns, which is what `*this = other.string()` passes when a
+        // HeaderValue is assigned to itself.
+        m_string = value;
+        m_builder = nullptr;
+        return *this;
+    }
+
+    const String& string() const LIFETIME_BOUND { return m_builder ? m_builder->toStringPreserveCapacity() : m_string; }
+    unsigned length() const { return m_builder ? m_builder->length() : m_string.length(); }
+
+    // Returns false, and stores nothing, when the combined value does not fit in
+    // a String. StringBuilder aborts the process on overflow, so the limit is
+    // checked here instead and reported to the caller.
+    bool append(ASCIILiteral delimiter, const String& value)
+    {
+        if (static_cast<uint64_t>(length()) + delimiter.length() + value.length() > String::MaxLength)
+            return false;
+
+        if (!m_builder) {
+            m_builder = makeUnique<StringBuilder>();
+            m_builder->append(as8Bit(m_string));
+            m_string = {};
+        }
+        m_builder->append(delimiter, as8Bit(value));
+        return true;
+    }
+
+    size_t memoryCost() const
+    {
+        if (!m_builder)
+            return m_string.sizeInBytes();
+        return sizeof(StringBuilder) + m_builder->capacity() * (m_builder->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t));
+    }
+
+    bool operator==(const HeaderValue& other) const { return string() == other.string(); }
+
+private:
+    // A stored header value holds only Latin-1 characters (isValidHTTPHeaderValue)
+    // but the String can still be 16-bit. An 8-bit builder needs half the
+    // buffer. It also never asks for a capacity that a StringImpl cannot hold:
+    // the builder grows by doubling up to String::MaxLength, and a 16-bit
+    // StringImpl holds a few characters less than that, which aborts.
+    static String as8Bit(const String& value)
+    {
+        if (value.is8Bit())
+            return value;
+        return StringImpl::create8BitIfPossible(value.span16());
+    }
+
+    String m_string;
+    std::unique_ptr<StringBuilder> m_builder;
+};
+
 class HTTPHeaderMap {
 public:
     struct CommonHeader {
         HTTPHeaderName key;
-        String value;
+        HeaderValue value;
 
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
     };
@@ -59,7 +149,7 @@ public:
 
     struct UncommonHeader {
         String key;
-        String value;
+        HeaderValue value;
 
         bool operator==(const UncommonHeader& other) const { return key == other.key && value == other.value; }
     };
@@ -138,7 +228,7 @@ public:
                 return false;
             m_keyValue.key = httpHeaderNameString(it->key).toStringWithoutCopying();
             m_keyValue.keyAsHTTPHeaderName = it->key;
-            m_keyValue.value = it->value;
+            m_keyValue.value = it->value.string();
             return true;
         }
         bool updateKeyValue(UncommonHeadersVector::const_iterator it)
@@ -147,7 +237,7 @@ public:
                 return false;
             m_keyValue.key = it->key;
             m_keyValue.keyAsHTTPHeaderName = std::nullopt;
-            m_keyValue.value = it->value;
+            m_keyValue.value = it->value.string();
             return true;
         }
 
@@ -165,7 +255,9 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    WEBCORE_EXPORT void add(const String& name, const String& value);
+    // The `add` overloads combine a repeated name into one value. They return
+    // false, and store nothing, when that value does not fit in a String.
+    WEBCORE_EXPORT bool add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
@@ -178,7 +270,7 @@ public:
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
     void set(HTTPHeaderName, const String& value);
-    void add(HTTPHeaderName, const String& value);
+    bool add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -207,7 +299,7 @@ public:
             return false;
 
         for (auto& commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != commonHeader.value)
+            if (b.get(commonHeader.key) != commonHeader.value.string())
                 return false;
         }
 
@@ -217,7 +309,7 @@ public:
         }
 
         for (auto& uncommonHeader : a.m_uncommonHeaders) {
-            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
+            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value.string())
                 return false;
         }
 
@@ -230,8 +322,8 @@ public:
     }
 
     void setUncommonHeader(const String& name, const String& value);
-    void addUncommonHeader(const String& name, const String& value);
-    void addUncommonHeaderCloneName(const StringView name, const String& value);
+    bool addUncommonHeader(const String& name, const String& value);
+    bool addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;

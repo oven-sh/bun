@@ -4,13 +4,13 @@
  *
  * Unlike the other vendored deps this is NOT built into its own archive.
  * A Rust `staticlib` bundles a private copy of `std`; linking that next to
- * `libbun_rust.a` (also a `staticlib`) gives the linker two copies of every
+ * `libbun_runtime.a` (also a `staticlib`) gives the linker two copies of every
  * unmangled std symbol (`rust_begin_unwind`, `__rdl_alloc`, ...). Instead
  * the `lol_html` crate (`vendor/lolhtml/Cargo.toml`) is a direct Rust path
  * dependency of `bun_runtime`/`bun_bundler`
  * (`lol_html = { path = "vendor/lolhtml" }` in the workspace `Cargo.toml`),
  * so it compiles as an rlib inside the ONE workspace cargo build and lands
- * in `libbun_rust.a` like any other crate. There is no C FFI layer; the
+ * in `libbun_runtime.a` like any other crate. There is no C FFI layer; the
  * upstream `c-api/` sub-crate is fetched along with the rest of the source
  * but never built.
  *

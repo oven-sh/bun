@@ -110,11 +110,11 @@ Add this folder to `$Env:PATH`: open the Start menu, type "Path", and use the en
 
 ## Extra paths
 
-- The build extracts WebKit to `build/debug/cache/webkit/`
+- The build extracts WebKit to `$Env:BUN_INSTALL\build-cache\webkit-<version>-debug` (`webkit-<version>-arm64-debug` on ARM64); `BUN_INSTALL` defaults to `~\.bun`
 
 ## Tests
 
-Run the test suite with `bun test <path>` or with the wrapper script `bun node:test <path>`. The `bun node:test` command runs every test file in a separate instance of `bun.exe`, so a crash in the test runner does not stop the entire suite.
+Run the test suite with `bun-debug test <path>` or with the wrapper script `bun run test <path>`. The `bun run test` command runs every test file in a separate instance of `bun-debug.exe`, so a crash in the test runner does not stop the entire suite.
 
 ```ps1
 # Run the entire test suite with reporter

@@ -113,7 +113,7 @@ bun up
 ### Script Execution
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (Bun never runs dependency scripts)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">
@@ -130,9 +130,9 @@ bun up
   Add to <code>trustedDependencies</code> in the project's <code>package.json</code> and install the package(s)
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 ### General & Environment
@@ -142,7 +142,8 @@ bun up
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Resolve updates but don't install packages, update <code>package.json</code>, or save a lockfile (the project's own
+  lifecycle scripts still run)
 </ParamField>
 
 <ParamField path="--cwd" type="string">

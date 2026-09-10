@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Test that ReadableStream objects from cancelled fetch responses are properly GC'd.
 //
@@ -200,4 +200,189 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
     timedOut: false,
     exitCode: 0,
   });
+});
+
+// Nothing holds the body any more, so it has to go away: once the unread bytes reach the
+// client's high-water mark the fetch parks the stream (stops rooting it), the stream is
+// collected, and the fetch behind it is aborted, in whatever state it was dropped. Before, the
+// fetch rooted its own stream until the body ended and buffered the rest of it, so against a
+// body that does not end, the stream, the connection, and the buffered bytes all lived until
+// the process exited.
+describe("an abandoned fetch body stream is collected and its fetch is aborted", () => {
+  const shapes: [string, (res: Response, parked: () => Promise<void>) => Promise<unknown>][] = [
+    ["res.body touched", async res => res.body],
+    [
+      "one read(), then releaseLock()",
+      async res => {
+        const reader = res.body!.getReader();
+        await reader.read();
+        reader.releaseLock();
+      },
+    ],
+    ["dropped while a reader holds the lock", res => res.body!.getReader().read()],
+    // A read that takes only part of what the parked stream buffered must leave it parked.
+    [
+      "one read() after it parked",
+      async (res, parked) => {
+        void res.body;
+        await parked();
+        await res.body!.getReader().read();
+      },
+    ],
+  ];
+
+  for (const [name, shape] of shapes) {
+    test(
+      name,
+      async () => {
+        let aborted = 0;
+        let pulls = 0;
+        using server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            req.signal.addEventListener("abort", () => aborted++);
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  pulls++;
+                  await Bun.sleep(1);
+                  controller.enqueue(new Uint8Array(64 * 1024));
+                },
+              }),
+            );
+          },
+        });
+        // The client stopped taking bytes: the server is no longer pulled.
+        async function parked() {
+          let last = -1;
+          for (let stable = 0; stable < 5; ) {
+            await Bun.sleep(10);
+            stable = pulls === last ? stable + 1 : 0;
+            last = pulls;
+          }
+        }
+        const N = 20;
+        // Its own frame, so that nothing on this one still refers to a response afterwards.
+        async function abandonOne() {
+          await shape(await fetch(server.url), parked);
+        }
+        for (let i = 0; i < N; i++) await abandonOne();
+
+        // Bounds the failing case only; the fixed build is done in well under a second.
+        const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
+        while (aborted < N && performance.now() < deadline) {
+          Bun.gc(true);
+          await Bun.sleep(10);
+        }
+        // A few can survive a collection through stale stack slots (conservative scanning);
+        // the rest must go. Unfixed, none of them do.
+        expect(N - aborted).toBeLessThan(N / 4);
+      },
+      30_000,
+    );
+  }
+});
+
+// A fetch body handed to something that takes it natively, here a `Bun.serve` response that
+// proxies it. When that response's own client goes away, the fetch behind the body has to be
+// aborted with it: the body is locked to the response, so nothing else can read the rest.
+// Before, the response only let go of the body, and the fetch sat paused on its connection
+// (one upstream connection leaked per proxy client that went away).
+describe("a proxied fetch body is aborted once the response's client is gone", () => {
+  const CHUNK = 64 * 1024;
+  // More than loopback socket buffers absorb, so a client that reads nothing backpressures
+  // the whole chain. Finite, so a build that keeps draining stays bounded.
+  const CHUNKS = 512;
+
+  const shapes: [string, (upstream: Response) => Response][] = [
+    // Goes through the JS pump; passes before and after, it is here so both spellings stay covered.
+    ["new Response(upstream.body)", upstream => new Response(upstream.body)],
+    // The native pipe.
+    ["the upstream Response itself", upstream => upstream],
+  ];
+
+  function servers(proxyResponse: (upstream: Response) => Response) {
+    const state = { pulls: 0, upstreamAborted: false, clientGone: Promise.withResolvers<void>() };
+    const upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => (state.upstreamAborted = true));
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (++state.pulls <= CHUNKS) {
+                controller.enqueue(new Uint8Array(CHUNK));
+                return;
+              }
+              // Out of data, but the body is not over: the upstream is still mid-body.
+              return new Promise<void>(() => {});
+            },
+          }),
+        );
+      },
+    });
+    const proxy = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => state.clientGone.resolve());
+        return proxyResponse(await fetch(upstream.url));
+      },
+    });
+    return {
+      state,
+      proxy,
+      [Symbol.dispose]() {
+        proxy.stop(true);
+        upstream.stop(true);
+      },
+    };
+  }
+
+  async function expectUpstreamAborted(state: { upstreamAborted: boolean }) {
+    // Bounds the failing case only; the fixed build aborts the upstream as the client goes.
+    const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
+    while (!state.upstreamAborted && performance.now() < deadline) await Bun.sleep(10);
+    expect(state.upstreamAborted).toBe(true);
+  }
+
+  for (const [name, proxyResponse] of shapes) {
+    test(`${name}, client leaves while reading`, async () => {
+      using chain = servers(proxyResponse);
+      const { state } = chain;
+
+      const client = new AbortController();
+      const res = await fetch(chain.proxy.url, { signal: client.signal });
+      const { value } = await res.body!.getReader().read();
+      expect(value!.byteLength).toBeGreaterThan(0);
+      client.abort();
+      await state.clientGone.promise;
+
+      await expectUpstreamAborted(state);
+    });
+
+    test(`${name}, client leaves without reading`, async () => {
+      using chain = servers(proxyResponse);
+      const { state } = chain;
+
+      const client = new AbortController();
+      const res = await fetch(chain.proxy.url, { signal: client.signal });
+      expect(res.status).toBe(200);
+      // Nothing reads: wait for the upstream to stop being pulled, which is the chain
+      // backpressured end to end (or, on a build that drains, out of data).
+      let last = -1;
+      for (let stable = 0; stable < 5; ) {
+        await Bun.sleep(20);
+        if (state.pulls === last) {
+          stable++;
+        } else {
+          stable = 0;
+          last = state.pulls;
+        }
+      }
+      client.abort();
+      await state.clientGone.promise;
+
+      await expectUpstreamAborted(state);
+    });
+  }
 });

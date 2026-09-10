@@ -35,7 +35,7 @@ bun install
 `bun install`:
 
 - **Installs** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun installs `peerDependencies` by default.
-- **Runs** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
+- **Runs** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies unless they are [trusted](/pm/lifecycle).
 - **Writes** a `bun.lock` lockfile to the project root.
 
 ---
@@ -177,6 +177,20 @@ Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or us
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
+
+### Offline installs
+
+With a warm cache, `bun install` can run without the network:
+
+```bash terminal icon="terminal"
+# Use cached package metadata regardless of age; only fetch what is missing from the cache
+bun install --prefer-offline
+
+# Never touch the network (registry, tarball URLs, git); a required dependency that is not cached is an error
+bun install --offline
+```
+
+`--prefer-offline` is also what `install.prefer = "offline"` in `bunfig.toml` selects; `install.offline = true` is the config form of `--offline`. With a complete restored cache, `--offline --frozen-lockfile` makes a CI install fully deterministic and network-free; `--prefer-offline` still fetches whatever the cache is missing.
 
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
@@ -360,7 +374,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 
-Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
+Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
 Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.
 
@@ -460,7 +474,7 @@ rm -rf ~/.bun/install/cache
 
 For performance, `bun install` uses different system calls to install dependencies depending on the platform. You can force a specific backend with the `--backend` flag.
 
-**`hardlink`** is the default backend on Linux. Benchmarking showed it to be the fastest on Linux.
+**`hardlink`** is the default backend on Linux and Windows. Benchmarking showed it to be the fastest on Linux.
 
 ```bash
 rm -rf node_modules
@@ -488,7 +502,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
+**`symlink`** is typically only used for `file:` dependencies internally (for example `file:../foo` and transitive `file:` dependencies). `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 

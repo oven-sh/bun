@@ -11,7 +11,6 @@ export const src = path.join(import.meta.dirname, "../");
 
 export type TypeKind = keyof typeof t;
 
-export let allFunctions: Func[] = [];
 export let files = new Map<string, File>();
 /** A reachable type is one that is required for code generation */
 export let typeHashToReachableType = new Map<string, TypeImpl>();
@@ -193,13 +192,11 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "undefined":
         return "u0";
       case "oneOf": // `union(enum)`
-      case "UTF8String": // []const u8
       case "record": // undecided how to lower records
       case "sequence": // []const T
         return null;
       case "externalClass":
         throw new Error("TODO");
-        return "*anyopaque";
       case "dictionary": {
         let existing = typeHashToStruct.get(this.hash());
         if (existing) return existing;
@@ -220,9 +217,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         existing.assignName(this.name());
         typeHashToStruct.set(this.hash(), existing);
         return existing;
-      }
-      case "sequence": {
-        return null;
       }
       default: {
         throw new Error("unexpected: " + (kind satisfies never));
@@ -705,7 +699,6 @@ export interface Variant {
   args: Arg[];
   ret: TypeImpl;
   returnStrategy?: ReturnStrategy;
-  argStruct?: Struct;
   globalObjectArg?: number | "hidden";
   minRequiredArgs: number;
   communicationStruct?: Struct;
@@ -735,24 +728,6 @@ export type ArgStrategy =
        * boundary uses two fields, `bool {prefix}_set` and `T {prefix}_value`.
        */
       prefix: string;
-      /**
-       * For compound complex types, such as `?union(enum) { a: u32, b:
-       * bun.String }`, the child item is assigned the prefix
-       * `{prefix_of_optional}_value`. The interpretation of this array depends
-       * on `arg.type.kind`.
-       */
-      children: ArgStrategyChildItem[];
-    };
-
-export type ArgStrategyChildItem =
-  | {
-      type: "c-abi-compatible";
-      abiType: CAbiType;
-    }
-  | {
-      type: "uses-communication-buffer";
-      prefix: string;
-      children: ArgStrategyChildItem[];
     };
 /**
  * In addition to moving a payload over, an additional bit of information
@@ -820,7 +795,6 @@ export function registerFunction(opts: FuncOptions) {
     sourceFile,
     variants,
   };
-  allFunctions.push(func);
   file.functions.push(func);
   return func;
 }
@@ -958,7 +932,6 @@ export class Struct {
   fields: StructField[] = [];
   #hash?: string;
   #name?: string;
-  namespace?: string;
 
   abiInfo(): [size: number, align: number] {
     let size = 0;
@@ -1005,10 +978,6 @@ export class Struct {
     const existing = structHashToSelf.get(hash);
     if (existing && existing !== this) return (this.#name = existing.name());
     return (this.#name = `anon_extern_struct_${hash}`);
-  }
-
-  toString() {
-    return this.namespace ? `${this.namespace}.${this.name()}` : this.name();
   }
 
   assignName(name: string) {

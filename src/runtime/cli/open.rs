@@ -91,9 +91,9 @@ impl Editor {
             return false;
         };
 
-        if let Some(path) = BIN_NAME[editor] {
-            if !path.is_empty() {
-                if let Some(bin) = which(buf, path_env, cwd, path) {
+        if let Some(bin_name) = BIN_NAME[editor] {
+            if !bin_name.is_empty() {
+                if let Some(bin) = which(buf, path_env, cwd, bin_name) {
                     *out = bin.as_bytes();
                     return true;
                 }
@@ -464,12 +464,12 @@ impl EditorContext {
     }
 
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
         // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
         // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &raw mut buf;
+        let buf_ptr: *mut PathBuffer = &raw mut *buf;
         let mut out: &[u8] = b"";
 
         // first: choose from user preference

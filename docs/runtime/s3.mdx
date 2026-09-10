@@ -395,7 +395,7 @@ const supabase = new S3Client({
   secretAccessKey: "secret-key",
   bucket: "my-bucket",
   region: "us-west-1",
-  endpoint: "https://<account-id>.supabase.co/storage/v1/s3/storage",
+  endpoint: "https://<account-id>.supabase.co/storage/v1/s3",
 });
 ```
 
@@ -485,6 +485,8 @@ const client = new S3Client({
   // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
   // endpoint: "http://localhost:9000", // MinIO
 });
+
+const file = client.file("my-file.txt");
 
 // Write using a Response
 await file.write(new Response("Hello World!"));
@@ -594,7 +596,7 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 | `await s3File.text()`        | `string`         |
 | `await s3File.bytes()`       | `Uint8Array`     |
 | `await s3File.json()`        | `JSON`           |
-| `await s3File.stream()`      | `ReadableStream` |
+| `s3File.stream()`            | `ReadableStream` |
 | `await s3File.arrayBuffer()` | `ArrayBuffer`    |
 
 Because `S3File` extends `Blob`, `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
@@ -659,7 +661,7 @@ const credentials = {
 };
 
 // Write string
-await S3Client.write("my-file.txt", "Hello World");
+await S3Client.write("my-file.txt", "Hello World", credentials);
 
 // Write JSON with type
 await S3Client.write("data.json", JSON.stringify({ hello: "world" }), {
@@ -708,7 +710,7 @@ This is equivalent to calling `new S3Client(credentials).presign("my-file.txt", 
 
 To list some or all (up to 1,000) objects in a bucket, use the `S3Client.list` static method.
 
-```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
+```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-22, 27-35}
 import { S3Client } from "bun";
 
 const credentials = {
@@ -723,21 +725,27 @@ const credentials = {
 const allObjects = await S3Client.list(null, credentials);
 
 // List (up to) 500 objects under `uploads/` prefix, with owner field for each object
-const uploads = await S3Client.list({
-  prefix: 'uploads/',
-  maxKeys: 500,
-  fetchOwner: true,
-}, credentials);
+const uploads = await S3Client.list(
+  {
+    prefix: "uploads/",
+    maxKeys: 500,
+    fetchOwner: true,
+  },
+  credentials,
+);
 
 // Check if more results are available
 if (uploads.isTruncated) {
   // List next batch of objects under `uploads/` prefix
-  const moreUploads = await S3Client.list({
-    prefix: 'uploads/',
-    maxKeys: 500,
-    startAfter: uploads.contents!.at(-1).key
-    fetchOwner: true,
-  }, credentials);
+  const moreUploads = await S3Client.list(
+    {
+      prefix: "uploads/",
+      maxKeys: 500,
+      startAfter: uploads.contents!.at(-1)!.key,
+      fetchOwner: true,
+    },
+    credentials,
+  );
 }
 ```
 

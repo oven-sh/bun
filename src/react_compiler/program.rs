@@ -107,9 +107,6 @@ pub trait Host {
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 
-// Back-compat alias for the parser hook written against the previous API.
-pub use Host as SymbolHost;
-
 // -----------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------
@@ -498,10 +495,6 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateNoSetStateInEffects" => env_bool!(validate_no_set_state_in_effects, val),
             b"validateNoDerivedComputationsInEffects" => {
                 env_bool!(validate_no_derived_computations_in_effects, val)
-            }
-            b"validateNoDerivedComputationsInEffectsExp"
-            | b"validateNoDerivedComputationsInEffects_exp" => {
-                env_bool!(validate_no_derived_computations_in_effects_exp, val)
             }
             b"validateNoJsxInTryStatements" | b"validateNoJSXInTryStatements" => {
                 env_bool!(validate_no_jsx_in_try_statements, val)

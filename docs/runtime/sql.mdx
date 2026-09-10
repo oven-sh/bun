@@ -1002,6 +1002,13 @@ try {
 } // Automatically released
 ```
 
+When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
+
+```ts
+// Give up if no connection frees up within 5 seconds
+using reserved = await sql.reserve({ signal: AbortSignal.timeout(5000) });
+```
+
 ---
 
 ## LISTEN / NOTIFY (PostgreSQL)
@@ -1079,13 +1086,13 @@ Queries still use the "extended" protocol, but run as [unnamed prepared statemen
 - Parameter binding is still safe against SQL injection
 - The server parses and plans each query from scratch
 - Queries are not [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
+- Only one command per query is supported (unless you use `sql``.simple()`)
 
 You might want to use `prepare: false` when:
 
 - Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
 - Debugging query execution plans
 - Working with dynamic SQL where query plans need to be regenerated frequently
-- Only one command per query is supported (unless you use `sql``.simple()`)
 
 Disabling prepared statements can slow down queries that run frequently with different parameters, since the server parses and plans each one from scratch.
 
@@ -1238,7 +1245,7 @@ try {
 
 ## Numbers and BigInt
 
-Bun returns numbers that exceed the range of a 53-bit integer as strings:
+Bun returns PostgreSQL `bigint` (`int8`) values, and MySQL `BIGINT` values outside the 32-bit range, as strings:
 
 ```ts
 import { sql } from "bun";
@@ -1271,7 +1278,6 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 Things we haven't finished yet:
 
-- Connection preloading with the `--db-preconnect` Bun CLI flag
 - Column name transforms (for example, `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
 - Column type transforms
 
@@ -1287,7 +1293,7 @@ MySQL supports multiple authentication plugins, which the client negotiates auto
 - **`caching_sha2_password`** - Default in MySQL 8.0+, more secure with RSA key exchange
 - **`sha256_password`** - SHA-256 based authentication
 
-The client automatically handles authentication plugin switching when the server requests it, including secure password exchange over non-SSL connections.
+The client automatically handles authentication plugin switching when the server requests it.
 
 #### Prepared Statements & Performance
 
@@ -1352,16 +1358,18 @@ Bun converts MySQL types to JavaScript types:
 | FLOAT, DOUBLE                           | number                   |                                                                                                  |
 | DATE                                    | Date                     | JavaScript Date object                                                                           |
 | DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
-| TIME                                    | number                   | Total of microseconds                                                                            |
+| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours); prepared queries drop fractional seconds   |
 | YEAR                                    | number                   |                                                                                                  |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
-| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | string                   | BLOB types are aliases for the TEXT types                                                        |
+| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set      |
 | JSON                                    | object/array             | Automatically parsed                                                                             |
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
-| GEOMETRY                                | string                   | Geometry data                                                                                    |
+| GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
 `DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
+
+Bun also sets `time_zone = '+00:00'` on every MySQL connection it opens. The server converts `TIMESTAMP` columns through the session time zone, so this keeps the stored instant equal to the `Date` you bound, and it makes server-side time functions such as `NOW()` and `CURRENT_TIMESTAMP` evaluate in UTC. There is no option to pick a different session time zone yet: a manual `SET time_zone = ...` reaches only the one pooled connection that runs it ([#40254](https://github.com/oven-sh/bun/issues/40254) tracks a per-connection option).
 
 #### Differences from PostgreSQL
 

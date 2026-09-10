@@ -208,7 +208,7 @@ beforeEach(() => {
 
 afterEach(() => {
   // Clear all mocks after each test
-  mock.restore();
+  mock.clearAllMocks();
 });
 ```
 
@@ -217,7 +217,7 @@ afterEach(() => {
 All lifecycle hooks support async functions:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { beforeAll, afterAll, test } from "bun:test";
+import { beforeAll, afterAll, test, expect } from "bun:test";
 
 beforeAll(async () => {
   // Async setup

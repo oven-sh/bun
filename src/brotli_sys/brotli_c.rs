@@ -48,6 +48,7 @@ unsafe extern "C" {
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
 }
 
 bun_opaque::opaque_ffi! {
@@ -106,6 +107,11 @@ impl BrotliDecoder {
         }
     }
 
+    /// True when decoded bytes are still held in the decoder's ring buffer.
+    pub fn has_more_output(state: &BrotliDecoder) -> bool {
+        BrotliDecoderHasMoreOutput(state) != 0
+    }
+
     pub fn initialize_brotli() -> bool {
         true
     }
@@ -158,6 +164,21 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_ALLOC_RING_BUFFER_2 = -27,
     ERROR_ALLOC_BLOCK_TYPE_TREES = -30,
     ERROR_UNREACHABLE = -31,
+}
+
+impl BrotliDecoderErrorCode2 {
+    /// The decoder's allocator (its `alloc_func`) returned null.
+    pub fn is_alloc_failure(self) -> bool {
+        matches!(
+            self,
+            Self::ERROR_ALLOC_CONTEXT_MODES
+                | Self::ERROR_ALLOC_TREE_GROUPS
+                | Self::ERROR_ALLOC_CONTEXT_MAP
+                | Self::ERROR_ALLOC_RING_BUFFER_1
+                | Self::ERROR_ALLOC_RING_BUFFER_2
+                | Self::ERROR_ALLOC_BLOCK_TYPE_TREES
+        )
+    }
 }
 
 #[repr(u32)]

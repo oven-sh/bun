@@ -339,7 +339,7 @@ describe.concurrent("require.cache", () => {
         expect(exitCode).toBe(0);
       },
       // TODO: Investigate why this is so slow on Windows
-      isWindows ? 60000 : 30000,
+      isWindows || isASAN ? 60000 : 30000,
     );
   });
 });

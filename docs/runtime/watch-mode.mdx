@@ -12,7 +12,7 @@ Bun supports two kinds of automatic reloading:
 
 ## `--watch` mode
 
-Watch mode works with `bun test` and when running TypeScript, JSX, and JavaScript files.
+Watch mode works with `bun test` and `bun build`, and when running TypeScript, JSX, and JavaScript files.
 
 To run a file in `--watch` mode:
 
@@ -118,7 +118,7 @@ setInterval(function () {}, 1000000);
 If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file.
 
 ```bash terminal icon="terminal"
-bun --hot index.ts
+bun --hot server.ts
 ```
 
 ```txt

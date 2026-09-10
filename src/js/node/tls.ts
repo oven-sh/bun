@@ -883,8 +883,7 @@ TLSSocket.prototype._start = function _start() {
 
 TLSSocket.prototype._final = function _final(callback) {
   if (!this._handle) return callback();
-  // A pre-handshake write stays pending until the handshake completes, and the
-  // shutdown follows it: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }

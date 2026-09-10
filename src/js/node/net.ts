@@ -297,8 +297,7 @@ function writeAfterFIN(chunk, encoding, cb) {
 
   return false;
 }
-// ssl.onhandshakedone for the two client handler tables: node's _finishInit +
-// onConnectSecure. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1647-L1707
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1647-L1707
 function onClientHandshake(self, socket, success, verifyError) {
   if (!success && verifyError?.code === "ECONNRESET") {
     // will be handled in onConnectEnd

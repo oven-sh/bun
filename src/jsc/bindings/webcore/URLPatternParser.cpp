@@ -538,6 +538,10 @@ static void appendEscapedPatternStringForCharacters(StringBuilder& result, std::
             result.append('\\');
 
         result.append(character);
+
+        // The rest of the input cannot change the outcome, and it can be long.
+        if (result.hasOverflowed()) [[unlikely]]
+            return;
     }
 }
 

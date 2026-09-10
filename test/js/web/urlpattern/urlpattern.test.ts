@@ -229,7 +229,9 @@ describe("pattern string above the string length limit", () => {
   const threw = { stdout: "RangeError Out of memory", stderr: "", exitCode: 0 };
 
   // The child holds a pathname of about 2.1 GB, so it needs more than the
-  // default per-test timeout on a loaded machine.
+  // default per-test timeout on a loaded machine. repeat() builds that string
+  // in 1.7 s in a debug ASAN build. Buffer.alloc(n, "b").toString() takes
+  // 3.2 s there and holds the 2.1 GB buffer and the 2.1 GB string at once.
   test.skipIf(totalmem() < 8 * 1024 ** 3)(
     "the base path joined with a relative pathname throws",
     async () => {

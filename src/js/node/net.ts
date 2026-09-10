@@ -322,7 +322,9 @@ function onClientHandshake(self, socket, success, verifyError) {
   // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
   // ERR_SSL_* / ERR_OSSL_* code).
   const isProtocolFailure =
-    !success && verifyError?.code != null && (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+    !success &&
+    verifyError?.code != null &&
+    (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
   if (isProtocolFailure) {
     // Surface the OpenSSL reason instead of letting the close path report a
     // generic disconnect.

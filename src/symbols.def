@@ -667,6 +667,12 @@ EXPORTS
   ?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z
   ?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z
   ?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
+  ?GetScriptOrigin@Function@v8@@QEBA?AVScriptOrigin@2@XZ
+  ?GetScriptLineNumber@Function@v8@@QEBAHXZ
+  ?GetScriptColumnNumber@Function@v8@@QEBAHXZ
+  ?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z
+  ?Value@Int32@v8@@QEBAHXZ
+  ?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ
   ?IsFunction@Value@v8@@QEBA_NXZ
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
   ?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z

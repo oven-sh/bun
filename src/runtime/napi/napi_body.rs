@@ -3562,6 +3562,12 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value12IsUint8ArrayEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function15GetScriptOriginEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function19GetScriptLineNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v88Function21GetScriptColumnNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv() -> *mut c_void;
         pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
         pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
@@ -3897,6 +3903,18 @@ mod v8_api {
         pub(super) fn v8_Value_ToString() -> *mut c_void;
         #[link_name = "?ToInteger@Value@v8@@QEBA?AV?$MaybeLocal@VInteger@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_Value_ToInteger() -> *mut c_void;
+        #[link_name = "?GetScriptOrigin@Function@v8@@QEBA?AVScriptOrigin@2@XZ"]
+        pub(super) fn v8_Function_GetScriptOrigin() -> *mut c_void;
+        #[link_name = "?GetScriptLineNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptLineNumber() -> *mut c_void;
+        #[link_name = "?GetScriptColumnNumber@Function@v8@@QEBAHXZ"]
+        pub(super) fn v8_Function_GetScriptColumnNumber() -> *mut c_void;
+        #[link_name = "?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInt32() -> *mut c_void;
+        #[link_name = "?Value@Int32@v8@@QEBAHXZ"]
+        pub(super) fn v8_Int32_Value() -> *mut c_void;
+        #[link_name = "?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ"]
+        pub(super) fn v8_ScriptOrigin_VerifyHostDefinedOptions() -> *mut c_void;
         #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
         pub(super) fn v8_Context_Global() -> *mut c_void;
         #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
@@ -4993,6 +5011,12 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v85Value12IsUint8ArrayEv,
             _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE,
             _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE,
+            _ZNK2v88Function15GetScriptOriginEv,
+            _ZNK2v88Function19GetScriptLineNumberEv,
+            _ZNK2v88Function21GetScriptColumnNumberEv,
+            _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Int325ValueEv,
+            _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv,
             _ZN2v87Context6GlobalEv,
             _ZNK2v86Object18InternalFieldCountEv,
             _ZN2v86Object15GetIdentityHashEv,
@@ -5172,6 +5196,12 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Value_IsUint8Array,
             v8_Value_ToString,
             v8_Value_ToInteger,
+            v8_Function_GetScriptOrigin,
+            v8_Function_GetScriptLineNumber,
+            v8_Function_GetScriptColumnNumber,
+            v8_Value_ToInt32,
+            v8_Int32_Value,
+            v8_ScriptOrigin_VerifyHostDefinedOptions,
             v8_Context_Global,
             v8_Object_InternalFieldCount,
             v8_Object_GetIdentityHash,

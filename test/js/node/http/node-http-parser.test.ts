@@ -193,6 +193,10 @@ describe("HTTPParser.prototype.execute", () => {
   const chunkSize = `${payloadSize.toString(16)}\r\n`.length + payloadSize + "\r\n".length;
   // A resizable ArrayBuffer of its own, or one WebAssembly.Memory page.
   const inputSizes = { resizable: 1024 * 1024, wasm: 64 * 1024 };
+  // A signaling wasm memory reserves its maximum up front and commits pages in place as it grows,
+  // which leaves the input mapped. Only a bounds checked memory releases the block it grew out of,
+  // so the wasm case asks JSC for that mode instead of counting on a full signaling memory pool.
+  const modeEnv = { resizable: bunEnv, wasm: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0" } };
 
   const fixture = (mode: keyof typeof inputSizes) => `
     const { HTTPParser } = process.binding("http_parser");
@@ -205,12 +209,9 @@ describe("HTTPParser.prototype.execute", () => {
       // resize() decommits the trimmed pages.
       mutate = () => buffer.resize(0);
     } else {
-      // Fill the signaling memory pool first so that the next memory is bounds checked. A bounds
-      // checked memory can move its bytes when it grows.
-      globalThis.hold = Array.from({ length: 12 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
       const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
       bytes = new Uint8Array(memory.buffer);
-      // grow() detaches the old buffer and releases its block.
+      // grow() detaches the old buffer and releases the block it held.
       mutate = () => memory.grow(1);
     }
 
@@ -260,7 +261,7 @@ describe("HTTPParser.prototype.execute", () => {
     async mode => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture(mode)],
-        env: bunEnv,
+        env: modeEnv[mode],
         stderr: "pipe",
       });
 

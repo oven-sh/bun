@@ -143,8 +143,7 @@ static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, Ca
     return thisObject;
 }
 
-// Call after all argument conversion: user code it runs (valueOf, getters,
-// toJSON) can close the view or start another operation on it.
+// Call after argument conversion: user code there (valueOf, getters, toJSON) can close the view or start another operation on it.
 static bool checkReady(JSGlobalObject* g, ThrowScope& scope, JSWebView* view, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
 {
     if (view->m_closed) {

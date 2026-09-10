@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { dedent, itBundled } from "./expectBundled";
 
 interface TemplateStringTest {
@@ -218,4 +218,31 @@ describe("bundler", () => {
       true`,
     },
   });
+
+  // A string literal with non-ASCII characters is UTF-16 in the AST. A text or
+  // JSON import is UTF-8. The printer must escape both the same way.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`string/SurrogatePairs_${target}`, {
+      files: {
+        "/entry.js": `
+          import text from "./text.txt";
+          import json from "./data.json";
+          console.log(JSON.stringify([text, json.k, "é 𐌴 \\u{10334} \\uD800\\uDF34", "a\\uD800b", "\\uDF34\\uD800"]));
+        `,
+        "/text.txt": "é 𐌴 𐌴 𐌴",
+        "/data.json": `{"k":"é 𐌴 𐌴 𐌴"}`,
+      },
+      target,
+      onAfterBundle(api) {
+        // --target=bun output is ASCII-only. Other targets print non-ASCII as-is,
+        // a well-formed surrogate pair included. Lone surrogates are always escaped.
+        const wellFormed = target === "bun" ? '"\\xE9 \\uD800\\uDF34 \\uD800\\uDF34 \\uD800\\uDF34"' : '"é 𐌴 𐌴 𐌴"';
+        const out = api.readFile("/out.js");
+        // The text import, the JSON import and the string literal.
+        expect(out.split(wellFormed).length - 1).toBe(3);
+        expect(out).toContain(wellFormed + ', "a\\uD800b", "\\uDF34\\uD800"]');
+      },
+      run: { stdout: '["é 𐌴 𐌴 𐌴","é 𐌴 𐌴 𐌴","é 𐌴 𐌴 𐌴","a\\ud800b","\\udf34\\ud800"]' },
+    });
+  }
 });

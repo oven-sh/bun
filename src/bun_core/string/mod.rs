@@ -1861,9 +1861,17 @@ pub mod printer {
         let mut i: usize = 0;
 
         while i < n {
+            // A well-formed surrogate pair is one code point; a lone surrogate is escaped below.
+            let utf16_pair: Option<u32> = match encoding {
+                StrEncoding::Utf16 if i + 1 < n => {
+                    strings::decode_surrogate_pair(text16[i], text16[i + 1])
+                }
+                _ => None,
+            };
             let width: u8 = match encoding {
-                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
+                StrEncoding::Latin1 | StrEncoding::Ascii => 1,
                 StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
+                StrEncoding::Utf16 => 1 + u8::from(utf16_pair.is_some()),
             };
             let clamped_width = (width as usize).min(n.saturating_sub(i));
             let c: i32 = match encoding {
@@ -1886,7 +1894,10 @@ pub mod printer {
                     text_in[i] as i32
                 }
                 StrEncoding::Latin1 => text_in[i] as i32,
-                StrEncoding::Utf16 => text16[i] as i32,
+                StrEncoding::Utf16 => match utf16_pair {
+                    Some(cp) => cp as i32,
+                    None => text16[i] as i32,
+                },
             };
 
             if c == MALFORMED {

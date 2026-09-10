@@ -1073,10 +1073,17 @@ where
     }
 
     while i < n {
+        // A well-formed surrogate pair is one code point; a lone surrogate is escaped below.
+        let utf16_pair: Option<u32> = match ENCODING {
+            Encoding::Utf16 if i + 1 < n => {
+                strings::decode_surrogate_pair(code_unit_at!(i) as u16, code_unit_at!(i + 1) as u16)
+            }
+            _ => None,
+        };
         let width: u8 = match ENCODING {
             Encoding::Latin1 | Encoding::Ascii => 1,
             Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
+            Encoding::Utf16 => 1 + u8::from(utf16_pair.is_some()),
         };
         let clamped_width = (width as usize).min(n.saturating_sub(i));
         let c: i32 = match ENCODING {
@@ -1095,12 +1102,10 @@ where
                 text[i] as i32
             }
             Encoding::Latin1 => text[i] as i32,
-            Encoding::Utf16 => {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
-            }
+            Encoding::Utf16 => match utf16_pair {
+                Some(cp) => cp as i32,
+                None => code_unit_at!(i),
+            },
         };
 
         if can_print_without_escape(c, ascii_only) {

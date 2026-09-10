@@ -2701,17 +2701,18 @@ pub mod formatter {
             self.print(format_args!("{str}"));
         }
 
-        #[inline]
-        pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
-            // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
-            // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
-            self.print(format_args!(
-                "{}",
-                bun_core::fmt::FormatUTF16 {
-                    buf: input,
-                    path_fmt_opts: None
-                }
-            ));
+        /// Writes `str` as a quoted JSON string, the same way for every encoding.
+        pub(crate) fn write_json_string(&mut self, str: EncodedSlice<'_>) {
+            let encoding = if str.is_16bit() {
+                JSPrinter::Encoding::Utf16
+            } else if str.is_utf8() {
+                JSPrinter::Encoding::Utf8
+            } else {
+                JSPrinter::Encoding::Latin1
+            };
+            if JSPrinter::write_json_string(str.byte_slice(), self.ctx, encoding).is_err() {
+                self.failed = true;
+            }
         }
     }
 
@@ -2980,36 +2981,14 @@ pub mod formatter {
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16bit() {
-                    let mut utf16_slice = key.utf16_slice();
-
-                    writer.add_for_new_line(utf16_slice.len() + 2);
+                } else {
+                    writer.add_for_new_line(key.len + 2);
 
                     if C {
                         writer.write_all(pfmt!("<r><green>", true).as_bytes());
                     }
-
-                    writer.write_all(b"\"");
-
-                    const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j]);
-                        writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j + 1..];
-                    }
-
-                    writer.write_16_bit(utf16_slice);
-
-                    writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
-                } else {
-                    writer.add_for_new_line(key.len + 2);
-
-                    writer.print(format_args!(
-                        "{}{}{}",
-                        pfmt!("<r><green>", C),
-                        bun_core::fmt::format_json_string_latin1(key.slice()),
-                        pfmt!("<r><d>:<r> ", C),
-                    ));
+                    writer.write_json_string(*key);
+                    writer.print(format_args!("{}", pfmt!("<r><d>:<r> ", C)));
                 }
             } else if cfg!(debug_assertions) && is_private_symbol {
                 writer.add_for_new_line(1 + "$:".len() + key.len);
@@ -3539,21 +3518,7 @@ pub mod formatter {
                 if C {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
-
-                if str.is_utf16() {
-                    if writer.failed {
-                        self.failed = true;
-                    }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
-                    if C {
-                        let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
-                    }
-                    return Ok(());
-                }
-
-                JSPrinter::write_json_string(str.latin1(), writer.ctx, JSPrinter::Encoding::Latin1)
-                    .expect("unreachable");
-
+                writer.write_json_string(str.to_encoded_slice());
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
@@ -3568,26 +3533,7 @@ pub mod formatter {
                     writer.print(format_args!("{}", pfmt!("<r><green>", C)));
                 }
                 writer.print(format_args!("[String: "));
-
-                if str.is_utf16() {
-                    if writer.failed {
-                        self.failed = true;
-                    }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
-                } else {
-                    JSPrinter::write_json_string(
-                        str.latin1(),
-                        writer.ctx,
-                        JSPrinter::Encoding::Latin1,
-                    )
-                    .expect("unreachable");
-                }
-
+                writer.write_json_string(str.to_encoded_slice());
                 writer.print(format_args!("]"));
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());

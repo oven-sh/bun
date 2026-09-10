@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -167,6 +167,114 @@ it("latin1", () => {
   expect(Bun.inspect("日本語")).toBe('"日本語"');
   expect(Bun.inspect("Emoji😎")).toBe('"Emoji😎"');
   expect(Bun.inspect("Français / Ελληνική")).toBe('"Français / Ελληνική"');
+});
+
+describe("quoted strings do not depend on the string's internal representation", () => {
+  // Same characters, but backed by 16-bit storage (what a UTF-16 decoder produces).
+  // A string used as a property key can be swapped for an equal 8-bit atom, for
+  // example one made by a string literal in this file, so each test asserts the
+  // representation it depends on.
+  const to16Bit = s => Buffer.from(s, "utf16le").toString("utf16le");
+
+  it("arrays of 8-bit and 16-bit strings wrap at the same place", () => {
+    const row8 = ["a", "b", "c", "d", "e"].map(c => Buffer.alloc(20, c).toString());
+    const row16 = row8.map(to16Bit);
+    expect(row16).toEqual(row8);
+    for (const s of row8) expect(s).toBeLatin1String();
+    for (const s of row16) expect(s).toBeUTF16String();
+    const expected =
+      '[ "aaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccc", "dddddddddddddddddddd",\n' +
+      '  "eeeeeeeeeeeeeeeeeeee"\n' +
+      "]";
+    expect(Bun.inspect(row8)).toBe(expected);
+    expect(Bun.inspect(row16)).toBe(expected);
+  });
+
+  it("8-bit and 16-bit strings with the same characters print the same", () => {
+    const s8 = '\x1b[31m \x00\x0b\x0e\x1f "q" \\';
+    const s16 = to16Bit(s8);
+    expect(s16).toBe(s8);
+    expect(s8).toBeLatin1String();
+    expect(s16).toBeUTF16String();
+    const expected = '"\\u001B[31m \\u0000\\u000B\\u000E\\u001F \\"q\\" \\\\"';
+    expect(Bun.inspect(s8)).toBe(expected);
+    expect(Bun.inspect(s16)).toBe(expected);
+    expect(Bun.inspect([s16])).toBe(Bun.inspect([s8]));
+    expect(Bun.inspect({ k: s16 })).toBe(Bun.inspect({ k: s8 }));
+    expect(Bun.inspect(new String(s16))).toBe(Bun.inspect(new String(s8)));
+    expect(Bun.inspect(new Map([[s16, s16]]))).toBe(Bun.inspect(new Map([[s8, s8]])));
+    // Nothing above swapped the 16-bit string for the 8-bit one.
+    expect(s16).toBeUTF16String();
+  });
+
+  it("strings that need 16 bits", () => {
+    expect(Bun.inspect("\x1b é 日本 😎 \u{10334}")).toBe('"\\u001B é 日本 😎 𐌴"');
+    expect(Bun.inspect(new String("\x1b😎"))).toBe('"\\u001B😎"');
+    // Lone surrogates and invisible separators are escaped.
+    expect(Bun.inspect(["\ud800", "\udc00x", "a\u2028b\u2029c\ufeffd"])).toBe(
+      '[ "\\uD800", "\\uDC00x", "a\\u2028b\\u2029c\\uFEFFd" ]',
+    );
+    // A surrogate pair is one character only when a high half is directly followed by a low half.
+    expect(Bun.inspect("\ud83d\ude0e\ude0e\ud83d\ud83d\ude0e")).toBe('"😎\\uDE0E\\uD83D😎"');
+  });
+
+  it("console.log of a String object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(new String("\\x1b😎!")); console.log(new String("\\x1b!"));`],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '[String: "\\u001B😎!"]\n[String: "\\u001B!"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a String object's toJSON is not called", () => {
+    const toJSON = jest.fn(() => "from toJSON");
+    class Tagged extends String {
+      toJSON() {
+        return toJSON();
+      }
+    }
+    const own = new String("😎");
+    own.toJSON = toJSON;
+    String.prototype.toJSON = toJSON;
+    try {
+      expect(Bun.inspect([new String("😎"), new String("x"), own, new Tagged("😎"), new Tagged("x")])).toBe(
+        '[ "😎", "x", "😎", "😎", "x" ]',
+      );
+    } finally {
+      delete String.prototype.toJSON;
+    }
+    expect(toJSON).not.toHaveBeenCalled();
+  });
+
+  it("property keys", () => {
+    expect(Bun.inspect({ 'k"\x1b\\': 1, 'k"\x1b\\ 日本 😎': 2 })).toBe(
+      '{\n  "k\\"\\u001B\\\\": 1,\n  "k\\"\\u001B\\\\ 日本 😎": 2,\n}',
+    );
+    // URLSearchParams and FormData print their names the same way.
+    expect(Bun.inspect(new URLSearchParams([['k"\x1b\\ 日本 😎', "v"]]))).toBe(
+      'URLSearchParams {\n  "k\\"\\u001B\\\\ 日本 😎": "v",\n}',
+    );
+  });
+
+  it("16-bit property keys that hold only Latin-1 characters", () => {
+    // Built from parts, so no string literal in this file makes an equal 8-bit atom.
+    const key = to16Bit(["dyn", "k", '"', "\x1b", "\\"].join(""));
+    const path = to16Bit(["C:", "Users", "José", "new.js"].join("\\"));
+    expect(key).toBeUTF16String();
+    expect(path).toBeUTF16String();
+    expect(Bun.inspect({ [key]: 1, [path]: path })).toBe(
+      '{\n  "dynk\\"\\u001B\\\\": 1,\n  "C:\\\\Users\\\\José\\\\new.js": "C:\\\\Users\\\\José\\\\new.js",\n}',
+    );
+    // Still 16-bit, so the line above went through the 16-bit branch.
+    expect(key).toBeUTF16String();
+    expect(path).toBeUTF16String();
+  });
 });
 
 it("Request object", () => {

@@ -19,6 +19,17 @@ pub struct SetextResult {
 }
 
 #[derive(Copy, Clone)]
+pub struct HrResult {
+    pub(crate) is_hr: bool,
+    /// Where the scan stopped. Every byte in `off..end` is the marker or a
+    /// blank, so when `!is_hr` no thematic break can start anywhere before
+    /// `end` either, and `analyze_line` skips re-checking until `off` reaches
+    /// it (md4c's `hr_killer`). Without that, N list markers nested on one
+    /// line (`- - - … a`) rescan the tail once per container level: O(N²).
+    pub(crate) end: OFF,
+}
+
+#[derive(Copy, Clone)]
 pub struct AtxResult {
     pub(crate) is_atx: bool,
     pub(crate) level: u32,
@@ -84,24 +95,24 @@ impl Parser<'_> {
         }
     }
 
-    pub(crate) fn is_hr_line(&self, off: OFF) -> bool {
+    pub(crate) fn is_hr_line(&self, off: OFF) -> HrResult {
         let c = ch(self.text, off);
-        if c != b'-' && c != b'_' && c != b'*' {
-            return false;
-        }
+        debug_assert!(matches!(c, b'-' | b'_' | b'*'));
 
-        let mut pos = off;
-        let mut count: u32 = 0;
-        while pos < self.size && !helpers::is_newline(ch(self.text, pos)) {
+        let mut pos = off + 1;
+        let mut count: u32 = 1;
+        while pos < self.size && (ch(self.text, pos) == c || helpers::is_blank(ch(self.text, pos)))
+        {
             if ch(self.text, pos) == c {
                 count += 1;
-            } else if !helpers::is_blank(ch(self.text, pos)) {
-                return false;
             }
             pos += 1;
         }
 
-        count >= 3
+        HrResult {
+            is_hr: count >= 3 && (pos >= self.size || helpers::is_newline(ch(self.text, pos))),
+            end: pos,
+        }
     }
 
     pub(crate) fn is_atx_header_line(&self, off: OFF) -> AtxResult {

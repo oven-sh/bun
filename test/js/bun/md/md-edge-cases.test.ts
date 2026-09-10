@@ -1219,6 +1219,62 @@ describe("pathological autolink opener inputs", () => {
   }, 90_000);
 });
 
+// ============================================================================
+// Pathological inputs: list markers nested on one line. `-` and `*` can also
+// open a thematic break, and the thematic-break check rescanned the rest of the
+// line at every container level before giving up at the first non-marker byte,
+// so N same-line markers (`- - - … a`) cost O(N^2): ~14s for a 200 KB line,
+// while the same shape with `+` was instant (md4c#66, the port had dropped
+// md4c's `hr_killer`). A failed check now records where its scan stopped and
+// later levels on that line skip straight past it. The child process is killed
+// after 30s so a regression fails fast instead of hanging the test runner.
+// ============================================================================
+
+describe("pathological thematic break inputs", () => {
+  test("same-line nested list markers render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const nested = n => fill(n - 1, "<ul>\\n<li>\\n") + "<ul>\\n<li>a</li>\\n</ul>\\n" + fill(n - 1, "</li>\\n</ul>\\n");
+        for (const mark of ["- ", "* "]) {
+          const n = 200000;
+          const html = Bun.markdown.html(fill(n, mark) + "a");
+          if (html !== nested(n)) throw new Error("unexpected html for " + JSON.stringify(mark) + ": " + JSON.stringify(html.slice(0, 120)));
+          console.log("OK html " + JSON.stringify(mark));
+        }
+        const ansi = Bun.markdown.ansi(fill(50000, "- ") + "a", { colors: false });
+        if (!ansi.startsWith("  * \\n") || !ansi.endsWith(" a\\n")) throw new Error("unexpected ansi: " + JSON.stringify(ansi.slice(0, 120)));
+        console.log("OK ansi");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Thematic breaks are still recognized at every container level, including
+    // right where an earlier level's scan gave up.
+    expect(Markdown.html("- - -\n")).toBe("<hr />\n");
+    expect(Markdown.html("* * * a\n")).toBe(
+      "<ul>\n<li>\n<ul>\n<li>\n<ul>\n<li>a</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n",
+    );
+    expect(Markdown.html("- * * *\n")).toBe("<ul>\n<li>\n<hr />\n</li>\n</ul>\n");
+    expect(Markdown.html("- - _ _ _\n")).toBe("<ul>\n<li>\n<ul>\n<li>\n<hr />\n</li>\n</ul>\n</li>\n</ul>\n");
+    expect(Markdown.html("> - ***\n")).toBe("<blockquote>\n<ul>\n<li>\n<hr />\n</li>\n</ul>\n</blockquote>\n");
+    expect(Markdown.html("- foo\n- * * *\n")).toBe("<ul>\n<li>foo</li>\n<li>\n<hr />\n</li>\n</ul>\n");
+  }, 90_000);
+});
+
 describe("inputs the parser cannot address", () => {
   // The parser addresses its input with u32 offsets and probes up to 9 bytes
   // past an offset (the `<![CDATA[` check), so everything longer than

@@ -135,10 +135,7 @@ impl NativeSocket {
         socket: *mut crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
-        debug_assert!(matches!(
-            self.0.get(),
-            BunSocket::None | BunSocket::Closed
-        ));
+        debug_assert!(matches!(self.0.get(), BunSocket::None | BunSocket::Closed));
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper
         // rooted by the caller's `socket_js`.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");

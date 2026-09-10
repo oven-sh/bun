@@ -522,13 +522,6 @@ declare module "bun" {
   interface SQL extends AsyncDisposable {
     /**
      * Executes a SQL query using template literals
-     *
-     * Interpolated values are kept by reference and serialized when the
-     * query is sent, which is no earlier than `await` or `.execute()`, not
-     * when the template is evaluated. Don't modify, transfer or detach a
-     * `TypedArray`/`ArrayBuffer`/`Date`/`sql(object)` value until the query
-     * settles, or pass a copy (`new Uint8Array(bytes)`).
-     *
      * @example
      * ```ts
      * const [user] = await sql<Users[]>`select * from users where id = ${1}`;

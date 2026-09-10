@@ -63,6 +63,15 @@ jobs:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:clippy
 
+      - name: cargo check --all-targets
+        # Clippy above covers the default targets only (lib and bin). This
+        # type-checks what it skips (`#[cfg(test)]` code, `tests/`, `benches/`)
+        # so that code keeps compiling: the miri job builds a few crates'
+        # tests, nothing builds the rest.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo check --workspace --all-targets --keep-going
+
   miri:
     name: cargo miri test
     runs-on: ubuntu-latest

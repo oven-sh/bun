@@ -1163,13 +1163,17 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
 
-        // A main-frame commit replaces the document. Chrome answers a
-        // capture that was in flight across one about half the time and
-        // drops the rest with no reply, so the load event below repeats
-        // it. A subframe commit (frame.parentId present) keeps the main
-        // document, and its captures complete.
-        if (view->m_pendingScreenshot && jsonField(frame, { "parentId", 8 }).empty())
-            view->m_screenshotStranded = true;
+        // A subframe commit (frame.parentId present) keeps the main
+        // document, and Chrome completes the captures in flight across it.
+        if (jsonField(frame, { "parentId", 8 }).empty()) {
+            mainFrameCommitted(view);
+            // A page restored from the back/forward cache is complete at its
+            // commit and fires no load event, so nothing later would repeat
+            // a capture this commit stranded.
+            auto type = jsonString(jsonField(params, { "type", 4 }));
+            if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
+                repeatStrandedCapture(g, view);
+        }
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -1191,25 +1195,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
-
-        // A capture the commit stranded: its id owes a reply that Chrome
-        // never sends, so drop the id and capture the document that just
-        // loaded instead. The repeat runs once per screenshot() call. A
-        // second commit over it rejects, so the promise always settles.
-        if (view->m_screenshotStranded && view->m_pendingScreenshot) {
-            view->m_screenshotStranded = false;
-            m_pending.remove(view->m_screenshotCdpId);
-            if (view->m_screenshotResent) {
-                settle(g, view, PendingSlot::Screenshot, false,
-                    createError(g, "screenshot: the page navigated before the capture completed"_s));
-                return;
-            }
-            view->m_screenshotResent = true;
-            uint32_t cid = nextId();
-            view->m_screenshotCdpId = cid;
-            m_pending.add(cid, Pending { Method::PageCaptureScreenshot, PendingSlot::Screenshot, view->m_viewId });
-            send(cid, captureScreenshotCommand(cid, sidSpan(view->m_sessionId), view->m_screenshotFormat, view->m_screenshotQuality));
-        }
+        repeatStrandedCapture(g, view);
         return;
     }
 
@@ -1339,6 +1325,48 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto event = WebCore::MessageEvent::create(methodAtom, WTF::move(init), WebCore::Event::IsTrusted::Yes);
     scope.release();
     view->wrapped().dispatchEvent(event);
+}
+
+void Transport::mainFrameCommitted(JSWebView* view)
+{
+    for (auto& entry : m_pending.values()) {
+        if (entry.viewId == view->m_viewId) entry.acrossCommit = true;
+    }
+}
+
+// Runs once the document that a main-frame commit brought in is in place: at
+// Page.loadEventFired, or at the commit itself for a back/forward cache
+// restore. The slot model allows one capture in flight per view, so there is
+// at most one stranded entry. Its id is dropped either way: Chrome owes it a
+// reply that never comes, and a late one must not reach a slot that a newer
+// screenshot() call has taken since.
+void Transport::repeatStrandedCapture(JSGlobalObject* g, JSWebView* view)
+{
+    uint32_t strandedId = 0;
+    bool wasRepeat = false;
+    for (auto& [id, entry] : m_pending) {
+        if (entry.viewId == view->m_viewId && entry.method == Method::PageCaptureScreenshot && entry.acrossCommit) {
+            strandedId = id;
+            wasRepeat = entry.repeat;
+            break;
+        }
+    }
+    if (!strandedId) return;
+    m_pending.remove(strandedId);
+    if (!view->m_pendingScreenshot) return;
+
+    // One repeat per screenshot() call. A second commit over the repeat
+    // rejects, so the promise settles and the slot frees either way.
+    if (wasRepeat) {
+        settle(g, view, PendingSlot::Screenshot, false,
+            createError(g, "screenshot: the page navigated before the capture completed"_s));
+        return;
+    }
+    uint32_t cid = nextId();
+    Pending entry { Method::PageCaptureScreenshot, PendingSlot::Screenshot, view->m_viewId };
+    entry.repeat = true;
+    m_pending.add(cid, entry);
+    send(cid, captureScreenshotCommand(cid, sidSpan(view->m_sessionId), view->m_screenshotFormat, view->m_screenshotQuality));
 }
 
 void Transport::onClose()
@@ -1555,12 +1583,8 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
     uint32_t id = t.nextId();
     // The response handler reads view->m_screenshotFormat (stashed by
     // JSWebView::screenshot before dispatch) to stamp the right MIME type
-    // on the Blob. The id, the quality and the two flags are what the
-    // load-event handler needs to repeat a capture a navigation stranded.
-    view->m_screenshotCdpId = id;
+    // on the Blob; repeatStrandedCapture reads both to send the capture again.
     view->m_screenshotQuality = quality;
-    view->m_screenshotStranded = false;
-    view->m_screenshotResent = false;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
         captureScreenshotCommand(id, sidSpan(view->m_sessionId), format, quality));

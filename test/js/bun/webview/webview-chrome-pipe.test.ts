@@ -177,6 +177,53 @@ test.concurrent("a screenshot two navigations drop rejects instead of hanging", 
   });
 });
 
+// A page restored from the back/forward cache commits with
+// type:"BackForwardCacheRestore" and fires no load event, so the repeat goes
+// out at the commit itself.
+test.concurrent("a screenshot dropped at a back/forward cache restore is captured again", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    await view.evaluate("__fake_drop_screenshots(1)");
+    const shot = outcome(view.screenshot().then(blob => blob.size));
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "LR", url: "http://fake/restored", mimeType: "text/html" },
+      type: "BackForwardCacheRestore",
+    })\`);
+    const settled = await within(shot, 2000);
+    print({ settled, url: view.url, sent: (await view.evaluate("__fake_screenshots()")).length });
+    view.close();
+  `);
+  expect(result).toEqual({ settled: { resolved: SCREENSHOT_BYTES.length }, url: "http://fake/restored", sent: 2 });
+});
+
+// A subframe commit keeps the main document and Chrome completes the capture,
+// so it must not be dropped or sent twice: an <iframe> that commits while the
+// page is still loading, then the page's own load event.
+test.concurrent("a subframe commit leaves a pending screenshot alone", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    await view.evaluate("__fake_hold_screenshots(true)");
+    const shot = outcome(view.screenshot().then(blob => blob.size));
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "C", parentId: "F", loaderId: "LC", url: "http://fake/child", mimeType: "text/html" },
+      type: "Navigation",
+    })\`);
+    await view.evaluate(\`__fake_emit("Page.loadEventFired", { timestamp: 9 })\`);
+    const beforeRelease = Bun.peek.status(shot);
+    await view.evaluate("__fake_hold_screenshots(false)");
+    const settled = await within(shot, 2000);
+    print({ beforeRelease, settled, sent: (await view.evaluate("__fake_screenshots()")).length });
+    view.close();
+  `);
+  expect(result).toEqual({
+    beforeRelease: "pending",
+    settled: { resolved: SCREENSHOT_BYTES.length },
+    sent: 1,
+  });
+});
+
 test.concurrent("many views interleave their commands on the one transport", async () => {
   const result = await runScenario(`
     const views = Array.from({ length: 8 }, newView);

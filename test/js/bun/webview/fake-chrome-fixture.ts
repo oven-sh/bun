@@ -38,9 +38,15 @@ const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 // The next `dropScreenshots` captures get no reply, the way Chrome drops a
 // Page.captureScreenshot whose document is replaced before it completes.
-// `screenshots` keeps the options of every capture the fake received.
+// While `holdScreenshots` is set, capture replies wait in `heldScreenshots`
+// instead, the way a real capture takes a while. `screenshots` keeps the
+// options of every capture the fake received.
 let dropScreenshots = 0;
+let holdScreenshots = false;
+const heldScreenshots: (() => void)[] = [];
 const screenshots: { format: string; quality: number }[] = [];
+// Emits an event on the session of the command being handled.
+let emit: (name: string, params: unknown) => void = () => {};
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -65,9 +71,18 @@ Object.assign(globalThis, {
   __fake_drop_screenshots(count: number) {
     dropScreenshots = count;
   },
+  // true: capture replies wait. false: the waiting ones go out, in order.
+  __fake_hold_screenshots(hold: boolean) {
+    holdScreenshots = hold;
+    if (!hold) for (const release of heldScreenshots.splice(0)) release();
+  },
   // The options of every capture the fake received, in order.
   __fake_screenshots() {
     return screenshots;
+  },
+  // Sends a CDP event on this view's session before the evaluate() reply.
+  __fake_emit(name: string, params: unknown) {
+    emit(name, params);
   },
 });
 
@@ -109,6 +124,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
         dropScreenshots--;
         return;
       }
+      if (holdScreenshots) {
+        heldScreenshots.push(() => reply({ data: screenshotBase64 }));
+        return;
+      }
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
@@ -117,6 +136,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       }
       let value: unknown;
       try {
+        emit = event;
         value = await (0, eval)(params.expression);
       } catch (e) {
         return reply({

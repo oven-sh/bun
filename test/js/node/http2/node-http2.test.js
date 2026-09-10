@@ -6009,3 +6009,75 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// Node's socketOnClose marks the session closed before it destroys it, so a session whose
+// transport went away reports `closed` as well as `destroyed`. A destroy() on a live transport
+// reports only `destroyed` (node v26.3.0).
+describe.concurrent("session.closed after the transport goes away", () => {
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const EMPTY_SETTINGS = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
+
+  // A TCP peer that sends its SETTINGS frame and reads everything the client sends, so a hang-up
+  // is a FIN and never an RST. It calls afterPreface with its socket once the client has written.
+  async function rawPeer(afterPreface) {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => afterPreface(socket));
+      socket.on("data", () => {});
+      socket.write(EMPTY_SETTINGS);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server;
+  }
+
+  it("a client session reports closed when its peer hangs up", async () => {
+    const server = await rawPeer(socket => socket.end());
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", () => {});
+      await new Promise(resolve => client.once("close", resolve));
+      expect({ closed: client.closed, destroyed: client.destroyed }).toEqual({ closed: true, destroyed: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a server session reports closed when its peer hangs up", async () => {
+    const server = http2.createServer();
+    const accepted = new Promise(resolve => server.on("session", resolve));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      socket.write(Buffer.concat([PREFACE, EMPTY_SETTINGS]));
+      const session = await accepted;
+      session.on("error", () => {});
+      const closed = new Promise(resolve => session.once("close", resolve));
+      socket.end();
+      await closed;
+      expect({ closed: session.closed, destroyed: session.destroyed }).toEqual({ closed: true, destroyed: true });
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("a client session destroyed while its transport is alive leaves closed false", async () => {
+    const server = await rawPeer(() => {});
+    try {
+      const socket = net.connect(server.address().port, "127.0.0.1");
+      socket.on("error", () => {});
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { createConnection: () => socket });
+      client.on("error", () => {});
+      await new Promise(resolve => client.once("remoteSettings", resolve));
+      const socketClosed = new Promise(resolve => socket.once("close", resolve));
+      client.destroy();
+      // The socket's own 'close' lands after the session is already detached. Node's socketOnClose
+      // returns early on a detached session, so that late teardown must not flip `closed`.
+      await socketClosed;
+      expect({ closed: client.closed, destroyed: client.destroyed }).toEqual({ closed: false, destroyed: true });
+    } finally {
+      server.close();
+    }
+  });
+});

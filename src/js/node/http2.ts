@@ -4935,8 +4935,9 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
-  /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
-  /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
+  /// closeCalled backs `session.closed`: node sets it in close() and in socketOnClose, so a
+  /// graceful close and a transport that went away both report it. A bare destroy() on a live
+  /// transport leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
@@ -5409,6 +5410,13 @@ class ClientHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
+    // Node's socketOnClose marks the session closed before it destroys it, so a dead transport
+    // reports `closed` as well as `destroyed`. The latch is all close() would do here: its GOAWAY
+    // has no transport left to reach, and its deferred teardown is redundant next to the destroy
+    // below. An already-detached session (destroy() or a transport error ran first) keeps `closed`
+    // false - node's socketOnClose returns early once the socket no longer points at a session.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (socketOnClose)
+    if (!this.destroyed) this.#closeCalled = true;
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }

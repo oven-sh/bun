@@ -1140,8 +1140,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
         if (loaderId != view->m_chromeFailedLoaderId) {
             view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
             view->m_chromeUnreportedFailureGeneration = view->m_chromeNavGeneration;
-            // A navigation command Chrome has not answered yet did not produce this page (its
-            // reply would have come first), so the failure is not that command's to settle.
+            // An unanswered command did not produce this page: CDP would have replied first.
             view->m_chromeUnreportedFailureSettles = !hasUnansweredNavigation(view);
         }
         return;

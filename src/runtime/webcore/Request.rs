@@ -239,14 +239,13 @@ impl Request {
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
+    /// Nothing is derived from the body here: a body's MIME type went into the
+    /// list when the Request was made (`append_content_type_from_body`).
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn ensure_fetch_headers(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn ensure_fetch_headers(&self) -> &mut HeadersRef {
         if self.headers.get().is_some() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            return self.headers_mut().as_mut().unwrap();
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -257,21 +256,9 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // `construct_into` already appended a JS-constructed body's type. A
-            // stream body has no MIME type, whatever backs the stream.
-            if let BodyValue::Blob(blob) = self.body_value() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        self.headers_mut().as_mut().unwrap()
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -294,7 +281,7 @@ impl Request {
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
     pub(crate) fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
+        Ok(self.ensure_fetch_headers().to_js(global_this))
     }
 
     pub(crate) fn clone_headers(
@@ -392,14 +379,16 @@ impl Request {
 }
 
 impl Request {
-    /// TODO: do we need this?
+    /// A Request made outside the JS constructor and outside the server's
+    /// request path (`server.fetch(url, init)`).
     pub(crate) fn init2(
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
         method: Method,
-    ) -> Request {
-        Request {
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Request> {
+        let request = Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
@@ -410,7 +399,41 @@ impl Request {
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
+        };
+        if let Err(err) = request.append_content_type_from_body(global_this) {
+            // SAFETY: `request` is dropped right after; this is the only release of its body.
+            let mut request = request;
+            unsafe { ManuallyDrop::drop(&mut request.body) };
+            return Err(err);
         }
+        Ok(request)
+    }
+
+    /// Fetch "extract a body": a Blob, FormData or URLSearchParams body has a
+    /// MIME type, and a new Request appends it to its header list unless a
+    /// `Content-Type` is already there. This runs when the Request is made:
+    /// later the body may be a stream or used up, and a stream's source says
+    /// nothing about this Request (`body: new Response(formData).body` has no
+    /// type).
+    fn append_content_type_from_body(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let BodyValue::Blob(blob) = self.body_value() else {
+            return Ok(());
+        };
+        let content_type = blob.content_type_slice();
+        if content_type.is_empty() {
+            return Ok(());
+        }
+        let headers = self
+            .headers_mut()
+            .get_or_insert_with(HeadersRef::create_empty);
+        if headers.fast_has(HTTPHeaderName::ContentType) {
+            return Ok(());
+        }
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(content_type),
+            global_this,
+        )
     }
 
     pub(crate) fn get_form_data_encoding(
@@ -1056,6 +1079,11 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
+        // The body came from `init.body` (fetch "extract a body", which also yields
+        // its MIME type), as opposed to being copied from an input Request along
+        // with that Request's header list.
+        let mut body_extracted = false;
+
         for &value in values_to_try {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
@@ -1166,6 +1194,9 @@ impl Request {
                                 match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
+                                        // A Response as init is a Bun extension: its body stands
+                                        // in for `init.body`, type included.
+                                        body_extracted = true;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1196,6 +1227,7 @@ impl Request {
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
                                 *req.body_value_mut() = v;
+                                body_extracted = true;
                             }
                             Err(e) => bail!(Err(e)),
                         }
@@ -1377,26 +1409,10 @@ impl Request {
 
         req.url.set(href);
 
-        // Fetch "extract a body": a Blob, FormData or URLSearchParams init has a
-        // MIME type and the constructor appends it to the header list now. Later
-        // the body may be a stream or used up, and a stream's source says nothing
-        // about this Request: `body: new Response(formData).body` has no type.
-        if let BodyValue::Blob(blob) = req.body_value() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                let headers = req
-                    .headers_mut()
-                    .get_or_insert_with(HeadersRef::create_empty);
-                if !headers.fast_has(HTTPHeaderName::ContentType) {
-                    match headers.put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
-                }
+        if body_extracted {
+            match req.append_content_type_from_body(global_this) {
+                Ok(()) => {}
+                Err(e) => bail!(Err(e)),
             }
         }
 

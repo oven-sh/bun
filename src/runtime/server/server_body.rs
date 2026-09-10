@@ -2346,7 +2346,8 @@ where
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),
                 method,
-            ))
+                ctx,
+            )?)
         } else if let Some(request_) = first_arg
             .is_object()
             .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))

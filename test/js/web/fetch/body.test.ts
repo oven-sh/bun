@@ -1775,9 +1775,11 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
 
   // The same spec step gives a Blob, FormData or URLSearchParams init a MIME
   // type, and the Request constructor appends it to the header list right
-  // there. So the header does not depend on what is read first.
+  // there. So the header does not depend on what is read first, and
+  // `new Request(input, init)` copies input's header list instead of looking
+  // at the body again.
   describe("new Request() takes the Content-Type from the body init at construction", () => {
-    const make = (body: BodyInit) => new Request("http://a/", { method: "POST", body });
+    const make = (body: BodyInit) => new Request("http://a/", { method: "POST", body, duplex: "half" } as RequestInit);
     for (const [name, init, type] of typedSources) {
       test(name, async () => {
         const contentType = (request: Request) => request.headers.get("content-type")?.slice(0, type.length) ?? null;
@@ -1790,6 +1792,9 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         touched.body;
         const clone = touched.clone();
         await clone.text();
+        const adopted = () => make(new Response(init()).body!);
+        const adoptedThenCloned = adopted();
+        adoptedThenCloned.clone();
         expect({
           headersFirst: await after(() => {}),
           bodyFirst: await after(request => request.body),
@@ -1800,12 +1805,18 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           bodyThenClone: contentType(touched),
           readCloneOfTouched: contentType(clone),
           sameBoundary: clone.headers.get("content-type") === touched.headers.get("content-type"),
-          copiedByNewRequest: contentType(new Request(make(init()))),
+          copied: contentType(new Request(make(init()))),
+          copiedWithInit: contentType(new Request(make(init()), { method: "PUT" })),
+          copiedWithNewHeaders: contentType(new Request(make(init()), { headers: { "x-a": "1" } })),
           explicitWins: new Request("http://a/", {
             method: "POST",
             body: init(),
             headers: { "content-type": "text/x-other" },
           }).headers.get("content-type"),
+          cloneOfAdoptedStream: contentType(adopted().clone()),
+          adoptedStreamAfterClone: contentType(adoptedThenCloned),
+          copyOfAdoptedStream: contentType(new Request(adopted())),
+          copyOfAdoptedStreamWithInit: contentType(new Request(adopted(), { method: "PUT" })),
         }).toEqual({
           headersFirst: type,
           bodyFirst: type,
@@ -1816,11 +1827,38 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           bodyThenClone: type,
           readCloneOfTouched: type,
           sameBoundary: true,
-          copiedByNewRequest: type,
+          copied: type,
+          copiedWithInit: type,
+          copiedWithNewHeaders: null,
           explicitWins: "text/x-other",
+          cloneOfAdoptedStream: null,
+          adoptedStreamAfterClone: null,
+          copyOfAdoptedStream: null,
+          copyOfAdoptedStreamWithInit: null,
         });
       });
     }
+
+    test("also when Bun.serve's server.fetch() builds the Request", async () => {
+      const seen: (string | null)[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          request.body;
+          seen.push(request.headers.get("content-type"));
+          return new Response("ok");
+        },
+      });
+      const body = new Blob(["a=1"], { type: "text/x-custom" });
+      await server.fetch(new URL("/", server.url).href, { method: "POST", body });
+      await server.fetch(new URL("/", server.url).href, { method: "POST", body, headers: { "x-a": "1" } });
+      await server.fetch(new URL("/", server.url).href, {
+        method: "POST",
+        body,
+        headers: { "content-type": "text/x-other" },
+      });
+      expect(seen).toEqual(["text/x-custom", "text/x-custom", "text/x-other"]);
+    });
   });
 
   // A null body is not a zero-length body: nothing can use it up.

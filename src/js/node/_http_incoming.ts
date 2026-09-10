@@ -389,11 +389,9 @@ IncomingMessage.prototype._read = function _read(_n) {
 
   const bodyReadState = handle.hasBody;
 
-  if (
-    (bodyReadState & NodeHTTPBodyReadState.done) !== 0 ||
-    bodyReadState === NodeHTTPBodyReadState.none ||
-    this._dumped
-  ) {
+  // A dumped request is not complete yet: like Node, it ends only when the
+  // rest of its body arrives (onDataIncomingMessage's isLast).
+  if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
     emitEOFIncomingMessage(this);
   }
 
@@ -406,7 +404,6 @@ IncomingMessage.prototype._read = function _read(_n) {
 
   if (!handle.ondata) {
     handle.ondata = onDataIncomingMessage.bind(this);
-    handle.hasCustomOnData = false;
   }
 };
 
@@ -759,10 +756,8 @@ IncomingMessage.prototype._dump = function _dump() {
     // If there is buffered data, it may trigger 'data' events.
     // Remove 'data' event listeners explicitly.
     this.removeAllListeners("data");
-    const handle = this[kHandle];
-    if (handle) {
-      handle.ondata = undefined;
-    }
+    // The native ondata stays armed: it discards the chunks but still
+    // delivers the fin that completes the request (see _read).
     this.resume();
   }
 };

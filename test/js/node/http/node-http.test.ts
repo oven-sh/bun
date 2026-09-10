@@ -4366,3 +4366,319 @@ describe("response header values are written as latin-1 bytes", () => {
     ]);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/4733
+// https://github.com/oven-sh/bun/issues/18613
+// Ending the response inside the request handler must not drop the request
+// body: like Node.js, the body keeps flowing to req's 'data' listeners and
+// piped destinations until it has been fully received, and resOnFinish (the
+// 'finish' listener) decides whether to _dump() based on the state *at*
+// 'finish', so a consumer attached after res.end() in the same tick still
+// receives the body. (req.complete / 'end' / 'close' tracking the body, and
+// connections the response closes, are covered in
+// node-http-server-abort-events.test.ts.)
+describe("request body still flows after res.end() was called in the handler", () => {
+  async function run(handler: (req: IncomingMessage, res: ServerResponse, out: Writable) => void) {
+    const events: string[] = [];
+    const chunks: Buffer[] = [];
+    const { promise: finished, resolve: finish, reject } = Promise.withResolvers<void>();
+
+    let reqRef: IncomingMessage | undefined;
+    await using server = createServer((req, res) => {
+      reqRef = req;
+      const out = new Writable({
+        write(chunk, _enc, cb) {
+          chunks.push(Buffer.from(chunk));
+          cb();
+        },
+      });
+      req.once("end", () => events.push("req-end"));
+      req.once("close", () => events.push("req-close"));
+      req.once("error", reject);
+      out.once("error", reject);
+      out.once("finish", () => {
+        events.push("out-finish");
+        finish();
+      });
+      handler(req, res, out);
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await finished;
+
+    expect({
+      body: Buffer.concat(chunks).toString(),
+      events,
+      dumped: reqRef!._dumped,
+    }).toEqual({
+      body: "testing-body",
+      events: ["req-end", "out-finish", "req-close"],
+      dumped: false,
+    });
+  }
+
+  it("req.pipe(out) before res.end()", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      res.end("ok");
+    });
+  });
+
+  it("req.on('data') before res.end()", async () => {
+    await run((req, res, out) => {
+      req.on("data", c => out.write(c));
+      req.on("end", () => out.end());
+      res.end("ok");
+    });
+  });
+
+  it("req.pipe(out) after res.end() in the same tick", async () => {
+    await run((req, res, out) => {
+      res.end("ok");
+      req.pipe(out);
+    });
+  });
+
+  it("req.on('data') after res.end() in the same tick", async () => {
+    await run((req, res, out) => {
+      res.end("ok");
+      req.on("data", c => out.write(c));
+      req.on("end", () => out.end());
+    });
+  });
+
+  it("req.pipe(out) with res.write() + res.end()", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      res.write("o");
+      res.end("k");
+    });
+  });
+
+  it("req.pipe(out) with res.end() on nextTick", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      process.nextTick(() => res.end("ok"));
+    });
+  });
+
+  it("with no consumer, req is _dumped on 'finish' like Node's resOnFinish", async () => {
+    let dumpedAtFinish: boolean | undefined;
+    let reqRef: IncomingMessage | undefined;
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      reqRef = req;
+      req.once("error", reject);
+      req.once("close", resolve);
+      res.end("ok");
+      // emitResponseFinish is registered before the 'request' event, so by the
+      // time this listener runs req._dump() has already been called.
+      res.on("finish", () => (dumpedAtFinish = req._dumped));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await closed;
+    expect({ dumpedAtFinish, dumped: reqRef!._dumped }).toEqual({ dumpedAtFinish: true, dumped: true });
+  });
+
+  it("req.resume() after res.end() in the same tick prevents _dump()", async () => {
+    let dumped: boolean | undefined;
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.once("error", reject);
+      res.end("ok");
+      req.resume();
+      req.once("end", () => {
+        dumped = req._dumped;
+        resolve();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await ended;
+    expect(dumped).toBe(false);
+  });
+
+  it("keep-alive connection reused after a consumed body releases the request", async () => {
+    // The body's fin arriving on the re-armed inStream after res.end() must
+    // release the pending-request ref so server.close() resolves and the
+    // process exits.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("http");
+         const { once } = require("events");
+         (async () => {
+           const bodies = [];
+           const server = http.createServer((req, res) => {
+             let body = "";
+             req.on("data", c => body += c);
+             req.once("end", () => bodies.push(body));
+             res.end("ok");
+           });
+           await once(server.listen(0, "127.0.0.1"), "listening");
+           const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+           const port = server.address().port;
+           for (let i = 0; i < 3; i++) {
+             await new Promise((resolve, reject) => {
+               const r = http.request({ agent, method: "POST", port }, res => {
+                 res.resume();
+                 res.on("end", resolve);
+                 res.on("error", reject);
+               });
+               r.on("error", reject);
+               r.end("body" + i);
+             });
+           }
+           agent.destroy();
+           await new Promise(r => server.close(r));
+           console.log(JSON.stringify(bodies));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('["body0","body1","body2"]');
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  it("chunked request body split across writes", async () => {
+    let body = "";
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.on("data", c => (body += c));
+      req.once("end", resolve);
+      req.once("error", reject);
+      req.once("close", () => reject(new Error("closed before end")));
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = connect(port, "127.0.0.1");
+    await once(sock, "connect");
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+    // A second TCP segment carrying the remainder (via setNoDelay + event-loop
+    // bounce) so res.end() has already run when it arrives.
+    sock.setNoDelay(true);
+    await new Promise<void>(r => setImmediate(r));
+    sock.write("6\r\n world\r\n0\r\n\r\n");
+
+    await ended;
+    sock.end();
+    expect(body).toBe("hello world");
+  });
+
+  it("socket closed mid-upload does not strand the event loop", async () => {
+    // Covers the case where the body's fin never arrives after the response
+    // ended: the body-read ref must be released on teardown.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("http");
+         const net = require("net");
+         const { once } = require("events");
+         (async () => {
+           const events = [];
+           const server = http.createServer((req, res) => {
+             req.on("data", c => events.push("data(" + c.length + ")"));
+             req.on("end", () => events.push("end"));
+             res.end("ok");
+           });
+           await once(server.listen(0, "127.0.0.1"), "listening");
+           const s = net.connect(server.address().port, "127.0.0.1");
+           await once(s, "connect");
+           s.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 100\\r\\n\\r\\nabc");
+           s.resume();
+           await once(s, "data");
+           s.destroy();
+           await once(s, "close");
+           server.close();
+           process.on("beforeExit", () => console.log(JSON.stringify(events)));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Like Node.js: the partial body is delivered, 'end' is not (incomplete),
+    // and the process reaches beforeExit.
+    expect(stdout.trim()).toBe('["data(3)"]');
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
+  // The body outliving the response must not leave anything holding the event
+  // loop open: the process has to exit on its own both when the body does
+  // arrive later (with the connection then reused, so the early request is no
+  // longer the connection's current one when it closes) and when the client
+  // goes away mid-body instead.
+  it.each(["complete", "abort"])(
+    "process exits on its own after an early response (%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        const server = createServer((req, res) => {
+          if (req.url === "/early") {
+            req.on("close", () => console.log("req close complete=" + req.complete));
+            req.socket.on("close", () => console.log("socket close complete=" + req.complete));
+          }
+          res.end("ok:" + req.url);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = connect(server.address().port, "127.0.0.1");
+          let received = "";
+          client.on("data", chunk => {
+            received += chunk;
+            if (received.endsWith("ok:/early")) {
+              received = "";
+              if (${JSON.stringify(mode)} === "abort") {
+                client.destroy();
+                server.close(() => console.log("server closed"));
+              } else {
+                client.write("def");
+                client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+              }
+            } else if (received.endsWith("ok:/second")) {
+              client.end();
+              server.close(() => console.log("server closed"));
+            }
+          });
+          client.write("POST /early HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 6\\r\\n\\r\\nabc");
+        });
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n").sort()).toEqual(
+        mode === "abort"
+          ? ["server closed", "socket close complete=false"]
+          : ["req close complete=true", "server closed", "socket close complete=true"],
+      );
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});

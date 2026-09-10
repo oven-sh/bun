@@ -824,10 +824,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
         // Like Node's connectionListener -> parserOnBody: body bytes flow into
         // the IncomingMessage as they arrive, and the push callback readStop()s
-        // the socket (which emits 'pause' on it) once the buffer fills.
+        // the socket once the buffer fills. The callback stays armed past
+        // res.end(), so req.complete tracks the body actually being received.
         if (hasBody) {
           handle.ondata = onDataIncomingMessage.bind(http_req);
-          handle.hasCustomOnData = false;
         }
         drainMicrotasks();
 
@@ -1347,6 +1347,10 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
+// Distinguishes the end() from onResponseFinishHandleSocket (Node's
+// destroySoon) from a user-issued one: for it, native lets a body still being
+// parsed reach the request before the shutdown.
+const kEndAfterResponse = Symbol("kEndAfterResponse");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
@@ -1485,6 +1489,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
+    [kEndAfterResponse] = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1765,7 +1770,7 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
-      handle.end();
+      handle.end(this[kEndAfterResponse]);
       callback();
     }
 
@@ -2387,10 +2392,15 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  const req = this.req;
+  // Dump the body if the user never consumed or resumed it (Node's resOnFinish).
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const socket = req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
@@ -2405,7 +2415,10 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
-    socket?.end();
+    if (socket != null) {
+      socket[kEndAfterResponse] = true;
+      socket.end();
+    }
     return;
   }
   if (!socket || socket.destroyed || typeof socket.setTimeout !== "function") {
@@ -3172,10 +3185,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
+  // The unread-body dump happens on 'finish' (emitResponseFinish), like
+  // Node's resOnFinish, so a same-tick consumer still gets the body.
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'

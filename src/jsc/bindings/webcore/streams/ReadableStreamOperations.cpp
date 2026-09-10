@@ -789,11 +789,11 @@ JSReadableStream* createReadableByteStream(JSGlobalObject* globalObject, SourceK
 // does, e.g. `{ a: 1 } must be iterable`.
 static void throwNotIterable(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue iterable)
 {
-    WTF::StringBuilder builder;
+    Bun::MessageBuilder builder;
     Bun::JSValueToStringSafe(globalObject, builder, iterable, false);
     RETURN_IF_EXCEPTION(scope, );
     builder.append(" must be iterable"_s);
-    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, builder.toString());
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, builder);
 }
 
 // GetMethod(value, propertyName): a [[Get]] on the boxed value (GetV — legal on primitives),

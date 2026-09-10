@@ -8,6 +8,7 @@
 #include "BunClientData.h"
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
+#include <wtf/text/StringBuilder.h>
 
 #define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
     do {                                                                                                           \
@@ -22,6 +23,22 @@
     } while (false)
 
 namespace Bun {
+
+// Builds one error message. A message can embed text that comes from JS (an
+// encoding name, a constructor name, an inspected value), so its length is
+// user controlled and can pass `WTF::String::MaxLength` (2^31 - 1 characters).
+// A default-constructed `WTF::StringBuilder` calls `CRASH()` on that append,
+// and on a failed allocation, which aborts the process instead of reporting
+// the error it was building. This builder records the overflow, and
+// `createError`/`throwError` report a message that did not fit as `RangeError:
+// Out of memory`, which is what JSC reports for a string it cannot create.
+class MessageBuilder final : public WTF::StringBuilder {
+public:
+    MessageBuilder()
+        : WTF::StringBuilder(WTF::OverflowPolicy::RecordOverflow)
+    {
+    }
+};
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:
@@ -56,8 +73,12 @@ private:
 };
 
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
+// Throws the error `message` describes, or `RangeError: Out of memory` when the
+// message overflowed. Same for the `createError` overload below.
+JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 // Throws ERR_INVALID_THIS describing `thisValue` ("…but received an instance of X"); if describing
@@ -71,11 +92,11 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
 // Appends Node's `determineSpecificType()` rendering of a value ("type number (5)",
 // "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.
-void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue value);
+void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue value);
 
 // Appends the value the way Node's `%s` error-message substitution renders it: primitives
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
-void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
+void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
 enum Bound {
     LOWER,

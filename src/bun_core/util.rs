@@ -2204,8 +2204,11 @@ impl StackCheck {
     /// every frame in it, so the same path measures ~160 KB there against a
     /// few KB in a release build. The sanitizer reserve is 3x that measured
     /// depth, and it only costs recursion depth in builds nobody ships.
-    const THRESHOLD: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 }
-        + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+    const THRESHOLD: usize = if cfg!(windows) {
+        256 * 1024
+    } else {
+        128 * 1024
+    } + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
 
     /// Is there enough stack space to safely recurse?
     #[inline]

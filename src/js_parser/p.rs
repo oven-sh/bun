@@ -2121,15 +2121,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
     /// of the same variable.
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
-        let mut ref_ = ref_;
-        loop {
-            let symbol = &mut self.symbols[ref_.inner_index() as usize];
-            if !symbol.has_link() {
-                symbol.set_has_been_assigned_to(true);
-                return;
-            }
-            ref_ = symbol.link.get();
-        }
+        let root = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        self.symbols[root.inner_index() as usize].set_has_been_assigned_to(true);
     }
 
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
@@ -5576,12 +5569,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
                 let mut local = self.relocated_top_level_vars[i];
-                while !local.ref_.is_empty() {
-                    let symbol = &self.symbols[local.ref_.inner_index() as usize];
-                    if !symbol.has_link() {
-                        break;
-                    }
-                    local.ref_ = symbol.link.get();
+                if !local.ref_.is_empty() {
+                    local.ref_ = js_ast::symbol::follow_symbols(&self.symbols, local.ref_);
                 }
                 self.relocated_top_level_vars[i] = local;
                 let Some(ref_) = local.ref_.to_nullable() else {
@@ -6913,17 +6902,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts_inside_closure: &'a mut [Stmt],
         all_values_are_pure: bool,
     ) -> Result<(), crate::Error> {
-        let mut name_ref = original_name_ref;
-
         // Follow the link chain in case symbols were merged
-        let mut symbol = &self.symbols[name_ref.inner_index() as usize];
-        while symbol.has_link() {
-            let link = symbol.link.get();
-            name_ref = link;
-            symbol = &self.symbols[name_ref.inner_index() as usize];
-        }
-        let symbol_kind = symbol.kind;
-        let _ = symbol;
+        let name_ref = js_ast::symbol::follow_symbols(&self.symbols, original_name_ref);
+        let symbol_kind = self.symbols[name_ref.inner_index() as usize].kind;
         let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
@@ -9263,12 +9244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // If this symbol was merged, use the symbol at the end of the
                         // linked list in the map. This is the case for multiple "var"
                         // declarations with the same name, for example.
-                        let mut r#ref = input;
-                        let mut symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        while symbol_ref.has_link() {
-                            r#ref = symbol_ref.link.get();
-                            symbol_ref = &ctx.symbols[r#ref.inner_index() as usize];
-                        }
+                        let r#ref = js_ast::symbol::follow_symbols(ctx.symbols, input);
 
                         ctx.top_level
                             .entry(r#ref)

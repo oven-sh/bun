@@ -11401,6 +11401,7 @@ for (const depth of [700, 16000]) {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
     expect(stdout).toStartWith("bun install v1.");
     // A depth the native stack can hold reaches the dependencies validator;
     // a deeper one is reported by the parser or the clone as too deeply nested.

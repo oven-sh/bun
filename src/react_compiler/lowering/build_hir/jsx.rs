@@ -27,32 +27,15 @@ fn estring_to_store_str(s: &E::EString) -> StoreStr {
 fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag, CompilerError> {
     let loc = convert_loc(tag.loc);
     match tag.data {
+        // Bun's parser already lowers host tags (`a..=z` first byte) to `EString`, so any
+        // identifier that reaches here is a component reference (`<Foo />`, `<_Foo />`, `<$Foo />`).
         ExprData::EIdentifier(id) => {
-            // Upstream (build_hir.rs:6252) gates on `is_ascii_uppercase` of the first char,
-            // but Bun's parser only emits EString for `a..=z` — so `_foo` / `$Bar` arrive here
-            // as identifiers. Replicate upstream's Builtin classification for non-uppercase.
-            let name = builder.host().ref_name(id.ref_);
-            if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
-                Ok(JsxTag::Place(temp))
-            } else {
-                Ok(JsxTag::Builtin(BuiltinTag {
-                    name: StoreStr::new(name),
-                    loc,
-                }))
-            }
+            let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
+            Ok(JsxTag::Place(temp))
         }
         ExprData::EImportIdentifier(id) => {
-            let name = builder.host().ref_name(id.ref_);
-            if name.first().is_some_and(u8::is_ascii_uppercase) {
-                let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
-                Ok(JsxTag::Place(temp))
-            } else {
-                Ok(JsxTag::Builtin(BuiltinTag {
-                    name: StoreStr::new(name),
-                    loc,
-                }))
-            }
+            let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
+            Ok(JsxTag::Place(temp))
         }
         ExprData::EString(s) => {
             let name = estring_to_store_str(&s);

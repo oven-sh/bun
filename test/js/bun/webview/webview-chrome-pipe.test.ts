@@ -199,11 +199,14 @@ test.concurrent("a screenshot dropped at a back/forward cache restore is capture
 
 // A subframe commit keeps the main document and Chrome completes the capture,
 // so it must not be dropped or sent twice: an <iframe> that commits while the
-// page is still loading, then the page's own load event.
-test.concurrent("a subframe commit leaves a pending screenshot alone", async () => {
+// page is still loading, then the page's own load event. The commit is the
+// iframe's, so view.url and onNavigated stay with the page.
+test.concurrent("a subframe commit leaves a pending screenshot, url and onNavigated alone", async () => {
   const result = await runScenario(`
     const view = newView();
     await view.navigate("http://fake/1");
+    const navigated = [];
+    view.onNavigated = url => navigated.push(url);
     await view.evaluate("__fake_hold_screenshots(true)");
     const shot = outcome(view.screenshot().then(blob => blob.size));
     await view.evaluate(\`__fake_emit("Page.frameNavigated", {
@@ -214,13 +217,21 @@ test.concurrent("a subframe commit leaves a pending screenshot alone", async () 
     const beforeRelease = Bun.peek.status(shot);
     await view.evaluate("__fake_hold_screenshots(false)");
     const settled = await within(shot, 2000);
-    print({ beforeRelease, settled, sent: (await view.evaluate("__fake_screenshots()")).length });
+    print({
+      beforeRelease,
+      settled,
+      sent: (await view.evaluate("__fake_screenshots()")).length,
+      url: view.url,
+      navigated,
+    });
     view.close();
   `);
   expect(result).toEqual({
     beforeRelease: "pending",
     settled: { resolved: SCREENSHOT_BYTES.length },
     sent: 1,
+    url: "http://fake/1",
+    navigated: [],
   });
 });
 

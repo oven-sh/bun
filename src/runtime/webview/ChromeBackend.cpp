@@ -1158,22 +1158,22 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        // An <iframe>'s own commit (frame.parentId present) arrives on the
+        // page's session too. The view's document, its url and the captures
+        // in flight across it are all untouched by it.
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return;
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
 
-        // A subframe commit (frame.parentId present) keeps the main
-        // document, and Chrome completes the captures in flight across it.
-        if (jsonField(frame, { "parentId", 8 }).empty()) {
-            mainFrameCommitted(view);
-            // A page restored from the back/forward cache is complete at its
-            // commit and fires no load event, so nothing later would repeat
-            // a capture this commit stranded.
-            auto type = jsonString(jsonField(params, { "type", 4 }));
-            if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
-                repeatStrandedCapture(g, view);
-        }
+        mainFrameCommitted(view);
+        // A page restored from the back/forward cache is complete at its
+        // commit and fires no load event, so nothing later would repeat a
+        // capture this commit stranded.
+        auto type = jsonString(jsonField(params, { "type", 4 }));
+        if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
+            repeatStrandedCapture(g, view);
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),

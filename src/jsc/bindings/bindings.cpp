@@ -3619,6 +3619,34 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
         buf->unpin();
 }
 
+// Re-reads the live byte range of a pinned ArrayBuffer or view.
+//
+// A pin stops a detach, but it does not stop a resize. `ArrayBuffer::resize`
+// marks the pages it trims PROT_NONE, so the pointer and the length captured
+// when the pin was taken can name unmapped memory once JS has run again. A
+// borrower that outlives the call re-reads the range before each access.
+// Reports a null pointer and a zero length for a detached value.
+CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (!view->isDetached()) {
+            *out_ptr = static_cast<uint8_t*>(view->vector());
+            *out_len = view->byteLength();
+            return;
+        }
+    } else if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (buf && !buf->isDetached()) {
+            *out_ptr = static_cast<uint8_t*>(buf->data());
+            *out_len = buf->byteLength();
+            return;
+        }
+    }
+    *out_ptr = nullptr;
+    *out_len = 0;
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data

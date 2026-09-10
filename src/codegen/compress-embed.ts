@@ -6,7 +6,7 @@
 import { mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
 import { constants, zstdCompressSync } from "zlib";
-import { writeIfNotChangedBinary } from "./helpers";
+import { writeIfNotChangedBinary } from "./helpers.ts";
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output) {

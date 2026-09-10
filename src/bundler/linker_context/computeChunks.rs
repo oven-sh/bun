@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicUsize;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
-use bun_paths::{PathBuffer, resolve_path};
+use bun_paths::resolve_path;
 use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 
@@ -693,7 +693,7 @@ pub(crate) fn compute_chunks(
             } else {
                 b"."
             };
-            let mut real_path_buf = PathBuffer::uninit();
+            let mut real_path_buf = bun_paths::path_buffer_pool::get();
             let dir: &[u8] = 'dir: {
                 let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),

@@ -277,6 +277,28 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/42060
+  it("Bun.write(existing path, Bun.file(src)) resolves to the number of bytes copied", async () => {
+    using dir = tempDir("bun-write-existing-dest", {
+      "existing.bin": "placeholder",
+    });
+    const size = 1024 * 1024 + 7;
+    const src = join(String(dir), "src.bin");
+    await Bun.write(src, new Uint8Array(size).fill(7));
+    const existing = join(String(dir), "existing.bin");
+
+    expect(await Bun.write(existing, Bun.file(src))).toBe(size);
+    expect(fs.statSync(existing).size).toBe(size);
+
+    expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(src))).toBe(1000);
+    expect(fs.statSync(existing).size).toBe(1000);
+
+    const small = join(String(dir), "small.bin");
+    await Bun.write(small, new Uint8Array(100).fill(9));
+    expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(small))).toBe(100);
+    expect(fs.statSync(existing).size).toBe(100);
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();
@@ -1023,6 +1045,283 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(Buffer.from(await Bun.file(dest).arrayBuffer())).toEqual(expected);
     });
 
+    // A direct stream's pull() runs once; its promise resolving without close() is the end of the
+    // body, as for Bun.serve. Before, bytes written after the sink's last flush were dropped while
+    // the resolved count still included them, and the sink was freed with its JS controller still
+    // attached, which read the freed sink once the controller was collected.
+    it("a direct stream whose pull() resolves without close()", async () => {
+      using dir = tempDir("bun-write-direct-no-close", {});
+      const dest = join(String(dir), "out.txt");
+      const fixture = /* js */ `
+        const { fileSinkInternals } = require("bun:internal-for-testing");
+        const nextTask = () => new Promise(resolve => setImmediate(resolve));
+        const baseline = fileSinkInternals.liveCount();
+        let controller;
+        let stream = new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            controller = c;
+            c.write("hello");
+            // The sink flushes "hello" to the file before this resolves.
+            await nextTask();
+            c.write(" ");
+            c.write(new TextEncoder().encode("wörld"));
+          },
+        });
+        const written = await Bun.write(process.env.DEST, new Response(stream));
+        const onDisk = await Bun.file(process.env.DEST).text();
+        // The stream ended when pull() resolved: the controller is closed and detached.
+        const late = {};
+        for (const method of ["write", "flush", "end"]) {
+          try {
+            late[method] = String(controller[method]("late"));
+          } catch (e) {
+            late[method] = e.message.split(".")[0];
+          }
+        }
+        // Collect the stream and its sink controller.
+        stream = controller = undefined;
+        Bun.gc(true);
+        await nextTask();
+        Bun.gc(true);
+        console.log(JSON.stringify({ written, onDisk, late, leakedSinks: fileSinkInternals.liveCount() - baseline }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, DEST: dest },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        written: 12,
+        onDisk: "hello wörld",
+        late: {
+          write: "This FileSink has already been closed",
+          flush: "This FileSink has already been closed",
+          end: "undefined",
+        },
+        leakedSinks: 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // close(error) fails the sink from inside FileSink's own close path, which re-enters the controller before the
+    // C++ caller passes the reason along. The stream must still end Errored with that reason, not Closed.
+    it.each([
+      ["inside a sync pull()", c => (c.write("a"), c.close(new Error("boom")))],
+      ["inside an async pull() after a flush", async c => (c.write("a"), await c.flush(), c.close(new Error("boom")))],
+      ["from a later task on a kept controller", null],
+    ])("close(error) %s errors the direct stream it came from", async (_where, pull) => {
+      using dir = tempDir("bun-write-direct-close-error-state", {});
+      let kept;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull: pull ?? (c => ((kept = c), c.write("a"))),
+      });
+      const written = Bun.write(join(String(dir), "out.txt"), stream);
+      if (!pull) {
+        await new Promise(resolve => setImmediate(resolve));
+        kept.close(new Error("boom"));
+      }
+      expect(
+        await written.then(
+          () => "resolved",
+          e => "rejected: " + e.message,
+        ),
+      ).toBe("rejected: boom");
+      // directStreamOnClose released the sink's lock, so the terminal state is observable through a reader.
+      expect(
+        await stream.getReader().closed.then(
+          () => "closed",
+          e => "errored: " + e.message,
+        ),
+      ).toBe("errored: boom");
+    });
+
+    it("a stream whose source fails rejects with that error", async () => {
+      using dir = tempDir("bun-write-stream-reject", {});
+      const nextTask = () => new Promise(resolve => setImmediate(resolve));
+      const direct = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write("hello");
+          await nextTask();
+          throw new Error("boom");
+        },
+      });
+      await expect(Bun.write(join(String(dir), "direct.txt"), new Response(direct))).rejects.toThrow("boom");
+      const generator = async function* () {
+        yield "hello";
+        await nextTask();
+        throw new Error("boom");
+      };
+      await expect(Bun.write(join(String(dir), "generator.txt"), new Response(generator()))).rejects.toThrow("boom");
+      const midway = new ReadableStream({
+        async pull(c) {
+          c.enqueue("hello");
+          await nextTask();
+          c.error(new Error("boom"));
+        },
+      });
+      await expect(Bun.write(join(String(dir), "midway.txt"), midway)).rejects.toThrow("boom");
+      const upfront = new ReadableStream({
+        start(c) {
+          c.error(new Error("boom"));
+        },
+      });
+      await expect(Bun.write(join(String(dir), "upfront.txt"), upfront)).rejects.toThrow("boom");
+    });
+
+    // The sink is released when the pump rejects; a controller collected after that must
+    // already be detached. A subprocess, because that GC can be the one at process exit.
+    it("survives a GC after a direct stream or a generator body fails", async () => {
+      using dir = tempDir("bun-write-body-fails-gc", {});
+      const fixture = /* js */ `
+        const dir = process.env.DEST_DIR;
+        const lines = [];
+        try {
+          await Bun.write(dir + "/gen.txt", new Response((async function* () { yield "a"; throw new Error("boom"); })()));
+        } catch (e) {
+          lines.push("gen:" + e.message);
+        }
+        let controller;
+        try {
+          await Bun.write(
+            dir + "/direct.txt",
+            new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(c) {
+                  controller = c;
+                  c.write("a");
+                  await c.flush();
+                  throw new Error("boom");
+                },
+              }),
+            ),
+          );
+        } catch (e) {
+          lines.push("direct:" + e.message);
+        }
+        try {
+          lines.push("late:" + controller.write("late"));
+        } catch {
+          lines.push("late:threw");
+        }
+        controller = undefined;
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        console.log(lines.join(","));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, DEST_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("gen:boom,direct:boom,late:threw");
+      expect(exitCode).toBe(0);
+    });
+
+    // The implicit end closes the stream like controller.close(): cancel() does not run (nobody aborted), and write()/flush() on the detached controller throw.
+    it("ends a direct stream's sink when its pull() returns", async () => {
+      using dir = tempDir("bun-write-direct-pull-returns", {});
+      const dest = join(String(dir), "out.txt");
+      let ctrl;
+      const cancelled = [];
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          ctrl = c;
+          c.write("first ");
+          await c.flush();
+          // A later event loop turn: "second" is still buffered in the sink when pull() returns.
+          await new Promise(resolve => setImmediate(resolve));
+          c.write("second");
+        },
+        cancel(reason) {
+          cancelled.push(reason);
+        },
+      });
+      expect(await Bun.write(dest, new Response(stream))).toBe(12);
+      expect(await Bun.file(dest).text()).toBe("first second");
+      expect(cancelled).toStrictEqual([]);
+      expect(() => ctrl.write("late event")).toThrow("This FileSink has already been closed");
+      expect(() => ctrl.flush()).toThrow("This FileSink has already been closed");
+      expect(ctrl.end()).toBeUndefined();
+      Bun.gc(true);
+    });
+
+    // Every way the JS pump can settle without a controller.close(), each followed by a full GC
+    // with the controller cell unreferenced. Before, the cell kept a pointer to the freed FileSink
+    // and the collection (or the sink's queued flush task) was a use-after-free. `await 1` settles
+    // in the tick the write started in; `tick()` settles on a later event-loop turn.
+    it.each([
+      [
+        "an async generator that throws right after a yield",
+        `async function* () { yield "first"; throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "an async generator that throws before its first yield",
+        `async function* () { throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "an async generator that throws on a later tick",
+        `async function* () { yield "first"; await tick(); throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "a direct ReadableStream whose pull rejects",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; throw new Error("boom"); } })`,
+        "rejected: boom",
+      ],
+      [
+        "a direct ReadableStream whose pull resolves without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; } })`,
+        `resolved: 5, "first"`,
+      ],
+      [
+        "a direct ReadableStream whose pull resolves on a later tick without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await tick(); } })`,
+        `resolved: 5, "first"`,
+      ],
+    ])("the body's sink controller is collectable after %s", async (_label, body, outcome) => {
+      using dir = tempDir("bun-write-settled-controller", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { readFileSync } = require("fs");
+           const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+           const tick = () => new Promise(resolve => setImmediate(resolve));
+           const body = ${body};
+           const outcomes = new Set();
+           for (let i = 0; i < 5; i++) {
+             outcomes.add(
+               await Bun.write(dest, new Response(body())).then(
+                 n => "resolved: " + n + ", " + JSON.stringify(readFileSync(dest, "utf8")),
+                 e => "rejected: " + e.message,
+               ),
+             );
+             Bun.gc(true);
+           }
+           console.log([...outcomes].join(" | "));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: outcome, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     // /dev/full: every write fails with ENOSPC.
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();
@@ -1159,5 +1458,97 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+});
+
+// These writes fail before any I/O is scheduled, so the write returns a promise
+// that is already rejected. Those rejections must carry the error itself and be
+// reported the same way as the ones produced later by the async path.
+(isWindows ? describe : describe.concurrent)("Bun.write early rejections are tracked", () => {
+  // The endpoint is never contacted: the options are validated first.
+  const s3Options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my_bucket",
+    endpoint: "http://127.0.0.1:1",
+  };
+  const invalidS3Options = { storageClass: "INVALID_VALUE" };
+  const invalidS3Message = "storageClass must be one of";
+
+  async function runChild(body) {
+    using dir = tempDir("bun-write-early-reject", { "file.txt": "x" });
+    const prelude = `
+      const fs = require("fs");
+      const dir = ${JSON.stringify(String(dir))};
+      const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+      const s3file = new Bun.S3Client(${JSON.stringify(s3Options)}).file("key");
+      const invalidS3Options = ${JSON.stringify(invalidS3Options)};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["a string written to a directory", `Bun.write(dir, "x")`, "EISDIR"],
+    ["a TypedArray written to a directory", `Bun.write(dir, new Uint8Array(4))`, "EISDIR"],
+    // Truncating a directory fails with EINVAL on Windows and EISDIR elsewhere.
+    ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
+    // Windows reports these two as "UV_EBADF" (errno -4083), which the substring check also accepts.
+    ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
+    [
+      "a TypedArray written to a read-only file descriptor",
+      `Bun.write(Bun.file(fs.openSync(file, "r")), new Uint8Array(4))`,
+      "EBADF",
+    ],
+    ["BunFile.write() on a directory", `Bun.file(dir).write("x")`, "EISDIR"],
+    ["an S3 write with invalid options", `s3file.write("x", invalidS3Options)`, invalidS3Message],
+    [
+      "an S3 write of an empty Blob with invalid options",
+      `s3file.write(new Blob([]), invalidS3Options)`,
+      invalidS3Message,
+    ],
+  ])("%s is reported as an unhandled rejection", async (_, expression, expected) => {
+    const { stderr, exitCode } = await runChild(`${expression};`);
+    expect(stderr).toContain(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["a string", () => "x"],
+    ["an empty Blob", () => new Blob([])],
+  ])("an S3 write of %s with invalid options rejects with the validation error itself", async (_, data) => {
+    const promise = new Bun.S3Client(s3Options).file("key").write(data(), invalidS3Options);
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+    await expect(promise).rejects.toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining(invalidS3Message),
+    });
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.write(dir, "x");
+    `);
+    expect(stdout).toBe("EISDIR true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      Bun.write(dir, "x").catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught EISDIR\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

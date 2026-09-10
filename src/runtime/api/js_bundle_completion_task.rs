@@ -28,11 +28,11 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
-use bun_paths::{self as paths, PathBuffer, SEP};
+use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
-    to_executable,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
+    target_base_public_path, to_executable,
 };
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -428,6 +428,9 @@ impl JSBundleCompletionTask {
                 Some(&compile_options.executable_path.list)
             },
             flags,
+            RuntimeOptions {
+                jit_policy: compile_options.jit_policy,
+            },
         ) {
             Ok(r) => r,
             Err(err) => {
@@ -483,7 +486,7 @@ impl JSBundleCompletionTask {
                     };
 
                     // Write the sourcemap file to disk next to the executable
-                    let mut pathbuf = PathBuffer::uninit();
+                    let mut pathbuf = bun_paths::path_buffer_pool::get();
                     let write_path: &[u8] = if cfg!(windows) {
                         &sourcemap_full_path
                     } else {
@@ -977,6 +980,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.bytecode_depth = config.bytecode_depth;
+        transpiler.options.optimize_bytecode = config.optimize_bytecode;
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {

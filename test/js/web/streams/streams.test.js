@@ -7,10 +7,18 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import {
+  consumers as directConsumers,
+  expected as directExpected,
+  observe as directObserve,
+  readerConsumers as directReaderConsumers,
+  shapes as directShapes,
+} from "./direct-stream-contract";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -801,6 +809,489 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(value.byteLength).toBe(10);
   });
 
+  // Once the bytes a JS reader has not taken reach the highWaterMark, write() returns a
+  // pending promise that a draining read resolves: the same contract as a native sink.
+  describe("a direct stream's controller.write() signals backpressure to a JS reader", () => {
+    const macrotask = () => new Promise(resolve => setImmediate(resolve));
+    const CHUNKS = 40;
+
+    const makeSource = (chunkSize, counters) => ({
+      type: "direct",
+      async pull(c) {
+        for (let i = 0; i < CHUNKS; i++) {
+          const wrote = c.write(new Uint8Array(chunkSize).fill(i));
+          counters.writes++;
+          if (wrote instanceof Promise) {
+            counters.promises++;
+            counters.resolved.push(await wrote);
+          } else {
+            counters.resolved.push(wrote);
+          }
+        }
+        c.end();
+      },
+    });
+
+    for (const [label, chunkSize, strategy] of [
+      ["default highWaterMark", 64 * 1024, undefined],
+      ["explicit highWaterMark", 1024, { highWaterMark: 4096 }],
+    ]) {
+      it(`getReader(): ${label}`, async () => {
+        const counters = { writes: 0, promises: 0, resolved: [] };
+        const rs = new ReadableStream(makeSource(chunkSize, counters), strategy);
+        const reader = rs.getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        // Give the producer every chance to run ahead while the reader is idle.
+        await macrotask();
+        await macrotask();
+        const hwm = strategy?.highWaterMark ?? 64 * 1024;
+        const writesPerDrain = Math.ceil(hwm / chunkSize);
+        // One drain's worth was delivered, at most one more is parked in the buffer.
+        expect(counters.writes).toBeLessThanOrEqual(2 * writesPerDrain);
+        expect(counters.promises).toBeGreaterThan(0);
+
+        let total = first.value.byteLength;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+        }
+        expect(total).toBe(CHUNKS * chunkSize);
+        expect(counters.writes).toBe(CHUNKS);
+        // A parked write resolves with its own byte count once the reader drains.
+        expect(counters.resolved).toEqual(Array(CHUNKS).fill(chunkSize));
+      });
+    }
+
+    it("for await: the producer stays at most one highWaterMark ahead", async () => {
+      const counters = { writes: 0, promises: 0, resolved: [] };
+      const rs = new ReadableStream(makeSource(16 * 1024, counters), { highWaterMark: 16 * 1024 });
+      let n = 0;
+      for await (const chunk of rs) {
+        expect(chunk.byteLength).toBe(16 * 1024);
+        n++;
+        await macrotask();
+        expect(counters.writes - n).toBeLessThanOrEqual(1);
+      }
+      expect(n).toBe(CHUNKS);
+    });
+
+    it("pipeTo(): a stalled WritableStream parks the producer", async () => {
+      const counters = { writes: 0, promises: 0, resolved: [] };
+      const rs = new ReadableStream(makeSource(64 * 1024, counters));
+      const received = [];
+      const { promise: stalled, resolve: stall } = Promise.withResolvers();
+      const { promise: gate, resolve: open } = Promise.withResolvers();
+      let gated = true;
+      const piped = rs.pipeTo(
+        new WritableStream(
+          {
+            write(chunk) {
+              received.push(chunk.byteLength);
+              if (!gated) return;
+              stall();
+              return gate;
+            },
+          },
+          { highWaterMark: 1 },
+        ),
+      );
+      await stalled;
+      await macrotask();
+      await macrotask();
+      expect(received).toEqual([64 * 1024]);
+      expect(counters.writes).toBeLessThanOrEqual(3);
+      expect(counters.promises).toBeGreaterThan(0);
+      gated = false;
+      open();
+      await piped;
+      expect(received.reduce((a, b) => a + b, 0)).toBe(CHUNKS * 64 * 1024);
+      expect(counters.writes).toBe(CHUNKS);
+    });
+
+    it("flush(true) waits for the same drain", async () => {
+      const events = [];
+      const { promise: parked, resolve: park } = Promise.withResolvers();
+      const rs = new ReadableStream(
+        {
+          type: "direct",
+          async pull(c) {
+            // At the highWaterMark, but the first read() is waiting: drained at the end of the tick.
+            events.push(await c.write(new Uint8Array(16)));
+            // Nobody is reading now.
+            events.push(typeof c.write(new Uint8Array(8)));
+            const write = c.write(new Uint8Array(8));
+            const flushed = c.flush(true);
+            events.push(flushed instanceof Promise, flushed === write);
+            park();
+            events.push(await flushed);
+            c.end();
+          },
+        },
+        { highWaterMark: 16 },
+      );
+      const reader = rs.getReader();
+      const first = await reader.read();
+      await parked;
+      const second = await reader.read();
+      const third = await reader.read();
+      expect(events).toEqual([16, "number", true, true, 8]);
+      expect([first.value.byteLength, second.value.byteLength, third.done]).toEqual([16, 16, true]);
+    });
+
+    it("cancel() wakes a parked producer with false", async () => {
+      const results = [];
+      const { promise: parked, resolve: park } = Promise.withResolvers();
+      const { promise: pullDone, resolve: finishPull } = Promise.withResolvers();
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          // Drained by the first read.
+          results.push(await c.write(new Uint8Array(64 * 1024)));
+          // Nobody reads: parked until the cancel.
+          const second = c.write(new Uint8Array(64 * 1024));
+          park();
+          results.push(await second);
+          // The controller is closed.
+          results.push(c.write(new Uint8Array(8)));
+          finishPull();
+        },
+      });
+      const reader = rs.getReader();
+      await reader.read();
+      await parked;
+      await reader.cancel();
+      await pullDone;
+      expect(results).toEqual([64 * 1024, false, 0]);
+    });
+
+    // A pull() that parks on each write (>= highWaterMark, written synchronously, so no
+    // end-of-tick job) must still reach reads that were queued before it wrote.
+    for (const [label, chunk, strategy] of [
+      ["default highWaterMark", 64 * 1024, undefined],
+      ["explicit highWaterMark", 4096, { highWaterMark: 1024 }],
+    ]) {
+      it(`a pull() parked on await write() feeds queued reads one chunk at a time: ${label}`, async () => {
+        let pulls = 0;
+        let writes = 0;
+        const rs = new ReadableStream(
+          {
+            type: "direct",
+            async pull(c) {
+              pulls++;
+              while (writes < 4) await c.write(new Uint8Array(chunk).fill(++writes));
+            },
+          },
+          strategy,
+        );
+        const reader = rs.getReader();
+        const reads = [reader.read(), reader.read(), reader.read()];
+        const got = [];
+        for (const read of reads) {
+          const { value } = await read;
+          got.push([value.byteLength, value[0]]);
+        }
+        expect(got).toEqual([
+          [chunk, 1],
+          [chunk, 2],
+          [chunk, 3],
+        ]);
+        expect(pulls).toBe(1);
+        await reader.cancel();
+      });
+    }
+
+    it("a producer writing outside pull() and parking is drained by the next read", async () => {
+      let ctrl;
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          ctrl ??= c;
+        },
+      });
+      const reader = rs.getReader();
+      const first = reader.read();
+      const results = [];
+      const producer = (async () => {
+        for (let i = 0; i < 10; i++) results.push(await ctrl.write(new Uint8Array(100 * 1024)));
+        ctrl.close();
+      })();
+      let total = (await first).value.byteLength;
+      while (true) {
+        await macrotask();
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+      }
+      await producer;
+      expect(total).toBe(10 * 100 * 1024);
+      expect(results).toEqual(Array(10).fill(100 * 1024));
+    });
+
+    it("writes parked on one drain resolve with the bytes written since it armed", async () => {
+      const { promise: parked, resolve: park } = Promise.withResolvers();
+      let writes;
+      const rs = new ReadableStream(
+        {
+          type: "direct",
+          async pull(c) {
+            await c.write(new Uint8Array(4));
+            writes = [c.write(new Uint8Array(4)), c.write(new Uint8Array(3)), c.write(new Uint8Array(0))];
+            park();
+            await writes[0];
+            c.end();
+          },
+        },
+        // A fractional highWaterMark still counts whole bytes.
+        { highWaterMark: 3.5 },
+      );
+      const reader = rs.getReader();
+      expect((await reader.read()).value.byteLength).toBe(4);
+      await parked;
+      expect(writes[0]).toBe(writes[1]);
+      expect(writes[1]).toBe(writes[2]);
+      expect((await reader.read()).value.byteLength).toBe(7);
+      expect(await Promise.all(writes)).toEqual([7, 7, 7]);
+      expect((await reader.read()).done).toBe(true);
+    });
+
+    it("a read drained inside pull() leaves no end-of-tick job pinning the controller", async () => {
+      // Nothing here yields to a macrotask, so a queued process.nextTick job would still be
+      // holding every controller when the GC runs.
+      const { heapStats } = require("bun:jsc");
+      const live = () => heapStats().objectTypeCounts.DirectStreamController ?? 0;
+      Bun.gc(true);
+      const before = live();
+      for (let i = 0; i < 500; i++) {
+        const reader = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("x");
+          },
+        }).getReader();
+        expect((await reader.read()).value.byteLength).toBe(1);
+        reader.releaseLock();
+      }
+      Bun.gc(true);
+      expect(live() - before).toBeLessThan(50);
+    });
+
+    it("write() validates its chunk like a native sink", async () => {
+      const errors = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          for (const chunk of [null, undefined, 1, {}]) {
+            try {
+              c.write(chunk);
+            } catch (e) {
+              errors.push(e.code);
+            }
+          }
+          expect(c.write("")).toBe(0);
+          expect(c.write(new Uint8Array(0))).toBe(0);
+          // UTF-8 encoded, like every other sink.
+          expect(c.write("héllo")).toBe(6);
+          expect(c.write(new Uint16Array([0x2c20]))).toBe(2);
+          c.end();
+        },
+      });
+      let text = "";
+      for await (const chunk of rs) {
+        expect(chunk).toBeInstanceOf(Uint8Array);
+        text += new TextDecoder().decode(chunk);
+      }
+      expect(text).toBe("héllo ,");
+      expect(errors).toEqual([
+        "ERR_STREAM_NULL_VALUES",
+        "ERR_STREAM_NULL_VALUES",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+      ]);
+    });
+  });
+
+  // The buffered consumers (text / array) never park a write, so flush(true) has nothing to
+  // wait for there: it must not hand back their closing promise, which only settles at end().
+  it("flush(true) inside pull() does not stall readableStreamToText / readableStreamToArray", async () => {
+    const source = () => ({
+      type: "direct",
+      async pull(c) {
+        c.write("a");
+        expect(await c.flush(true)).toBeUndefined();
+        c.write("b");
+        c.end();
+      },
+    });
+    expect(await readableStreamToText(new ReadableStream(source()))).toBe("ab");
+    const chunks = await readableStreamToArray(new ReadableStream(source()));
+    expect(Buffer.concat(chunks.map(c => Buffer.from(c))).toString()).toBe("ab");
+  });
+
+  // https://github.com/oven-sh/bun/issues/18315
+  describe("cancel() reaches a direct source's cancel(reason) hook", () => {
+    it("after a read", async () => {
+      const events = [];
+      const source = {
+        type: "direct",
+        async pull(c) {
+          c.write("x");
+          await new Promise(() => {});
+        },
+        cancel(reason) {
+          events.push(["cancel", reason, this === source]);
+        },
+      };
+      const reader = new ReadableStream(source).getReader();
+      await reader.read();
+      expect(await reader.cancel("bye")).toBeUndefined();
+      expect(events).toEqual([["cancel", "bye", true]]);
+    });
+
+    it("before the first read", async () => {
+      const events = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        pull() {
+          events.push(["pull"]);
+        },
+        cancel(reason) {
+          events.push(["cancel", reason]);
+        },
+      });
+      expect(await rs.cancel("early")).toBeUndefined();
+      expect(events).toEqual([["cancel", "early"]]);
+    });
+
+    it("through for await ... break", async () => {
+      const events = [];
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write("x");
+          await new Promise(() => {});
+        },
+        cancel(reason) {
+          events.push(["cancel", reason]);
+        },
+      });
+      for await (const chunk of rs) {
+        events.push(["chunk", new TextDecoder().decode(chunk)]);
+        break;
+      }
+      expect(events).toEqual([
+        ["chunk", "x"],
+        ["cancel", undefined],
+      ]);
+    });
+
+    it("a throwing or rejecting hook rejects cancel()", async () => {
+      for (const cancel of [
+        () => {
+          throw new Error("nope");
+        },
+        async () => {
+          throw new Error("nope");
+        },
+      ]) {
+        const rs = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("x");
+          },
+          cancel,
+        });
+        const reader = rs.getReader();
+        await reader.read();
+        await expect(reader.cancel()).rejects.toThrow("nope");
+      }
+    });
+
+    it("waits for an async hook, before and after the first read", async () => {
+      for (const readFirst of [false, true]) {
+        const events = [];
+        const rs = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("x");
+          },
+          async cancel(reason) {
+            await Promise.resolve();
+            await Promise.resolve();
+            events.push(["cancel", reason]);
+          },
+        });
+        if (readFirst) {
+          const reader = rs.getReader();
+          await reader.read();
+          expect(await reader.cancel("bye")).toBeUndefined();
+        } else {
+          expect(await rs.cancel("bye")).toBeUndefined();
+        }
+        events.push(["settled", readFirst]);
+        expect(events).toEqual([
+          ["cancel", "bye"],
+          ["settled", readFirst],
+        ]);
+      }
+    });
+
+    it("not after end(): the source already saw close()", async () => {
+      const events = [];
+      let ctrl;
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          ctrl = c;
+          c.write("a");
+        },
+        cancel(reason) {
+          events.push(["cancel", reason]);
+        },
+        close() {
+          events.push(["close"]);
+        },
+      });
+      const reader = rs.getReader();
+      await reader.read();
+      // end() with nobody reading arms the final chunk: the stream stays readable.
+      ctrl.write("b");
+      ctrl.end();
+      expect(await reader.cancel("late")).toBeUndefined();
+      expect(events).toEqual([["close"]]);
+    });
+
+    it("the source's methods are read once, at construction", async () => {
+      const reads = [];
+      const source = {
+        type: "direct",
+        get pull() {
+          reads.push("pull");
+          return c => {
+            c.write("x");
+          };
+        },
+        get cancel() {
+          reads.push("cancel");
+          return () => {};
+        },
+        get close() {
+          reads.push("close");
+          return () => {};
+        },
+      };
+      const rs = new ReadableStream(source);
+      const readsAtConstruction = [...reads];
+      const reader = rs.getReader();
+      await reader.read();
+      await reader.cancel();
+      expect(reads).toEqual(readsAtConstruction);
+      expect(reads.toSorted()).toEqual(["cancel", "close", "pull"]);
+      expect(() => new ReadableStream({ type: "direct", pull() {}, close: 1 })).toThrow(TypeError);
+    });
+  });
+
   // A type:"direct" pull() is re-invoked per read as a demand signal, but never while a
   // previous async pull() is still pending and never after end(). A pull that writes the
   // whole body and ends therefore runs exactly once.
@@ -1158,11 +1649,12 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
         return new ReadableStream({
           type: "direct",
           pull(c) {
-            if (pulls++ > 0) return c.end();
+            pulls++;
             c.write("a");
             c.flush();
             c.write("b");
             c.flush();
+            c.end();
           },
         });
       };
@@ -1189,16 +1681,9 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
           out.pipeTo = await settle(mk().pipeTo(new WritableStream()));
           out.tee = await settle(Bun.readableStreamToText(mk().tee()[0]));
           out.forAwait = await settle((async () => { for await (const _ of mk()); })());
-          // Two reads during an async pull() make its fulfillment re-pull; the re-pull throws.
-          let pulls = 0;
-          const reader = new ReadableStream({
-            type: "direct",
-            pull() {
-              if (pulls++ === 0) return Promise.resolve();
-              throw new Error("boom");
-            },
-          }).getReader();
-          out.rePull = await Promise.all([settle(reader.read()), settle(reader.read())]);
+          // An async pull() that rejects errors every queued read with its reason.
+          const reader = new ReadableStream({ type: "direct", async pull() { await 1; throw new Error("boom"); } }).getReader();
+          out.rejected = await Promise.all([settle(reader.read()), settle(reader.read())]);
           // Unhandled rejections are reported once the current turn's microtasks drain.
           await new Promise(resolve => setTimeout(resolve, 0));
           out.unhandled = unhandled;
@@ -1214,11 +1699,104 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
         pipeTo: "boom",
         tee: "boom",
         forAwait: "boom",
-        rePull: ["boom", "boom"],
+        rejected: ["boom", "boom"],
         unhandled: 0,
       });
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // A whole-body consumer (.text(), .bytes(), Bun.readableStreamTo*(), a native sink) calls pull() once; a reader calls it again per read.
+  describe("an async direct pull() that resolves without close() completes a whole-body consumer", () => {
+    const nextTask = () => new Promise(resolve => setImmediate(resolve));
+    const mk = (hooks = {}) =>
+      new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write("hello");
+          await nextTask();
+          c.write(new TextEncoder().encode("wor"));
+          c.write("ld");
+        },
+        ...hooks,
+      });
+    const decode = bytes => new TextDecoder().decode(bytes);
+
+    it("Response and Request body methods", async () => {
+      expect(await new Response(mk()).text()).toBe("helloworld");
+      expect(decode(await new Response(mk()).bytes())).toBe("helloworld");
+      expect(decode(new Uint8Array(await new Response(mk()).arrayBuffer()))).toBe("helloworld");
+      expect(await (await new Response(mk()).blob()).text()).toBe("helloworld");
+      expect(await new Request("http://example.com/", { method: "POST", body: mk() }).text()).toBe("helloworld");
+      const json = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write('{"hello":');
+          await nextTask();
+          c.write('"world"}');
+        },
+      });
+      expect(await new Response(json).json()).toEqual({ hello: "world" });
+    });
+
+    it("ReadableStream methods", async () => {
+      expect(await mk().text()).toBe("helloworld");
+      expect(decode(await mk().bytes())).toBe("helloworld");
+      expect(await (await mk().blob()).text()).toBe("helloworld");
+    });
+
+    it("Bun.readableStreamTo*()", async () => {
+      expect(await readableStreamToText(mk())).toBe("helloworld");
+      expect(decode(await readableStreamToBytes(mk()))).toBe("helloworld");
+      expect(decode(new Uint8Array(await readableStreamToArrayBuffer(mk())))).toBe("helloworld");
+      const chunks = await readableStreamToArray(mk());
+      expect(chunks.map(chunk => (typeof chunk === "string" ? chunk : decode(chunk))).join("")).toBe("helloworld");
+    });
+
+    it("runs the source's close() hook once, as an explicit close() does", async () => {
+      let textCloses = 0;
+      expect(await new Response(mk({ close: () => textCloses++ })).text()).toBe("helloworld");
+      let bytesCloses = 0;
+      expect(decode(await new Response(mk({ close: () => bytesCloses++ })).bytes())).toBe("helloworld");
+      expect([textCloses, bytesCloses]).toEqual([1, 1]);
+    });
+
+    it("a sync pull() that returns without close() still waits for close()", async () => {
+      let controller;
+      const text = new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(c) {
+            controller = c;
+            c.write("hello");
+          },
+        }),
+      ).text();
+      let settled = false;
+      text.finally(() => (settled = true));
+      await nextTask();
+      expect(settled).toBe(false);
+      controller.write("world");
+      controller.close();
+      expect(await text).toBe("helloworld");
+    });
+
+    it("a reader still pulls again after each pull() resolves", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          await nextTask();
+          c.write("x");
+          if (pulls === 3) c.close();
+        },
+      });
+      const chunks = [];
+      for await (const chunk of rs) chunks.push(decode(chunk));
+      expect(pulls).toBe(3);
+      expect(chunks.join("")).toBe("xxx");
     });
   });
 
@@ -1944,6 +2522,115 @@ it("Bun.file().stream() read text from large file", async () => {
   } finally {
     unlinkSync(tmpfile);
   }
+});
+
+// A POSIX file is read synchronously inside the stream's pull, so a failing
+// read(2) arrives with no pending read to reject. Windows reads files through
+// libuv, where the error always lands on a pending read.
+describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+  // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
+  const eioPath = "/proc/self/mem";
+  const itEIO = isLinux ? it : it.skip;
+
+  async function expectReadError(promise, code) {
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe(code);
+    return err;
+  }
+
+  itEIO("for await rejects with the read error", async () => {
+    const chunks = [];
+    await expectReadError(
+      (async () => {
+        for await (const chunk of Bun.file(eioPath).stream()) chunks.push(chunk);
+      })(),
+      "EIO",
+    );
+    expect(chunks).toHaveLength(0);
+  });
+
+  itEIO("getReader().read() rejects with the read error", async () => {
+    await expectReadError(Bun.file(eioPath).stream().getReader().read(), "EIO");
+  });
+
+  itEIO("pipeTo() rejects with the read error", async () => {
+    await expectReadError(
+      Bun.file(eioPath)
+        .stream()
+        .pipeTo(new WritableStream({ write() {} })),
+      "EIO",
+    );
+  });
+
+  itEIO("Bun.file().text() reports the same read error", async () => {
+    const err = await expectReadError(Bun.file(eioPath).text(), "EIO");
+    expect(err.syscall).toBe("read");
+  });
+
+  it("a stream over a write-only fd rejects with EBADF", async () => {
+    using dir = tempDir("file-stream-read-error", { "x.bin": "hello" });
+    const fd = openSync(join(String(dir), "x.bin"), "w");
+    try {
+      await expectReadError(Bun.file(fd).stream().getReader().read(), "EBADF");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // A pollable fd (here a non-blocking pty master, as node-pty sets it up) is
+  // read when its poll fires. A read error must release that poll, or the
+  // process never exits. The slave hangup fails the master read with EIO on
+  // Linux and ends it on macOS.
+  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { CString, dlopen } = require("bun:ffi");
+        const { closeSync, constants, openSync, writeSync } = require("node:fs");
+        const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
+        const candidates = process.platform === "darwin" ? ["libSystem.B.dylib"] : ["libc.so.6", "libc.musl-" + arch + ".so.1"];
+        let libc, lastError;
+        for (const lib of candidates) {
+          try {
+            libc = dlopen(lib, {
+              posix_openpt: { args: ["int"], returns: "int" },
+              grantpt: { args: ["int"], returns: "int" },
+              unlockpt: { args: ["int"], returns: "int" },
+              ptsname: { args: ["int"], returns: "ptr" },
+            }).symbols;
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (!libc) throw lastError;
+        const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
+        if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("pty setup failed");
+        const slave = openSync(new CString(libc.ptsname(master)).toString(), constants.O_RDWR | constants.O_NOCTTY);
+        const reader = Bun.file(master).stream().getReader();
+        writeSync(slave, "x");
+        const first = await reader.read();
+        console.log("first", Buffer.from(first.value).toString());
+        // This read finds no data and waits on the poll. The hangup fires it.
+        const pending = reader.read();
+        closeSync(slave);
+        const result = await pending.then(r => (r.done ? "done" : "data"), e => e.code);
+        console.log("settled", result);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
@@ -3058,5 +3745,668 @@ describe("iterator result consumers", () => {
       },
     });
     expect({ text: await (await fetch(server.url)).text(), pulls }).toEqual({ text: "part1-part2-part3", pulls: 2 });
+  });
+});
+
+describe("direct stream contract", () => {
+  // Consumers that need a file or a child process live here; Bun.serve / fetch cells are in serve-direct-readable-stream.test.ts.
+  const consumers = {
+    ...directConsumers,
+    "Bun.write(file, new Response(s))": async s => {
+      using dir = tempDir("direct-contract", {});
+      const file = join(String(dir), "out.txt");
+      await Bun.write(file, new Response(s));
+      // Read before `dir` is disposed at the end of this scope.
+      return await Bun.file(file).text();
+    },
+    "Bun.spawn({ stdin: s })": async s => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "for await (const c of process.stdin) process.stdout.write(c)"],
+        env: bunEnv,
+        stdin: s,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [out] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return out;
+    },
+  };
+  // A child's stdin has nowhere to report the source's error: the child sees EOF. Only pulls/cancels are pinned there.
+  const cannotSurfaceErrors = new Set(["Bun.spawn({ stdin: s })"]);
+  describe.each(Object.keys(directShapes))("%s", shapeName => {
+    const shape = directShapes[shapeName];
+    const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
+    test.concurrent.each(cells)("%s", async consumerName => {
+      const got = await directObserve(shape, consumers[consumerName]);
+      if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
+        expect({ pulls: got.pulls, cancels: got.cancels }).toEqual({ pulls: 1, cancels: 0 });
+        return;
+      }
+      expect(got).toEqual(directExpected(shape));
+    });
+  });
+});
+
+describe("direct stream edge cases", () => {
+  const later = () => new Promise(r => setImmediate(r));
+  const dec = new TextDecoder();
+  const txt = v => (typeof v === "string" ? v : dec.decode(v));
+  const tally = () => ({ pulls: 0, cancels: [], closes: [] });
+  const direct = (t, pull, extra = {}) =>
+    new ReadableStream({
+      type: "direct",
+      pull(c) {
+        t.pulls++;
+        return pull(c);
+      },
+      cancel(reason) {
+        t.cancels.push(reason);
+      },
+      ...extra,
+    });
+  const settle = p =>
+    p.then(
+      v => ({ ok: v }),
+      e => ({ err: e?.message ?? String(e) }),
+    );
+
+  describe("re-entrancy", () => {
+    test("cancel() hook that writes and closes the controller it was given is a no-op, not a crash", async () => {
+      let controller;
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          t.pulls++;
+          controller = c;
+          c.write("a");
+          await c.flush();
+          await new Promise(() => {}); // park forever
+        },
+        cancel(reason) {
+          t.cancels.push(reason?.message ?? reason);
+          controller.write("after-cancel");
+          controller.close();
+        },
+      });
+      const reader = rs.getReader();
+      expect(txt((await reader.read()).value)).toBe("a");
+      await reader.cancel(new Error("bye"));
+      expect({ pulls: t.pulls, cancels: t.cancels }).toEqual({ pulls: 1, cancels: ["bye"] });
+    });
+
+    test("the source's close(reason) hook throwing surfaces to the consumer and does not leave the stream half-closed", async () => {
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          t.pulls++;
+          c.write("a");
+          c.close();
+        },
+        close(reason) {
+          t.closes.push(reason);
+          throw new Error("close hook");
+        },
+      });
+      const result = await settle(Bun.readableStreamToText(rs));
+      expect({ pulls: t.pulls, closes: t.closes.length, result }).toEqual({
+        pulls: 1,
+        closes: 1,
+        result: { err: "close hook" },
+      });
+    });
+
+    test("the source's close() hook calling controller.close() again does not recurse", async () => {
+      let controller;
+      const t = tally();
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          t.pulls++;
+          controller = c;
+          c.write("a");
+          c.close();
+        },
+        close() {
+          t.closes.push(1);
+          controller.close();
+          controller.end();
+        },
+      });
+      expect({ text: await Bun.readableStreamToText(rs), pulls: t.pulls, closes: t.closes.length }).toEqual({
+        text: "a",
+        pulls: 1,
+        closes: 1,
+      });
+    });
+
+    test("a pending flush() promise settles when close() runs before the reader drains", async () => {
+      let flushed;
+      const t = tally();
+      const rs = direct(t, c => {
+        c.write("a");
+        flushed = c.flush();
+        c.close();
+      });
+      const text = await Bun.readableStreamToText(rs);
+      expect({ text, flushed: "ok" in (await settle(Promise.resolve(flushed))) }).toEqual({ text: "a", flushed: true });
+    });
+
+    test("a pending backpressured write() settles when the consumer cancels", async () => {
+      let pendingWrite;
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        pendingWrite = c.write(new Uint8Array(256 * 1024));
+        await pendingWrite;
+        c.close();
+      });
+      const reader = rs.getReader();
+      expect(txt((await reader.read()).value)).toBe("a");
+      await later();
+      expect(pendingWrite).toBeInstanceOf(Promise);
+      await reader.cancel(new Error("gone"));
+      expect({ settled: await settle(pendingWrite), cancels: t.cancels.length }).toEqual({
+        settled: expect.anything(),
+        cancels: 1,
+      });
+    });
+
+    test("write()/flush() after close(): the reader path reports 0 bytes, a native sink throws", async () => {
+      const after = {};
+      const mk = key =>
+        direct(tally(), async c => {
+          c.write("a");
+          await c.flush();
+          c.close();
+          const r = {};
+          for (const m of ["write", "flush", "end"]) {
+            try {
+              const v = m === "write" ? c.write("late") : c[m]();
+              r[m] = v instanceof Promise ? "promise" : v;
+            } catch (e) {
+              r[m] = "throws";
+            }
+          }
+          after[key] = r;
+        });
+      await Bun.readableStreamToText(mk("reader"));
+      using dir = tempDir("direct-write-after-close", {});
+      await Bun.write(join(String(dir), "out.txt"), new Response(mk("fileSink")));
+      await later();
+      expect(after).toEqual({
+        reader: { write: 0, flush: undefined, end: undefined },
+        fileSink: { write: "throws", flush: "throws", end: undefined },
+      });
+    });
+
+    // close() inside the synchronous part of pull() completes when pull() returns. The calls
+    // that follow it in the same pull() must already see a closed controller.
+    test.each(["close", "end"])(
+      "after %s() in the same pull() call: write() reports 0 bytes, flush()/end()/close(error)/error() are no-ops",
+      async how => {
+        const after = {};
+        const t = tally();
+        const rs = direct(t, c => {
+          c.write("a");
+          c[how]();
+          const late = {
+            write: () => c.write("late"),
+            flush: () => c.flush(),
+            end: () => c.end(),
+            "close(error)": () => c.close(new Error("late")),
+            error: () => c.error(new Error("late")),
+          };
+          for (const [name, call] of Object.entries(late)) {
+            try {
+              const v = call();
+              after[name] = v instanceof Promise ? "promise" : v;
+            } catch (e) {
+              after[name] = "throws: " + e?.message;
+            }
+          }
+        });
+        const reader = rs.getReader();
+        const reads = [];
+        for (let r; !(r = await reader.read()).done; ) reads.push(txt(r.value));
+        expect({ reads, after, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+          reads: ["a"],
+          after: { write: 0, flush: undefined, end: undefined, "close(error)": undefined, error: undefined },
+          pulls: 1,
+          cancels: 0,
+        });
+      },
+    );
+  });
+
+  describe("ordering", () => {
+    test("an async pull() with no await ends after its writes are committed and before the next macrotask", async () => {
+      const events = [];
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        events.push("wrote");
+      });
+      const done = Bun.readableStreamToText(rs).then(v => events.push("text:" + v));
+      setImmediate(() => events.push("immediate"));
+      await done;
+      await later();
+      expect(events).toEqual(["wrote", "text:a", "immediate"]);
+    });
+
+    test("close() from queueMicrotask, process.nextTick, setImmediate and setTimeout(0) all deliver the same bytes", async () => {
+      const schedulers = {
+        queueMicrotask: f => queueMicrotask(f),
+        nextTick: f => process.nextTick(f),
+        setImmediate: f => setImmediate(f),
+        setTimeout0: f => setTimeout(f, 0),
+      };
+      const out = {};
+      for (const [name, schedule] of Object.entries(schedulers)) {
+        const t = tally();
+        out[name] = await Bun.readableStreamToText(
+          direct(t, c => {
+            c.write("a");
+            schedule(() => {
+              c.write("b");
+              c.close();
+            });
+          }),
+        );
+      }
+      expect(out).toEqual({ queueMicrotask: "ab", nextTick: "ab", setImmediate: "ab", setTimeout0: "ab" });
+    });
+
+    test("a pull() that rejects after close() ran is not an unhandled rejection and does not fail the consumer", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let unhandled = 0;
+          process.on("unhandledRejection", () => unhandled++);
+          const text = await new Response(new ReadableStream({
+            type: "direct",
+            async pull(c) { c.write("ok"); c.close(); await 1; throw new Error("late"); },
+          })).text();
+          await new Promise(r => setTimeout(r, 0));
+          console.log(JSON.stringify({ text, unhandled }));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ text: "ok", unhandled: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    test("cancel() rejecting is marked handled", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let unhandled = 0;
+          process.on("unhandledRejection", () => unhandled++);
+          const rs = new ReadableStream({
+            type: "direct",
+            async pull(c) { c.write("a"); await c.flush(); await new Promise(() => {}); },
+            async cancel() { throw new Error("cancel failed"); },
+          });
+          const reader = rs.getReader();
+          await reader.read();
+          await reader.cancel("bye").catch(() => {});
+          await new Promise(r => setTimeout(r, 0));
+          console.log(JSON.stringify({ unhandled }));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ unhandled: 0 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("pipes", () => {
+    test("pipeTo a WritableStream whose write() rejects on the second chunk: cancel(reason) once, the parked write settles, pipeTo rejects", async () => {
+      const t = tally();
+      let secondWrite;
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        secondWrite = c.write("two");
+        await c.flush();
+        await new Promise(() => {}); // still open when the sink fails
+      });
+      let n = 0;
+      const ws = new WritableStream({
+        write() {
+          if (++n === 2) throw new Error("sink refused");
+        },
+      });
+      const result = await settle(rs.pipeTo(ws));
+      await later();
+      expect({
+        result,
+        pulls: t.pulls,
+        cancels: t.cancels.map(e => e?.message ?? e),
+        secondWriteSettled: "ok" in (await settle(Promise.resolve(secondWrite))),
+      }).toEqual({
+        result: { err: "sink refused" },
+        pulls: 1,
+        cancels: ["sink refused"],
+        secondWriteSettled: true,
+      });
+    });
+
+    test("pipeTo with an AbortSignal aborted mid-body cancels the source once with the abort reason", async () => {
+      const t = tally();
+      const ac = new AbortController();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        ac.abort(new Error("stop"));
+        await later();
+        c.write("two");
+        c.close();
+      });
+      const chunks = [];
+      const result = await settle(
+        rs.pipeTo(new WritableStream({ write: v => void chunks.push(txt(v)) }), { signal: ac.signal }),
+      );
+      await later();
+      expect({ result, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e), chunks }).toEqual({
+        result: { err: "stop" },
+        pulls: 1,
+        cancels: ["stop"],
+        chunks: ["one"],
+      });
+    });
+
+    test("pipeTo with preventCancel: the writable failing does not call the source's cancel()", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        c.write("two");
+        await c.flush();
+        c.close();
+      });
+      const ws = new WritableStream({
+        write() {
+          throw new Error("sink refused");
+        },
+      });
+      const result = await settle(rs.pipeTo(ws, { preventCancel: true }));
+      await later();
+      expect({ result, cancels: t.cancels.length }).toEqual({ result: { err: "sink refused" }, cancels: 0 });
+    });
+
+    test("pipeThrough a TransformStream whose transform() throws errors the readable side and cancels the source", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("one");
+        await c.flush();
+        c.write("two");
+        await c.flush();
+        await new Promise(() => {}); // still open when the transform fails
+      });
+      let n = 0;
+      const ts = new TransformStream({
+        transform(chunk, controller) {
+          if (++n === 2) throw new Error("transform failed");
+          controller.enqueue(chunk);
+        },
+      });
+      const result = await settle(Bun.readableStreamToText(rs.pipeThrough(ts)));
+      await later();
+      expect({ result, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        result: { err: "transform failed" },
+        pulls: 1,
+        cancels: ["transform failed"],
+      });
+    });
+
+    test("tee(): cancelling one branch immediately still lets the other read the whole body", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const part of ["a", "b", "c"]) {
+          c.write(part);
+          await c.flush();
+        }
+        c.close();
+      });
+      const [a, b] = rs.tee();
+      // a.cancel() resolves once the source is done (both branches settled), so it must not be awaited before b is read.
+      const cancelled = a.cancel("not interested");
+      expect({ b: await Bun.readableStreamToText(b), pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+        b: "abc",
+        pulls: 1,
+        cancels: 0,
+      });
+      await cancelled;
+    });
+
+    test("tee(): cancelling both branches cancels the source once with both reasons", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        await new Promise(() => {});
+      });
+      const [a, b] = rs.tee();
+      const ra = a.getReader();
+      await ra.read();
+      await Promise.all([ra.cancel("ra"), b.cancel("rb")]);
+      await later();
+      expect({ pulls: t.pulls, cancels: t.cancels }).toEqual({ pulls: 1, cancels: [["ra", "rb"]] });
+    });
+  });
+
+  describe("async generator bodies", () => {
+    test("a generator that yields then throws rejects text() with its error and runs finally once", async () => {
+      const events = [];
+      async function* gen() {
+        try {
+          yield "a";
+          await later();
+          throw new Error("gen failed");
+        } finally {
+          events.push("finally");
+        }
+      }
+      expect({ result: await settle(new Response(gen()).text()), events }).toEqual({
+        result: { err: "gen failed" },
+        events: ["finally"],
+      });
+    });
+
+    test("breaking out of for-await over a generator-backed Response body calls return() once", async () => {
+      const events = [];
+      async function* gen() {
+        try {
+          yield "a";
+          await later();
+          yield "b";
+          await later();
+          yield "c";
+        } finally {
+          events.push("return");
+          await later();
+          events.push("after await in finally");
+        }
+      }
+      const body = new Response(gen()).body;
+      for await (const chunk of body) {
+        events.push("chunk:" + txt(chunk));
+        break;
+      }
+      await later();
+      await later();
+      expect(events).toEqual(["chunk:a", "return", "after await in finally"]);
+    });
+
+    test("a generator yielding an empty chunk, a string, a Uint8Array and an ArrayBuffer produces their concatenation", async () => {
+      async function* gen() {
+        yield new Uint8Array(0);
+        yield "str ";
+        yield new TextEncoder().encode("bytes ");
+        yield new TextEncoder().encode("buffer").buffer;
+      }
+      expect(await new Response(gen()).text()).toBe("str bytes buffer");
+    });
+
+    test("a generator yielding an unsupported value (a Blob) rejects the body with a TypeError", async () => {
+      async function* gen() {
+        yield "a";
+        yield new Blob(["blob"]);
+      }
+      const result = await settle(new Response(gen()).text());
+      expect("err" in result).toBe(true);
+    });
+  });
+
+  describe("node:stream interop", () => {
+    test("Readable.fromWeb(direct): pull() once, data in order, 'end' after close()", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const part of ["a", "b", "c"]) {
+          c.write(part);
+          await c.flush();
+        }
+        c.close();
+      });
+      const readable = Readable.fromWeb(rs);
+      const events = [];
+      readable.on("data", d => events.push("data:" + txt(d)));
+      await new Promise((resolve, reject) => {
+        readable.on("end", () => (events.push("end"), resolve()));
+        readable.on("error", reject);
+      });
+      const data = events
+        .filter(e => e.startsWith("data:"))
+        .map(e => e.slice(5))
+        .join("");
+      expect({ data, last: events.at(-1), pulls: t.pulls, cancels: t.cancels.length }).toEqual({
+        data: "abc",
+        last: "end",
+        pulls: 1,
+        cancels: 0,
+      });
+    });
+
+    test("Readable.fromWeb(direct): close(error) becomes 'error' with that error, no 'end'", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        c.close(new Error("source failed"));
+      });
+      const readable = Readable.fromWeb(rs);
+      const events = [];
+      readable.on("data", d => events.push("data:" + txt(d)));
+      readable.on("end", () => events.push("end"));
+      const err = await new Promise(resolve => readable.on("error", resolve));
+      expect({ events, err: err.message, pulls: t.pulls }).toEqual({
+        events: ["data:a"],
+        err: "source failed",
+        pulls: 1,
+      });
+    });
+
+    test("Readable.fromWeb(direct).destroy(err) cancels the source once", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        c.write("a");
+        await c.flush();
+        await new Promise(() => {});
+      });
+      const readable = Readable.fromWeb(rs);
+      const errored = new Promise(resolve => readable.once("error", resolve));
+      await new Promise(resolve => readable.once("data", resolve));
+      readable.destroy(new Error("torn down"));
+      expect((await errored).message).toBe("torn down");
+      await later();
+      expect({ pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        pulls: 1,
+        cancels: ["torn down"],
+      });
+    });
+
+    test("direct.pipeTo(Writable.toWeb(nodeWritable)) with highWaterMark 1 delivers everything in order", async () => {
+      const t = tally();
+      const parts = Array.from({ length: 20 }, (_, i) => "chunk" + i + ";");
+      const rs = direct(t, async c => {
+        for (const p of parts) await c.write(p);
+        c.close();
+      });
+      const seen = [];
+      const nodeWritable = new Writable({
+        highWaterMark: 1,
+        write(chunk, _enc, cb) {
+          seen.push(txt(chunk));
+          setImmediate(cb);
+        },
+      });
+      await rs.pipeTo(Writable.toWeb(nodeWritable));
+      expect({ body: seen.join(""), pulls: t.pulls }).toEqual({ body: parts.join(""), pulls: 1 });
+    });
+
+    test("stream.pipeline(Readable.fromWeb(direct), throwing transform, sink) reports the error once and cancels the source once", async () => {
+      const t = tally();
+      const rs = direct(t, async c => {
+        for (const p of ["a", "b", "c"]) {
+          c.write(p);
+          await c.flush();
+        }
+        await new Promise(() => {}); // still open when the transform fails
+      });
+      let n = 0;
+      const transform = new PassThrough({
+        transform(chunk, _enc, cb) {
+          if (++n === 2) return cb(new Error("transform failed"));
+          cb(null, chunk);
+        },
+      });
+      const sink = new Writable({ write: (_c, _e, cb) => cb() });
+      const errors = [];
+      await new Promise(resolve =>
+        pipeline(Readable.fromWeb(rs), transform, sink, err => (errors.push(err?.message), resolve())),
+      );
+      await later();
+      expect({ errors, pulls: t.pulls, cancels: t.cancels.map(e => e?.message ?? e) }).toEqual({
+        errors: ["transform failed"],
+        pulls: 1,
+        cancels: ["transform failed"],
+      });
+    });
+
+    test("finished(Readable.fromWeb(direct)) resolves after close() and rejects after close(error)", async () => {
+      const ok = Readable.fromWeb(direct(tally(), async c => (c.write("a"), await c.flush(), c.close())));
+      ok.resume();
+      const bad = Readable.fromWeb(
+        direct(tally(), async c => (c.write("a"), await c.flush(), c.close(new Error("source failed")))),
+      );
+      bad.resume();
+      const results = await Promise.all([
+        settle(new Promise((res, rej) => finished(ok, e => (e ? rej(e) : res("finished"))))),
+        settle(new Promise((res, rej) => finished(bad, e => (e ? rej(e) : res("finished"))))),
+      ]);
+      expect(results).toEqual([{ ok: "finished" }, { err: "source failed" }]);
+    });
+
+    test("Readable.toWeb(nodeReadable) → Response.text() with destroy(err) mid-stream rejects with that error", async () => {
+      const readable = new Readable({ read() {} });
+      const text = settle(new Response(Readable.toWeb(readable)).text());
+      readable.push("a");
+      await later();
+      readable.destroy(new Error("node source failed"));
+      expect(await text).toEqual({ err: "node source failed" });
+    });
   });
 });

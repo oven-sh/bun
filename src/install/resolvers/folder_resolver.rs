@@ -196,7 +196,7 @@ fn normalize_package_json_path<'a>(
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
 
     let rel: &[u8] = if strings::starts_with_char(normalized, b'.') {
-        let mut tempcat = PathBuffer::uninit();
+        let mut tempcat = bun_paths::path_buffer_pool::get();
 
         tempcat[..normalized.len()].copy_from_slice(normalized);
         tempcat[normalized.len()] = SEP;
@@ -381,9 +381,9 @@ pub(crate) fn get_or_put(
     non_normalized_path: &[u8],
     manager: &mut PackageManager,
 ) -> FolderResolution {
-    let mut joined = PathBuffer::uninit();
+    let mut joined = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
-    let mut rel_buf = PathBuffer::uninit();
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
     let paths = normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path);
 
     #[cfg(not(windows))]
@@ -433,7 +433,7 @@ pub(crate) fn get_or_put(
 
     let result: crate::Result<LockfilePackage> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
-            let mut path = PathBuffer::uninit();
+            let mut path = bun_paths::path_buffer_pool::get();
             path[..non_normalized_path.len()].copy_from_slice(non_normalized_path);
             let mut resolver: SymlinkResolver = NewResolver {
                 folder_path: &path[0..non_normalized_path.len()],

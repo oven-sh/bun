@@ -575,10 +575,11 @@ fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
     const PROCESS_TERMINATE: w::DWORD = 0x0001;
     const SYNCHRONIZE: w::DWORD = 0x0010_0000;
     const WAIT_OBJECT_0: w::DWORD = 0;
-    // SAFETY: FFI; a pid that no longer exists yields a null handle.
+    const ERROR_INVALID_PARAMETER: w::DWORD = 87;
+    // SAFETY: FFI; ERROR_INVALID_PARAMETER means no process has this pid any more.
     let handle = unsafe { w::OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid as w::DWORD) };
     if handle.is_null() {
-        return true;
+        return w::GetLastError() == ERROR_INVALID_PARAMETER;
     }
     // Fails if the process already exited, which the wait then reports.
     TerminateProcess(handle, 1);
@@ -735,9 +736,7 @@ fn spawn(
         }
         let attached = endpoints.attach(process);
         if attached.is_err() {
-            // No exit handler will report this browser, and once its handle is
-            // dropped the pid may be reused: forget it now instead of killing
-            // whatever owns the pid at exit.
+            // Unwatched from here on and its pid may be reused: forget it now, never kill by pid later.
             delete_temp_profile_of(pid);
         }
         attached

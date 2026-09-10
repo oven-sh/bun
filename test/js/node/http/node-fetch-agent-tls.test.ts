@@ -3,6 +3,7 @@
 // @kubernetes/client-node passes an https.Agent (with ca/cert/key) to node-fetch.
 // Bun's node-fetch shim must apply those TLS options like node-fetch does on Node.
 // This file uses node:test so it runs unchanged on Node: `node --test <file>`.
+import nodeFetch from "node-fetch";
 import assert from "node:assert";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -12,7 +13,6 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
 import type { TLSSocket } from "node:tls";
-import nodeFetch from "node-fetch";
 
 const fixturesDir = path.join(import.meta.dirname, "..", "tls", "fixtures");
 const ca1 = readFileSync(path.join(fixturesDir, "ca1-cert.pem"), "utf8");

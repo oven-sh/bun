@@ -3063,8 +3063,7 @@ fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     }
 }
 
-/// Reports a failed `write_header`, `write_data` or `write_close` on the in-memory archive
-/// (an allocation, compressor or format error, named by libarchive's error string) and exits.
+/// Reports a failed write into the in-memory archive (libarchive's error string names it) and exits.
 #[cold]
 fn archive_write_failed(archive: &Archive) -> ! {
     Output::err_generic(

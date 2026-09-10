@@ -9648,7 +9648,15 @@ declare module "bun" {
      * Enable the domain first with `cdp("Domain.enable")`, or Chrome
      * won't send those events. Events without a registered listener
      * are dropped before JSON parsing (no overhead for domains you
-     * enabled but don't fully listen to).
+     * enabled but don't fully listen to). `Page` and `Runtime` are
+     * already enabled; the events Bun consumes itself
+     * (`Page.frameNavigated`, `Page.loadEventFired`,
+     * `Runtime.consoleAPICalled`) are delivered to listeners as well.
+     *
+     * A `"Page.javascriptDialogOpening"` listener takes over dialog
+     * handling for the view: Bun stops auto-dismissing `alert`/`confirm`/
+     * `prompt`/`beforeunload`, and the listener answers each one with
+     * `cdp("Page.handleJavaScriptDialog", { accept, promptText })`.
      *
      * @example
      * ```ts

@@ -379,6 +379,28 @@ it("chrome: cdp() enable + addEventListener receives CDP events", async () => {
   // no accumulation.
 });
 
+it("chrome: events the backend consumes itself still reach addEventListener", async () => {
+  // Page.frameNavigated / Page.loadEventFired drive view.url, onNavigated and
+  // the navigate() promise; Runtime.consoleAPICalled drives the console
+  // option. Listeners see them too, in protocol order, before navigate()
+  // resolves (that waits for one more round trip after the load event).
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body>init</body>"));
+  const seen: string[] = [];
+  view.addEventListener("Page.frameNavigated", (e: MessageEvent<any>) =>
+    seen.push("frameNavigated " + e.data.frame.url),
+  );
+  view.addEventListener("Page.loadEventFired", (e: MessageEvent<any>) =>
+    seen.push("loadEventFired " + typeof e.data.timestamp),
+  );
+  view.addEventListener("Runtime.consoleAPICalled", (e: MessageEvent<any>) =>
+    seen.push("consoleAPICalled " + e.data.type + " " + e.data.args[0].value),
+  );
+  const page = html("<script>console.warn('from page')</script><body>second</body>");
+  await view.navigate(page);
+  expect(seen).toEqual(["frameNavigated " + page, "consoleAPICalled warning from page", "loadEventFired number"]);
+});
+
 it("chrome: screenshot quality option affects JPEG size", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   // Gradient + text → lossy compression has work to do.
@@ -1089,15 +1111,68 @@ it("chrome: goBack/goForward navigates history", async () => {
 it("chrome: goBack at history start resolves undefined (no-op)", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body>only</body>"));
-  // Target.createTarget({url:"about:blank"}) means history[0]=about:blank,
-  // history[1]=our page after navigate. goBack once → about:blank.
-  await view.goBack();
-  expect(await view.evaluate("document.body.textContent")).toBe("");
-  // Now at index 0. Second goBack hits the boundary — target=-1 → out of
-  // range → resolve undefined. Same semantics as WKWebView's goBack no-op.
+  // The tab is created on about:blank before it can be driven; that bootstrap
+  // entry is dropped once the first page commits, so history starts at the
+  // first page the caller asked for, as on WKWebView. Session history is the
+  // browser's, so ask it, not the page (the page's copy of history.length
+  // arrives on its own channel and can lag this evaluate).
+  const history = (await view.cdp("Page.getNavigationHistory")) as { currentIndex: number; entries: unknown[] };
+  expect({ currentIndex: history.currentIndex, entries: history.entries.length }).toEqual({
+    currentIndex: 0,
+    entries: 1,
+  });
   const r = await view.goBack();
   expect(r).toBeUndefined();
-  expect(await view.evaluate("document.body.textContent")).toBe("");
+  expect(view.url).toBe(html("<body>only</body>"));
+  expect(await view.evaluate("document.body.textContent")).toBe("only");
+  // A later navigation still gets a real back entry.
+  await view.navigate(html("<body>second</body>"));
+  await view.goBack();
+  expect(await view.evaluate("document.body.textContent")).toBe("only");
+  expect(await view.goBack()).toBeUndefined();
+  expect(await view.evaluate("document.body.textContent")).toBe("only");
+});
+
+// --- Dialogs ----------------------------------------------------------------
+
+it("chrome: dialogs are answered when nothing listens for Page.javascriptDialogOpening", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  // alert() during load would otherwise block the load event forever.
+  await view.navigate(html("<script>alert('on load')</script><body>loaded</body>"));
+  expect(await view.evaluate("document.body.textContent")).toBe("loaded");
+  // Dismissed, like WKWebView with no UI delegate: confirm() is false,
+  // prompt() is null, alert() just returns.
+  expect(await view.evaluate("[confirm('sure?'), prompt('name?', 'default'), (alert('hi'), 'after')]")).toEqual([
+    false,
+    null,
+    "after",
+  ]);
+  // A beforeunload prompt is accepted so the navigation that raised it
+  // proceeds. Chrome only shows it after a user gesture, hence the typing.
+  await view.navigate(
+    html(
+      "<input id=i><script>addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = 'stay'; })</script>",
+    ),
+  );
+  await view.click("#i");
+  await view.type("unsaved");
+  await view.navigate(html("<body>left anyway</body>"));
+  expect(await view.evaluate("document.body.textContent")).toBe("left anyway");
+});
+
+it("chrome: a Page.javascriptDialogOpening listener takes over dialog handling", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  const seen: { type: string; message: string }[] = [];
+  view.addEventListener("Page.javascriptDialogOpening", (e: MessageEvent<any>) => {
+    seen.push({ type: e.data.type, message: e.data.message });
+    view.cdp("Page.handleJavaScriptDialog", { accept: true, promptText: "typed" });
+  });
+  expect(await view.evaluate("[confirm('sure?'), prompt('name?')]")).toEqual([true, "typed"]);
+  expect(seen).toEqual([
+    { type: "confirm", message: "sure?" },
+    { type: "prompt", message: "name?" },
+  ]);
 });
 
 // --- Console capture -------------------------------------------------------

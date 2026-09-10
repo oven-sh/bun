@@ -190,6 +190,7 @@ describe("sparse arrays that only claim a length", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      // Kill switch: before the fix, the first comparison alone ran for about a minute.
       timeout: 20_000,
       killSignal: "SIGKILL",
     });
@@ -200,7 +201,7 @@ describe("sparse arrays that only claim a length", () => {
     );
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 
   // An index that a sparse array does hold lives in its sparse map, which the
   // walk reads instead of probing the gaps around it.

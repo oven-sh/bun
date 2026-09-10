@@ -2308,9 +2308,7 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // Copy the caller's `Headers`, as `new Request()` does: the Request owns
-                        // its list (and may append the body's Content-Type to it).
-                        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                        // Copy the caller's `Headers`, as `new Request()` does; the Request owns its list.
                         let original = bun_opaque::opaque_deref_mut(headers__.as_ptr());
                         // SAFETY: `clone_this` returns a fresh +1 ref.
                         headers = original

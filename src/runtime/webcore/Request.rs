@@ -405,8 +405,7 @@ impl Request {
         Ok(request)
     }
 
-    /// Fetch "extract a body", last step: a Blob, FormData or URLSearchParams
-    /// body has a MIME type, appended at construction unless a `Content-Type` is set.
+    /// Fetch "extract a body": append a Blob body's MIME type unless a `Content-Type` is set.
     fn append_content_type_from_body(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let BodyValue::Blob(blob) = self.body_value() else {
             return Ok(());

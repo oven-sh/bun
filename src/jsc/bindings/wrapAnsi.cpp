@@ -636,12 +636,9 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 // Main Implementation
 // ============================================================================
 
-// The output is not bounded by the input: every wrapped row re-emits the open
-// hyperlink sequence, so a long URI and many rows multiply. A default
-// StringBuilder aborts the process once the built string passes
-// StringImpl::MaxLength, so every builder here records the overflow instead and
-// the caller turns it into ERR_STRING_TOO_LONG. `Bun__stringSyntheticAllocationLimit`
-// is the same limit lowered for tests (u32::MAX, above MaxLength, in production).
+// Every row re-emits the open hyperlink, so the output can pass
+// StringImpl::MaxLength. The builders record the overflow and the caller
+// throws ERR_STRING_TOO_LONG. nullopt means that throw.
 static std::optional<WTF::String> finishWrapAnsi(StringBuilder& result)
 {
     if (result.hasOverflowed() || result.length() > Bun__stringSyntheticAllocationLimit) [[unlikely]]
@@ -649,8 +646,7 @@ static std::optional<WTF::String> finishWrapAnsi(StringBuilder& result)
     return result.toString();
 }
 
-// Capacity past MaxLength fails the whole build, so cap the estimate. An input
-// near MaxLength still wraps when its output fits.
+// reserveCapacity() past MaxLength fails the builder before any append.
 static unsigned wrapAnsiCapacity(size_t estimate)
 {
     return static_cast<unsigned>(std::min<size_t>(estimate, WTF::String::MaxLength));

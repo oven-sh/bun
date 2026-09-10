@@ -97,14 +97,16 @@ const stream = new ReadableStream({
 
 `await controller.flush(true)` is equivalent, and you can use it after a write returns a `Promise`.
 
-Once the destination has gone away, `write()` returns `0` (when an HTTP client disconnects, `Bun.serve` also calls the source's `cancel(reason)`). `await`ing a `0` does not pause anything, so a producer with no natural end must check for it and stop, or it spins without ever yielding to the event loop:
+Once the destination has gone away, `write()` returns `0` for every chunk (when an HTTP client disconnects, `Bun.serve` also calls the source's `cancel(reason)`). `await`ing a `0` does not pause anything, so a producer with no natural end must check for it and stop, or it spins without ever yielding to the event loop. An empty chunk also returns `0`, so skip those before you rely on the check:
 
 ```ts
 const stream = new ReadableStream({
   type: "direct",
   async pull(controller) {
     while (true) {
-      const written = await controller.write(nextChunk());
+      const chunk = await nextChunk();
+      if (chunk.length === 0) continue;
+      const written = await controller.write(chunk);
       if (written === 0) break; // the destination is gone
     }
     controller.close();

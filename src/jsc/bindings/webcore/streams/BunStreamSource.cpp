@@ -751,15 +751,24 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     pullArgs.append(sinkController);
     ASSERT(!pullArgs.hasOverflowed());
     JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Resolving without close()/end() ends the sink controller first; a sync return waits for close()/end().
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // `pull` is a callback returning Promise<undefined>, so a synchronous throw is its rejection, and the
+        // sink has started and may hold bytes pull() wrote: fail it from this side as the rejection handler of an
+        // async pull() does, then report it below like a sync close(error) instead of returning abruptly to the
+        // owner. A throw after pull() ended or closed the sink has nothing left to fail. A VM termination is not converted.
+        JSValue reason = exception->value();
+        TRY_CLEAR_EXCEPTION(scope, {});
+        if (sinkController->wrapped()) {
+            sinkController->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() threw"_s)));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    } else if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
+        // Resolving without close()/end() ends the sink controller first; a sync return waits for close()/end().
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), result, sinkController);
         return result;
     }
-    // A sync pull() that called close(error): the owner hears it the way it hears an async one.
+    // A sync pull() that called close(error) or threw: the owner hears it the way it hears an async one.
     if (JSValue failed = sinkController->m_failReason.get()) {
         auto* rejected = promiseRejectedWith(globalObject, failed);
         RETURN_IF_EXCEPTION(scope, {});

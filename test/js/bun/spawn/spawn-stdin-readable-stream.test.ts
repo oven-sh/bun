@@ -8,6 +8,7 @@ import {
   expectMaxObjectTypeCount,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   runFixtureMaxRSS,
   tempDir,
@@ -359,6 +360,123 @@ describe("spawn stdin ReadableStream", () => {
     expect(stdout.trim()).toBe("uncaught=0");
     expect(exitCode).toBe(0);
   });
+
+  // The child is already running when stdin is wired up, so an exception
+  // escaping spawn() here would lose the Subprocess handle (nothing to kill or
+  // await). A synchronous throw from a direct stream's pull() fails the stdin
+  // pipe instead: the bytes it flushed are delivered, stdin is closed, and the
+  // child sees EOF, as with `async pull() { throw }`. Where the error itself is
+  // then reported is not asserted here.
+  test("a direct ReadableStream whose pull() throws synchronously does not throw out of spawn()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("unhandledRejection", () => {});
+        let child, threw = "nothing";
+        try {
+          child = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+            stdin: new ReadableStream({
+              type: "direct",
+              pull(controller) {
+                controller.write("before throw|");
+                controller.flush();
+                throw new Error("sync pull boom");
+              },
+            }),
+            stdout: "pipe",
+          });
+        } catch (e) {
+          threw = e.message;
+        }
+        const [out, exitCode] = child ? await Promise.all([child.stdout.text(), child.exited]) : ["", "no child"];
+        console.log(JSON.stringify({ threw, returned: typeof child, out, exitCode }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      threw: "nothing",
+      returned: "object",
+      out: "before throw|",
+      exitCode: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The same exit without a user `throw`: the child exits before a synchronous
+  // pull() flushes, so the flush inside pull() fails with EPIPE. That error
+  // escaped spawn() too, and the child it lost was never reaped (one zombie
+  // per call). Linux-only: it reads /proc to see the child exit from inside
+  // pull(), where the Subprocess does not exist yet.
+  test.skipIf(!isLinux)(
+    "a write error inside a synchronous pull() does not throw out of spawn() or leave a zombie",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("node:fs");
+          process.on("unhandledRejection", () => {});
+          // Child processes of this one by /proc state ("Z" = exited, not yet reaped).
+          function children() {
+            const states = { Z: 0, live: 0 };
+            for (const d of fs.readdirSync("/proc")) {
+              if (!/^\\d+$/.test(d)) continue;
+              let stat;
+              try { stat = fs.readFileSync("/proc/" + d + "/stat", "utf8"); } catch { continue; }
+              const [st, ppid] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+              if (ppid === String(process.pid)) states[st === "Z" ? "Z" : "live"]++;
+            }
+            return states;
+          }
+          let child, threw = "nothing", sawExit = false;
+          try {
+            child = Bun.spawn({
+              cmd: ["true"],
+              stdin: new ReadableStream({
+                type: "direct",
+                pull(controller) {
+                  // spawn() has forked already; wait here until the child has exited
+                  // (zombie, or already reaped by a waiter thread) so its end of the
+                  // stdin pipe is closed and the flush below fails with EPIPE.
+                  const deadline = Date.now() + 30_000;
+                  while (!(sawExit = children().live === 0) && Date.now() < deadline) {}
+                  controller.write("x");
+                  controller.close();
+                },
+              }),
+            });
+          } catch (e) {
+            threw = e.code ?? e.message;
+          }
+          const exitCode = child ? await child.exited : "no child";
+          console.log(JSON.stringify({ sawExit, threw, returned: typeof child, exitCode, zombies: children().Z }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({
+        sawExit: true,
+        threw: "nothing",
+        returned: "object",
+        exitCode: 0,
+        zombies: 0,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // The ReadableStream -> stdin FileSink pump intentionally does not await the
   // Promise FileSink.write() returns for writes it cannot complete synchronously

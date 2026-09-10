@@ -45,8 +45,7 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
-// Chrome: which event ends the navigation the view has in flight. A commit
-// carries no loader id, so the state decides which commit is the view's.
+// Chrome: which event ends the navigation the view has in flight.
 enum class ChromeNavigationKind : uint8_t {
     NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
     Requested, // command written, no reply yet: a commit now can still be the page's own

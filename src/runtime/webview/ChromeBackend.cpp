@@ -704,10 +704,7 @@ static void startNavigation(JSWebView* view, ChromeNavigationKind kind)
     view->m_chromeNavigationSeq++;
 }
 
-// Does a same-document commit end the navigation in flight? Chrome sends no
-// loader id with one, so the navigation has to be classified same-document,
-// or answered and unclassified (a history traversal on a Chrome that sends no
-// Page.frameStartedNavigating). Anything earlier is the page's own doing.
+// Which commit is the view's? A same-document one carries no loader id, so only the state says.
 static bool sameDocumentCommitEndsNavigation(JSWebView* view)
 {
     if (!view->m_pendingNavigate) return false;
@@ -935,8 +932,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
     case Method::PageNavigateToHistoryEntry:
-        // Response is empty {} on success: the traversal is underway and a
-        // commit of either shape is now its own. A commit does the settling.
+        // Empty {} on success: the traversal is underway, so the next commit is its own.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested)
             view->m_chromeNavigationKind = ChromeNavigationKind::Unknown;
         return;
@@ -1225,8 +1221,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             : makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
-        // Chrome answers a navigation command before the document commits, so
-        // a commit before that reply is the page's own, not the command's.
+        // Chrome answers a command before its document commits, so an earlier commit is the page's.
         auto kind = view->m_chromeNavigationKind;
         if (kind != ChromeNavigationKind::NotRequested && kind != ChromeNavigationKind::Requested) {
             view->m_chromeNavigationCommitted = true;
@@ -1265,8 +1260,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // roundtrip (~1ms), but the user-visible guarantee is worth it:
     // `await view.navigate(); view.title` just works.
     //
-    // If the load is not the view's navigation (uninitiated navigation,
-    // redirect), the title fetch only updates m_title.
+    // For a load that is not the view's navigation, the fetch only updates m_title.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         // Page-level: no frame, no loader. Only a document the view's own command committed ends it.
         bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;

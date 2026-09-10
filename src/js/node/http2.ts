@@ -4699,9 +4699,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
-    // Idempotent, like Node's destroy(). A latch rather than the `destroyed` getter: the socket
-    // only detaches at the end of the teardown, and destroy() is re-entered from inside it (a
-    // stream's 'error' listener, the 'goaway' emit).
+    // Idempotent like Node's. Latched, not `destroyed`: destroy() is re-entered before the socket detaches.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;
@@ -5767,9 +5765,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   destroy(error?: Error | number, code?: number) {
-    // Idempotent, like Node's destroy(). A latch rather than the `destroyed` getter: the socket
-    // only detaches at the end of the teardown, and destroy() is re-entered from inside it (a
-    // stream's 'error' listener, the 'goaway' emit).
+    // Idempotent like Node's. Latched, not `destroyed`: destroy() is re-entered before the socket detaches.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;

@@ -1180,9 +1180,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto root = JSON::Value::parseJSON(WTF::String::fromUTF8(params));
         auto o = root ? root->asObject() : nullptr;
         if (!o) return;
-        // CDP names four of its ConsoleAPICalled types differently from the
-        // console method that produced them. The callback contract (and the
-        // WebKit backend) use the method name.
+        // CDP's names for these four differ from the console method name.
         auto type = o->getString("type"_s);
         if (type == "warning"_s)
             type = "warn"_s;
@@ -1266,8 +1264,6 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             scope.release();
             auto clientRef = g->consoleClient();
             if (!clientRef) return;
-            // group/groupEnd go through their own entry points so the
-            // mirrored output nests like the page's console does.
             if (type == "group"_s)
                 clientRef->group(g, WTF::move(scriptArgs));
             else if (type == "groupCollapsed"_s)

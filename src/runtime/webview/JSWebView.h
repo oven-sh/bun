@@ -114,6 +114,16 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
+    // Chrome-only. A Page.captureScreenshot whose document is replaced
+    // before the capture completes gets no reply, ever. m_screenshotCdpId
+    // is the in-flight capture's CDP id, m_screenshotQuality repeats the
+    // capture with the options the user asked for, m_screenshotStranded
+    // records that a main-frame commit happened while the capture was in
+    // flight, and m_screenshotResent bounds the recovery to one repeat.
+    uint32_t m_screenshotCdpId = 0;
+    uint8_t m_screenshotQuality = 80;
+    bool m_screenshotStranded = false;
+    bool m_screenshotResent = false;
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;

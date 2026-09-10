@@ -36,6 +36,11 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// The next `dropScreenshots` captures get no reply, the way Chrome drops a
+// Page.captureScreenshot whose document is replaced before it completes.
+// `screenshots` keeps the options of every capture the fake received.
+let dropScreenshots = 0;
+const screenshots: { format: string; quality: number }[] = [];
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -55,6 +60,14 @@ Object.assign(globalThis, {
     commandsClosed = true;
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
+  },
+  // The next `count` Page.captureScreenshot commands get no reply.
+  __fake_drop_screenshots(count: number) {
+    dropScreenshots = count;
+  },
+  // The options of every capture the fake received, in order.
+  __fake_screenshots() {
+    return screenshots;
   },
 });
 
@@ -91,6 +104,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return;
     }
     case "Page.captureScreenshot":
+      screenshots.push({ format: params.format, quality: params.quality });
+      if (dropScreenshots > 0) {
+        dropScreenshots--;
+        return;
+      }
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {

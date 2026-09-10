@@ -307,6 +307,18 @@ process.stdout.write(`\x1b_Gf=100,t=s,a=T,S=${size};${btoa(name)}\x1b\\`);
 
 On WebKit, the shm name looks like `/bun-webview-<pid>-<seq>`; on Chrome, `/bun-chrome-<pid>-<seq>`. If you request `"shmem"` and don't hand the name to something that will `shm_unlink` it, the segment leaks until your process exits.
 
+### A screenshot during a navigation
+
+A page can commit a new document while a capture is still running. Chrome throws that capture away. On the Chrome backend, Bun takes the screenshot again when the new document fires its load event, so the promise resolves with an image of the page that loaded:
+
+```ts
+const shot = view.screenshot(); // starts against the current document
+await view.navigate(url); // the new document replaces it
+await shot; // an image of the new document
+```
+
+Bun repeats the capture once. If the page navigates a second time before the repeat completes, the promise rejects with `screenshot: the page navigated before the capture completed`.
+
 ---
 
 ## Input simulation

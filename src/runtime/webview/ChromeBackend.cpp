@@ -616,6 +616,21 @@ static constexpr ASCIILiteral cdpButton(uint8_t b)
     }
 }
 
+// Page.captureScreenshot for one view's options. Built in two places: the
+// screenshot() op, and the repeat that recovers a capture a navigation
+// stranded. CDP takes format as a JSON string; quality is 0-100 for
+// JPEG/WebP and Chrome ignores it for PNG.
+static Command captureScreenshotCommand(uint32_t id, std::span<const char> sessionId,
+    ScreenshotFormat format, uint8_t quality)
+{
+    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
+        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
+                                                           : "\"png\""_s;
+    return Command(id, "Page.captureScreenshot"_s, sessionId)
+        .raw("format"_s, fmtLit)
+        .num("quality"_s, static_cast<int32_t>(quality));
+}
+
 // Bun modifier bits → CDP modifier integer. CDP uses bit 0=Alt, 1=Ctrl,
 // 2=Meta, 3=Shift. ipc_protocol.h's ModShift=1 ModCtrl=2 ModAlt=4 ModMeta=8.
 static constexpr int32_t cdpModifiers(uint8_t m)
@@ -1148,6 +1163,14 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
 
+        // A main-frame commit replaces the document. Chrome answers a
+        // capture that was in flight across one about half the time and
+        // drops the rest with no reply, so the load event below repeats
+        // it. A subframe commit (frame.parentId present) keeps the main
+        // document, and its captures complete.
+        if (view->m_pendingScreenshot && jsonField(frame, { "parentId", 8 }).empty())
+            view->m_screenshotStranded = true;
+
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
                 JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));
@@ -1168,6 +1191,25 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
         send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+
+        // A capture the commit stranded: its id owes a reply that Chrome
+        // never sends, so drop the id and capture the document that just
+        // loaded instead. The repeat runs once per screenshot() call. A
+        // second commit over it rejects, so the promise always settles.
+        if (view->m_screenshotStranded && view->m_pendingScreenshot) {
+            view->m_screenshotStranded = false;
+            m_pending.remove(view->m_screenshotCdpId);
+            if (view->m_screenshotResent) {
+                settle(g, view, PendingSlot::Screenshot, false,
+                    createError(g, "screenshot: the page navigated before the capture completed"_s));
+                return;
+            }
+            view->m_screenshotResent = true;
+            uint32_t cid = nextId();
+            view->m_screenshotCdpId = cid;
+            m_pending.add(cid, Pending { Method::PageCaptureScreenshot, PendingSlot::Screenshot, view->m_viewId });
+            send(cid, captureScreenshotCommand(cid, sidSpan(view->m_sessionId), view->m_screenshotFormat, view->m_screenshotQuality));
+        }
         return;
     }
 
@@ -1511,21 +1553,17 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
 {
     auto& t = transport();
     uint32_t id = t.nextId();
-    // CDP takes format as a JSON string. quality is ignored for PNG by
-    // Chrome; for JPEG/WebP it's 0-100. Pass it unconditionally — Chrome
-    // silently ignores quality for PNG, and the builder's && ref-qualifier
-    // means conditionals break the chain (lvalue after materialization).
     // The response handler reads view->m_screenshotFormat (stashed by
     // JSWebView::screenshot before dispatch) to stamp the right MIME type
-    // on the Blob.
-    ASCIILiteral fmtLit = format == ScreenshotFormat::Jpeg ? "\"jpeg\""_s
-        : format == ScreenshotFormat::Webp                 ? "\"webp\""_s
-                                                           : "\"png\""_s;
+    // on the Blob. The id, the quality and the two flags are what the
+    // load-event handler needs to repeat a capture a navigation stranded.
+    view->m_screenshotCdpId = id;
+    view->m_screenshotQuality = quality;
+    view->m_screenshotStranded = false;
+    view->m_screenshotResent = false;
     return sendChromeOp(g, view, view->m_pendingScreenshot, PendingSlot::Screenshot,
         Method::PageCaptureScreenshot, id,
-        Command(id, "Page.captureScreenshot"_s, sidSpan(view->m_sessionId))
-            .raw("format"_s, fmtLit)
-            .num("quality"_s, static_cast<int32_t>(quality)));
+        captureScreenshotCommand(id, sidSpan(view->m_sessionId), format, quality));
 }
 
 // One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is

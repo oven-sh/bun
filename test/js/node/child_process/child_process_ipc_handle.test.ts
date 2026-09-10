@@ -731,6 +731,134 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
     },
   );
 
+  // node: the handle close that follows the handoff cancels the write request still queued on it
+  // (write ECANCELED), that error fails the chunks queued behind it inside the stream, and the
+  // socket errors and closes. The sender used to drop all of it on the floor: the callbacks never
+  // ran and writableLength stayed put for the life of the socket.
+  test.concurrent("a net.Socket handed off with writes still queued fails them with ECANCELED", async () => {
+    using dir = tempDir("ipc-handle-queued-writes", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const result = { events: [] };
+const server = net.createServer(socket => {
+  socket.on('error', e => result.events.push(['error', e.code, e.syscall, e.message]));
+  socket.on('close', () => result.events.push(['close']));
+  const chunk = Buffer.alloc(1 << 20, 'w');
+  const outcomes = new Map();
+  let id = 0;
+  const write = () => { const n = id++; return socket.write(chunk, err => outcomes.set(n, err ? err.code : null)); };
+  // The client never reads: write until a chunk is left waiting on the kernel buffer, then queue
+  // one more behind it inside the stream.
+  while (write()) {}
+  write();
+  const queued = [id - 2, id - 1];
+  result.writableLengthBeforeSend = socket.writableLength;
+  child.send('socket', socket);
+  child.on('message', m => {
+    // The reply takes whole event-loop turns to arrive; whatever the sender does about the queued
+    // writes happens in the ticks right after send().
+    result.child = m;
+    result.completedWrites = [...outcomes].filter(([n]) => !queued.includes(n)).map(([, code]) => code);
+    result.queuedWrites = queued.map(n => (outcomes.has(n) ? outcomes.get(n) : 'callback never ran'));
+    result.writableLength = socket.writableLength;
+    result.destroyed = socket.destroyed;
+    server.getConnections((err, count) => {
+      result.connections = err ? err.message : count;
+      console.log(JSON.stringify(result));
+      child.kill();
+      process.exit(0);
+    });
+  });
+});
+server.listen(0, '127.0.0.1', () => {
+  const client = net.connect(server.address().port, '127.0.0.1');
+  client.pause();
+  client.on('error', () => {});
+});
+`,
+      "child.js": `
+const net = require('node:net');
+process.on('message', (m, socket) => {
+  const received = socket instanceof net.Socket;
+  if (received) socket.destroy();
+  process.send({ message: m, received });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const out = JSON.parse(stdout.trim());
+    expect({ ...out, completedWrites: out.completedWrites.every(code => code === null), stderr }).toEqual({
+      writableLengthBeforeSend: 2 * (1 << 20),
+      child: { message: "socket", received: true },
+      completedWrites: true,
+      queuedWrites: ["ECANCELED", "ECANCELED"],
+      events: [["error", "ECANCELED", "write", "write ECANCELED"], ["close"]],
+      writableLength: 0,
+      destroyed: true,
+      connections: 0,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The handoff takes the connection off the server's books, so a server that was already closing
+  // has nothing left to wait for. (node leaves such a server waiting forever and, once the sender's
+  // socket object is destroyed, counts the handed-off connection off a second time.)
+  test.concurrent("handing off the last connection of a closing server lets it emit 'close'", async () => {
+    using dir = tempDir("ipc-handle-closing-server", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const events = [];
+const server = net.createServer(socket => {
+  server.close(() => events.push('server close'));
+  child.send('socket', socket);
+  events.push('sent');
+  child.on('message', m => {
+    events.push('child replied');
+    console.log(JSON.stringify({ events, received: m.received }));
+    child.kill();
+    process.exit(0);
+  });
+});
+server.listen(0, '127.0.0.1', () => {
+  net.connect(server.address().port, '127.0.0.1').on('error', () => {});
+});
+`,
+      "child.js": `
+const net = require('node:net');
+process.on('message', (m, socket) => {
+  const received = socket instanceof net.Socket;
+  if (received) socket.destroy();
+  process.send({ received });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { events: ["sent", "server close", "child replied"], received: true },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
   // second disconnect() errors, and the parent receives the server, then the message queued behind
   // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on

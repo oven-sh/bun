@@ -42,7 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError, kDetachHandle } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -1893,6 +1893,41 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.unref();
   connection.destroy();
 };
+
+// child.send(message, socket) without keepOpen: the receiving process takes the
+// connection over, so this socket lets go of its handle like node's
+// handleConversion["net.Socket"].send. Returns the native handle for the IPC
+// layer, or null when there is nothing to send.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
+//
+// The handle's drain/close events no longer reach this socket, so a write still
+// waiting on the native drain could never complete. Node's close of the sent
+// handle fails that write with ECANCELED, which in turn fails the chunks queued
+// behind it and destroys the socket; do the same rather than leave the
+// callbacks (and writableLength) pending forever.
+Socket.prototype[kDetachHandle] = function detachHandle() {
+  const handle = this._handle;
+  if (!handle) return null;
+  const server = this.server;
+  if (server) {
+    // The connection leaves the server's books now; _destroy() must not take
+    // it off a second time.
+    this._server = undefined;
+    server._connections--;
+    if (server._emitCloseIfDrained) server._emitCloseIfDrained();
+  }
+  this.setTimeout(0);
+  handle.data = undefined;
+  this._handle = null;
+  const pendingWrite = this[kwriteCallback];
+  if (pendingWrite) process.nextTick(cancelDetachedWriteNT, this, pendingWrite);
+  return handle;
+};
+
+function cancelDetachedWriteNT(self, callback) {
+  if (self[kwriteCallback] !== callback) return;
+  failWrite(self, UV_ECANCELED, callback);
+}
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");

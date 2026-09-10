@@ -144,6 +144,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kSyncWriteSink = Symbol("kSyncWriteSink");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -2183,6 +2184,16 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     // socket goes through the fresh handle's normal write path.
     delete this._write;
     delete this._writev;
+    const sink = this[kSyncWriteSink];
+    if (sink !== undefined) {
+      this[kSyncWriteSink] = undefined;
+      try {
+        // A tail still in flight may drain, but must not hold the process open (node drops it on destroy).
+        if ($isPromise(sink.end())) sink.unref();
+      } catch (e) {
+        err ||= e;
+      }
+    }
     if (syncFd > 2) {
       try {
         require("node:fs").closeSync(syncFd);
@@ -2532,40 +2543,87 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 });
 
 function fdSyncWrite(chunk, encoding, callback) {
-  const fs = require("node:fs");
+  let buf;
   try {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    let offset = 0;
-    while (offset < buf.length) {
-      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
-    }
-    // No native handle on this path, so feed bytesWritten/_bytesDispatched
-    // directly (node accounts these via the libuv handle).
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
-    callback();
+    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
   } catch (err) {
     callback(err);
+    return;
   }
+  fdWrite(this, buf, callback);
 }
 
 function fdSyncWritev(data, callback) {
-  const fs = require("node:fs");
+  let buf;
   try {
-    let total = 0;
-    for (let i = 0; i < data.length; i++) {
+    const n = data.length;
+    const bufs = $newArrayWithSize(n);
+    for (let i = 0; i < n; i++) {
       const { chunk, encoding } = data[i];
-      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-      let offset = 0;
-      while (offset < buf.length) {
-        offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
-      }
-      total += offset;
+      bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     }
-    // See fdSyncWrite: no native handle to account these on.
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
-    callback();
+    buf = Buffer.concat(bufs);
   } catch (err) {
     callback(err);
+    return;
+  }
+  fdWrite(this, buf, callback);
+}
+
+function fdWrite(self, buf, callback) {
+  const sink = self[kSyncWriteSink];
+  if (sink !== undefined) {
+    fdSinkWrite(self, sink, buf, callback);
+    return;
+  }
+  const fs = require("node:fs");
+  let offset = 0;
+  try {
+    while (offset < buf.length) {
+      offset += fs.writeSync(self[kSyncWriteFd], buf, offset);
+    }
+  } catch (err) {
+    if (process.platform === "win32" || err?.code !== "EAGAIN") {
+      callback(err);
+      return;
+    }
+    // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the tail, as node's pipe handle does.
+    let newSink;
+    try {
+      newSink = self[kSyncWriteSink] = Bun.file(self[kSyncWriteFd]).writer();
+    } catch (e) {
+      callback(e);
+      return;
+    }
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+    fdSinkWrite(self, newSink, offset === 0 ? buf : buf.subarray(offset), callback);
+    return;
+  }
+  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+  callback();
+}
+
+// The callback runs once every byte reached the fd, like a libuv write request.
+function fdSinkWrite(self, sink, buf, callback) {
+  let result;
+  try {
+    result = sink.write(buf);
+    // The sink only buffers a short chunk; push it to the fd now.
+    if (!$isPromise(result)) result = sink.flush();
+  } catch (err) {
+    callback(err);
+    return;
+  }
+  const { length } = buf;
+  if ($isPromise(result)) {
+    result.$then(() => {
+      self[kBytesWritten] = (self[kBytesWritten] || 0) + length;
+      callback();
+    }, callback);
+  } else {
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + length;
+    callback();
   }
 }
 

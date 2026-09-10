@@ -98,14 +98,10 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 /// holds on them.
 #[derive(Default, Clone, Copy)]
 enum BunSocket {
-    /// No native socket: the bytes go out through the `onWrite` handler, which
-    /// writes them to the session's JS transport (a `Duplex`, a socket that is
-    /// still connecting).
+    /// No native socket: `_write` hands the bytes to the `onWrite` handler.
     #[default]
     None,
-    /// The native socket this parser was attached to has closed. Frames
-    /// serialized after that have no transport, so `_write` drops them instead
-    /// of taking the `None` route back into JS.
+    /// The native socket closed: `_write` drops the bytes, there is no transport.
     Closed,
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
@@ -158,11 +154,10 @@ impl NativeSocket {
             });
     }
 
-    /// Releases whatever `attach` took. The state the cell is left in is set
-    /// before the release call, which can re-enter through
-    /// `NewSocket::detach_native_callback`. `Closed` is sticky: only a new
-    /// `attach` clears it.
+    /// Releases whatever `attach` took. `Closed` is sticky: only `attach` clears it.
     fn detach(&self) {
+        // Each arm sets the cell before its release call, which re-enters through
+        // `NewSocket::detach_native_callback`.
         match self.0.get() {
             BunSocket::Tcp(socket) => {
                 self.0.set(BunSocket::None);
@@ -185,11 +180,8 @@ impl NativeSocket {
         }
     }
 
-    /// The socket's close dispatch detached this parser: the transport is gone.
-    /// Plain `detach` would leave `None`, which means "write through JS" - on a
-    /// session whose socket just closed that hands the frames still in flight
-    /// to `socket.write()` on a `net.Socket` with no handle, and the failed
-    /// write reports ERR_SOCKET_CLOSED on a session Node leaves silent.
+    /// The socket's close dispatch detached this parser. `Closed`, not the `None`
+    /// `detach` leaves: a frame written after the close must not go out through JS.
     fn mark_closed(&self) {
         self.detach();
         self.0.set(BunSocket::Closed);
@@ -2806,8 +2798,7 @@ impl H2FrameParser {
                     "_write dropped {} (transport closed)",
                     bytes.len()
                 );
-                // Report them as sent: queueing bytes for a transport that is
-                // gone only grows the buffer until the session is destroyed.
+                // Sent, not queued: a transport that is gone never drains.
                 true
             }
             BunSocket::None => {
@@ -7561,8 +7552,7 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
-        // mark_closed can drop the socket's last ref (Writeonly deref), so
-        // match on_native_read/on_native_writable and hold our own +1.
+        // mark_closed can drop the socket's last ref (Writeonly deref): hold a +1.
         let _keepalive = self.keepalive();
         self.native_socket.mark_closed();
     }

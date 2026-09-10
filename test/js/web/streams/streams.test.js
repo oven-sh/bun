@@ -2106,8 +2106,6 @@ describe("ReadableStream for a File that fails to open", () => {
   // there errors the stream: consumers do not throw synchronously, and every read settles.
   const missing = join(import.meta.dir, "fetch.js.txt.notfound");
   const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
-  const unlinkDir = tmpdirSync();
-  let unlinkCount = 0;
   // label => [makeStream, expected error]
   const doors = {
     "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
@@ -2119,12 +2117,11 @@ describe("ReadableStream for a File that fails to open", () => {
       () => new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
       enoent,
     ],
-    "file unlinked after .stream()": [
+    "file removed after .stream()": [
       () => {
-        const path = join(unlinkDir, "unlinked-" + unlinkCount++);
-        writeFileSync(path, "gone before the first read");
-        const stream = file(path).stream();
-        unlinkSync(path);
+        const dir = tempDir("file-stream-open-fail", { "gone.txt": "gone before the first read" });
+        const stream = file(join(String(dir), "gone.txt")).stream();
+        dir[Symbol.dispose]();
         return stream;
       },
       enoent,
@@ -2186,7 +2183,10 @@ describe("ReadableStream for a File that fails to open", () => {
         stream.getReader().releaseLock();
         const readable = Readable.fromWeb(stream);
         const { promise, resolve, reject } = Promise.withResolvers();
-        readable.on("error", resolve).on("end", () => reject(new Error("ended without an error")));
+        readable
+          .on("error", resolve)
+          .on("end", () => reject(new Error("ended without an error")))
+          .on("close", () => reject(new Error("closed without an error")));
         readable.resume();
         expect(await promise).toEqual(expected);
       });

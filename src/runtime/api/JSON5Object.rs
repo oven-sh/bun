@@ -363,10 +363,21 @@ impl Stringifier {
 
     fn append_quoted_string(&mut self, str: &BunString) {
         self.builder.append_lchar(b'\'');
-        for i in 0..str.length() {
+        let len = str.length();
+        for i in 0..len {
             let c = str.char_at(i);
             match c {
-                0x00 => self.builder.append_latin1(b"\\0"),
+                0x00 => {
+                    // `\0` followed by a decimal digit is an octal escape,
+                    // which JSON5 forbids. Spell it `\x00` in that case.
+                    let next_is_digit =
+                        i + 1 < len && matches!(str.char_at(i + 1), 0x30..=0x39 /* '0'..='9' */);
+                    if next_is_digit {
+                        self.builder.append_latin1(b"\\x00");
+                    } else {
+                        self.builder.append_latin1(b"\\0");
+                    }
+                }
                 0x08 => self.builder.append_latin1(b"\\b"),
                 0x09 => self.builder.append_latin1(b"\\t"),
                 0x0a => self.builder.append_latin1(b"\\n"),

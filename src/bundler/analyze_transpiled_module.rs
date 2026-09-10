@@ -503,6 +503,16 @@ impl ModuleInfoSlotTableBuilder {
         }
         ids
     }
+    /// Interns one string (a module key the pre-resolved graph names); returns its table id.
+    pub fn intern(&mut self, s: &[u8], slot_for: impl Fn(&[u8]) -> u32) -> u32 {
+        if let Some(&id) = self.ids.get(s) {
+            return id;
+        }
+        let id = u32::try_from(self.slots.len()).expect("int cast");
+        self.slots.push(slot_for(s));
+        self.ids.insert(s.into(), id);
+        id
+    }
     pub fn count(&self) -> u32 {
         self.slots.len() as u32
     }

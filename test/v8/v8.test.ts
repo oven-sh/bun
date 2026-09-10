@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   canBuildNodeAddons,
+  expectRssDeltaBelow,
   isASAN,
   isBroken,
   isMusl,
@@ -272,6 +273,12 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("ObjectTemplate", () => {
     it("creates objects with internal fields", async () => {
       await checkSameOutput("test_v8_object_template");
+    });
+    it("frees the internal fields of collected instances", async () => {
+      await expectRssDeltaBelow(
+        ["--smol", join(directories.bunRelease, "main.js"), "test_v8_internal_field_object_leak", "[]", "null"],
+        { release: 40, debug: 55 },
+      );
     });
   });
 

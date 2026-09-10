@@ -1092,10 +1092,10 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
     let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
-        return BunString::static_("h2").to_js(global);
+        return Ok(global.common_strings().alpn_h2());
     }
     if strings::eql(slice, b"http/1.1") {
-        return BunString::static_("http/1.1").to_js(global);
+        return Ok(global.common_strings().alpn_http11());
     }
     bun_string_jsc::create_utf8_for_js(global, slice)
 }

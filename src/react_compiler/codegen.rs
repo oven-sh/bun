@@ -663,6 +663,7 @@ fn codegen_reactive_scope(
                 target: cache_ident(),
                 index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         )
@@ -1886,6 +1887,7 @@ fn codegen_base_instruction_value(
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
+                        namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));
@@ -2005,6 +2007,7 @@ fn codegen_base_instruction_value(
                     target: obj,
                     index: prop,
                     optional_chain: None,
+                    is_import_property_use: false,
                 },
                 loc,
             ))
@@ -2026,6 +2029,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2047,6 +2051,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2369,6 +2374,7 @@ fn codegen_function_expression(
                 ),
                 index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         );
@@ -3231,6 +3237,7 @@ fn property_access_expr(
                 target,
                 index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
+                is_import_property_use: false,
             },
             loc,
         ),

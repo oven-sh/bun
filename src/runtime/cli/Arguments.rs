@@ -19,8 +19,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
+use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -40,15 +40,17 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
     if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
+        api::JsxRuntime::Automatic
     } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
-    } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
+        api::JsxRuntime::Classic
     } else {
-        Err(crate::Error::InvalidJSXRuntime)
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Invalid --jsx-runtime: \"{}\", expected \"automatic\" or \"classic\"",
+            BStr::new(s)
+        );
+        Global::exit(1);
     }
 }
 
@@ -342,7 +344,7 @@ const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
         parse_param!("-v, --version                     Print version and exit"),
         parse_param!("--revision                        Print version with revision and exit"),
@@ -360,7 +362,7 @@ const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
     ],
     AUTO_OR_RUN_PARAMS,
@@ -400,6 +402,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -432,6 +437,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
+            "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
         ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -470,7 +478,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
         ),
         parse_param!(
-            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+            "--no-module-preload              With --splitting and --target browser: don't emit <link rel=modulepreload> for the chunks an entry or import() loads"
+        ),
+        parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load. Default: 0 (off); 16384 is a good value for browser builds"
         ),
         parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
@@ -505,6 +516,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
+        ),
+        parse_param!(
+            "--no-deprecated-namespace-object-setters  Make bundled module namespace objects getter-only (the default in a future release)"
         ),
         parse_param!("--minify                         Enable all minification flags"),
         parse_param!("--minify-syntax                  Minify syntax and inline data"),
@@ -819,7 +833,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = PathBuffer::uninit();
+        let mut outbuf = bun_paths::path_buffer_pool::get();
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
@@ -843,7 +857,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
-        let mut phys = PathBuffer::uninit();
+        let mut phys = bun_paths::path_buffer_pool::get();
         match bun_core::getcwd(&mut phys) {
             Ok(p) => Box::<[u8]>::from(p.as_bytes()),
             Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
@@ -854,12 +868,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ) {
         // A deleted cwd must not abort the runtime (Node boots and lets
         // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = PathBuffer::uninit();
+        let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
-        let mut temp = PathBuffer::uninit();
+        let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
@@ -1595,7 +1609,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     api::JsxRuntime::Automatic
                 },
@@ -1611,7 +1625,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .map(Box::<[u8]>::from)
                     .unwrap_or(prev.import_source),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     prev.runtime
                 },
@@ -2058,6 +2072,8 @@ fn parse_build_command_options(
             FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
+    ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
+
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
         ctx.args.target = Some(api::Target::Bun);
@@ -2085,6 +2101,8 @@ fn parse_build_command_options(
 
     ctx.bundler_options.emit_dce_annotations =
         args.flag(b"--emit-dce-annotations") || !ctx.bundler_options.minify_whitespace;
+    ctx.bundler_options.deprecated_namespace_object_setters =
+        !args.flag(b"--no-deprecated-namespace-object-setters");
 
     if !args.options(b"--external").is_empty() {
         opts.external = slice_to_owned(args.options(b"--external"));
@@ -2230,6 +2248,25 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-jit-policy requires --compile", ());
+            Global::crash();
+        }
+        match strings::str_utf8(jit_policy).and_then(|s| s.parse::<f32>().ok()) {
+            Some(scale) if scale.is_finite() && scale >= 1.0 => {
+                ctx.bundler_options.compile_jit_policy = scale;
+            }
+            _ => {
+                Output::err_generic(
+                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number \\>= 1",
+                    format_args!("{}", BStr::new(jit_policy)),
+                );
+                Global::exit(1);
+            }
+        }
     }
 
     {
@@ -2545,6 +2582,9 @@ fn parse_build_command_options(
     if args.flag(b"--no-split-require") {
         ctx.bundler_options.split_require = false;
     }
+    if args.flag(b"--no-module-preload") {
+        ctx.bundler_options.module_preload = false;
+    }
 
     if let Some(size_str) = args.option(b"--min-chunk-size") {
         let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
@@ -2561,7 +2601,7 @@ fn parse_build_command_options(
             Output::err_generic("--min-chunk-size requires --splitting", ());
             Global::crash();
         }
-        ctx.bundler_options.min_chunk_size = min_chunk_size;
+        ctx.bundler_options.min_chunk_size = Some(min_chunk_size);
     }
 
     for (flag, slot) in [

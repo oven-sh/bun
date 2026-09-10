@@ -57,15 +57,9 @@ impl Zone {
         if p.is_null() { None } else { Some(p) }
     }
 
-    #[inline]
-    pub fn malloc_zone_calloc(&self, num_items: usize, size: usize) -> Option<*mut c_void> {
-        let p = malloc_zone_calloc(self, num_items, size);
-        if p.is_null() { None } else { Some(p) }
-    }
-
     /// # Safety
-    /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`
-    /// / `malloc_zone_calloc`) and not already freed.
+    /// `ptr` must have been allocated by this zone (via `malloc_zone_malloc`)
+    /// and not already freed.
     #[inline]
     pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
         // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
@@ -85,11 +79,6 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof for the pure-allocation entry
     // points (alloc/calloc/valloc/memalign return null on failure).
     pub(crate) safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
-    pub(crate) safe fn malloc_zone_calloc(
-        zone: &Zone,
-        num_items: usize,
-        size: usize,
-    ) -> *mut c_void;
     pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
     pub(crate) fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
 }
@@ -103,12 +92,9 @@ mod stubs {
     pub fn malloc_zone_malloc(_: &Zone, _: usize) -> *mut c_void {
         unreachable!()
     }
-    pub fn malloc_zone_calloc(_: &Zone, _: usize, _: usize) -> *mut c_void {
-        unreachable!()
-    }
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) {
         unreachable!()
     }
 }
 #[cfg(not(target_os = "macos"))]
-pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
+pub use stubs::{malloc_zone_free, malloc_zone_malloc};

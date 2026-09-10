@@ -15,17 +15,18 @@ interface PropertyAttribute {
  * Specifies what happens when a method is called with `this` set to a value that is not an instance
  * of the class.
  */
-export enum InvalidThisBehavior {
+export const InvalidThisBehavior = {
   /**
    * Default. Throws a `TypeError`.
    */
-  Throw,
+  Throw: 0,
   /**
    * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
    * work like this.
    */
-  NoOp,
-}
+  NoOp: 1,
+} as const;
+export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
 
 export type Field =
   | ({

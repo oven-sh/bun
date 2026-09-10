@@ -74,7 +74,6 @@ CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGloba
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg0);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1);
-CPP_DECL JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t arg4);
 CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* arg0, unsigned char arg1, EncodedSlice* arg2);
 CPP_DECL bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char arg1);
@@ -124,7 +123,6 @@ CPP_DECL JSC::JSPromise* JSC__JSPromise__create(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, bool arg3);
 CPP_DECL void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
@@ -263,7 +261,9 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 #pragma mark - JSC::VM
 
 CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC::VM* arg0);
-CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0);
+CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0, bool full);
+CPP_DECL void JSC__VM__collectAsyncIdle(JSC::VM* arg0);
+CPP_DECL void JSC__VM__setStartupJITDeferralScale(JSC::VM* arg0, double scale);
 CPP_DECL JSC::VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC::VM* arg0);
@@ -767,9 +767,6 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC::CustomGetterSetter *arg
 BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
-
-BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);

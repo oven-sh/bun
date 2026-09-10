@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import zlib from "node:zlib";
 
@@ -126,6 +127,50 @@ describe("CompressionStream and DecompressionStream", () => {
         const output = decoder.decode(decompressed);
         expect(output).toBe(input);
       }
+    });
+
+    // https://github.com/oven-sh/bun/issues/41439
+    // A flushed brotli chunk must come out in full once its write settles. The
+    // decoder used to stop after one 16 KiB output buffer and keep the rest
+    // until the next compressed chunk was written.
+    test("DecompressionStream delivers the whole flushed chunk before the next write", async () => {
+      const firstLine = Buffer.alloc(40000, "x").toString() + "\n";
+      const secondLine = "done\n";
+
+      const compressor = zlib.createBrotliCompress();
+      const compressed: Buffer[] = [];
+      compressor.on("data", chunk => compressed.push(chunk));
+      await new Promise<void>(resolve => {
+        compressor.write(firstLine);
+        compressor.flush(resolve);
+      });
+      const firstPart = Buffer.concat(compressed.splice(0));
+      compressor.end(secondLine);
+      await once(compressor, "end");
+      const restPart = Buffer.concat(compressed.splice(0));
+
+      const ds = new DecompressionStream("brotli");
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      let received = 0;
+      const readAll = (async () => {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+        }
+      })();
+
+      // The write settles only once every output step of the chunk is done.
+      await writer.write(firstPart);
+      // Let the pending reads above settle before we count.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(received).toBe(firstLine.length);
+
+      await writer.write(restPart);
+      await writer.close();
+      await readAll;
+      expect(received).toBe(firstLine.length + secondLine.length);
     });
   });
 
@@ -563,19 +608,29 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // 32 MiB is beyond any of that, so a source that gets this far was never paused.
   const RUNAWAY = 512;
 
-  /** A pull source of copies of `chunk` that keeps producing until `endAfter()` or RUNAWAY. */
-  function countingSource(chunk: Uint8Array) {
+  /**
+   * A pull source of copies of `chunk` that keeps producing until `endAfter()` or RUNAWAY.
+   * With `numbered`, each copy carries its 1-based pull number in its first 4 bytes, so a
+   * consumer can check that it received every block in order.
+   */
+  function countingSource(chunk: Uint8Array, numbered = false) {
     let pulls = 0;
     let closeAt = RUNAWAY;
+    const block = (n: number) => {
+      const copy = Buffer.from(chunk);
+      if (numbered) copy.writeUInt32BE(n, 0);
+      return copy;
+    };
     const stream = new ReadableStream({
       pull(c) {
         pulls++;
-        c.enqueue(chunk.slice());
+        c.enqueue(block(pulls));
         if (pulls >= closeAt) c.close();
       },
     });
     return {
       stream,
+      block,
       get pulls() {
         return pulls;
       },
@@ -609,28 +664,78 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // (slow client), the transform arm's writeBytes returns a pending promise and
   // the writable side parks on m_nativeSinkReadyPromise. Without that, a fast
   // source with a stalled client fills the sink buffer unboundedly.
+  //
+  // The stalled client is a raw socket paused before it sends the request, so
+  // nothing reads until the stall is observed. The kernel then absorbs only the
+  // server's send buffer plus the client's untouched receive buffer. A fetch()
+  // client would not do: it reads ahead in bursts, and every read lets TCP
+  // receive autotuning grow the window, up to tcp_rmem[2] (32 MiB since Linux
+  // 6.16), which holds RUNAWAY chunks on its own.
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
     // Incompressible data so the gzipped output is ~as large as the input.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
     let source!: ReturnType<typeof countingSource>;
+    const { promise: requested, resolve: onRequest } = Promise.withResolvers<void>();
     await using server = Bun.serve({
       port: 0,
       fetch() {
-        source = countingSource(chunk);
+        source = countingSource(chunk, true);
+        onRequest();
         return new Response(source.stream.pipeThrough(new CompressionStream("gzip")));
       },
     });
-    const res = await fetch(server.url);
-    const reader = res.body!.getReader();
-    await reader.read();
+    const received: Buffer[] = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    using socket = await Bun.connect({
+      hostname: server.url.hostname,
+      port: server.port,
+      socket: {
+        open(s) {
+          s.pause();
+          s.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        },
+        data(_s, data) {
+          received.push(data);
+        },
+        close() {
+          onClose();
+        },
+      },
+    });
+    await requested;
     const pullsWhileStalled = await waitUntilParked(source);
-    if (pullsWhileStalled >= RUNAWAY) await reader.cancel();
     expect(pullsWhileStalled).toBeGreaterThan(0);
     expect(pullsWhileStalled).toBeLessThan(RUNAWAY);
     // Reading again must resume the parked pull loop and run it to the end.
     const closeAt = source.endAfter(8);
-    while (!(await reader.read()).done) {}
+    socket.resume();
+    await closed;
     expect(source.pulls).toBe(closeAt);
+
+    // The stall and the resume must not lose or reorder output: de-chunk the
+    // response and compare the gunzipped body with the numbered source blocks.
+    const raw = Buffer.concat(received);
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const head = raw.subarray(0, headEnd).toString();
+    expect(head).toStartWith("HTTP/1.1 200");
+    expect(head.toLowerCase()).toContain("transfer-encoding: chunked");
+    const body: Buffer[] = [];
+    for (let i = headEnd + 4; ; ) {
+      const sizeEnd = raw.indexOf("\r\n", i);
+      const size = parseInt(raw.subarray(i, sizeEnd).toString(), 16);
+      if (sizeEnd < 0 || Number.isNaN(size)) throw new Error(`malformed chunk framing at offset ${i}`);
+      if (size === 0) break;
+      body.push(raw.subarray(sizeEnd + 2, sizeEnd + 2 + size));
+      i = sizeEnd + 2 + size + 2;
+    }
+    const out = zlib.gunzipSync(Buffer.concat(body));
+    expect(out.byteLength).toBe(closeAt * chunk.byteLength);
+    for (let n = 1; n <= closeAt; n++) {
+      const got = out.subarray((n - 1) * chunk.byteLength, n * chunk.byteLength);
+      if (!got.equals(source.block(n))) {
+        throw new Error(`block ${n} of ${closeAt} is block ${got.readUInt32BE(0)} of the source, or corrupt`);
+      }
+    }
   });
 
   test("request body -> DecompressionStream propagates backpressure to the client", async () => {

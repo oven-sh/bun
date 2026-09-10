@@ -424,13 +424,9 @@ impl Stringifier {
         self.wrote = true;
     }
 
-    /// The chain is one link per table nesting level, and the caller already
-    /// holds one checked `stringify_table_body` frame per level, so this walks
-    /// the chain instead of recursing over it: recursing here doubles the
-    /// depth the stack check accounted for.
+    /// Walks the chain. The caller holds one checked `stringify_table_body`
+    /// frame per link, so recursing here would double that depth.
     fn append_path(&mut self, path: &Path<'_>) {
-        // A header path is a handful of segments in any real document; a
-        // deeper one spills to the heap.
         let mut chain: SmallVec<[&BunString; 16]> = SmallVec::new();
         let mut next = Some(path);
         while let Some(link) = next {

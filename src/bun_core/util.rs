@@ -2197,13 +2197,9 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
-    /// Stack a check leaves unused, for the work the caller does before it
-    /// reaches the next check. One heap allocation needs most of it: a
-    /// `WTF::StringBuilder` growth reallocates through `libpas`, and that
-    /// thread-local-cache slow path is ~35 frames. A sanitizer build pads
-    /// every frame in it, so the same path measures ~160 KB there against a
-    /// few KB in a release build. The sanitizer reserve is 3x that measured
-    /// depth, and it only costs recursion depth in builds nobody ships.
+    /// Stack reserved for the work a frame does before the next check. One
+    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
+    /// path that measures ~160 KB under a sanitizer and a few KB without one.
     const THRESHOLD: usize = if cfg!(windows) {
         256 * 1024
     } else {

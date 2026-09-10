@@ -23,13 +23,13 @@ use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
@@ -83,7 +83,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
@@ -526,7 +526,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = PathBuffer::uninit();
+    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
     // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
@@ -656,7 +656,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -742,12 +742,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
+                                    let str = BunString::create_format(format_args!(
                                         "bake:/{}",
                                         BStr::new(without_prefix)
                                     ));
-                                    str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] =
+                                        str.thread_isolated_copy();
                                 }
                             }
 
@@ -770,7 +770,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::Sourcemap => {}
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
-                        | OutputKind::BytecodeStringTable => {}
+                        | OutputKind::BytecodeStringTable
+                        | OutputKind::ModuleInfoStringTable
+                        | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }
@@ -1133,7 +1135,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             // (slice iterators are ExactSize + DoubleEnded).
             let param_info_array =
                 JSValue::create_array_from_iter(global, params_buf.iter().rev(), |param| {
-                    jsc::bun_string_jsc::create_utf8_for_js(global, param)
+                    bun_string_jsc::create_utf8_for_js(global, param)
                 })
                 .map_err(js_err)?;
             route_param_info
@@ -1162,7 +1164,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            &BunString::init(&*root_dir_path),
+            &BunString::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,
@@ -1338,7 +1340,7 @@ extern "C" fn BakeProdResolve(
             bun_core::fmt::quote(specifier.slice()),
             bun_core::fmt::quote(referrer.slice()),
         ));
-        return BunString::dead();
+        return BunString::DEAD;
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
@@ -1603,7 +1605,7 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &BunString) -> BunString {
             .value
             .to_bun_string_ref();
     }
-    BunString::dead()
+    BunString::DEAD
 }
 
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)

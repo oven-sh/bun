@@ -127,6 +127,12 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+  /**
+   * Working directory of the dev server process, relative to the test root.
+   * `Bun.serve` HTML routes use this as the project root, so files outside of
+   * it get `../` relative paths.
+   */
+  cwd?: string;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
   /**
@@ -2080,8 +2086,8 @@ function testImpl<T extends DevServerTest>(
     };
 
     await using devProcess = Bun.spawn({
-      cwd: root,
-      cmd: [process.execPath, "./harness_start.ts"],
+      cwd: path.join(root, options.cwd ?? "."),
+      cmd: [process.execPath, path.join(root, "harness_start.ts")],
       env: mergeWindowEnvs([
         bunEnv,
         {

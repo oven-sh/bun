@@ -21,9 +21,9 @@ impl From<OptionValueType> for &'static str {
 impl super::validators::StringEnum for OptionValueType {
     const VALUES_INFO: &'static str = "boolean|string";
     fn from_bun_string(s: &String) -> Option<Self> {
-        if s.eql_comptime(b"boolean") {
+        if s.eq_ascii(b"boolean") {
             Some(Self::Boolean)
-        } else if s.eql_comptime(b"string") {
+        } else if s.eq_ascii(b"string") {
             Some(Self::String)
         } else {
             None
@@ -52,7 +52,7 @@ impl Default for OptionDefinition<'_> {
     fn default() -> Self {
         Self {
             long_name: StringView::EMPTY,
-            short_name: String::empty(),
+            short_name: String::EMPTY,
             r#type: OptionValueType::Boolean,
             multiple: false,
             default_value: None,
@@ -84,21 +84,21 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
     let len = arg.length();
 
     if len == 2 {
-        if arg.has_prefix_comptime(b"-") {
-            return if arg.has_prefix_comptime(b"--") {
+        if arg.starts_with_ascii(b"-") {
+            return if arg.starts_with_ascii(b"--") {
                 TokenSubtype::OptionTerminator
             } else {
                 TokenSubtype::LoneShortOption
             };
         }
     } else if len > 2 {
-        if arg.has_prefix_comptime(b"--") {
+        if arg.starts_with_ascii(b"--") {
             return if arg.index_of_ascii_char(b'=').unwrap_or(0) >= 3 {
                 TokenSubtype::LongOptionAndValue
             } else {
                 TokenSubtype::LoneLongOption
             };
-        } else if arg.has_prefix_comptime(b"-") {
+        } else if arg.starts_with_ascii(b"-") {
             let first_char = arg.substring_with_len(1, 2);
             let option_idx = find_option_by_short_name(&first_char, options);
             if let Some(i) = option_idx {
@@ -120,7 +120,7 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
 /// the option argument, like `--port --verbose` when `port` of type:string.
 /// In strict mode we throw errors if value is option-like.
 pub(crate) fn is_option_like_value(value: &String) -> bool {
-    value.length() > 1 && value.has_prefix_comptime(b"-")
+    value.length() > 1 && value.starts_with_ascii(b"-")
 }
 
 /// Find the long option associated with a short option. Looks for a configured

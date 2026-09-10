@@ -722,6 +722,8 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.
@@ -2012,6 +2014,7 @@ impl Data {
                     optional_chain: el.optional_chain,
                     can_be_removed_if_unused: el.can_be_removed_if_unused,
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EDot(StoreRef::from_bump(item)))
             }
@@ -2020,6 +2023,7 @@ impl Data {
                     target: el.target.deep_clone_no_detach(bump)?,
                     index: el.index.deep_clone_no_detach(bump)?,
                     optional_chain: el.optional_chain,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
@@ -2123,6 +2127,7 @@ impl Data {
                     expr: el.expr.deep_clone_no_detach(bump)?,
                     options: el.options.deep_clone_no_detach(bump)?,
                     import_record_index: el.import_record_index,
+                    namespace_ref: el.namespace_ref,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }

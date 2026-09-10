@@ -324,10 +324,7 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -406,7 +403,7 @@ impl MkdirCtx for MkdirVerboseVTable {
         let out = unsafe { &mut *self.inner };
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let str = bun_paths::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
             out.extend_from_slice(str.as_bytes());
             out.push(b'\n');

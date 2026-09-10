@@ -87,24 +87,11 @@ void CryptoErrorList::capture()
     }
 }
 
-void CryptoErrorList::add(WTF::String error)
-{
-    errors_.push_back(error);
-}
-
 std::optional<WTF::String> CryptoErrorList::pop_back()
 {
     if (errors_.empty()) return std::nullopt;
     WTF::String error = errors_.back();
     errors_.pop_back();
-    return error;
-}
-
-std::optional<WTF::String> CryptoErrorList::pop_front()
-{
-    if (errors_.empty()) return std::nullopt;
-    WTF::String error = errors_.front();
-    errors_.pop_front();
     return error;
 }
 
@@ -278,17 +265,6 @@ size_t BignumPointer::byteLength() const
 {
     if (bn_ == nullptr) return 0;
     return BN_num_bytes(bn_.get());
-}
-
-DataPointer BignumPointer::encode() const
-{
-    return EncodePadded(bn_.get(), byteLength());
-}
-
-size_t BignumPointer::encodeInto(unsigned char* out) const
-{
-    if (!bn_) return 0;
-    return BN_bn2bin(bn_.get(), out);
 }
 
 DataPointer BignumPointer::Encode(const BIGNUM* bn)
@@ -1183,13 +1159,6 @@ std::optional<WTF::String> X509View::getFingerprint(
     return std::nullopt;
 }
 
-X509Pointer X509View::clone() const
-{
-    ClearErrorOnReturn clear_error_on_return;
-    if (!cert_) return {};
-    return X509Pointer(X509_dup(const_cast<X509*>(cert_)));
-}
-
 Result<X509Pointer, int> X509Pointer::Parse(
     Buffer<const unsigned char> buffer)
 {
@@ -1289,12 +1258,6 @@ BIOPointer BIOPointer::NewMem()
     return BIOPointer(BIO_new(BIO_s_mem()));
 }
 
-BIOPointer BIOPointer::New(const BIO_METHOD* method)
-{
-    if (method == nullptr) return {};
-    return BIOPointer(BIO_new(method));
-}
-
 BIOPointer BIOPointer::New(const void* data, size_t len)
 {
     return BIOPointer(BIO_new_mem_buf(data, len));
@@ -1305,13 +1268,6 @@ BIOPointer BIOPointer::New(const BIGNUM* bn)
     auto res = NewMem();
     if (!res || !BN_print(res.get(), bn)) return {};
     return res;
-}
-
-int BIOPointer::Write(BIOPointer* bio, WTF::StringView message)
-{
-    if (bio == nullptr || !*bio) return 0;
-    auto messageUtf8 = message.utf8();
-    return BIO_write(bio->get(), messageUtf8.data(), messageUtf8.length());
 }
 
 // ============================================================================
@@ -1677,10 +1633,6 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
-    //     return EVP_ripemd160();
-    // }
-
     auto nameUtf8 = name.utf8();
     return EVP_get_digestbyname(nameUtf8.data());
 }
@@ -1875,12 +1827,6 @@ int EVPKeyPointer::id() const
 int EVPKeyPointer::base_id() const
 {
     return base_id(get());
-}
-
-int EVPKeyPointer::bits() const
-{
-    if (get() == nullptr) return 0;
-    return EVP_PKEY_bits(get());
 }
 
 size_t EVPKeyPointer::size() const
@@ -2496,11 +2442,6 @@ const Cipher Cipher::FromCtx(const CipherCtxPointer& ctx)
     return Cipher(EVP_CIPHER_CTX_cipher(ctx.get()));
 }
 
-const Cipher& Cipher::EMPTY()
-{
-    static const Cipher cipher = Cipher();
-    return cipher;
-}
 const Cipher& Cipher::AES_128_CBC()
 {
     static const Cipher cipher = Cipher::FromNid(NID_aes_128_cbc);
@@ -3056,14 +2997,6 @@ ECKeyPointer ECKeyPointer::NewByCurveName(int nid)
     return ECKeyPointer(EC_KEY_new_by_curve_name(nid));
 }
 
-ECKeyPointer ECKeyPointer::New(const EC_GROUP* group)
-{
-    auto ptr = ECKeyPointer(EC_KEY_new());
-    if (!ptr) return {};
-    if (!EC_KEY_set_group(ptr.get(), group)) return {};
-    return ptr;
-}
-
 // ============================================================================
 
 EVPKeyCtxPointer::EVPKeyCtxPointer()
@@ -3257,21 +3190,6 @@ bool EVPKeyCtxPointer::initForDecrypt()
 {
     if (!ctx_) return false;
     return EVP_PKEY_decrypt_init(ctx_.get()) == 1;
-}
-
-DataPointer EVPKeyCtxPointer::derive() const
-{
-    if (!ctx_) return {};
-    size_t len = 0;
-    if (EVP_PKEY_derive(ctx_.get(), nullptr, &len) != 1) return {};
-    auto data = DataPointer::Alloc(len);
-    if (!data) return {};
-    if (EVP_PKEY_derive(
-            ctx_.get(), static_cast<unsigned char*>(data.get()), &len)
-        != 1) {
-        return {};
-    }
-    return data;
 }
 
 EVPKeyPointer EVPKeyCtxPointer::paramgen() const
@@ -3489,21 +3407,6 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
 }
 
 // ============================================================================
-
-Ec::Ec()
-    : ec_(nullptr)
-{
-}
-
-Ec::Ec(OSSL3_CONST EC_KEY* key)
-    : ec_(key)
-{
-}
-
-const EC_GROUP* Ec::getGroup() const
-{
-    return ECKeyPointer::GetGroup(ec_);
-}
 
 int Ec::GetCurveIdFromName(const char* name)
 {
@@ -3764,15 +3667,6 @@ bool HMACCtxPointer::update(const Buffer<const void>& buf)
                static_cast<const unsigned char*>(buf.data),
                buf.len)
         == 1;
-}
-
-DataPointer HMACCtxPointer::digest()
-{
-    auto data = DataPointer::Alloc(EVP_MAX_MD_SIZE);
-    if (!data) return {};
-    Buffer<void> buf = data;
-    if (!digestInto(&buf)) return {};
-    return data.resize(buf.len);
 }
 
 bool HMACCtxPointer::digestInto(Buffer<void>* buf)

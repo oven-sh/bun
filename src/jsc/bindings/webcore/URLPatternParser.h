@@ -102,8 +102,12 @@ String generateSegmentWildcardRegexp(const URLPatternStringOptions&);
 String escapeRegexString(StringView);
 ASCIILiteral convertModifierToString(Modifier);
 std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions&);
-String generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
-String escapePatternString(StringView input);
+
+// Both fail with an OutOfMemoryError when the string they build would be longer
+// than String::MaxLength. An escape adds a character, so an input below that
+// limit can escape to a result above it.
+ExceptionOr<String> generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
+ExceptionOr<String> escapePatternString(StringView input);
 bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst);
 
 } // namespace URLPatternUtilities

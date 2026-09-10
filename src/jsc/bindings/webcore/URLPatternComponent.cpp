@@ -63,7 +63,10 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
     if (!regularExpression->isValid())
         return Exception { ExceptionCode::TypeError, "Unable to create RegExp object regular expression from provided URLPattern string."_s };
 
-    String patternString = generatePatternString(partList, options);
+    auto maybePatternString = generatePatternString(partList, options);
+    if (maybePatternString.hasException())
+        return maybePatternString.releaseException();
+    String patternString = maybePatternString.releaseReturnValue();
 
     bool hasRegexGroups = partList.containsIf([](auto& part) {
         return part.type == PartType::Regexp;

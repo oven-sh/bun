@@ -45,7 +45,7 @@ namespace WebCore {
 using namespace JSC;
 
 // https://urlpattern.spec.whatwg.org/#process-a-base-url-string
-static String processBaseURLString(StringView input, BaseURLStringType type)
+static ExceptionOr<String> processBaseURLString(StringView input, BaseURLStringType type)
 {
     if (type != BaseURLStringType::Pattern)
         return input.toString();
@@ -82,27 +82,50 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         if (!baseURL.isValid())
             return Exception { ExceptionCode::TypeError, "Invalid baseURL."_s };
 
-        if (init.protocol.isNull())
-            result.protocol = processBaseURLString(baseURL.protocol(), type);
+        if (init.protocol.isNull()) {
+            auto protocolResult = processBaseURLString(baseURL.protocol(), type);
+
+            if (protocolResult.hasException())
+                return protocolResult.releaseException();
+
+            result.protocol = protocolResult.releaseReturnValue();
+        }
 
         if (type != BaseURLStringType::Pattern
             && init.protocol.isNull()
             && init.hostname.isNull()
             && init.port.isNull()
-            && init.username.isNull())
-            result.username = processBaseURLString(baseURL.user(), type);
+            && init.username.isNull()) {
+            auto usernameResult = processBaseURLString(baseURL.user(), type);
+
+            if (usernameResult.hasException())
+                return usernameResult.releaseException();
+
+            result.username = usernameResult.releaseReturnValue();
+        }
 
         if (type != BaseURLStringType::Pattern
             && init.protocol.isNull()
             && init.hostname.isNull()
             && init.port.isNull()
             && init.username.isNull()
-            && init.password.isNull())
-            result.password = processBaseURLString(baseURL.password(), type);
+            && init.password.isNull()) {
+            auto passwordResult = processBaseURLString(baseURL.password(), type);
+
+            if (passwordResult.hasException())
+                return passwordResult.releaseException();
+
+            result.password = passwordResult.releaseReturnValue();
+        }
 
         if (init.protocol.isNull()
             && init.hostname.isNull()) {
-            result.hostname = processBaseURLString(!baseURL.host().isNull() ? baseURL.host() : StringView { emptyString() }, type);
+            auto hostnameResult = processBaseURLString(!baseURL.host().isNull() ? baseURL.host() : StringView { emptyString() }, type);
+
+            if (hostnameResult.hasException())
+                return hostnameResult.releaseException();
+
+            result.hostname = hostnameResult.releaseReturnValue();
         }
 
         if (init.protocol.isNull()
@@ -116,7 +139,12 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.hostname.isNull()
             && init.port.isNull()
             && init.pathname.isNull()) {
-            result.pathname = processBaseURLString(baseURL.path(), type);
+            auto pathnameResult = processBaseURLString(baseURL.path(), type);
+
+            if (pathnameResult.hasException())
+                return pathnameResult.releaseException();
+
+            result.pathname = pathnameResult.releaseReturnValue();
         }
 
         if (init.protocol.isNull()
@@ -124,7 +152,12 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.port.isNull()
             && init.pathname.isNull()
             && init.search.isNull()) {
-            result.search = processBaseURLString(baseURL.hasQuery() ? baseURL.query() : StringView { emptyString() }, type);
+            auto searchResult = processBaseURLString(baseURL.hasQuery() ? baseURL.query() : StringView { emptyString() }, type);
+
+            if (searchResult.hasException())
+                return searchResult.releaseException();
+
+            result.search = searchResult.releaseReturnValue();
         }
 
         if (init.protocol.isNull()
@@ -133,7 +166,12 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.pathname.isNull()
             && init.search.isNull()
             && init.hash.isNull()) {
-            result.hash = processBaseURLString(baseURL.hasFragmentIdentifier() ? baseURL.fragmentIdentifier() : StringView { emptyString() }, type);
+            auto hashResult = processBaseURLString(baseURL.hasFragmentIdentifier() ? baseURL.fragmentIdentifier() : StringView { emptyString() }, type);
+
+            if (hashResult.hasException())
+                return hashResult.releaseException();
+
+            result.hash = hashResult.releaseReturnValue();
         }
     }
 
@@ -174,11 +212,24 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.pathname = init.pathname;
 
         if (!baseURL.isNull() && !baseURL.hasOpaquePath() && !isAbsolutePathname(result.pathname, type)) {
-            auto baseURLPath = processBaseURLString(baseURL.path(), type);
+            auto baseURLPathResult = processBaseURLString(baseURL.path(), type);
+
+            if (baseURLPathResult.hasException())
+                return baseURLPathResult.releaseException();
+
+            auto baseURLPath = baseURLPathResult.releaseReturnValue();
             size_t slashIndex = baseURLPath.reverseFind('/');
 
-            if (slashIndex != notFound)
-                result.pathname = makeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
+            if (slashIndex != notFound) {
+                // The base path and the pathname are each below String::MaxLength,
+                // but their sum does not have to be.
+                auto joined = tryMakeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
+
+                if (joined.isNull()) [[unlikely]]
+                    return Exception { ExceptionCode::OutOfMemoryError };
+
+                result.pathname = WTF::move(joined);
+            }
         }
         auto pathResult = processPathname(result.pathname, result.protocol, type);
 

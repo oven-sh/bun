@@ -1,6 +1,8 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { totalmem } from "node:os";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -206,4 +208,64 @@ describe("URLPattern", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
     });
   });
+});
+
+// The constructor builds each component pattern from the baseURL. Escaping adds
+// a character per escaped character, and a relative pathname is joined onto the
+// base path, so an input below the 2147483647 character string limit produces a
+// result above it. Both cases must throw a catchable error, not abort.
+describe("pattern string above the string length limit", () => {
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  const threw = { stdout: "RangeError Out of memory", stderr: "", exitCode: 0 };
+
+  // The child holds a pathname of about 2.1 GB, so it needs more than the
+  // default per-test timeout on a loaded machine.
+  test.skipIf(totalmem() < 8 * 1024 ** 3)(
+    "the base path joined with a relative pathname throws",
+    async () => {
+      expect(
+        await run(`
+          const basePath = "/" + "x".repeat(1 << 20) + "/";
+          const pathname = "b".repeat(2 ** 31 - (1 << 19));
+          try {
+            new URLPattern({ pathname, baseURL: "https://e.com" + basePath });
+            console.log("no error");
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        `),
+      ).toEqual(threw);
+    },
+    60_000,
+  );
+
+  // The child commits about 6 GB, and escaping 2^30 characters takes minutes in
+  // a debug or ASAN build.
+  test.skipIf(isDebug || isASAN || totalmem() < 16 * 1024 ** 3)(
+    "a base path that escapes past the limit throws",
+    async () => {
+      expect(
+        await run(`
+          const path = "(".repeat(2 ** 30 + 16);
+          try {
+            new URLPattern({ baseURL: "https://e.com/" + path });
+            console.log("no error");
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        `),
+      ).toEqual(threw);
+    },
+    120_000,
+  );
 });

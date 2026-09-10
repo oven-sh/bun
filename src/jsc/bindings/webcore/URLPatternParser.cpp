@@ -427,10 +427,12 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
     return { result.toString(), WTF::move(nameList) };
 }
 
+static void appendEscapedPatternString(StringBuilder&, StringView);
+
 // https://urlpattern.spec.whatwg.org/#generate-a-pattern-string
-String generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions& options)
+ExceptionOr<String> generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions& options)
 {
-    StringBuilder result;
+    StringBuilder result { OverflowPolicy::RecordOverflow };
 
     for (size_t index = 0; index < partList.size(); ++index) {
         auto& part = partList[index];
@@ -445,11 +447,13 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
 
         if (part.type == PartType::FixedText) {
             if (part.modifier == Modifier::None) {
-                result.append(escapePatternString(part.value));
+                appendEscapedPatternString(result, part.value);
 
                 continue;
             }
-            result.append('{', escapePatternString(part.value), '}', convertModifierToString(part.modifier));
+            result.append('{');
+            appendEscapedPatternString(result, part.value);
+            result.append('}', convertModifierToString(part.modifier));
 
             continue;
         }
@@ -479,7 +483,7 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
         if (needsGrouping)
             result.append('{');
 
-        result.append(escapePatternString(part.prefix));
+        appendEscapedPatternString(result, part.prefix);
 
         if (hasCustomName)
             result.append(':', part.name);
@@ -500,7 +504,7 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
         if (part.type == PartType::SegmentWildcard && hasCustomName && !part.suffix.isEmpty() && isValidNameCodepoint(*StringView(part.suffix).codePoints().begin(), IsFirst::Yes))
             result.append('\\');
 
-        result.append(escapePatternString(part.suffix));
+        appendEscapedPatternString(result, part.suffix);
 
         if (needsGrouping)
             result.append('}');
@@ -508,16 +512,26 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
         result.append(convertModifierToString(part.modifier));
     }
 
-    return result.toString();
+    if (result.hasOverflowed()) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
+
+    return String { result.toString() };
 }
 
 template<typename CharacterType>
-static String escapePatternStringForCharacters(std::span<const CharacterType> characters)
+static void appendEscapedPatternStringForCharacters(StringBuilder& result, std::span<const CharacterType> characters)
 {
     static constexpr auto escapeCharacters = std::to_array<const CharacterType>({ '+', '*', '?', ':', '(', ')', '\\', '{', '}' }); // NOLINT
 
-    StringBuilder result;
-    result.reserveCapacity(characters.size());
+    if (result.hasOverflowed()) [[unlikely]]
+        return;
+
+    // An escape adds a character, so the result is never shorter than the input.
+    // A capacity above String::MaxLength cannot be reserved, and the appends
+    // below record that overflow.
+    auto requiredCapacity = static_cast<uint64_t>(result.length()) + characters.size();
+    if (requiredCapacity <= String::MaxLength)
+        result.reserveCapacity(static_cast<unsigned>(requiredCapacity));
 
     for (auto character : characters) {
         if (std::ranges::find(escapeCharacters, character) != escapeCharacters.end())
@@ -525,19 +539,28 @@ static String escapePatternStringForCharacters(std::span<const CharacterType> ch
 
         result.append(character);
     }
-
-    return result.toString();
 }
 
 // https://urlpattern.spec.whatwg.org/#escape-a-pattern-string
-String escapePatternString(StringView input)
+static void appendEscapedPatternString(StringBuilder& result, StringView input)
 {
     // FIXME: Ensure input only contains ASCII based on spec after the parser (or tokenizer) knows to filter non-ASCII input.
 
     if (input.is8Bit())
-        return escapePatternStringForCharacters(input.span8());
+        appendEscapedPatternStringForCharacters(result, input.span8());
+    else
+        appendEscapedPatternStringForCharacters(result, input.span16());
+}
 
-    return escapePatternStringForCharacters(input.span16());
+ExceptionOr<String> escapePatternString(StringView input)
+{
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    appendEscapedPatternString(result, input);
+
+    if (result.hasOverflowed()) [[unlikely]]
+        return Exception { ExceptionCode::OutOfMemoryError };
+
+    return String { result.toString() };
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-valid-name-code-point

@@ -117,9 +117,44 @@ describe("ClientHttp2Stream.close(code) event sequence after data", () => {
   }
 });
 
-// close(code) on a non-pending stream that has not received any response yet (request() after
-// remoteSettings so the id is assigned): same contract. Uses a real http2 server that never
-// responds.
+// Closes a request against a real http2 server that never responds. With `whenConnected` the
+// request is made after remoteSettings, so it has an id (not pending); without it the request is
+// made before the session connects, so it is still pending (no id) when close() runs.
+async function closeWithoutResponse(code: number, whenConnected: boolean): Promise<string[]> {
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.on("close", () => {});
+  });
+  const port = await listen(server);
+  try {
+    const events: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", reject);
+    const run = () => {
+      const req = client.request({ ":path": "/" }, { endStream: true });
+      assert.strictEqual(req.pending, !whenConnected);
+      req.on("response", () => events.push("response"));
+      req.on("data", () => events.push("data"));
+      req.on("end", () => events.push("end"));
+      req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+      req.on("close", () => {
+        events.push("close:" + req.rstCode);
+        client.close();
+        resolve(events);
+      });
+      req.close(code);
+    };
+    if (whenConnected) client.on("remoteSettings", run);
+    else run();
+    return await promise;
+  } finally {
+    server.close();
+  }
+}
+
+// Non-pending stream (id assigned) with no response yet: same contract as after data.
 describe("ClientHttp2Stream.close(code) before response", () => {
   for (const [code, expected] of [
     [NGHTTP2_NO_ERROR, ["end", "close:0"]],
@@ -128,34 +163,22 @@ describe("ClientHttp2Stream.close(code) before response", () => {
     [NGHTTP2_ENHANCE_YOUR_CALM, ["error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
   ] as const) {
     test(`close(${code})`, async () => {
-      const server = http2.createServer();
-      server.on("stream", stream => {
-        stream.on("error", () => {});
-        stream.on("close", () => {});
-      });
-      const port = await listen(server);
-      try {
-        const events: string[] = [];
-        const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-        const client = http2.connect(`http://127.0.0.1:${port}`);
-        client.on("error", reject);
-        client.on("remoteSettings", () => {
-          const req = client.request({ ":path": "/" }, { endStream: true });
-          req.on("response", () => events.push("response"));
-          req.on("data", () => events.push("data"));
-          req.on("end", () => events.push("end"));
-          req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
-          req.on("close", () => {
-            events.push("close:" + req.rstCode);
-            client.close();
-            resolve(events);
-          });
-          req.close(code);
-        });
-        assert.deepStrictEqual(await promise, expected);
-      } finally {
-        server.close();
-      }
+      assert.deepStrictEqual(await closeWithoutResponse(code, true), expected);
+    });
+  }
+});
+
+// Pending stream (no id yet): node's finishCloseStream ends the readable for every code, so 'end'
+// precedes the synthesized 'error' here.
+describe("ClientHttp2Stream.close(code) while pending", () => {
+  for (const [code, expected] of [
+    [NGHTTP2_NO_ERROR, ["end", "close:0"]],
+    [NGHTTP2_CANCEL, ["end", "close:8"]],
+    [NGHTTP2_INTERNAL_ERROR, ["end", "error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+    [NGHTTP2_ENHANCE_YOUR_CALM, ["end", "error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
+  ] as const) {
+    test(`close(${code})`, async () => {
+      assert.deepStrictEqual(await closeWithoutResponse(code, false), expected);
     });
   }
 });

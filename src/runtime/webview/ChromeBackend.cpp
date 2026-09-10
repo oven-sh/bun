@@ -849,8 +849,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // The reply names the main frame, the one Page.navigate targets.
         if (view->m_mainFrameId.isEmpty())
             view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(result, { "frameId", 7 })));
-        // Don't settle — the commit does (handleEvent). No loaderId means no
-        // document load: the navigation is same-document.
+        // Don't settle — the commit does. A reply without loaderId loads no document.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::Unknown) {
             view->m_chromeNavigationKind = jsonField(result, { "loaderId", 8 }).empty()
                 ? ChromeNavigationKind::SameDocument
@@ -1163,9 +1162,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.frameStartedNavigating — Chrome classifies a navigation before it
-    // commits. "sameDocument" and "historySameDocument" keep the document;
-    // every other navigationType loads one.
+    // Page.frameStartedNavigating — Chrome classifies a navigation before it commits.
     if (method.size() == 27 && memcmp(method.data(), "Page.frameStartedNavigating", 27) == 0) {
         if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
         // Nothing of the view's is in flight: the page started this one.
@@ -1179,9 +1176,9 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.frameNavigated — cross-document commit. Update m_url and fire
-    // onNavigated. Same timing as WKWebView's NavDone (didFinishNavigation):
-    // the URL is now the new document, resources may still be loading.
+    // Page.frameNavigated — commit. Update m_url and fire onNavigated.
+    // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
+    // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
         if (!isMainFrame(view, jsonString(jsonField(frame, { "id", 2 })))) return;
@@ -1192,8 +1189,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
             ? WTF::String::fromUTF8(url)
             : makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
         view->m_url = urlStr;
-        // m_loading stays true — loadEventFired flips it. A new document is
-        // live, so its load event ends whatever the view has in flight.
+        // m_loading stays true — loadEventFired flips it.
+        // A new document is live: its load event ends whatever the view has in flight.
         if (view->m_chromeNavigationKind != ChromeNavigationKind::NotRequested)
             view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
 
@@ -1204,23 +1201,20 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.navigatedWithinDocument — same-document commit (#fragment,
-    // history.pushState, a traversal inside one document). No load event
-    // follows, so a same-document navigation ends here.
+    // Page.navigatedWithinDocument — same-document commit (#fragment, pushState). No load event follows.
     if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0) {
         if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
         auto urlStr = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
         view->m_url = urlStr;
 
-        // CrossDocument waits for its load event and NotRequested has asked
-        // Chrome for nothing: then the page did this on its own. Decided
-        // before onNavigated runs user code, which may navigate() next.
+        // CrossDocument waits for its load event; NotRequested asked for nothing, so the page did this.
         auto kind = view->m_chromeNavigationKind;
         if (view->m_pendingNavigate && (kind == ChromeNavigationKind::Unknown || kind == ChromeNavigationKind::SameDocument)) {
             view->m_loading = false;
             sendTitleFetch(view);
         }
 
+        // After the settle decision: the callback is user code and may navigate() next.
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
                 JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));

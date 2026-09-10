@@ -46,14 +46,11 @@ enum class ScreenshotEncoding : uint8_t {
 };
 
 // Chrome: which event ends the navigation the view has in flight.
-// CrossDocument ends on Page.loadEventFired, SameDocument (a #fragment, a
-// history.pushState entry) on Page.navigatedWithinDocument, Unknown on
-// whichever comes first, NotRequested on neither.
 enum class ChromeNavigationKind : uint8_t {
-    NotRequested, // slot empty, or goBack()/goForward() still looking up the entry
-    Unknown, // command sent, Chrome has not classified it yet
-    SameDocument,
-    CrossDocument,
+    NotRequested, // nothing asked of Chrome (slot empty, or goBack()/goForward() mid history lookup): no event ends it
+    Unknown, // command sent, not yet classified: Page.loadEventFired or Page.navigatedWithinDocument ends it
+    SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
+    CrossDocument, // Page.loadEventFired ends it
 };
 
 inline const char* screenshotMimeType(ScreenshotFormat f)

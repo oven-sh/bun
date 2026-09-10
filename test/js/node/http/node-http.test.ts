@@ -4338,6 +4338,53 @@ describe("https.Server adopts connections fed through emit()", () => {
       front.close();
     }
   });
+
+  it("a fed connection runs the server's SNICallback and ALPNCallback", async () => {
+    const calls: string[] = [];
+    const server = createHttpsServer(
+      {
+        ...tlsCert,
+        SNICallback: (servername, cb) => {
+          calls.push(`SNI ${servername}`);
+          cb(null, undefined);
+        },
+        ALPNCallback: ({ servername, protocols }) => {
+          calls.push(`ALPN ${servername} ${protocols.join(",")}`);
+          return "http/1.1";
+        },
+      },
+      (req, res) => res.end(`${(req.socket as TLSSocket).alpnProtocol} ${(req.socket as TLSSocket).servername}`),
+    );
+    const front = createNetServer(socket => server.emit("connection", socket));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    try {
+      const result = await new Promise<string>((resolve, reject) => {
+        https
+          .get(
+            {
+              host: "127.0.0.1",
+              port: (front.address() as AddressInfo).port,
+              servername: "localhost",
+              ALPNProtocols: ["h2", "http/1.1"],
+              rejectUnauthorized: false,
+              agent: false,
+            },
+            res => {
+              let text = "";
+              res.setEncoding("utf8");
+              res.on("data", d => (text += d));
+              res.on("end", () => resolve(`${res.statusCode} ${(res.socket as TLSSocket).alpnProtocol} ${text}`));
+            },
+          )
+          .on("error", reject);
+      });
+      expect(result).toBe("200 http/1.1 http/1.1 localhost");
+      // The TLS library decides which ClientHello extension it processes first.
+      expect(calls.sort()).toEqual(["ALPN localhost h2,http/1.1", "SNI localhost"]);
+    } finally {
+      front.close();
+    }
+  });
 });
 
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still

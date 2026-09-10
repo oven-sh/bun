@@ -1047,6 +1047,8 @@ struct JsCallbackRenderer<'a> {
     // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
+    /// Number of ul/ol entries currently on `stack`.
+    list_depth: u32,
     callbacks: Callbacks,
     heading_tracker: md::helpers::HeadingIdTracker,
     stack_check: StackCheck,
@@ -1146,6 +1148,7 @@ impl<'a> JsCallbackRenderer<'a> {
             global_object,
             src_text,
             stack: Vec::new(),
+            list_depth: 0,
             callbacks: Callbacks::default(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
@@ -1274,6 +1277,9 @@ impl<'a> JsCallbackRenderer<'a> {
         if block_type == md::BlockType::H {
             self.heading_tracker.enter_heading();
         }
+        if matches!(block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth += 1;
+        }
 
         // For li: record its 0-based index within the parent list, then
         // increment the parent's counter so the next sibling gets index+1.
@@ -1300,6 +1306,12 @@ impl<'a> JsCallbackRenderer<'a> {
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
+        }
+
+        // Leaving a ul/ol: drop it from the count first so `list_depth` is the
+        // number of *enclosing* lists while its meta is built.
+        if matches!(block_type, md::BlockType::Ul | md::BlockType::Ol) {
+            self.list_depth = self.list_depth.saturating_sub(1);
         }
 
         let callback = self.get_block_callback(block_type);
@@ -1457,24 +1469,6 @@ impl<'a> JsCallbackRenderer<'a> {
     // Metadata object creation
     // ========================================
 
-    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
-    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
-    /// own depth which excludes self).
-    fn count_list_depth(&self) -> u32 {
-        let mut depth: u32 = 0;
-        // Skip the top entry (self) — we want enclosing lists only.
-        let len = self.stack.len();
-        if len < 2 {
-            return 0;
-        }
-        for entry in &self.stack[0..len - 1] {
-            if entry.block_type == md::BlockType::Ul || entry.block_type == md::BlockType::Ol {
-                depth += 1;
-            }
-        }
-        depth
-    }
-
     /// Returns the parent ul/ol entry for the current li (top of stack).
     /// Returns None if the stack shape is unexpected.
     fn parent_list(&self) -> Option<&CallbackStackEntry> {
@@ -1513,7 +1507,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     true,
                     JSValue::js_number(data as f64),
-                    self.count_list_depth(),
+                    self.list_depth,
                 )))
             }
             md::BlockType::Ul => {
@@ -1522,7 +1516,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     g,
                     false,
                     JSValue::UNDEFINED,
-                    self.count_list_depth(),
+                    self.list_depth,
                 )))
             }
             md::BlockType::Code => {
@@ -1557,10 +1551,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 let parent = self.parent_list();
                 let is_ordered =
                     parent.is_some() && parent.unwrap().block_type == md::BlockType::Ol;
-                // count_list_depth() includes the immediate parent list; subtract it
+                // `list_depth` includes the immediate parent list; subtract it
                 // so that items in a top-level list report depth 0.
-                let enclosing = self.count_list_depth();
-                let depth: u32 = if enclosing > 0 { enclosing - 1 } else { 0 };
+                let depth = self.list_depth.saturating_sub(1);
                 let task_mark = md::types::task_mark_from_data(data);
 
                 let start_js = if is_ordered {

@@ -3,7 +3,7 @@ import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
-import { connect, createServer } from "node:tls";
+import { connect, createServer, TLSSocket } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
@@ -175,4 +175,61 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   }
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
+});
+
+// Server-side wraps of an accepted named-pipe connection. A pipe has no fd for
+// the native upgrade to adopt; the wrap has to run the TLS engine over the
+// stream, the way tls.connect({ socket }) already does for pipes. It used to
+// throw "upgradeTLS requires an established socket" from nextTick, uncaught.
+type ServerWrap = (accepted: net.Socket, echo: (secure: TLSSocket) => void, fail: (err: Error) => void) => void;
+
+async function serverWrapRoundTrip(wrap: ServerWrap) {
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  const echoed = Promise.withResolvers<string>();
+  const server = net.createServer(accepted => {
+    accepted.on("error", echoed.reject);
+    wrap(
+      accepted,
+      secure => {
+        secure.on("error", echoed.reject);
+        secure.on("data", chunk => secure.end(`echo:${chunk}`));
+      },
+      echoed.reject,
+    );
+  });
+  let client: TLSSocket | undefined;
+  try {
+    server.listen(pipeName);
+    await once(server, "listening");
+    client = connect({ socket: net.connect(pipeName), rejectUnauthorized: false }, () => client!.write("ping"));
+    client.on("error", echoed.reject);
+    // Read through to the server's close_notify before tearing down: a pipe
+    // write is only complete once the peer has read it, so closing on the
+    // first data chunk would fail the server's still-pending close_notify
+    // write with EPIPE.
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    client.on("end", () => echoed.resolve(received));
+    expect(await echoed.promise).toBe("echo:ping");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+}
+
+it.if(isWindows)("new TLSSocket(pipeSocket, { isServer: true }) completes a handshake over a named pipe", async () => {
+  await serverWrapRoundTrip((accepted, echo) => echo(new TLSSocket(accepted, { isServer: true, ...tls })));
+});
+
+it.if(isWindows)("tls.Server wraps a named-pipe connection handed in via emit('connection')", async () => {
+  const tlsServer = createServer(tls);
+  try {
+    await serverWrapRoundTrip((accepted, echo, fail) => {
+      tlsServer.once("secureConnection", echo);
+      tlsServer.once("tlsClientError", fail);
+      tlsServer.emit("connection", accepted);
+    });
+  } finally {
+    tlsServer.close();
+  }
 });

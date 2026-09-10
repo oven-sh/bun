@@ -3,7 +3,8 @@
 // and this file speaks the --remote-debugging-pipe protocol back to it:
 // NUL-delimited CDP JSON, commands arriving on fd 3, replies and events
 // leaving on fd 4. It implements just enough of CDP for navigate(),
-// evaluate() and screenshot(). evaluate() runs the expression in this
+// evaluate() and screenshot(), and acks Input.* the way Chrome does, with an
+// empty result. evaluate() runs the expression in this
 // process, which is how the tests move chosen payloads across the pipes and
 // how they make the fake browser misbehave on cue (the __fake_* globals).
 import { closeSync, readSync, writeSync } from "node:fs";
@@ -36,6 +37,14 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// Methods whose next command gets no reply, the way Chrome drops some
+// commands that are in flight when a navigation commits.
+const dropNext = new Set<string>();
+// Methods whose next command's reply waits until __fake_release().
+const holdNext = new Set<string>();
+const held: (() => void)[] = [];
+// Emits an event on the session of the command being handled.
+let emit: (name: string, params: unknown) => void = () => {};
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -56,6 +65,23 @@ Object.assign(globalThis, {
     closeSync(COMMANDS);
     setInterval(() => {}, 2 ** 30);
   },
+  // The next `method` command (for Input.dispatchMouseEvent, `method:type`
+  // picks one event type) gets no reply, ever.
+  __fake_drop_next(method: string) {
+    dropNext.add(method);
+  },
+  // The next `method` command's reply waits for __fake_release().
+  __fake_hold_next(method: string) {
+    holdNext.add(method);
+  },
+  // Sends the `count` oldest held replies, oldest first. Default: all of them.
+  __fake_release(count = held.length) {
+    for (const sendHeld of held.splice(0, count)) sendHeld();
+  },
+  // Sends a CDP event on this view's session before the evaluate() reply.
+  __fake_emit(name: string, params: unknown) {
+    emit(name, params);
+  },
 });
 
 function send(message: unknown) {
@@ -69,8 +95,16 @@ let loads = 0;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
-  const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
+  let reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+
+  const knob = (set: Set<string>) =>
+    set.delete(method) || (typeof params.type === "string" && set.delete(method + ":" + params.type));
+  if (knob(dropNext)) return;
+  if (knob(holdNext)) {
+    const sendReply = reply;
+    reply = result => void held.push(() => sendReply(result));
+  }
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -99,6 +133,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       }
       let value: unknown;
       try {
+        emit = event;
         value = await (0, eval)(params.expression);
       } catch (e) {
         return reply({

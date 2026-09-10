@@ -673,6 +673,52 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
     }
 }
 
+// Whether Transport::mainFrameCommitted resolves a command that is in flight
+// when the view's main frame commits another document, or leaves it to
+// Chrome's reply. Chrome answers most commands across a commit. It can drop,
+// with no reply ever, the ones whose answer is owed by the renderer that the
+// commit retires. No default: a new Method has to pick a side.
+static bool resolvesAtCommit(Method m)
+{
+    switch (m) {
+    // Dropped. Chrome parks a wheel behind a frame request to the old renderer
+    // before it injects it, and acks insertText through a reply pipe to that
+    // renderer. Neither is answered once that renderer is gone, or frozen in
+    // the back/forward cache.
+    case Method::InputDispatchMouseWheel:
+    case Method::InputInsertText:
+        return true;
+    // Dropped the same way, but a capture owes a result, so it cannot resolve.
+    case Method::PageCaptureScreenshot:
+    // view.cdp() can send any command, the droppable ones included, and
+    // nothing here tells them apart. Such a call stays pending until close().
+    case Method::UserRaw:
+    // Answered. Chrome acks the key and button events it has pending when it
+    // swaps the renderer, answers setDeviceMetricsOverride itself, and answers
+    // Runtime.evaluate with a result or with "Inspected target navigated".
+    case Method::InputDispatchMouseEvent:
+    case Method::InputDispatchKeyEvent:
+    case Method::EmulationSetDeviceMetricsOverride:
+    case Method::RuntimeEvaluate:
+    case Method::ClickSelectorEval:
+    case Method::ScrollToSelectorEval:
+    case Method::PageTitle:
+    // The navigation's own commands, and the ones that never have an entry.
+    case Method::TargetCreateTarget:
+    case Method::TargetAttachToTarget:
+    case Method::PageEnable:
+    case Method::RuntimeEnable:
+    case Method::TargetCloseTarget:
+    case Method::PageNavigate:
+    case Method::PageReload:
+    case Method::PageGetNavigationHistory:
+    case Method::PageNavigateToHistoryEntry:
+        return false;
+    }
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
 // Slots, not m_pending: a navigation that Chrome has already answered is
 // waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
@@ -1021,8 +1067,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     case Method::InputDispatchMouseEvent:
+    case Method::InputDispatchMouseWheel:
     case Method::InputDispatchKeyEvent:
-    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-
@@ -1147,6 +1193,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
+
+        // A subframe commit (frame.parentId present) keeps the main document
+        // and its renderer, and Chrome answers what is in flight across it.
+        // Runs before onNavigated so the callback finds the slots it frees.
+        if (jsonField(frame, { "parentId", 8 }).empty())
+            mainFrameCommitted(g, view);
 
         if (JSObject* cb = view->m_onNavigated.get()) {
             Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
@@ -1297,6 +1349,27 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto event = WebCore::MessageEvent::create(methodAtom, WTF::move(init), WebCore::Event::IsTrusted::Yes);
     scope.release();
     view->wrapped().dispatchEvent(event);
+}
+
+// Resolves the command Chrome can drop at this commit (resolvesAtCommit). If it
+// is still pending here, Chrome answers it later, once the new document took
+// the input (at times after the load event), or never, when no document did.
+// Nothing tells the two apart, and resolve is right for both: a reject or a
+// repeat is wrong for the input Chrome still applies. The id is forgotten so
+// that a late reply cannot settle whatever holds the slot by then. The
+// droppable commands share the Misc slot, so a view has one at most.
+void Transport::mainFrameCommitted(JSGlobalObject* g, JSWebView* view)
+{
+    uint32_t resolvedId = 0;
+    PendingSlot resolvedSlot = PendingSlot::Misc;
+    for (auto& [id, entry] : m_pending) {
+        if (entry.viewId != view->m_viewId || !resolvesAtCommit(entry.method)) continue;
+        resolvedId = id;
+        resolvedSlot = entry.slot;
+    }
+    if (!resolvedId) return;
+    m_pending.remove(resolvedId);
+    settle(g, view, resolvedSlot, true, jsUndefined());
 }
 
 void Transport::onClose()
@@ -1614,6 +1687,8 @@ JSPromise* type(JSGlobalObject* g, JSWebView* view, const WTF::String& text)
     uint32_t id = t.nextId();
     // Input.insertText does exactly what WKWebView's _executeEditCommand:
     // InsertText does — inserts text at the caret without keydown events.
+    // A main-frame commit while it is in flight settles it instead of
+    // Chrome's reply (resolvesAtCommit).
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::InputInsertText, id,
         Command(id, "Input.insertText"_s, sidSpan(view->m_sessionId))
@@ -1694,9 +1769,10 @@ JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
     auto& t = transport();
     uint32_t id = t.nextId();
     // mouseWheel at the center. No presentation-barrier dance — Chrome's
-    // reply means the scroll was processed.
+    // reply means the scroll was processed. A main-frame commit while it is
+    // in flight settles it instead of that reply (resolvesAtCommit).
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
-        Method::InputDispatchMouseEvent, id,
+        Method::InputDispatchMouseWheel, id,
         Command(id, "Input.dispatchMouseEvent"_s, sidSpan(view->m_sessionId))
             .raw("type"_s, "\"mouseWheel\""_s)
             .num("x"_s, view->m_width / 2.0)

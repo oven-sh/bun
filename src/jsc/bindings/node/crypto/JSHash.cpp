@@ -132,6 +132,13 @@ bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigH
 
 bool JSHash::update(std::span<const uint8_t> input)
 {
+    // Zero-length input succeeds even after digest() released the state, as
+    // in Node, where OpenSSL returns before its finalized check:
+    // https://github.com/openssl/openssl/blob/openssl-3.5.0/crypto/evp/digest.c#L387-L393
+    if (input.empty()) {
+        return true;
+    }
+
     if (m_ctx) {
         ncrypto::Buffer<const void> buffer {
             .data = input.data(),
@@ -229,8 +236,17 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
     }
 
-    // Check if already finalized
-    if (hash->m_finalized) {
+    // Hash.prototype._flush passes `false`. Like Node's _flush it skips the
+    // finalized check and does not finalize, so end() works after digest()
+    // and one digest() works after end() (https://github.com/nodejs/node/issues/28245):
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hash.js#L129-L160
+    bool finalize = true;
+    JSValue finalizeValue = callFrame->argument(1);
+    if (finalizeValue.isBoolean()) {
+        finalize = finalizeValue.asBoolean();
+    }
+
+    if (finalize && hash->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -246,19 +262,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
     }
 
-    bool finalized = true;
-    JSValue setFinalizedValue = callFrame->argument(1);
-    if (setFinalizedValue.isBoolean()) {
-        finalized = setFinalizedValue.asBoolean();
-    }
-
     uint32_t len = hash->m_mdLen;
 
     // Finalizing leaves the native state unusable (EVP_DigestFinal_ex cleanses
     // the EVP_MD_CTX; EVP_DigestUpdate on a cleansed SHA-3 context never
-    // returns), so release it and serve later calls from m_digest. _flush
-    // passes finalized=false so that one explicit digest() after the stream
-    // ends still works, as in Node: https://github.com/nodejs/node/issues/28245
+    // returns), so release it now and serve every later call from m_digest.
     if (!hash->m_digest && len > 0) {
         if (hash->m_zigHasher) {
             size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
@@ -288,9 +296,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
             hash->m_digest = ByteSource::allocated(data.release());
             hash->m_ctx.reset();
         }
+        hash->m_sizeForGC = hash->m_digest.size();
     }
 
-    hash->m_finalized = finalized;
+    if (finalize) {
+        hash->m_finalized = true;
+    }
 
     RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }

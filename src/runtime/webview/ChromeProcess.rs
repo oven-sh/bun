@@ -478,37 +478,50 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
-/// A temp-dir `--user-data-dir` made for a Chrome without `dataStore`, and its browser.
+/// A temp-dir `--user-data-dir` made for a Chrome without `dataStore`.
 struct TempProfile {
-    pid: bun_spawn::PidT,
+    /// The browser to kill before `dir` can go at exit; `None` once it is gone.
+    pid: Option<bun_spawn::PidT>,
     dir: Box<[u8]>,
 }
 
-/// Profiles whose browser has not been reaped yet; see [`delete_temp_profiles_at_exit`].
+/// Profiles not deleted yet; see [`delete_temp_profiles_at_exit`].
 static TEMP_PROFILES: bun_core::Mutex<Vec<TempProfile>> = bun_core::Mutex::new(Vec::new());
 
-fn register_temp_profile(pid: bun_spawn::PidT, dir: Box<[u8]>) {
+fn register_temp_profile(pid: Option<bun_spawn::PidT>, dir: Box<[u8]>) {
     TEMP_PROFILES.lock().push(TempProfile { pid, dir });
     bun_core::add_exit_callback(delete_temp_profiles_at_exit);
 }
 
-/// The browser with this pid has exited: its profile directory is ours to delete.
-fn delete_temp_profile_of(pid: bun_spawn::PidT) {
-    let profile = {
-        let mut profiles = TEMP_PROFILES.lock();
-        let Some(i) = profiles.iter().position(|p| p.pid == pid) else {
-            return;
-        };
-        profiles.swap_remove(i)
-    };
-    delete_profile_dir(&profile.dir);
+fn take_temp_profile(pid: bun_spawn::PidT) -> Option<Box<[u8]>> {
+    let mut profiles = TEMP_PROFILES.lock();
+    let i = profiles.iter().position(|p| p.pid == Some(pid))?;
+    Some(profiles.swap_remove(i).dir)
 }
 
-fn delete_profile_dir(dir: &[u8]) {
+/// The browser with this pid has exited: its profile directory is ours to delete.
+fn delete_temp_profile_of(pid: bun_spawn::PidT) {
+    if let Some(dir) = take_temp_profile(pid) {
+        delete_profile_dir(dir);
+    }
+}
+
+/// Tries again at exit if this attempt fails (on Windows a straggling child can still hold a file).
+fn delete_profile_dir(dir: Box<[u8]>) {
+    if !try_delete_profile_dir(&dir) {
+        register_temp_profile(None, dir);
+    }
+}
+
+fn try_delete_profile_dir(dir: &[u8]) -> bool {
     #[cfg(unix)]
     delete_singleton_socket(dir);
-    if let Err(err) = bun_sys::delete_tree_absolute(dir) {
-        scoped_log!(Chrome, "could not delete {}: {}", bstr::BStr::new(dir), err);
+    match bun_sys::delete_tree_absolute(dir) {
+        Ok(()) => true,
+        Err(err) => {
+            scoped_log!(Chrome, "could not delete {}: {}", bstr::BStr::new(dir), err);
+            false
+        }
     }
 }
 
@@ -546,8 +559,8 @@ fn delete_singleton_socket(profile_dir: &[u8]) {
 extern "C" fn delete_temp_profiles_at_exit() {
     let profiles = core::mem::take(&mut *TEMP_PROFILES.lock());
     for profile in profiles {
-        if kill_and_wait(profile.pid) {
-            delete_profile_dir(&profile.dir);
+        if profile.pid.is_none_or(kill_and_wait) {
+            try_delete_profile_dir(&profile.dir);
         }
     }
 }
@@ -653,7 +666,7 @@ fn spawn(
         };
         let temp_dir = scopeguard::guard(temp_dir, |dir| {
             if let Some(dir) = dir {
-                delete_profile_dir(&dir);
+                delete_profile_dir(dir);
             }
         });
 
@@ -733,12 +746,19 @@ fn spawn(
         let process = spawned.to_process_handle(event_loop);
         let pid = process.process_mut().pid;
         if let Some(dir) = scopeguard::ScopeGuard::into_inner(temp_dir) {
-            register_temp_profile(pid, dir);
+            register_temp_profile(Some(pid), dir);
         }
         let attached = endpoints.attach(process);
         if attached.is_err() {
-            // Unwatched from here on and its pid may be reused: forget it now, never kill by pid later.
-            delete_temp_profile_of(pid);
+            // No exit handler will run for this browser: reap it here, while the pid is still ours.
+            let gone = kill_and_wait(pid);
+            if let Some(dir) = take_temp_profile(pid) {
+                if gone {
+                    delete_profile_dir(dir);
+                } else {
+                    register_temp_profile(None, dir);
+                }
+            }
         }
         attached
     }

@@ -17,7 +17,8 @@ JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int32_t port,
 {
     VM& vm = globalObject->vm();
 
-    auto* family = isIPv6 ? globalObject->commonStrings().IPv6String(globalObject) : globalObject->commonStrings().IPv4String(globalObject);
+    auto& commonStrings = Bun::commonStrings(vm);
+    auto* family = isIPv6 ? commonStrings.IPv6String() : commonStrings.IPv4String();
 
     JSObject* thisObject = constructEmptyObject(vm, globalObject->JSSocketAddressDTOStructure());
     thisObject->putDirectOffset(vm, addressOffset, value);
@@ -71,7 +72,8 @@ extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
-    auto* af = isIPv6 ? global->commonStrings().IPv6String(global) : global->commonStrings().IPv4String(global);
+    auto& commonStrings = Bun::commonStrings(vm);
+    auto* af = isIPv6 ? commonStrings.IPv6String() : commonStrings.IPv4String();
 
     JSObject* thisObject = constructEmptyObject(vm, global->JSSocketAddressDTOStructure());
     thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::addressOffset, JSValue::decode(address));

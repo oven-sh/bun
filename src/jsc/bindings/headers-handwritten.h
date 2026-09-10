@@ -46,6 +46,9 @@ enum class BunStringTag : uint8_t {
     EncodedSlice = 2,
     StaticEncodedSlice = 3,
     Empty = 4,
+    // A constructor could not allocate the string. Holds no string like Dead,
+    // but reaches JS as ERR_MEMORY_ALLOCATION_FAILED, not ERR_STRING_TOO_LONG.
+    OutOfMemory = 5,
 };
 
 /// Mirrors `ErrorKind` in src/jsc/bun_string_jsc.rs.
@@ -100,6 +103,9 @@ typedef struct BunString {
 
     bool isEmpty() const;
 
+    // Dead or OutOfMemory: no string at all. Empty is a string.
+    bool isDead() const { return tag == BunStringTag::Dead || tag == BunStringTag::OutOfMemory; }
+
     void appendToBuilder(WTF::StringBuilder& builder) const;
 
 } BunString;
@@ -127,6 +133,9 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool already_bundled;
+    // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
+    // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
+    bool is_prelinked_module;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -141,7 +150,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

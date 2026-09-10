@@ -1,12 +1,17 @@
 import { describe } from "bun:test";
-import { itBundled } from "../expectBundled";
+import { BundlerTestInput, itBundled as itBundledBase } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/importstar
 
-describe("bundler", () => {
+// Default to the CLI backend: itBundled registers API-backend cases with
+// it.serial (Bun.build needs process.chdir), so only CLI-backend cases overlap
+// under describe.concurrent.
+const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
+
+describe.concurrent("bundler", () => {
   itBundled("importstar/ImportStarUnused", {
     files: {
       "/entry.js": /* js */ `
@@ -46,6 +51,10 @@ describe("bundler", () => {
         console.log(ns.foo, ns.foo, foo)
       `,
       "/foo.js": `export const foo = 123`,
+    },
+    onAfterBundle(api) {
+      // ns.foo binds to foo directly, so no namespace object is created
+      api.expectFile("/out.js").not.toContain("__export");
     },
     run: {
       stdout: "123 123 234",
@@ -171,6 +180,9 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
     run: {
       stdout: "123 123 234",
     },
@@ -236,6 +248,13 @@ describe("bundler", () => {
         console.log(ns.foo, ns2.foo)
       `,
       "/foo.js": `export const foo = 123`,
+    },
+    onAfterBundle(api) {
+      // foo.js stays an ES module; require() of it goes through __toCommonJS
+      api.expectFile("/out.js").not.toContain("__commonJS");
+    },
+    run: {
+      stdout: "123 123",
     },
   });
   itBundled("importstar/ImportStarNoBundleUnused", {
@@ -325,7 +344,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import * as ns from './foo'
         let foo = 234
-        console.log(JSON.stringify(ns), ns.foo, foo)
+        console.log(ns.foo, ns.foo, foo)
       `,
     },
     minifySyntax: true,
@@ -334,7 +353,7 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
     },
     run: {
-      stdout: '{"foo":123} 123 234',
+      stdout: "123 123 234",
     },
   });
   itBundled("importstar/ImportStarExportStarOmitAmbiguous", {
@@ -559,6 +578,13 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
+    onAfterBundle(api) {
+      // the self re-export resolves statically: no runtime re-export helper
+      api.expectFile("/out.js").not.toContain("__reExport");
+    },
+    run: {
+      stdout: "",
+    },
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
     todo: true,
@@ -846,6 +872,16 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const foo = require('./out.js')
+        console.log(JSON.stringify(foo));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"ns":{"default":{"foo":123},"foo":123}}',
+    },
   });
   itBundled("importstar/NamespaceImportMissingES6", {
     files: {
@@ -1398,7 +1434,7 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{"inner":{"b":456},"a":123,"b":456}',
+      stdout: '{"inner":{"b":456},"a":123}',
     },
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
@@ -1476,6 +1512,481 @@ describe("bundler", () => {
       stdout: '{"a":1,"b":2,"default":"dflt"}',
     },
   });
+  // `X.foo` where X is a default/named import that resolves to a module
+  // namespace is bound directly to `foo`, so the namespace object is not
+  // materialized and unused exports are tree-shaken.
+  itBundled("importstar/MemberOfExportStarAsDefaultFromSelf", {
+    files: {
+      "/entry.js": /* js */ `
+        import HooksHost from './hooks'
+        console.log(HooksHost.load(), HooksHost["other"])
+      `,
+      "/hooks.js": /* js */ `
+        export function load() { return 'load' }
+        export const other = 'other'
+        export const unused = 'FAIL'
+        export * as default from './hooks'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "load other" },
+  });
+  itBundled("importstar/MemberOfReExportedImportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import { z } from './zod'
+        import zd from './zod'
+        console.log(z.object(), zd.string())
+      `,
+      "/zod.js": /* js */ `
+        import * as z from './external'
+        export * from './external'
+        export { z }
+        export default z
+      `,
+      "/external.js": /* js */ `
+        export function object() { return 'object' }
+        export function string() { return 'string' }
+        export function number() { return 'FAIL' }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "object string" },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportChain", {
+    files: {
+      "/entry.js": /* js */ `
+        import z from './v4'
+        import { z as z2 } from './v4'
+        console.log(z.object(), z2.string())
+      `,
+      // mirrors zod/v4: index -> classic/index -> classic/external
+      "/v4.js": /* js */ `
+        import z4 from './classic'
+        export * from './classic'
+        export default z4
+      `,
+      "/classic.js": /* js */ `
+        import * as z from './external'
+        export { z }
+        export * from './external'
+        export default z
+      `,
+      "/external.js": /* js */ `
+        export function object() { return 'object' }
+        export function string() { return 'string' }
+        export function number() { return 'FAIL' }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "object string" },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportSnapshot", {
+    // `export default counter` snapshots the value; it must not become a live
+    // alias just because `counter` is an import.
+    files: {
+      "/entry.js": /* js */ `
+        import c, { inc } from './snapshot'
+        import * as ext from './external'
+        inc()
+        console.log(c, ext.counter)
+      `,
+      "/snapshot.js": /* js */ `
+        import { counter, inc } from './external'
+        export default counter
+        export { inc }
+      `,
+      "/external.js": /* js */ `
+        export let counter = 0
+        export function inc() { counter++ }
+      `,
+    },
+    run: { stdout: "0 1" },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportCycleTDZ", {
+    // Reading `index.default` from inside a cycle before `export default z4`
+    // has executed: unbundled this is a TDZ ReferenceError and the old output
+    // read `undefined`; following the alias to the namespace yields the
+    // namespace itself. After evaluation completes everything agrees.
+    files: {
+      "/entry.js": /* js */ `
+        import z from './index'
+        import { early } from './cycle'
+        z.inc()
+        console.log(early, z.object(), z.counter)
+      `,
+      "/index.js": /* js */ `
+        import z4 from './classic'
+        export * from './classic'
+        export default z4
+      `,
+      "/classic.js": /* js */ `
+        import * as z from './external'
+        export * from './external'
+        export { z }
+        export default z
+      `,
+      "/external.js": /* js */ `
+        import './cycle'
+        export function object() { return 'object' }
+        export let counter = 0
+        export function inc() { counter++ }
+        export const unused = 'FAIL'
+      `,
+      "/cycle.js": /* js */ `
+        import z from './index'
+        export let early
+        try { early = typeof z.object } catch (e) { early = e.constructor.name }
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__export");
+    },
+    run: { stdout: "function object 1" },
+  });
+  itBundled("importstar/MemberOfImportDelete", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './lib'
+        try { delete ns.foo } catch {}
+        console.log(typeof ns.bar)
+      `,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const foo = 1; export const bar = 2`,
+    },
+    // must not print \`delete bar\` (a strict-mode SyntaxError)
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/delete \w+\.foo/);
+    },
+    run: { stdout: "number" },
+  });
+  itBundled("importstar/ImportStarDeleteIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './t'
+        delete ns.foo
+      `,
+      "/t.js": `export const foo = 1`,
+    },
+    bundleErrors: { "/entry.js": [`Cannot assign to import "foo"`] },
+  });
+  itBundled("importstar/MemberOfExportDefaultImportMissingReportedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from './b'
+        import a2 from './b'
+        console.log(a.x, a2.x)
+      `,
+      "/b.js": /* js */ `
+        import Y from './c'
+        export default Y
+      `,
+      "/c.js": `export const x = 1`,
+    },
+    bundleErrors: { "/b.js": [`No matching export in "c.js" for import "default"`] },
+  });
+  itBundled("importstar/MemberOfExportStarAs", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './reexport'
+        console.log(ns.a, ns.nested.deep, ns.nested.missing)
+      `,
+      "/reexport.js": `export * as ns from './target'`,
+      "/target.js": /* js */ `
+        export const a = 'a'
+        export const b = 'DROP'
+        export * as nested from './nested'
+      `,
+      "/nested.js": /* js */ `
+        export const deep = 'deep'
+      `,
+    },
+    onAfterBundle(api) {
+      // `ns` itself is never materialized (so `b` is dropped); only the
+      // directly-accessed level is bound, so `nested` still is.
+      api.expectFile("/out.js").not.toContain("DROP");
+      api.expectFile("/out.js").not.toContain("exports_target");
+    },
+    run: { stdout: "a deep undefined" },
+  });
+  // Shapes taken from rolldown's tree_shaking fixtures.
+  itBundled("importstar/MemberOfNamespaceMemberTwoLevels", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './shared'
+        console.log(ns.a.b, ns.a['a'])
+      `,
+      "/shared.js": `import { c } from './c'; export { c as a }`,
+      "/c.js": `export * as c from './a'`,
+      "/a.js": `export const c = 'FAIL'; export const b = 500; export const a = 100`,
+    },
+    dce: true,
+    run: { stdout: "500 100" },
+  });
+  itBundled("importstar/MemberOfNamespaceDynamicKeyKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './shared'
+        let q = 'a'
+        console.log(ns.a[q], Object.keys(ns.a).length)
+      `,
+      "/shared.js": `import { c } from './c'; export { c as a }`,
+      "/c.js": `export * as c from './a'`,
+      "/a.js": `export const c = 1000; export const b = 500; export const a = 100`,
+    },
+    run: { stdout: "100 3" },
+  });
+  itBundled("importstar/MemberOfNamespaceOptionalChain", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as h from './state'
+        import { ns } from './lib'
+        console.log(h.app?.user?.name ?? 'ok', h['app']?.['user']?.['name'] ?? 'ok', ns.obj?.x, ns?.obj?.missing?.y)
+      `,
+      "/state.js": `export const app = { user: null }`,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const obj = { x: 1 }`,
+    },
+    run: { stdout: "ok ok 1 undefined" },
+  });
+  itBundled("importstar/MemberOfNamespaceAssignThroughMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './lib'
+        ns.data.search = 'overridden'
+        console.log(ns.data.search)
+      `,
+      "/lib.js": `export * as ns from './t'`,
+      "/t.js": `export const data = { search: 'orig' }`,
+    },
+    run: { stdout: "overridden" },
+  });
+  // Shapes taken from webpack's parsing/harmony-deep-exports and
+  // side-effects/{nested-namespace-reexport,star-reexport-passthrough} cases.
+  itBundled("importstar/MemberOfReExportedNamespaceLiveBindings", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as C from "./reexport-namespace.js";
+        import { counter } from "./reexport-namespace.js";
+        import * as C2 from "./reexport-namespace-again.js";
+        const out = [];
+        (0, counter.reset)(); out.push(counter.counter); (0, counter.increment)(); out.push(counter.counter);
+        (0, C.counter.reset)(); out.push(C.counter.counter); (0, C.counter.increment)(); out.push(C.counter.counter);
+        (0, C2.CC.counter.reset)(); out.push(C2.CC.counter.counter); (0, C2.CC.counter.increment)(); out.push(C2.CC.counter.counter);
+        C2.CC.counter.increment(); out.push(counter.counter, C.counter.counter === C2.CC.counter.counter);
+        console.log(JSON.stringify(out));
+      `,
+      "/counter.js": /* js */ `
+        export let counter = 0;
+        export const increment = () => { counter++; };
+        export function reset() { counter = 0; }
+      `,
+      "/reexport-namespace.js": /* js */ `
+        import * as counter from "./counter.js";
+        export { counter };
+        import * as counter2 from "./counter.js";
+        export { counter2 };
+      `,
+      "/reexport-namespace-again.js": /* js */ `
+        import * as CC from "./reexport-namespace.js";
+        export { CC };
+      `,
+    },
+    run: { stdout: "[0,1,0,1,0,1,2,true]" },
+  });
+  itBundled("importstar/MemberOfNestedNamespaceReexportSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from "chain/ns.js";
+        console.log(ns.y);
+      `,
+      "/node_modules/chain/package.json": `{"name":"chain","version":"0.0.1","sideEffects":false}`,
+      "/node_modules/chain/ns.js": `export * as ns from "./inner.js";`,
+      "/node_modules/chain/inner.js": `export { y } from "./real.js";`,
+      "/node_modules/chain/real.js": `export const y = 42; export const other = "FAIL";`,
+    },
+    dce: true,
+    run: { stdout: "42" },
+  });
+  itBundled("importstar/MemberOfStarReexportPassthroughSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, bar } from "./named.js";
+        import * as ns from "lib";
+        console.log(JSON.stringify([foo(), bar(), ns.foo(), ns.bar(), ns.baz(), Object.keys(ns).sort()]));
+      `,
+      "/named.js": `export { foo, bar } from "lib";`,
+      "/node_modules/lib/package.json": `{"name":"lib","version":"0.0.1","sideEffects":false}`,
+      "/node_modules/lib/index.js": `export * from "./mid.js";`,
+      "/node_modules/lib/mid.js": `export * from "./real.js";`,
+      "/node_modules/lib/real.js": /* js */ `
+        export function foo() { return 1; }
+        export function bar() { return 2; }
+        export function baz() { return 3; }
+      `,
+    },
+    run: { stdout: `[1,2,1,2,3,["bar","baz","foo"]]` },
+  });
+  // Shapes taken from rollup's function/samples/namespace-member-side-effects.
+  itBundled("importstar/MemberOfNamespaceInsideExportedObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import api from './api/index.js';
+        import { sideEffects } from './api/sideEffects.js';
+        api.namespace.sideEffectFunction();
+        let threw = false;
+        try { api.namespace.missing.foo } catch { threw = true }
+        console.log(JSON.stringify(sideEffects), threw);
+      `,
+      "/api/index.js": /* js */ `
+        import * as namespace from './namespace.js';
+        export default { namespace };
+      `,
+      "/api/namespace.js": /* js */ `
+        import { sideEffects } from './sideEffects.js';
+        export function sideEffectFunction() { sideEffects.push('fn called'); }
+      `,
+      "/api/sideEffects.js": `export const sideEffects = [];`,
+    },
+    run: { stdout: `["fn called"] true` },
+  });
+  itBundled("importstar/MemberOfImportFallbacks", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { obj } from './plain'
+        import cjs from './cjs.cjs'
+        import { E } from './enum'
+        import data from './data.json'
+        import { dyn } from './reexport-dyn'
+        import ext from 'ext'
+        console.log(obj.y(), cjs.foo, cjs.bar.baz, typeof cjs.bar.nope, E.A, E.B, data.k, dyn.named, dyn.fromCjs, ext.deep.value)
+        obj.x = 5
+        console.log(obj.y())
+      `,
+      "/plain.js": `export const obj = { x: 1, y() { return this.x + 1 } }`,
+      "/cjs.cjs": `module.exports = { foo: 'foo', bar: { baz: 'baz' } }`,
+      "/enum.ts": `export enum E { A = 1, B = 'b' }`,
+      "/data.json": `{ "k": "v" }`,
+      "/reexport-dyn.js": `export * as dyn from './dyn'`,
+      "/dyn.js": /* js */ `
+        export * from './leaf.cjs'
+        export const named = 'named'
+      `,
+      "/leaf.cjs": `exports.fromCjs = 'fromCjs'`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { deep: { value: 'ext' } }`,
+    },
+    external: ["ext"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("1 /* A */");
+    },
+    run: { stdout: "2 foo baz undefined 1 b v named fromCjs ext\n6" },
+  });
+  itBundled("importstar/MemberOfImportNamespaceStillCaptured", {
+    files: {
+      "/entry.js": /* js */ `
+        import ns from './lib'
+        console.log(ns.a, Object.keys(ns).join())
+        export { ns }
+      `,
+      "/lib.js": /* js */ `
+        export const a = 'a'
+        export const b = 'b'
+        export * as default from './lib'
+      `,
+    },
+    run: { stdout: "a a,b,default" },
+  });
+  itBundled("importstar/MemberOfImportSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './lib'
+        console.log('a', lib.shared())
+      `,
+      "/b.js": /* js */ `
+        import { ns } from './reexport'
+        console.log('b', ns.shared())
+      `,
+      "/reexport.js": `export * as ns from './lib'`,
+      "/lib.js": /* js */ `
+        export function shared() { return 'shared' }
+        export const unused = 'FAIL'
+        export * as default from './lib'
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    dce: true,
+    run: [
+      { file: "/out/a.js", stdout: "a shared" },
+      { file: "/out/b.js", stdout: "b shared" },
+    ],
+  });
+  itBundled("importstar/MemberOfImportFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib'
+        import ext from 'ext'
+        console.log(lib.a, ext.deep.value)
+      `,
+      "/lib.js": /* js */ `
+        export const a = 'a'
+        export const b = 'FAIL'
+        export * as default from './lib'
+      `,
+    },
+    format: "cjs",
+    external: ["ext"],
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { deep: { value: 'ext' } }`,
+    },
+    dce: true,
+    run: { stdout: "a ext" },
+  });
+  // The enum members fold to the keys "ab" and "x". The first part of each
+  // folded string is "a" and "".
+  itBundled("importstar/MemberOfImportFoldedStringKey", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from './lib'
+        enum K { AB = 'a' + 'b', X = '' + 'x' }
+        console.log(ns[K.AB], ns[K.X])
+      `,
+      "/lib.js": `export const a = 'a', ab = 'ab', x = 'x'`,
+    },
+    run: { stdout: "ab x" },
+  });
+  for (const deprecatedNamespaceObjectSetters of [true, false]) {
+    itBundled(`importstar/NamespaceObjectSetters${deprecatedNamespaceObjectSetters ? "Deprecated" : "Off"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as ns from './lib'
+          const obj = ns
+          const desc = Object.getOwnPropertyDescriptor(obj, 'x')
+          let threw = false
+          try { obj.x = 2 } catch { threw = true }
+          console.log(typeof desc.get, typeof desc.set, desc.configurable, threw, obj.x)
+        `,
+        "/lib.js": `export let x = 1`,
+      },
+      deprecatedNamespaceObjectSetters,
+      run: {
+        stdout: deprecatedNamespaceObjectSetters ? "function function true false 1" : "function undefined true true 1",
+      },
+    });
+  }
   itBundled("importstar/CjsEntryPointExportsSorted", {
     files: {
       "/entry.js": /* js */ `

@@ -73,6 +73,27 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if !c.options.minify_identifiers {
+            // Top-level names are final; name each file's nested scopes in
+            // parallel.
+            let mut tasks =
+                crate::linker_context::rename_symbols_in_chunk::nested_rename_tasks(chunks);
+            c.worker_pool().each_ptr(
+                ctx,
+                crate::linker_context::rename_symbols_in_chunk::run_nested_rename_task,
+                &mut tasks,
+            );
+            for task in tasks {
+                if let (crate::bun_renamer::ChunkRenamer::Number(r), Some(names)) =
+                    (&mut chunks[task.chunk_index as usize].renamer, task.names)
+                {
+                    r.absorb(names);
+                }
+            }
+            for chunk in chunks.iter_mut() {
+                chunk.nested_scopes_to_rename = Vec::new();
+            }
+        }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {
                 // Counts are in; name the cross-chunk bindings, pin them, then
@@ -364,7 +385,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<()> = StringHashMap::default();
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
 
         #[derive(Default)]
         struct DuplicateEntry {
@@ -395,23 +416,30 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
-            if path_names_map.get_or_put(&rel_path)?.found_existing {
-                // collect all duplicates in a list
-                let dup = duplicates_map.get_or_put(&rel_path)?;
-                if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
-                }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
-                continue;
-            }
-
             // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
             // which importers of the chunk would copy verbatim.
             while let Some(i) = strings::index_of(&rel_path, b"/./") {
                 rel_path.drain(i..i + 2);
             }
 
-            chunk.final_rel_path = rel_path.into_boxed_slice();
+            let claimed = path_names_map.get_or_put(&rel_path)?;
+            if claimed.found_existing {
+                let first = *claimed.value_ptr as usize;
+                let dup = duplicates_map.get_or_put(&rel_path)?;
+                if !dup.found_existing {
+                    *dup.value_ptr = DuplicateEntry::default();
+                    dup.value_ptr
+                        .sources
+                        .push(bun_ptr::BackRef::new(&chunks[first]));
+                }
+                dup.value_ptr
+                    .sources
+                    .push(bun_ptr::BackRef::new(&chunks[index]));
+                continue;
+            }
+            *claimed.value_ptr = index as u32;
+
+            chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {
@@ -466,12 +494,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
-                write!(
-                    &mut text,
-                    "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                    name,
-                    bstr::BStr::new(template),
-                )?;
+                if crate::options::path_template_hash_len(template).is_some() {
+                    write!(
+                        &mut text,
+                        "{} naming is '{}'; these inputs produce identical content",
+                        name,
+                        bstr::BStr::new(template),
+                    )?;
+                } else {
+                    write!(
+                        &mut text,
+                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
+                        name,
+                        bstr::BStr::new(template),
+                    )?;
+                }
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
@@ -494,6 +531,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         && c.options.compile_mode.is_executable())
     .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
+    // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
+    let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
     if c.options.generates_module_info() {
         let external_string_table = external_string_table
             .as_ref()
@@ -573,18 +612,64 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
             table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
         }
+
+        // The pre-resolved graph over every chunk with module_info (`OutputKind::PrelinkedModuleGraph`): graph module
+        // `i` is the i-th such chunk, keyed by the path other chunks request it by. Built before the slot table is
+        // serialized below (it interns the keys). Its modules ship no module_info body: the graph is their record.
+        {
+            let mut inputs: Vec<crate::prelinked_module_graph::ModuleInput<'_>> = Vec::new();
+            let mut chunk_indices: Vec<u32> = Vec::new();
+            let mut complete = true;
+            let mut ids = table_ids.iter();
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                let crate::chunk::Content::Javascript(js) = &chunk.content else {
+                    continue;
+                };
+                let Some(mi) = js.module_info.as_ref() else {
+                    continue;
+                };
+                let table_ids = ids.next().expect("one per chunk with module_info");
+                let Some(path) = unique_key_to_path.get(chunk.unique_key) else {
+                    complete = false;
+                    break;
+                };
+                inputs.push(crate::prelinked_module_graph::ModuleInput {
+                    path: &path[..],
+                    info: mi,
+                    table_ids,
+                });
+                chunk_indices.push(chunk_index as u32);
+            }
+            if complete && !inputs.is_empty() {
+                prelinked_graph = crate::prelinked_module_graph::build(
+                    &inputs,
+                    &mut module_info_strings,
+                    external_string_table,
+                )
+                .map(|bytes| (bytes, chunk_indices));
+            }
+        }
+
         let mut table_ids = table_ids.iter();
-        for chunk in chunks.iter_mut() {
+        for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
             };
             let Some(mi) = js.module_info.take() else {
                 continue;
             };
+            let table_ids = table_ids.next().expect("one per chunk with module_info");
+            if prelinked_graph.as_ref().is_some_and(|(_, chunk_indices)| {
+                chunk_indices.binary_search(&(chunk_index as u32)).is_ok()
+            }) {
+                // Keeps the chunk's (empty) module_info output slot so output-file indices stay dense.
+                js.module_info_bytes = Some(Box::default());
+                continue;
+            }
             js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
                 &mi,
                 module_info_strings.count(),
-                table_ids.next().expect("one per chunk with module_info"),
+                table_ids,
             ));
         }
     }
@@ -1018,18 +1103,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
-            let side: options::Side = if matches!(chunk.content, crate::chunk::Content::Css(_))
-                || chunk
-                    .flags
-                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            {
-                options::Side::Client
-            } else {
-                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                    options::Target::Browser => options::Side::Client,
-                    _ => options::Side::Server,
-                }
-            };
+            let side: options::Side = c.chunk_side(chunk);
 
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
@@ -1043,7 +1117,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
+                        let mut fdpath = bun_paths::path_buffer_pool::get();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1073,6 +1147,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             &code_result.buffer,
                             &source_provider_url,
                             c.options.bytecode_depth,
+                            c.options.optimize_bytecode,
                             external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
@@ -1099,11 +1174,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 output_path: Box::from(source_provider_url_str.slice()),
                                 input_path: input_path_buf.into_boxed_slice(),
                                 input_loader: Loader::Js,
-                                hash: if chunk.template.placeholder.hash.is_some() {
-                                    Some(bun_wyhash::hash(&bytecode))
-                                } else {
-                                    None
-                                },
+                                hash: chunk.template.placeholder.hash.map(|_| {
+                                    chunk.template.content_hash(bun_wyhash::hash(&bytecode))
+                                }),
                                 output_kind: options::OutputKind::Bytecode,
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
@@ -1163,11 +1236,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         output_path: out_path.into_boxed_slice(),
                                         input_path: in_path.into_boxed_slice(),
                                         input_loader: Loader::Js,
-                                        hash: if chunk.template.placeholder.hash.is_some() {
-                                            Some(bun_wyhash::hash(module_info_bytes))
-                                        } else {
-                                            None
-                                        },
+                                        hash: chunk.template.placeholder.hash.map(|_| {
+                                            chunk
+                                                .template
+                                                .content_hash(bun_wyhash::hash(module_info_bytes))
+                                        }),
                                         output_kind: options::OutputKind::ModuleInfo,
                                         loader: Loader::File,
                                         size: Some(module_info_bytes.len()),
@@ -1206,14 +1279,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 None
             };
 
-            let output_kind = if matches!(chunk.content, crate::chunk::Content::Css(_)) {
-                options::OutputKind::Asset
-            } else if chunk.entry_point.is_entry_point() {
-                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                    .output_kind()
-            } else {
-                options::OutputKind::Chunk
-            };
+            let output_kind = c.chunk_output_kind(chunk);
 
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
@@ -1346,6 +1412,34 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
         );
+    }
+    if let Some((bytes, chunk_indices)) = prelinked_graph {
+        debug!(
+            "prelinked module graph: {} modules, {} bytes",
+            chunk_indices.len(),
+            bytes.len()
+        );
+        // `result[i]` is chunk `i`'s output file (see the chunk loop above).
+        for (module_index, &chunk_index) in chunk_indices.iter().enumerate() {
+            result[chunk_index as usize].prelinked_module_index = module_index as u32;
+        }
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".prelinked-module-graph".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::PrelinkedModuleGraph,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer {
+                data: bytes.into_boxed_slice(),
+            },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
     }
     if c.options.generates_module_info() {
         let bytes = module_info_strings.serialize();

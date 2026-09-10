@@ -197,6 +197,8 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
     });
 }
 
+extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, const Identifier& key, const SourceCode&);
+
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
@@ -211,8 +213,15 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
     if (provider->m_moduleInfo == nullptr) {
-        dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
+        // A module of the executable's pre-resolved graph carries no module_info of its own: the graph is its record.
+        JSModuleRecord* prelinked = Bun__createPrelinkedModuleRecordForPipeline(uncheckedDowncast<Zig::GlobalObject>(globalObject), moduleKey, sourceCode);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        if (prelinked) {
+            promise->resolve(globalObject, vm, prelinked);
+            RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+        }
+        // Neither: analyze the source text.
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise));
     }
 
     auto* moduleInfo = provider->m_moduleInfo;

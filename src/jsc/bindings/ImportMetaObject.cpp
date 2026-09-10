@@ -246,6 +246,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         RETURN_IF_EXCEPTION(scope, {});
                         auto str = string->value(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
+                        // The override replaces the resolver, which rejects a null byte. require()
+                        // opens this string as a path, and a null byte truncates the C string, so
+                        // reject it here the way node's loader does.
+                        if (str->contains('\0')) [[unlikely]] {
+                            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                            return {};
+                        }
                         WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                         if (!prefixed.isNull()) {
                             return JSValue::encode(jsString(vm, prefixed));

@@ -769,7 +769,9 @@ test("https-proxy-agent reports a refused CONNECT as the proxy's response, like 
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     const ended = Promise.withResolvers<void>();
+    let sawResponse = false;
     const req = http.request({ host: "example.test", port: 80, path: "/", agent }, res => {
+      sawResponse = true;
       events.push(`response ${res.statusCode} ${res.headers["proxy-authenticate"]}`);
       res.on("error", ended.reject);
       res.on("end", () => {
@@ -779,7 +781,11 @@ test("https-proxy-agent reports a refused CONNECT as the proxy's response, like 
       res.resume();
     });
     req.on("error", err => events.push(`req error ${(err as NodeJS.ErrnoException).code}`));
-    req.on("close", () => closed.resolve());
+    req.on("close", () => {
+      closed.resolve();
+      // A request that died without a response has nothing left to end.
+      if (!sawResponse) ended.resolve();
+    });
     req.end();
     await Promise.all([closed.promise, ended.promise]);
     expect(events).toEqual(['response 407 Basic realm="test"', "res end"]);

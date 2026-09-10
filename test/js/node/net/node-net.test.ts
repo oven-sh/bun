@@ -1429,18 +1429,24 @@ describe("Socket fd adoption", () => {
     const fd = fs.openSync(path, "w");
     const socket = new Socket({ fd, readable: false, writable: true });
     try {
+      const idle = 500;
+      const writes: number[] = [];
       const timeouts: number[] = [];
-      const start = performance.now();
-      socket.on("timeout", () => timeouts.push(performance.now() - start));
-      socket.setTimeout(500);
-      // Two full timeout periods of steady writes: never 500ms idle.
+      socket.on("timeout", () => timeouts.push(performance.now()));
+      socket.setTimeout(idle);
+      // Two full timeout periods of steady writes, then let it go idle.
       for (let i = 0; i < 20; i++) {
+        writes.push(performance.now());
         socket.write("x");
         await Bun.sleep(50);
       }
-      expect(timeouts).toEqual([]);
-      // The timer is still armed from the last write and fires once it goes idle.
-      await once(socket, "timeout");
+      if (timeouts.length === 0) await once(socket, "timeout");
+      // Whenever 'timeout' fired, a full idle period had passed since the last
+      // write before it: each write restarted the timer. (A scheduler stall
+      // longer than `idle` between two writes is then a legitimate timeout, not
+      // a failure.) Without the restart the first one lands ~50ms after a write.
+      const gaps = timeouts.map(at => at - Math.max(...writes.filter(w => w <= at)));
+      expect(gaps.filter(gap => gap < idle * 0.9)).toEqual([]);
       expect(fs.readFileSync(path, "utf8")).toBe(Buffer.alloc(20, "x").toString());
     } finally {
       socket.destroy();

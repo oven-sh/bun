@@ -6024,6 +6024,7 @@ it("destroys the transport when a transport 'error' tears the client session dow
     return header;
   }
   let connectionsOpen = 0;
+  const { promise: peerConnected, resolve: resolvePeerConnected } = Promise.withResolvers();
   const { promise: peerClosed, resolve: resolvePeerClosed } = Promise.withResolvers();
   const server = net.createServer(connection => {
     connectionsOpen++;
@@ -6035,21 +6036,34 @@ it("destroys the transport when a transport 'error' tears the client session dow
     // The smallest usable server preface: an empty SETTINGS frame, then an ACK of the client's.
     connection.write(frame(4, 0));
     connection.once("data", () => connection.write(frame(4, 1)));
+    resolvePeerConnected();
   });
+  let transport;
+  let session;
   try {
-    const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
-    let transport;
-    const session = http2.connect(`http://127.0.0.1:${port}`, {
+    const port = await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+    });
+    session = http2.connect(`http://127.0.0.1:${port}`, {
       createConnection: () => (transport = net.connect(port, "127.0.0.1")),
     });
+    const injected = Object.assign(new Error("transport failed"), { code: "EFAIL" });
     const sessionError = new Promise(resolve => session.once("error", resolve));
     const sessionClosed = new Promise(resolve => session.once("close", resolve));
-    await new Promise(resolve => session.once("connect", resolve));
+    // The client's 'connect' can land before the server has accepted (it did on macOS), so wait
+    // for both ends before counting connections. A session that dies first fails the wait.
+    const connected = new Promise((resolve, reject) => {
+      session.once("connect", resolve);
+      sessionError.then(reject);
+      sessionClosed.then(() => reject(new Error("session closed before 'connect'")));
+    });
+    await Promise.all([connected, peerConnected]);
     expect(connectionsOpen).toBe(1);
 
-    transport.emit("error", Object.assign(new Error("transport failed"), { code: "EFAIL" }));
+    transport.emit("error", injected);
 
-    expect((await sessionError).message).toBe("transport failed");
+    expect(await sessionError).toBe(injected);
     await sessionClosed;
     expect(session.destroyed).toBe(true);
 
@@ -6063,6 +6077,10 @@ it("destroys the transport when a transport 'error' tears the client session dow
     await peerClosed;
     expect(connectionsOpen).toBe(0);
   } finally {
+    // server.close() does not drop a live connection, so release the client end too (a failing
+    // run has just shown it is still open).
+    transport?.destroy();
+    session?.destroy();
     server.close();
   }
 });

@@ -4705,8 +4705,9 @@ class ServerHttp2Session extends Http2Session {
     // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
     // re-emits 'error' on a session whose one-shot listeners are consumed.
     // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
+    // detached", which only happens at the end of the teardown, so a destroy()
+    // re-entered from inside it (a stream's 'error' listener, the 'goaway'
+    // emit) would otherwise run the teardown twice.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;
@@ -5419,11 +5420,7 @@ class ClientHttp2Session extends Http2Session {
     if (this.destroyed) {
       return;
     }
-    // Keep the socket attached: destroy() ends and destroys it, and it only
-    // detaches afterwards. Detaching here left destroy() with no socket to
-    // tear down, so a transport that reports an error without destroying
-    // itself (emit('error'), autoDestroy:false, a wrapper that forwards the
-    // error) stayed open and leaked the connection.
+    // The socket stays attached so destroy() can end and destroy it.
     if (this.#closed) {
       this.destroy();
       return;
@@ -5782,8 +5779,9 @@ class ClientHttp2Session extends Http2Session {
     // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
     // re-emits 'error' on a session whose one-shot listeners are consumed.
     // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
+    // detached", which only happens at the end of the teardown, so a destroy()
+    // re-entered from inside it (a stream's 'error' listener, the 'goaway'
+    // emit) would otherwise run the teardown twice.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;

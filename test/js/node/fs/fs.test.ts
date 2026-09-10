@@ -6681,11 +6681,15 @@ it("a by-length path argument keeps its bytes while an async call is pending", a
   // view holding a file name has the same hazard: without the pin the
   // transfer below frees the name under the pool thread, which then opens
   // whatever landed in the freed block. The path is padded with "/." segments
-  // so that every byte of the view is part of the name.
+  // so that every byte of the view is part of the name. The length sits
+  // between JSC's 1000-element fastSizeLimit (above it, so the view has no
+  // ArrayBuffer) and macOS's 1024-byte MAX_PATH_BYTES (below it, so the call
+  // reaches the pool instead of failing with ENAMETOOLONG).
+  const N = 1020;
   const script = `
     const fs = require("node:fs");
     const cwd = process.cwd();
-    const N = 3000;
+    const N = ${N};
     const name = n => {
       const pad = N - cwd.length - 1 - n.length;
       const u = new Uint8Array(N);
@@ -6717,7 +6721,7 @@ it("a by-length path argument keeps its bytes while an async call is pending", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ byteLength: 3000, contents: "AAAA" });
+  expect(JSON.parse(stdout.trim())).toEqual({ byteLength: N, contents: "AAAA" });
   expect(exitCode).toBe(0);
 });
 

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isWindows, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -720,7 +720,8 @@ describe("hostile option objects", () => {
     // Heap::sweepArrayBuffers frees it, and the pool thread reads the freed
     // block: an ASAN heap-use-after-free, or a decode error / wrong image on a
     // build without ASAN. `Malloc=1` routes the Gigacage through system malloc
-    // so ASAN sees the free.
+    // so ASAN sees the free. Windows is left alone: bmalloc's SystemHeap is
+    // unimplemented there and `Malloc=1` would RELEASE_BASSERT.
     using dir = tempDir("image-oversize-transfer", {
       "repro.ts": `
         import zlib from "node:zlib";
@@ -761,7 +762,7 @@ describe("hostile option objects", () => {
     const rounds = 3;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "repro.ts", String(rounds)],
-      env: { ...bunEnv, Malloc: "1" },
+      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
       cwd: String(dir),
       stderr: "pipe",
     });

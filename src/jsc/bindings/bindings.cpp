@@ -3476,17 +3476,12 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
-// True when a view's bytes belong to a WebAssembly.Memory. A pin cannot hold
-// such storage: `WebAssembly.Memory.prototype.grow()` on a bounds-checked
-// memory allocates a new block, copies into it, frees the old one, and then
-// detaches the ArrayBuffer. `ArrayBuffer::detach` ignores the pin count for a
-// wasm buffer by design ("We allow detaching wasm memory ArrayBuffers even
-// though they are locked", WebKit `ArrayBuffer.cpp`).
-//
-// The `hasArrayBuffer()` guard keeps this free of side effects:
-// `possiblySharedBuffer()` returns the buffer the view already has for every
-// such mode, and only materializes one for a Fast or Oversize view. Neither of
-// those holds wasm memory, because `memory.buffer` is where the view comes from.
+// A pin cannot hold wasm memory: `ArrayBuffer::detach` ignores the pin count
+// for it ("We allow detaching wasm memory ArrayBuffers even though they are
+// locked", WebKit `ArrayBuffer.cpp`), and a non-shared `grow()` frees the block.
+// The `hasArrayBuffer()` guard keeps this side-effect free: only a Fast or
+// Oversize view makes `possiblySharedBuffer()` materialize one, and a view over
+// wasm memory comes from `memory.buffer`, so it always has one already.
 static bool isWasmMemoryStorage(JSC::JSArrayBufferView* view)
 {
     if (!view->hasArrayBuffer())

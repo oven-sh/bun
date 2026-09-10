@@ -31,8 +31,8 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
-    /// True when the bytes belong to a `WebAssembly.Memory`. A pin does not
-    /// hold them: see [`PinnedArrayBuffer::copy_out_for_write`].
+    /// True when the bytes belong to a `WebAssembly.Memory` — a `grow()` can free
+    /// them under a pin ([`PinnedArrayBuffer::copy_out_for_write`]).
     pub wasm_memory: bool,
     /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
@@ -659,7 +659,7 @@ pub struct PinnedArrayBuffer {
     /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable)
     /// or [`copy_out_for_write`](Self::copy_out_for_write) replaced the JS storage.
     copy: Option<Vec<u8>>,
-    /// `copy` is a write scratch that [`write_back`](Self::write_back) returns to the view.
+    /// `copy` is a write scratch, not a read-only snapshot.
     writes_back: bool,
 }
 
@@ -719,18 +719,12 @@ impl PinnedArrayBuffer {
         true
     }
 
-    /// A pin stops a detach. It does not stop `WebAssembly.Memory.prototype.grow()`.
-    /// A bounds-checked memory allocates a new block on a grow, copies into it, frees
-    /// the old one, and detaches the ArrayBuffer, which `ArrayBuffer::detach` permits
-    /// for a pinned wasm buffer by design. A job that WRITES through the borrow then
-    /// writes into the freed block, and so does the kernel on the job's behalf: the
-    /// range is unmapped, so another allocation can already own it.
-    ///
-    /// Give such a job a private copy to write into, and return what it wrote with
-    /// [`write_back`](Self::write_back) on the JS thread. The copy starts as the
-    /// view's current bytes, so a partial write leaves the rest correct. A shared
-    /// memory grows in place and needs none of this. `false` if the copy cannot be
-    /// allocated.
+    /// [`copy_if_resizable`](Self::copy_if_resizable) for a job that WRITES through the
+    /// borrow. A pin does not hold wasm memory: a non-shared `grow()` can move the block
+    /// and free the old one, and `ArrayBuffer::detach` ignores the pin count there by
+    /// design, so the job (or the kernel on its behalf) writes into freed pages. The copy
+    /// starts as the view's bytes, so a short write leaves the rest correct, and
+    /// [`write_back`](Self::write_back) returns it. `false` if it cannot be allocated.
     pub fn copy_out_for_write(&mut self, global: &JSGlobalObject) -> bool {
         if !self.buffer.wasm_memory
             || self.buffer.shared
@@ -752,10 +746,9 @@ impl PinnedArrayBuffer {
         true
     }
 
-    /// JS thread, once the job is done and before JS reads the view again: copy what
-    /// the job wrote into the view's own storage. The view can be gone (a grow
-    /// detaches it) or shorter (a resize), so re-read its extent from the JS value
-    /// and copy only what still fits. A no-op without
+    /// JS thread, once the job is done: copy what it wrote into the view's own storage.
+    /// The view can be gone (a grow detaches it) or shorter (a resize), so take its
+    /// extent from the JS value again and copy what still fits. A no-op without
     /// [`copy_out_for_write`](Self::copy_out_for_write).
     pub fn write_back(&mut self, global: &JSGlobalObject) {
         if !self.writes_back {
@@ -765,13 +758,12 @@ impl PinnedArrayBuffer {
         let Some(scratch) = self.copy.take() else {
             return;
         };
-        let Some(mut live) = self.buffer.value.as_array_buffer(global) else {
+        let Some(live) = self.buffer.value.as_array_buffer(global) else {
             return;
         };
-        // `as_array_buffer` reports no pin; keep the one this value still holds so
-        // `Drop` stays balanced.
-        live.pinned = self.buffer.pinned;
-        self.buffer = live;
+        self.buffer.ptr = live.ptr;
+        self.buffer.len = live.len;
+        self.buffer.byte_len = live.byte_len;
         if self.buffer.is_detached() {
             return;
         }

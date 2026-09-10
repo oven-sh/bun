@@ -947,8 +947,8 @@ mod _async_tasks {
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with consuming it below; the sentinel left behind is dropped in `destroy()`.
             let result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
-            // Read the back-reference field, not the `&self` method: `write_back` takes
-            // `&mut self.args`, and only a field borrow is disjoint from it.
+            // The field, not the `&self` method: only a field borrow is disjoint
+            // from the `&mut self.args` that `write_back` takes.
             let global_object = self.global_object.get();
             self.args.write_back(global_object);
             let success = matches!(result, Ok(_));
@@ -1016,10 +1016,8 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
-        /// JS thread, before the result reaches JS: return to its view whatever the
-        /// job wrote into a scratch copy
-        /// ([`PinnedArrayBuffer::copy_out_for_write`](jsc::PinnedArrayBuffer::copy_out_for_write)).
-        /// Only an argument set with a write destination overrides this.
+        /// JS thread, before the result reaches JS: hand back a write destination's
+        /// scratch copy ([`jsc::PinnedArrayBuffer::write_back`]). Only `fs.read` has one.
         fn write_back(&mut self, _global: &JSGlobalObject) {}
     }
 

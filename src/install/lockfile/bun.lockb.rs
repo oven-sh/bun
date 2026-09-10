@@ -456,9 +456,6 @@ pub(crate) fn load(
 
     lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
 
-    // Like `meta.id` above, every slice descriptor and element id in the
-    // package columns and tree list is memcpy'd verbatim from disk, and the
-    // consumers index with them unchecked. Reject out-of-range values here.
     validate_buffer_ranges(lockfile)?;
 
     if stream.read_int_le::<u64>()? != 0 {
@@ -886,36 +883,28 @@ pub(crate) fn load(
     Ok(res)
 }
 
-/// `true` when the `(off, len)` window stays inside a buffer of `buffer_len`
-/// elements. Computed in `usize` so `off + len` cannot overflow `u32`.
+/// `off + len <= buffer_len`, computed in `usize` so the sum cannot wrap.
 #[inline]
 fn slice_in_bounds(off: u32, len: u32, buffer_len: usize) -> bool {
     off as usize + len as usize <= buffer_len
 }
 
-/// `package::serializer::load` and `buffers::load` memcpy the package columns,
-/// the tree list and the id buffers verbatim from disk, and their consumers
-/// (`ExternalSlice::get`, `Package::clone`, the hoister, the printers) index
-/// with them unchecked. Validate every `ExternalSlice` window (`dependencies`,
-/// `resolutions`, `bin.map`, tree `dependencies`) and element id (tree
-/// `dependency_id` / `parent`, the `resolutions` and `hoisted_dependencies`
-/// buffers) so a corrupt or crafted lockfile fails the parse and the installer
-/// warns and re-resolves instead of panicking. String `(off, len)` pairs are
-/// not covered here: `SemverString::slice` already clamps them.
+/// Rejects slice windows and element ids that the rest of the installer
+/// indexes with unchecked, so a corrupt or crafted lockfile fails the parse
+/// instead of panicking later. String `(off, len)` pairs are exempt:
+/// `SemverString::slice` clamps them.
 fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
     let buffers = &lockfile.buffers;
     let dependencies_len = buffers.dependencies.len();
     let resolutions_len = buffers.resolutions.len();
 
-    // `dependencies` and `resolutions` are parallel buffers: the tree builder
-    // iterates a package's `resolutions` range and indexes both with it.
+    // Parallel buffers: one dependency id indexes both.
     if resolutions_len != dependencies_len {
         return Err(crate::Error::InvalidLockfile);
     }
 
-    // A package's two windows must be the same range, not just two in-bounds
-    // ranges: consumers derive dependency ids from one and index the other
-    // with them.
+    // For the same reason a package's two windows must be one range, not just
+    // two in-bounds ranges.
     for (dependencies, resolutions) in lockfile
         .packages
         .items_dependencies()
@@ -930,10 +919,8 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         }
     }
 
-    // `bin` is a tagged union; the `Map` arm is an `(off, len)` window into
-    // `extern_strings` (the tag byte itself is validated by the package
-    // deserializer). The window holds `[name, target]` pairs and every
-    // consumer walks it two at a time, so its length must also be even.
+    // A `Map` bin is a window of `[name, target]` pairs in `extern_strings`,
+    // walked two at a time, so it must also have even length.
     let extern_strings_len = buffers.extern_strings.len();
     for package_bin in lockfile.packages.items_bin() {
         if package_bin.tag == bin::Tag::Map {
@@ -958,20 +945,20 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         }
     }
 
-    let trees_len = buffers.trees.len();
     let hoisted_len = buffers.hoisted_dependencies.len();
     for (tree_index, tree) in buffers.trees.iter().enumerate() {
-        // Only the root node carries a sentinel (`ROOT_DEP_ID`, or
-        // `invalid_dependency_id` from `Tree::default`). Every other node was
-        // created for a dependency, and the consumers (`Tree::folder_name`,
-        // `Lockfile::is_workspace_tree_id`) index `buffers.dependencies`
-        // with its id.
+        // Only the root may carry a sentinel dependency id; every other
+        // tree's id is used to index `buffers.dependencies`.
         let dependency_id_valid = (tree.dependency_id as usize) < dependencies_len
             || (tree_index == 0
                 && (tree.dependency_id == super::tree::ROOT_DEP_ID
                     || tree.dependency_id == invalid_dependency_id));
-        if !dependency_id_valid
-            || (tree.parent != Tree::INVALID_ID && tree.parent as usize >= trees_len)
+        // The builder appends each tree after its parent: ids are positions
+        // and a parent precedes its child, which also rules out parent cycles.
+        let parent_valid = tree.parent == Tree::INVALID_ID || (tree.parent as usize) < tree_index;
+        if tree.id as usize != tree_index
+            || !dependency_id_valid
+            || !parent_valid
             || !slice_in_bounds(tree.dependencies.off, tree.dependencies.len, hoisted_len)
         {
             return Err(crate::Error::InvalidLockfile);

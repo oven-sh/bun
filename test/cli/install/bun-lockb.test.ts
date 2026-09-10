@@ -420,12 +420,52 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
 //   "range start index 4294967280 out of range for slice of length 3"
 // The two windows must also be the same range: consumers derive dependency
 // ids from one and index the other with them.
-for (const [what, column, poke] of [
-  ["dependencies offset is out of range", "dependencies", 0xfffffff0],
-  ["resolutions offset is out of range", "resolutions", 0xfffffff0],
-  ["resolutions window does not match dependencies", "resolutions", 0],
+function corruptPackageColumn(column: "dependencies" | "resolutions", poke: number) {
+  return (lockb: Buffer) => {
+    // Locate the column (the SoA walk documented in the `meta` test above)
+    // and overwrite the last package's `off`. Only the start index matters;
+    // the end is already clamped.
+    const fmt = lockb.readUInt32LE(42);
+    const N = Number(lockb.readBigUInt64LE(86));
+    const begin = Number(lockb.readBigUInt64LE(110));
+    const resolutionSize = fmt === 2 ? 64 : 72;
+    const columnStart = begin + N * (8 + 8 + resolutionSize) + (column === "resolutions" ? N * 8 : 0);
+    expect(N).toBe(3);
+    // Sanity: the root package's list is the first two of the three entries,
+    // and the last package's window starts right after them, so overwriting
+    // its `off` with 0 always de-pairs it from its `dependencies` window.
+    expect(lockb.readUInt32LE(columnStart)).toBe(0);
+    expect(lockb.readUInt32LE(columnStart + 4)).toBe(2);
+    expect(lockb.readUInt32LE(columnStart + 2 * 8)).toBe(2);
+    lockb.writeUInt32LE(poke, columnStart + 2 * 8);
+  };
+}
+
+// The hoisted tree list is written as 20-byte `[id|dependency_id|parent|off|len]`
+// records behind a 16-byte (start, end) header and a type-name prefix. Trees
+// are appended after their parent, so a parent id must precede the tree's own
+// position; a root that names itself as parent is the smallest parent cycle,
+// which the parent-chain walks over a loaded tree (`bun update`'s cleanup of
+// collapsed copies) would never leave.
+function corruptRootTreeParent(lockb: Buffer) {
+  const prefix = lockb.indexOf("\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n");
+  expect(prefix).toBeGreaterThan(16);
+  const treesStart = Number(lockb.readBigUInt64LE(prefix - 16));
+  const treesEnd = Number(lockb.readBigUInt64LE(prefix - 8));
+  // Everything hoists, so there is exactly the root tree: id 0, no parent.
+  expect(treesEnd - treesStart).toBe(20);
+  expect(lockb.readUInt32LE(treesStart)).toBe(0);
+  expect(lockb.readUInt32LE(treesStart + 8)).toBe(0xffffffff);
+  lockb.writeUInt32LE(0, treesStart + 8);
+}
+
+for (const [what, corrupt] of [
+  ["package dependencies offset is out of range", corruptPackageColumn("dependencies", 0xfffffff0)],
+  ["package resolutions offset is out of range", corruptPackageColumn("resolutions", 0xfffffff0)],
+  ["package resolutions window does not match dependencies", corruptPackageColumn("resolutions", 0)],
+  ["root tree is its own parent", corruptRootTreeParent],
 ] as const) {
-  it(`rejects a binary lockfile whose package ${what}`, async () => {
+  it(`rejects a binary lockfile whose ${what}`, async () => {
     const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
     // Migrating a package-lock.json with `--lockfile-only` writes bun.lockb
@@ -473,32 +513,17 @@ for (const [what, column, poke] of [
     const lockbPath = join(packageDir, "bun.lockb");
     expect(await exists(lockbPath)).toBe(true);
 
-    // Locate the column (the SoA walk documented in the `meta` test above)
-    // and point the last package's `off` far past the end of its buffer. Only
-    // the start index matters; the end is already clamped.
     const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
-    const fmt = lockb.readUInt32LE(42);
-    const N = Number(lockb.readBigUInt64LE(86));
-    const begin = Number(lockb.readBigUInt64LE(110));
-    const resolutionSize = fmt === 2 ? 64 : 72;
-    const columnStart = begin + N * (8 + 8 + resolutionSize) + (column === "resolutions" ? N * 8 : 0);
-    expect(N).toBe(3);
-    // Sanity: the root package's list is the first two of the three entries,
-    // and the last package's window starts right after them, so overwriting
-    // its `off` with 0 always de-pairs it from its `dependencies` window.
-    expect(lockb.readUInt32LE(columnStart)).toBe(0);
-    expect(lockb.readUInt32LE(columnStart + 4)).toBe(2);
-    expect(lockb.readUInt32LE(columnStart + 2 * 8)).toBe(2);
-    lockb.writeUInt32LE(poke, columnStart + 2 * 8);
+    corrupt(lockb);
     await write(lockbPath, lockb);
 
     // Each command is a separate door into the corrupt lockfile, and a
     // command that re-resolves rewrites the file, so restore the corrupt
     // bytes before each run. Run all three before asserting: one door that
     // crashes must not hide what the others do.
-    const corrupt = Buffer.from(lockb);
+    const corruptBytes = Buffer.from(lockb);
     const run = async (args: string[]) => {
-      await write(lockbPath, corrupt);
+      await write(lockbPath, corruptBytes);
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), ...args],
         cwd: packageDir,

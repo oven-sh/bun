@@ -67,14 +67,19 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
+// Last committed URL per session, for Page.reload.
+const urls = new Map<string, string>();
 
 // Sessions whose renderer Page.crash killed, with the ids of the commands
-// Chrome would be holding for the dead renderer. What real Chrome does: the
-// session stays attached; commands the renderer handles get no reply until a
-// Page.navigate creates a new renderer, and are then failed with "Target
-// crashed"; Page.captureScreenshot and Input.* fail at once; Page.navigate
-// itself is handled by the browser and works.
+// Chrome would be holding for the dead renderer. What real Chrome (153) does:
+// the session stays attached; Target.* and the navigation commands are the
+// browser's and keep working, and a navigation gives the tab a new renderer;
+// until then, commands the renderer answers get no reply, and once it exists
+// again they are failed with "Target crashed"; Page.captureScreenshot and
+// Input.* fail at once. (Emulation.* hangs the whole browser connection for
+// good there; here it is only held.)
 const crashedSessions = new Map<string, number[]>();
+const browserHandled = /^(Target\.|Page\.(navigate|reload|getNavigationHistory|navigateToHistoryEntry|crash)$)/;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
@@ -84,11 +89,26 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       sessionId ? { id: failedId, error: { code, message }, sessionId } : { id: failedId, error: { code, message } },
     );
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+  // A document commits and finishes loading. If the renderer was dead, this
+  // is also where the new one takes over and the held commands are failed.
+  const load = (url: string) => {
+    const loaderId = "L" + ++loads;
+    const held = crashedSessions.get(sessionId!);
+    if (held) {
+      crashedSessions.delete(sessionId!);
+      for (const heldId of held) fail(heldId, -32000, "Target crashed");
+      event("Inspector.targetReloadedAfterCrash", {});
+    }
+    urls.set(sessionId!, url);
+    event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
+    event("Page.loadEventFired", { timestamp: loads });
+    return loaderId;
+  };
 
   if (method === cdpErrorOn) return fail(id, -32000, "Cannot navigate to invalid URL");
 
   const held = sessionId === undefined ? undefined : crashedSessions.get(sessionId);
-  if (held && method !== "Page.navigate" && !method.startsWith("Target.")) {
+  if (held && !browserHandled.test(method)) {
     if (method === "Page.captureScreenshot" || method.startsWith("Input.")) return fail(id, -32603, "Internal error");
     held.push(id);
     return;
@@ -101,17 +121,14 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      if (held) {
-        crashedSessions.delete(sessionId!);
-        for (const heldId of held) fail(heldId, -32000, "Target crashed");
-        event("Inspector.targetReloadedAfterCrash", {});
-      }
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
+      reply({ frameId: "F", loaderId: "L" + (loads + 1) });
+      load(params.url);
       return;
     }
+    case "Page.reload":
+      reply({});
+      load(urls.get(sessionId!) ?? "about:blank");
+      return;
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Page.crash":

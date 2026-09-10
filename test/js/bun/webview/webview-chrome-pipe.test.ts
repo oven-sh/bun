@@ -338,15 +338,16 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
 
 // A tab's renderer process can die while the browser keeps running (OOM kill,
 // SIGKILL, Page.crash). Chrome reports it with Inspector.targetCrashed on the
-// view's session, keeps the session attached, and holds every command the
-// page has to answer, the ones already in flight included, until a
-// Page.navigate gives the tab a new renderer. So the view has to settle the
-// pending work itself, and refuse page operations until then rather than let
-// them wait for a navigation that may never come. cdp() stays raw.
-test.concurrent("a renderer crash rejects the view's pending work and navigate() recovers it", async () => {
+// view's session and keeps the session attached. A navigation (navigate,
+// reload, history) gives the tab a new renderer; until then Chrome holds every
+// command the page has to answer, the ones already in flight included. So the
+// view settles the pending work itself and refuses page operations until a
+// navigation commits, rather than let them wait for one that may never come.
+// cdp() stays raw.
+test.concurrent("a renderer crash rejects the view's pending work and a reload() recovers it", async () => {
   const result = await runScenario(`
     const view = newView();
-    await view.navigate("http://fake/");
+    await view.navigate("http://fake/crashed-and-reloaded");
     const hungEvaluate = view.evaluate("__fake_no_reply()");
     const hungCdp = view.cdp("Page.crash");
     hungEvaluate.catch(() => {}); // held, so the crash rejection is not loud here
@@ -360,38 +361,37 @@ test.concurrent("a renderer crash rejects the view's pending work and navigate()
       }));
     });
     // Awaiting a slot the crash left pending would never return, so report
-    // that instead of hanging.
-    const settledNow = p => Bun.peek.status(p) === "pending" ? { pending: true } : outcome(p);
+    // that instead of hanging (and keep whatever it settles with later quiet).
+    const settledNow = p => Bun.peek.status(p) === "pending" ? (p.catch(() => {}), { pending: true }) : outcome(p);
     // A taken slot throws ERR_INVALID_STATE from the call, not its promise.
     const begin = call => { try { return call(); } catch (e) { return Promise.reject(new Error("threw " + e.message)); } };
     report.evaluate = await settledNow(hungEvaluate);
     report.cdp = await settledNow(hungCdp);
 
-    // While the renderer is dead, a page operation is refused on the spot
-    // instead of waiting on a navigation that may never come.
+    // While the renderer is dead, a page operation is refused on the spot.
     report.evaluateWhileCrashed = await settledNow(begin(() => view.evaluate("'too early'")));
-    report.reloadWhileCrashed = await settledNow(begin(() => view.reload()));
+    report.resizeWhileCrashed = await settledNow(begin(() => view.resize(120, 120)));
     // cdp() keeps Chrome's own semantics: the browser holds the command and
-    // fails it with "Target crashed" once the navigation recreates the tab.
+    // fails it with "Target crashed" once a navigation recreates the renderer.
     const cdpWhileCrashed = outcome(begin(() => view.cdp("DOM.getDocument")));
-    report.recovery = await outcome(begin(() => view.navigate("http://fake/again")));
+    report.reload = await outcome(begin(() => view.reload()));
     report.cdpWhileCrashed = await cdpWhileCrashed;
-    report.evaluateAfter = await outcome(begin(() => view.evaluate("'alive'")));
+    report.after = await outcome(begin(() => view.evaluate("'alive at ' + " + JSON.stringify(view.url))));
     view.close();
     print(report);
   `);
   const crashed = { rejected: "page crashed (renderer process died)" };
-  const refused = { rejected: "page crashed (renderer process died), navigate() to recover" };
+  const refused = { rejected: "page crashed (renderer process died), reload() or navigate() to recover" };
   expect(result).toEqual({
     evaluateStatus: "rejected",
     cdpStatus: "rejected",
     evaluate: crashed,
     cdp: crashed,
     evaluateWhileCrashed: refused,
-    reloadWhileCrashed: refused,
-    recovery: {},
+    resizeWhileCrashed: refused,
+    reload: {},
     cdpWhileCrashed: { rejected: "Target crashed" },
-    evaluateAfter: { resolved: "alive" },
+    after: { resolved: "alive at http://fake/crashed-and-reloaded" },
   });
 });
 

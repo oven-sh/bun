@@ -685,6 +685,15 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingCdp, false, err);
 }
 
+// A page death the user did not ask for: reject the view's slots and forget the ids Chrome still owes it.
+void Transport::failPendingWork(JSWebView* view, JSValue err)
+{
+    rejectViewSlots(m_global, view, err);
+    uint32_t vid = view->m_viewId;
+    m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
+    updateKeepAlive();
+}
+
 // close() variant of rejectViewSlots: see rejectSlotAsHandled (JSWebView.h).
 static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
@@ -1103,7 +1112,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     auto& vm = g->vm();
 
     // Target.detachedFromTarget — fires when an attached session's target
-    // dies (renderer crash, OOM, kill). params: {sessionId, targetId}.
+    // is destroyed (tab closed from outside, context gone). params: {sessionId, targetId}.
     // Browser-level (no sessionId on the envelope). close() handles user-
     // initiated closes eagerly; this is the only notification for external
     // death. Without it, pending evaluates on the dead view hang forever.
@@ -1119,11 +1128,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
         if (!view) return;
-        rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
-        // Erase stale m_pending entries — replies won't come.
-        m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
-        updateKeepAlive();
+        failPendingWork(view, createError(g, "page detached (crashed or closed)"_s));
         return;
     }
     auto sidStr = WTF::String::fromUTF8(sessionId);
@@ -1278,11 +1284,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // Renderer died, session stays attached: the detach path above never fires.
     if (method.size() == 23 && memcmp(method.data(), "Inspector.targetCrashed", 23) == 0) {
         view->m_crashed = true;
-        // Settled before the dispatch below, so a listener can navigate().
-        rejectViewSlots(g, view, createError(g, "page crashed (renderer process died)"_s));
-        uint32_t vid = view->m_viewId;
-        m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
-        updateKeepAlive();
+        // Settled before the dispatch below, so a listener can reload().
+        failPendingWork(view, createError(g, "page crashed (renderer process died)"_s));
     }
 
     // Unhandled CDP event — dispatch to the view's EventTarget if it has
@@ -1419,11 +1422,11 @@ static JSPromise* rejectedPromise(JSGlobalObject* g, const WTF::String& message)
     return promise;
 }
 
-// Chrome holds a crashed session's page commands until a navigate recreates the renderer.
+// Chrome holds (or, for Emulation.*, wedges on) a crashed tab's page commands until a navigation recreates the renderer.
 static JSPromise* refuseIfCrashed(JSGlobalObject* g, JSWebView* v)
 {
     if (!v->m_crashed) return nullptr;
-    return rejectedPromise(g, "page crashed (renderer process died), navigate() to recover"_s);
+    return rejectedPromise(g, "page crashed (renderer process died), reload() or navigate() to recover"_s);
 }
 
 // Allocate promise, store in slot, add to Transport pending map, send frame.
@@ -1442,8 +1445,8 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None)
         return rejectedPromise(g, "Chrome connection is not available"_s);
-    // navigate() recovers the view; cdp() keeps Chrome's raw semantics.
-    if (m != Method::PageNavigate && m != Method::UserRaw) {
+    // Any navigation recovers a crashed view; cdp() keeps Chrome's raw semantics.
+    if (ps != PendingSlot::Navigate && ps != PendingSlot::Cdp) {
         if (auto* refused = refuseIfCrashed(g, v)) return refused;
     }
     auto* promise = JSPromise::create(vm, g->promiseStructure());

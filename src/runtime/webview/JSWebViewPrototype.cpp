@@ -513,8 +513,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
     }
 
     VirtualKey vk = virtualKeyFromName(key);
-    // One code point: one BMP unit, or one surrogate pair (an emoji). A lone
-    // surrogate is half a character and has no key to send.
+    // One code point: one BMP unit, or one surrogate pair (an emoji).
     bool singleCodePoint = (key.length() == 1 && !U16_IS_SURROGATE(key[0]))
         || (key.length() == 2 && U16_IS_LEAD(key[0]) && U16_IS_TRAIL(key[1]));
     if (vk == VirtualKey::Character && !singleCodePoint) {

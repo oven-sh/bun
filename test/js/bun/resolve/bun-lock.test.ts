@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunRun, tempDir } from "harness";
 import { join } from "path";
 
 const lockfile = `{
@@ -13,8 +13,8 @@ const lockfile = `{
   "packages": { },
 }`;
 
-test("import bun.lock file as json", async () => {
-  const dir = tempDirWithFiles("bun-lock", {
+test.concurrent("import bun.lock file as json", async () => {
+  await using dir = tempDir("bun-lock", {
     "bun.lock": lockfile,
     "index.ts": `
     import lockfile from './bun.lock';
@@ -23,5 +23,5 @@ test("import bun.lock file as json", async () => {
     `,
   });
 
-  expect([join(dir, "index.ts")]).toRun();
+  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });

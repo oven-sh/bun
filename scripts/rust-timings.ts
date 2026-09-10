@@ -255,16 +255,23 @@ if (cfg.cargo === undefined) {
 
 // Codegen + vendored path deps must exist before cargo can load the workspace
 // manifest. The configure step is a no-op when already done.
-if (!existsSync(cfg.codegenDir) || !existsSync(join(repo, "vendor/lolhtml/Cargo.toml"))) {
+if (
+  !existsSync(cfg.codegenDir) ||
+  !existsSync(join(repo, "vendor/lolhtml/Cargo.toml")) ||
+  !existsSync(join(repo, "vendor/rust-argon2/Cargo.toml"))
+) {
   console.log(cyan("[setup]") + " bun scripts/build.ts --configure-only --profile=" + opts.profile);
   const r = spawnSync(process.execPath, ["scripts/build.ts", "--configure-only", `--profile=${opts.profile}`], {
     stdio: "inherit",
     cwd: repo,
   });
   if (r.status !== 0) process.exit(1);
-  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml"], { stdio: "inherit", cwd: repo });
+  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
+    stdio: "inherit",
+    cwd: repo,
+  });
   if (nr.error || nr.status !== 0) {
-    console.error(nr.error ? `ninja: ${nr.error.message}` : "ninja codegen/clone-lolhtml failed");
+    console.error(nr.error ? `ninja: ${nr.error.message}` : "ninja codegen/clone-lolhtml/clone-rust-argon2 failed");
     process.exit(1);
   }
 }

@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 
 const bunEnv = {
   ...bunEnv_,
@@ -329,6 +329,56 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  describe("--cwd longer than the OS path limit", () => {
+    // Longer than PATH_MAX on every platform (4096 on Linux, 1024 on macOS).
+    const tooLong = Buffer.alloc(5000, "a").toString();
+
+    for (const [kind, cwdArg] of [
+      ["absolute", "/" + tooLong],
+      ["relative", tooLong],
+    ] as const) {
+      it(`${kind} value is reported as an error instead of crashing`, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--cwd", cwdArg, "-e", "console.log('ran')"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain(`Could not change directory to "${cwdArg}"`);
+        // Windows leaves the verdict on a path this long to SetCurrentDirectoryW.
+        if (!isWindows) expect(stderr).toContain("ENAMETOOLONG");
+        expect(stdout).toBe("");
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(1);
+      });
+    }
+
+    it("value that only normalizes down to a path that fits is honored", async () => {
+      using dir = tempDir("bun-run-cwd-normalize", {
+        "subdir/.keep": "",
+      });
+      // 6006 bytes before normalization, "subdir" after it.
+      const cwdArg = "subdir" + Buffer.alloc(6000, "/../subdir").toString();
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cwd", cwdArg, "-e", "console.log(process.cwd())"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(basename(stdout.trim())).toBe("subdir");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {
       "index.ts": `
@@ -348,6 +398,34 @@ describe.concurrent("bun run", () => {
 
     expect(stderr).toBe("");
     expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/41275
+  it("a __PURE__ marker that is not the first word of a // comment is not a DCE annotation", async () => {
+    const source = `
+      function repro() {
+        // \`/*#__PURE__*/\`
+        console.log("Hello, world!");
+      }
+      repro();
+      // Wrap class inside init: \`/*#__PURE__*/ (() => { let C = class C {}; return C; })()\`
+      console.log("second");
+      // @__PURE__
+      console.log("removed");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Hello, world!\nsecond\n");
     expect(exitCode).toBe(0);
   });
 
@@ -1118,5 +1196,56 @@ describe.concurrent("bun run", () => {
       stdout: expect.stringContaining("nested --bun ok"),
       exitCode: 0,
     });
+  });
+
+  it.if(isWindows)("--shell=system refuses a passthrough argument containing a cmd.exe special character", async () => {
+    using dir = tempDir("bun-run-system-shell-metachar", {
+      "package.json": JSON.stringify({ name: "system-shell-metachar", scripts: { say: "echo" } }),
+    });
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--shell=system", "say", "hello"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("hello");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--shell=system", "say", 'x" & echo marker & "'],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(
+        'error: Failed to run script say: argument "x\\" & echo marker & \\"" contains a cmd.exe special character and cannot be passed to the system shell',
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    }
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--shell=system", "say", "%PATH%"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(
+        'error: Failed to run script say: argument "%PATH%" contains a cmd.exe special character and cannot be passed to the system shell',
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    }
   });
 });

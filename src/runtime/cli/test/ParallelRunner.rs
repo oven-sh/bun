@@ -11,6 +11,6 @@
 //!
 //! Thin facade re-exporting the entry points from `parallel/`.
 
-pub use super::parallel::runner::run_as_coordinator;
-pub use super::parallel::runner::run_as_worker;
-pub use super::parallel::runner::worker_emit_test_done;
+pub(crate) use super::parallel::runner::run_as_coordinator;
+pub(crate) use super::parallel::runner::run_as_worker;
+pub(crate) use super::parallel::runner::worker_emit_test_done;

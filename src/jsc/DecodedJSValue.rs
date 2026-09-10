@@ -1,4 +1,4 @@
-use crate::{JSCell, JSValue, ffi};
+use crate::{JSCell, JSValue};
 
 /// ABI-compatible with `JSC::JSValue`.
 #[repr(C)]
@@ -11,7 +11,7 @@ pub struct DecodedJSValue {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union EncodedValueDescriptor {
-    pub as_int64: i64,
+    pub(crate) as_int64: i64,
     pub ptr: *mut JSCell,
     pub as_bits: AsBits,
 }
@@ -38,15 +38,6 @@ impl DecodedJSValue {
     /// Equivalent to `JSC::JSValue::encode`.
     pub fn encode(self) -> JSValue {
         JSValue::from_raw(self.bits())
-    }
-
-    fn as_u64(self) -> u64 {
-        self.bits() as u64
-    }
-
-    /// Equivalent to `JSC::JSValue::isCell`. Note that like JSC, this method treats 0 as a cell.
-    pub fn is_cell(self) -> bool {
-        self.as_u64() & ffi::NOT_CELL_MASK == 0
     }
 }
 

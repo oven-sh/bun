@@ -5,22 +5,21 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
-pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
 // `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see the comment
 // on the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
-    pub config: &'a Config,
-    pub sources: &'a Vec<Box<[u8]>>,
-    pub hashes: BumpVec<'a, &'a [u8]>,
-    pub exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
-    pub references: &'a mut CssModuleReferences<'a>,
+    pub(crate) config: &'a Config,
+    pub(crate) sources: &'a Vec<Box<[u8]>>,
+    pub(crate) hashes: BumpVec<'a, &'a [u8]>,
+    pub(crate) exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
+    pub(crate) references: &'a mut CssModuleReferences<'a>,
 }
 
 impl<'a> CssModule<'a> {
-    pub fn new(
+    pub(crate) fn new(
         bump: &'a Bump,
         config: &'a Config,
         sources: &'a Vec<Box<[u8]>>,
@@ -70,7 +69,7 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
+    pub(crate) fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
         // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
         // (CssModuleExport can't be Default — BumpVec field), so use the
         // entry()-API instead.
@@ -88,7 +87,6 @@ impl<'a> CssModule<'a> {
                         self.sources[source_index as usize].as_ref(),
                         name,
                     ),
-                    composes: BumpVec::new_in(bump),
                     is_referenced: true,
                 });
             }
@@ -102,7 +100,7 @@ impl<'a> CssModule<'a> {
     // hands it down as `specifier_path`; the fallible `importRecord` lookup
     // therefore lives at the call site, which is why this no longer returns
     // `Result<_, PrintErr>`.
-    pub fn reference_dashed(
+    pub(crate) fn reference_dashed(
         &mut self,
         bump: &'a Bump,
         name: &'a [u8],
@@ -144,7 +142,6 @@ impl<'a> CssModule<'a> {
                                 self.sources[source_index as usize].as_ref(),
                                 &name[2..],
                             ),
-                            composes: BumpVec::new_in(bump),
                             is_referenced: true,
                         });
                     }
@@ -174,7 +171,7 @@ impl<'a> CssModule<'a> {
         Some(the_hash)
     }
 
-    pub fn handle_composes(
+    pub(crate) fn handle_composes(
         &mut self,
         _dest: &mut css::Printer,
         selectors: &css::selector::parser::SelectorList,
@@ -199,7 +196,7 @@ impl<'a> CssModule<'a> {
         Ok(())
     }
 
-    pub fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
+    pub(crate) fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
         use bun_collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =
             self.exports_by_source_index[source_index as usize].entry(local)
@@ -213,13 +210,12 @@ impl<'a> CssModule<'a> {
                     self.sources[source_index as usize].as_ref(),
                     &local[2..],
                 ),
-                composes: BumpVec::new_in(bump),
                 is_referenced: false,
             });
         }
     }
 
-    pub fn add_local(
+    pub(crate) fn add_local(
         &mut self,
         bump: &'a Bump,
         exported: &'a [u8],
@@ -239,7 +235,6 @@ impl<'a> CssModule<'a> {
                     self.sources[source_index as usize].as_ref(),
                     local,
                 ),
-                composes: BumpVec::new_in(bump),
                 is_referenced: false,
             });
         }
@@ -250,22 +245,18 @@ impl<'a> CssModule<'a> {
 pub struct Config {
     /// The name pattern to use when renaming class names and other identifiers.
     /// Default is `[hash]_[local]`.
-    pub pattern: Pattern,
+    pub(crate) pattern: Pattern,
 
     /// Whether to rename dashed identifiers, e.g. custom properties.
-    pub dashed_idents: bool,
+    pub(crate) dashed_idents: bool,
 
     /// Whether to scope animation names.
     /// Default is `true`.
-    pub animation: bool,
-
-    /// Whether to scope grid names.
-    /// Default is `true`.
-    pub grid: bool,
+    pub(crate) animation: bool,
 
     /// Whether to scope custom identifiers
     /// Default is `true`.
-    pub custom_idents: bool,
+    pub(crate) custom_idents: bool,
 }
 
 impl Default for Config {
@@ -274,7 +265,6 @@ impl Default for Config {
             pattern: Pattern::default(),
             dashed_idents: false,
             animation: true,
-            grid: true,
             custom_idents: true,
         }
     }
@@ -283,7 +273,7 @@ impl Default for Config {
 /// A CSS modules class name pattern.
 pub struct Pattern {
     /// The list of segments in the pattern.
-    pub segments: crate::SmallList<Segment, 3>,
+    pub(crate) segments: crate::SmallList<Segment, 3>,
 }
 
 impl Default for Pattern {
@@ -300,7 +290,7 @@ impl Default for Pattern {
 
 impl Pattern {
     /// Write the substituted pattern to a destination.
-    pub fn write(
+    pub(crate) fn write(
         &self,
         hash_: &[u8],
         path: &[u8],
@@ -330,7 +320,7 @@ impl Pattern {
         }
     }
 
-    pub fn write_to_string_with_prefix<'a>(
+    pub(crate) fn write_to_string_with_prefix<'a>(
         &self,
         bump: &'a Bump,
         prefix: &'static [u8],
@@ -357,7 +347,7 @@ impl Pattern {
         res.into_bump_slice()
     }
 
-    pub fn write_to_string<'a>(
+    pub(crate) fn write_to_string<'a>(
         &self,
         _bump: &'a Bump,
         res_: BumpVec<'a, u8>,
@@ -413,26 +403,14 @@ pub type CssModuleReferences<'a> = ArrayHashMap<&'a [u8], CssModuleReference<'a>
 pub struct CssModuleExport<'a> {
     /// The local (compiled) name for this export.
     pub name: &'a [u8],
-    /// Other names that are composed by this export.
-    pub composes: BumpVec<'a, CssModuleReference<'a>>,
     /// Whether the export is referenced in this file.
-    pub is_referenced: bool,
+    pub(crate) is_referenced: bool,
 }
 
 /// A referenced name within a CSS module, e.g. via the `composes` property.
 ///
 /// See [CssModuleExport](CssModuleExport).
 pub enum CssModuleReference<'a> {
-    /// A local reference.
-    Local {
-        /// The local (compiled) name for the reference.
-        name: &'a [u8],
-    },
-    /// A global reference.
-    Global {
-        /// The referenced global name.
-        name: &'a [u8],
-    },
     /// A reference to an export in a different file.
     Dependency {
         /// The name to reference within the dependency.
@@ -444,33 +422,12 @@ pub enum CssModuleReference<'a> {
     },
 }
 
-impl<'a> CssModuleReference<'a> {
-    pub fn eql(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Local { name: a }, Self::Local { name: b }) => a == b,
-            (Self::Global { name: a }, Self::Global { name: b }) => a == b,
-            // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
-            (
-                Self::Dependency {
-                    name: an,
-                    specifier: asp,
-                },
-                Self::Dependency {
-                    name: bn,
-                    specifier: bsp,
-                },
-            ) => an == bn && asp == bsp,
-            _ => false,
-        }
-    }
-}
-
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
 /// the *same* hasher without depending on `bun_css`. Re-export here so
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
 /// `css_modules::hash` path.
 #[inline]
-pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
+pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }

@@ -25,17 +25,3 @@
 
 #include "config.h"
 #include "ServerTiming.h"
-
-namespace WebCore {
-
-ServerTiming ServerTiming::isolatedCopy() const&
-{
-    return ServerTiming { name.isolatedCopy(), duration, description.isolatedCopy(), durationSet, descriptionSet };
-}
-
-ServerTiming ServerTiming::isolatedCopy() &&
-{
-    return ServerTiming { WTF::move(name).isolatedCopy(), duration, WTF::move(description).isolatedCopy(), durationSet, descriptionSet };
-}
-
-} // namespace WebCore

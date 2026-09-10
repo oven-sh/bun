@@ -7,6 +7,7 @@
 #include "JSWritableStream.h"
 
 #include "BunClientData.h"
+#include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -18,7 +19,6 @@
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
 
@@ -48,6 +48,105 @@ JSObject* extractSizeAlgorithm(const QueuingStrategyDict& strategy)
     if (strategy.size.isEmpty())
         return nullptr;
     return asObject(strategy.size);
+}
+
+// How many bytes at the tail of `data` form a valid incomplete UTF-8 sequence (1..3),
+// or 0 if it ends on a boundary (or the tail is definitely invalid and should be
+// replaced now). Applies the WHATWG UTF-8 decoder's per-lead second-byte ranges so a
+// surrogate / overlong / out-of-range prefix is not held back.
+static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
+{
+    size_t len = data.size();
+    for (size_t back = 1; back <= std::min<size_t>(3, len); ++back) {
+        uint8_t b = data[len - back];
+        if ((b & 0xC0) == 0x80)
+            continue;
+        size_t need;
+        uint8_t secondMin = 0x80, secondMax = 0xBF;
+        if (b < 0x80)
+            need = 1;
+        else if (b >= 0xC2 && b <= 0xDF)
+            need = 2;
+        else if (b >= 0xE0 && b <= 0xEF) {
+            need = 3;
+            if (b == 0xE0)
+                secondMin = 0xA0;
+            else if (b == 0xED)
+                secondMax = 0x9F;
+        } else if (b >= 0xF0 && b <= 0xF4) {
+            need = 4;
+            if (b == 0xF0)
+                secondMin = 0x90;
+            else if (b == 0xF4)
+                secondMax = 0x8F;
+        } else
+            return 0;
+        if (back >= need)
+            return 0;
+        if (back >= 2) {
+            uint8_t second = data[len - back + 1];
+            if (second < secondMin || second > secondMax)
+                return 0;
+        }
+        return back;
+    }
+    return 0;
+}
+
+JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
+{
+    WTF::Vector<uint8_t> joinedStorage;
+    std::span<const uint8_t> joined = chunk;
+    if (unsigned pendingLen = state.pendingLen()) {
+        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
+        joinedStorage.append(chunk);
+        joined = joinedStorage.span();
+        state.clearPending();
+    }
+
+    if (!state.bomSeen) {
+        static constexpr uint8_t bom[] = { 0xEF, 0xBB, 0xBF };
+        if (joined.size() >= 3 && !memcmp(joined.data(), bom, 3)) {
+            joined = joined.subspan(3);
+            state.bomSeen = true;
+        } else if (!flush && !joined.empty() && joined.size() < 3 && !memcmp(joined.data(), bom, joined.size())) {
+            // Still a possible BOM prefix; carry it to the next chunk.
+            state.setPending(joined.data(), static_cast<unsigned>(joined.size()));
+            return nullptr;
+        } else if (!joined.empty())
+            state.bomSeen = true;
+    }
+
+    size_t holdBack = flush ? 0 : incompleteTrailingUTF8(joined);
+    if (holdBack)
+        state.setPending(joined.data() + (joined.size() - holdBack), static_cast<unsigned>(holdBack));
+    auto toDecode = joined.first(joined.size() - holdBack);
+    if (toDecode.empty())
+        return nullptr;
+
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    // Bun's simdutf-backed Buffer.toString('utf8') path: SIMD ASCII check,
+    // external UTF-16 for non-ASCII, replacement chars for invalid sequences.
+    JSValue decoded = JSValue::decode(Bun__encoding__toStringUTF8(toDecode.data(), toDecode.size(), globalObject));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return asString(decoded);
+}
+
+bool nativeSinkWriteIsBackpressure(JSC::VM& vm, JSValue wrote)
+{
+    if (wrote.isNumber())
+        return wrote.asNumber() < 0;
+    if (auto* p = dynamicDowncast<JSC::JSPromise>(wrote)) {
+        markPromiseAsHandled(vm, p);
+        return p->status() == JSC::JSPromise::Status::Pending;
+    }
+    return false;
 }
 
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.
@@ -296,25 +395,49 @@ JSValue invokeOptionalMethod(JSGlobalObject* globalObject, JSObject* object, con
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, object, args, "method is not a function"_s));
 }
 
-bool errorCodeIs(JSGlobalObject* globalObject, JSValue error, ASCIILiteral code)
+JSPromise* invokeCallbackReturningPromise(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
 {
-    auto& vm = getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!error || !error.isObject())
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    });
+}
+
+JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSObject* callback, JSValue thisValue, const MarkedArgumentBuffer& args)
+{
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        auto callData = JSC::getCallData(callback);
+        ASSERT(callData.type != JSC::CallData::Type::None);
+        JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!result.isObject()) [[likely]]
+            return nullptr;
+        // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
+        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
+        // thenable adoption is unobservable. Subclasses / patched .then fall through.
+        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
+            return resultPromise;
+        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+    });
+}
+
+bool errorCodeIs(VM& vm, JSValue error, ASCIILiteral code)
+{
+    // Own or inherited *data* property only (Bun's coded errors keep `code` on a per-code
+    // prototype); structures' stored prototypes are followed, so no getter or proxy trap runs.
+    JSValue codeValue;
+    for (JSObject* object = error ? error.getObject() : nullptr; object && !codeValue; object = object->getPrototypeDirect().getObject())
+        codeValue = object->getDirect(vm, WebCore::builtinNames(vm).codePublicName());
+    auto* codeString = codeValue ? dynamicDowncast<JSString>(codeValue) : nullptr;
+    if (!codeString)
         return false;
-    JSValue codeValue = asObject(error)->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    if (!codeValue || !codeValue.isString())
-        return false;
-    String codeString = asString(codeValue)->value(globalObject);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return false;
-    }
-    return codeString == StringView(code);
+    auto value = codeString->tryGetValue();
+    return WTF::equal(value.data, StringView(code));
 }
 
 // Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
@@ -458,18 +581,6 @@ JSPromise* webStreamClosedPromise(JSGlobalObject* globalObject, JSWritableStream
     }
     stream->m_closedPromise.set(vm, stream, promise);
     return promise;
-}
-
-// The ONE sanctioned completion-record catch: the spec's "interpreting X as a completion
-// record" sites only. Empty return = a VM termination the caller must propagate.
-JSValue takeAbruptCompletion(JSGlobalObject*, TopExceptionScope& catchScope)
-{
-    const JSC::Exception* exception = catchScope.exception();
-    ASSERT(exception);
-    JSValue thrown = exception->value();
-    if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
-        return {};
-    return thrown;
 }
 
 } // namespace WebStreams

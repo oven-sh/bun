@@ -194,7 +194,7 @@ await view.navigate("file:///path/to/index.html");
 
 `navigate()` resolves when the main frame's `load` event fires. After it resolves, `view.url` and `view.title` reflect the new page, and `view.loading` is `false`.
 
-A URL that only adds or changes the `#fragment` of the current page stays in the same document. The browser fires no `load` event for it, so `navigate()` resolves as soon as the new URL is current. The same applies to `goBack()` and `goForward()` over an entry of the current document, such as a `#fragment` entry or one the page made with `history.pushState()`.
+A URL that only adds or changes the `#fragment` of the current page stays in the same document. The browser fires no `load` event for it, so `navigate()` resolves as soon as the new URL is current. The same applies to `goBack()` and `goForward()` over an entry of the current document, such as a `#fragment` entry or one the page made with `history.pushState()`. A `goBack()` or `goForward()` onto a page that the browser kept whole in its back-forward cache also resolves as soon as that page is current.
 
 If the navigation fails (DNS failure, connection refused, invalid URL), the promise rejects with an `Error` describing the failure.
 
@@ -224,7 +224,7 @@ view.onNavigationFailed = error => {
 };
 ```
 
-These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Set to `null` to remove.
+These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Same-document navigations by the page (`history.pushState()`, a fragment change) also update `view.url` and fire `onNavigated`. Navigations inside an `<iframe>` do not. Set to `null` to remove.
 
 ---
 

@@ -479,6 +479,9 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
+    void onFrameNavigated(JSWebView*, std::span<const char> params);
+    void onNavigatedWithinDocument(JSWebView*, std::span<const char> params);
+    void onLoadEventFired(JSWebView*);
     // Fetches document.title into m_title; with endsNavigation the reply also settles the Navigate slot.
     void sendTitleFetch(JSWebView*, bool endsNavigation);
     void rejectAllAndMarkDead(const WTF::String& reason);

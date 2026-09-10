@@ -260,6 +260,108 @@ test.concurrent("a second same-document commit does not fetch the title again", 
   expect(result).toEqual({ url: "http://fake/page#canonical", titleFetches: 1 });
 });
 
+// After a load fails, Chrome commits its own error page
+// (chrome-error://chromewebdata/, with frame.unreachableUrl naming the page it
+// stands in for) and fires that page's load event. Neither is a navigation of
+// the view's: navigate() already rejected with the errorText of its reply, so
+// the error page reports nothing more, and view.url and view.title keep the
+// last real page.
+test.concurrent("a failed navigate() reports one failure and Chrome's error page changes nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const errorPageLoaded = new Promise(resolve => view.addEventListener("Page.loadEventFired", resolve, { once: true }));
+    const failed = await outcome(view.navigate("http://fake/unreachable"));
+    await errorPageLoaded;
+    print({ failed, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    title: "fake chrome",
+    loading: false,
+  });
+});
+
+// A load the page starts itself can fail too. Its error page is the only sign:
+// onNavigationFailed fires once that page has loaded. reload() then loads the
+// failed URL again, fails again, and rejects instead of resolving on the error
+// page's load event.
+test.concurrent("a failed load the page started fires onNavigationFailed, and reload() of it rejects", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await view.evaluate("__fake_page_load_fails('http://fake/unreachable-link')");
+    const afterLink = { events: [...events], url: view.url };
+    const reloaded = await outcome(view.reload());
+    print({ afterLink, reloaded, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterLink: { events: ["failed:Navigation to http://fake/unreachable-link failed"], url: "http://fake/start" },
+    reloaded: { rejected: "Navigation to http://fake/unreachable-link failed" },
+    events: [
+      "failed:Navigation to http://fake/unreachable-link failed",
+      "failed:Navigation to http://fake/unreachable-link failed",
+    ],
+    url: "http://fake/start",
+    loading: false,
+  });
+});
+
+// A history traversal onto a page Chrome kept in its back-forward cache
+// commits with type "BackForwardCacheRestore" and fires no load event: the
+// page is complete as it commits, so goBack() settles there.
+test.concurrent("goBack() onto a page restored from the back-forward cache settles", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/bfcached#top");
+    await view.navigate("http://fake/b");
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    await view.goBack();
+    const afterBack = { url: view.url, loading: view.loading };
+    await view.goForward();
+    print({ afterBack, afterForward: view.url, urls });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterBack: { url: "http://fake/bfcached#top", loading: false },
+    afterForward: "http://fake/b",
+    urls: ["http://fake/bfcached#top", "http://fake/b"],
+  });
+});
+
+// The view does its own bookkeeping on these three events; like every other
+// CDP event they still reach addEventListener(), with the parsed params.
+test.concurrent("navigation events reach addEventListener()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/first");
+    const events = [];
+    for (const type of ["Page.frameNavigated", "Page.navigatedWithinDocument", "Page.loadEventFired"]) {
+      view.addEventListener(type, event => events.push([type, event.data.frame?.url ?? event.data.url ?? null]));
+    }
+    await view.navigate("http://fake/page");
+    await view.navigate("http://fake/page#one");
+    print(events);
+    view.close();
+  `);
+  expect(result).toEqual([
+    ["Page.frameNavigated", "http://fake/page"],
+    ["Page.loadEventFired", null],
+    ["Page.navigatedWithinDocument", "http://fake/page#one"],
+  ]);
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

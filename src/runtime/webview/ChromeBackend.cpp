@@ -654,6 +654,14 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+static void fireOnNavigationFailed(JSGlobalObject* g, JSWebView* view, JSValue errValue)
+{
+    if (JSObject* cb = view->m_onNavigationFailed.get()) {
+        Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+            JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+    }
+}
+
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
 // onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
 // for PageTitle: that is the post-load title fetch, and its failure (for
@@ -665,12 +673,7 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
     bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
     if (navigationFailed) view->m_loading = false;
     settle(g, view, slot, false, errValue);
-    if (navigationFailed) {
-        if (JSObject* cb = view->m_onNavigationFailed.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
-        }
-    }
+    if (navigationFailed) fireOnNavigationFailed(g, view, errValue);
 }
 
 // Slots, not m_pending: a navigation that Chrome has already answered is
@@ -701,6 +704,7 @@ static void startNavigation(JSWebView* view, ChromeNavigationKind kind)
 {
     view->m_chromeNavigationKind = kind;
     view->m_chromeNavigationCommitted = false;
+    view->m_chromeNavigationLoaderId = WTF::String();
     view->m_chromeNavigationSeq++;
 }
 
@@ -863,24 +867,22 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageNavigate: {
-        // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
-        // errorText present → navigation failed synchronously (bad URL,
-        // net::ERR_* resolved before commit). Reject now. Otherwise the
-        // navigation is underway; Page.loadEventFired resolves. Keep the
-        // pending entry so the event handler can look up the view by
-        // sessionId — actually the event handler uses m_sessions, not
-        // m_pending, so we just drop here.
+        // {"frameId":"...","loaderId"?:"...","errorText"?:"..."}
+        // errorText present → the navigation failed before anything committed
+        // (a bad URL, a net::ERR_* resolved early). Reject now; Chrome's error
+        // page for this loader commits next and must not report it again. No
+        // loaderId → a same-document navigation, which loads no document.
+        auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(result, { "loaderId", 8 })));
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty()) {
+            view->m_chromeFailedLoaderId = loaderId;
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
             return;
         }
-        // The reply names the main frame, the one Page.navigate targets.
-        if (view->m_mainFrameId.isEmpty())
-            view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(result, { "frameId", 7 })));
-        // Don't settle — the commit does. A reply without loaderId loads no document.
+        // Don't settle — the commit does.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested) {
-            view->m_chromeNavigationKind = jsonField(result, { "loaderId", 8 }).empty()
+            view->m_chromeNavigationLoaderId = loaderId;
+            view->m_chromeNavigationKind = loaderId.isEmpty()
                 ? ChromeNavigationKind::SameDocument
                 : ChromeNavigationKind::CrossDocument;
         }
@@ -1139,10 +1141,17 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
-// Subframes navigate too. Before the first Page.navigate reply there are none.
+// Subframes navigate too. Before the first main frame commit there are none.
 static bool isMainFrame(JSWebView* view, std::span<const char> frameId)
 {
     return view->m_mainFrameId.isEmpty() || view->m_mainFrameId == WTF::String::fromUTF8(frameId);
+}
+
+// Chrome answers a navigation command before its document commits, so a commit in any other state is the page's own.
+static bool commitIsNavigations(JSWebView* view)
+{
+    auto kind = view->m_chromeNavigationKind;
+    return kind != ChromeNavigationKind::NotRequested && kind != ChromeNavigationKind::Requested;
 }
 
 void Transport::sendTitleFetch(JSWebView* view, bool endsNavigation)
@@ -1150,6 +1159,101 @@ void Transport::sendTitleFetch(JSWebView* view, bool endsNavigation)
     uint32_t tid = nextId();
     m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, endsNavigation ? view->m_chromeNavigationSeq : 0 });
     send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+}
+
+static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
+{
+    if (JSObject* cb = view->m_onNavigated.get()) {
+        Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+            JSValue::encode(jsString(g->vm(), url)), JSValue::encode(jsUndefined()));
+    }
+}
+
+// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}: a document
+// committed. Same timing as WKWebView's NavDone: the URL is the new document's, subresources may still load.
+void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
+{
+    auto frame = jsonField(params, { "frame", 5 });
+    if (!jsonField(frame, { "parentId", 8 }).empty()) return; // an <iframe>'s own navigation
+    view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
+    auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
+    // navigate() already failed with errorText for this loader: its error page ends nothing and reports nothing.
+    bool alreadyFailed = !loaderId.isEmpty() && loaderId == view->m_chromeFailedLoaderId;
+    // Page.navigate's reply named the loader it started; reload() and a traversal go by state alone.
+    bool expectedLoader = view->m_chromeNavigationLoaderId.isEmpty() || view->m_chromeNavigationLoaderId == loaderId;
+    if (!alreadyFailed && expectedLoader && commitIsNavigations(view)) {
+        view->m_chromeNavigationCommitted = true;
+        view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
+    }
+
+    // unreachableUrl: this is Chrome's error page for a load that failed. view.url keeps the last real page.
+    auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
+    if (!unreachable.empty()) {
+        view->m_chromeOnErrorPage = true;
+        // Reported once the error page has loaded and the tab takes commands again.
+        view->m_chromeUnreportedFailure = alreadyFailed ? WTF::String() : WTF::String::fromUTF8(unreachable);
+        return;
+    }
+    view->m_chromeOnErrorPage = false;
+    view->m_chromeUnreportedFailure = WTF::String();
+
+    // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
+    auto url = jsonString(jsonField(frame, { "url", 3 }));
+    auto fragment = jsonString(jsonField(frame, { "urlFragment", 11 }));
+    view->m_url = fragment.empty()
+        ? WTF::String::fromUTF8(url)
+        : makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
+    // m_loading stays true — loadEventFired flips it.
+
+    // A page restored from the back-forward cache is whole as it commits: no load event follows.
+    auto type = jsonString(jsonField(params, { "type", 4 }));
+    if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
+        onLoadEventFired(view);
+
+    // After the settle decision: the callback is user code and may navigate() next.
+    fireOnNavigated(m_global, view, view->m_url);
+}
+
+// Page.navigatedWithinDocument {frameId, url}: a same-document commit (#fragment, pushState). No load event follows.
+void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char> params)
+{
+    if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
+    view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
+
+    if (sameDocumentCommitEndsNavigation(view)) {
+        sendTitleFetch(view, true);
+        navigationConsumed(view);
+    }
+
+    // After the settle decision: the callback is user code and may navigate() next.
+    fireOnNavigated(m_global, view, view->m_url);
+}
+
+// Page.loadEventFired: the live document finished loading. It is page-level — no frame, no loader — so only a
+// document the view's own command committed ends the view's navigation. The document.title fetch chained here
+// makes `await view.navigate(); view.title` work, like WKWebView's NavDone which carries url and title together.
+void Transport::onLoadEventFired(JSWebView* view)
+{
+    auto* g = m_global;
+    bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;
+
+    if (view->m_chromeOnErrorPage) {
+        // No title fetch: view.title keeps the last real page's, like view.url.
+        auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String());
+        if (failedUrl.isNull()) return;
+        JSValue err = createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s));
+        if (endsNavigation) {
+            navigationConsumed(view);
+            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, err);
+        } else {
+            fireOnNavigationFailed(g, view, err);
+        }
+        return;
+    }
+
+    // For a load that is not the view's navigation, the fetch only updates m_title.
+    sendTitleFetch(view, endsNavigation);
+    if (endsNavigation) navigationConsumed(view);
 }
 
 void Transport::handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId)
@@ -1193,67 +1297,13 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.frameNavigated — commit. Update m_url and fire onNavigated.
-    // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
-    // now the new document, resources may still be loading.
-    if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
-        auto frame = jsonField(params, { "frame", 5 });
-        if (!isMainFrame(view, jsonString(jsonField(frame, { "id", 2 })))) return;
-        // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
-        auto url = jsonString(jsonField(frame, { "url", 3 }));
-        auto fragment = jsonString(jsonField(frame, { "urlFragment", 11 }));
-        auto urlStr = fragment.empty()
-            ? WTF::String::fromUTF8(url)
-            : makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
-        view->m_url = urlStr;
-        // m_loading stays true — loadEventFired flips it.
-        // Chrome answers a command before its document commits, so an earlier commit is the page's.
-        auto kind = view->m_chromeNavigationKind;
-        if (kind != ChromeNavigationKind::NotRequested && kind != ChromeNavigationKind::Requested) {
-            view->m_chromeNavigationCommitted = true;
-            view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
-        }
-
-        if (JSObject* cb = view->m_onNavigated.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));
-        }
-        return;
-    }
-
-    // Page.navigatedWithinDocument — same-document commit (#fragment, pushState). No load event follows.
-    if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0) {
-        if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
-        auto urlStr = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
-        view->m_url = urlStr;
-
-        if (sameDocumentCommitEndsNavigation(view)) {
-            sendTitleFetch(view, true);
-            navigationConsumed(view);
-        }
-
-        // After the settle decision: the callback is user code and may navigate() next.
-        if (JSObject* cb = view->m_onNavigated.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));
-        }
-        return;
-    }
-
-    // Page.loadEventFired — load complete. Chain a document.title fetch
-    // so view.title is populated when navigate() resolves — matches
-    // WKWebView's NavDone which packs url+title in one reply. One extra
-    // roundtrip (~1ms), but the user-visible guarantee is worth it:
-    // `await view.navigate(); view.title` just works.
-    //
-    // For a load that is not the view's navigation, the fetch only updates m_title.
-    if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
-        // Page-level: no frame, no loader. Only a document the view's own command committed ends it.
-        bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;
-        sendTitleFetch(view, endsNavigation);
-        if (endsNavigation) navigationConsumed(view);
-        return;
-    }
+    // The three navigation events update the view first, then reach addEventListener() like any CDP event.
+    if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0)
+        onFrameNavigated(view, params);
+    else if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
+        onNavigatedWithinDocument(view, params);
+    else if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0)
+        onLoadEventFired(view);
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.
     // params: {"type":"log","args":[<RemoteObject>,...],"stackTrace":{...}}.

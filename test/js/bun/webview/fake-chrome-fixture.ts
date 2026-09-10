@@ -84,6 +84,14 @@ Object.assign(globalThis, {
   __fake_page_load_on_history_lookup(url: string) {
     pageLoadOnHistoryLookup = url;
   },
+  // The page navigates itself to `url` (a link, `location.href = ...`) and
+  // the load fails: Chrome's error page commits in its place and loads.
+  __fake_page_load_fails(url: string) {
+    loads++;
+    event("Page.frameStartedNavigating", { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" });
+    pushEntry(url, "P" + loads);
+    commitErrorPage(url, "P" + loads);
+  },
   // The page follows a #fragment link of its own, which Chrome starts and
   // commits after the runtime wrote the next navigation command and before
   // Chrome answers it. Chrome calls that start "sameDocument".
@@ -123,6 +131,11 @@ function send(message: unknown) {
   while (written < bytes.length) written += writeSync(REPLIES, bytes, written, bytes.length - written);
 }
 
+// An event on the session of the command being handled.
+function event(method: string, params: unknown) {
+  send({ method, params, sessionId: currentSessionId });
+}
+
 let targets = 0;
 let loads = 0;
 let entries = 0;
@@ -130,71 +143,86 @@ let entries = 0;
 // Session history, the way the browser keeps it: Page.navigate appends,
 // Page.getNavigationHistory reports it, Page.navigateToHistoryEntry moves
 // inside it. Two URLs that differ only after the '#' are the same document.
-const history: { id: number; url: string }[] = [];
+// Each entry remembers the loader its document committed under.
+const history: { id: number; url: string; loaderId: string }[] = [];
 let historyIndex = -1;
 const documentOf = (url: string) => url.split("#")[0];
 const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
 // A URL with "never-load" in it starts loading and never commits, the way a
 // server that accepts the connection and then says nothing looks. One with
 // "stall-on-return" loads when navigated to, but a history traversal back to
-// it starts and never commits.
+// it starts and never commits. One with "unreachable" in it fails to load,
+// the way a refused connection does: Chrome commits its error page instead.
+// One with "bfcached" in it comes back whole from the back-forward cache when
+// a history traversal returns to it.
 const neverLoads = (url: string) => url.includes("never-load");
 const stallsOnReturn = (url: string) => url.includes("stall-on-return");
+const failsToLoad = (url: string) => url.includes("unreachable");
+const bfcached = (url: string) => url.includes("bfcached");
+
+function pushEntry(url: string, loaderId: string) {
+  history.length = historyIndex + 1;
+  history.push({ id: ++entries, url, loaderId });
+  historyIndex = history.length - 1;
+}
 
 function replaceState(url: string) {
   if (historyIndex >= 0) history[historyIndex].url = url;
-  send({
-    method: "Page.navigatedWithinDocument",
-    params: { frameId: "F", url, navigationType: "historyApi" },
-    sessionId: currentSessionId,
-  });
+  event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
+}
+
+// Chrome names a navigation's kind before it starts. The runtime ignores it.
+function startNavigating(url: string, navigationType: string) {
+  event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
+}
+
+// A document commits: Page.frameNavigated, with the fragment split off into
+// frame.urlFragment. A fresh load ("Navigation") ends with the load event; a
+// page restored from the back-forward cache is complete as it commits, so
+// nothing follows.
+function commitDocument(url: string, loaderId: string, type: "Navigation" | "BackForwardCacheRestore") {
+  const fragment = fragmentOf(url);
+  const frame = { id: "F", loaderId, url: documentOf(url), mimeType: "text/html" };
+  event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
+  if (type === "BackForwardCacheRestore") return;
+  if (subframeNavigation) {
+    const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
+    event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" }, type });
+  }
+  event("Page.loadEventFired", { timestamp: loads });
+}
+
+// A same-document navigation commits: Page.navigatedWithinDocument, and never
+// a load event.
+function commitSameDocument(url: string) {
+  event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
+  if (replaceStateAfterNextCommit !== undefined) {
+    replaceState(replaceStateAfterNextCommit);
+    replaceStateAfterNextCommit = undefined;
+  }
+}
+
+// Chrome's error page standing in for a document that failed to load: it
+// commits under the failed loader, names the URL it replaces, and loads.
+function commitErrorPage(unreachableUrl: string, loaderId: string) {
+  const frame = { id: "F", loaderId, url: "chrome-error://chromewebdata/", unreachableUrl, mimeType: "text/html" };
+  event("Page.frameNavigated", { frame, type: "Navigation" });
+  event("Page.loadEventFired", { timestamp: loads });
 }
 
 // The page navigates itself to a new document (a link, `location.href = ...`):
 // its own loader and commit. __fake_load_event() finishes it.
 function pageLoad(url: string) {
-  const event = (method: string, params: unknown) => send({ method, params, sessionId: currentSessionId });
   loads++;
   event("Page.frameStartedNavigating", { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" });
-  history.length = historyIndex + 1;
-  history.push({ id: ++entries, url });
-  historyIndex = history.length - 1;
-  event("Page.frameNavigated", { frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" } });
+  pushEntry(url, "P" + loads);
+  event("Page.frameNavigated", { frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" }, type: "Navigation" });
 }
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
-  const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
-
-  // Chrome names a navigation's kind before it starts. The runtime ignores it.
-  const startNavigating = (url: string, navigationType: string) => {
-    event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
-  };
-
-  // The commit. A cross-document navigation commits with
-  // Page.frameNavigated, which splits the fragment into frame.urlFragment,
-  // and ends with the load event. A same-document one commits with
-  // Page.navigatedWithinDocument and never fires a load event.
-  const commit = (url: string, sameDocument: boolean) => {
-    if (sameDocument) {
-      event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
-      if (replaceStateAfterNextCommit !== undefined) {
-        replaceState(replaceStateAfterNextCommit);
-        replaceStateAfterNextCommit = undefined;
-      }
-      return;
-    }
-    const fragment = fragmentOf(url);
-    const frame = { id: "F", loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
-    event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame });
-    if (subframeNavigation) {
-      const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
-      event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" } });
-    }
-    event("Page.loadEventFired", { timestamp: loads });
-  };
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -207,6 +235,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
+      const url: string = params.url;
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
       if (fragmentLinkOnNextNavigate !== undefined) {
         startNavigating(fragmentLinkOnNextNavigate, "sameDocument");
@@ -214,19 +243,40 @@ async function handle(command: { id: number; method: string; params?: any; sessi
         fragmentLinkOnNextNavigate = undefined;
       }
       // A #fragment target of the current document keeps that document.
-      const current = history[historyIndex]?.url;
+      const current = history[historyIndex];
       const sameDocument =
-        current !== undefined && documentOf(current) === documentOf(params.url) && fragmentOf(params.url) !== "";
-      startNavigating(params.url, sameDocument ? "sameDocument" : "differentDocument");
-      if (!sameDocument) loads++;
-      // The reply names a loaderId only for a navigation that loads a
-      // document.
-      reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
-      if (neverLoads(params.url)) return;
-      history.length = historyIndex + 1;
-      history.push({ id: ++entries, url: params.url });
-      historyIndex = history.length - 1;
-      commit(params.url, sameDocument);
+        current !== undefined && documentOf(current.url) === documentOf(url) && fragmentOf(url) !== "";
+      startNavigating(url, sameDocument ? "sameDocument" : "differentDocument");
+      if (sameDocument) {
+        // The reply names a loaderId only for a navigation that loads a document.
+        reply({ frameId: "F" });
+        pushEntry(url, current.loaderId);
+        commitSameDocument(url);
+        return;
+      }
+      const loaderId = "L" + ++loads;
+      if (failsToLoad(url)) {
+        // The failure is known before anything commits: the reply carries it,
+        // and the error page follows under the same loader.
+        reply({ frameId: "F", loaderId, errorText: "net::ERR_CONNECTION_REFUSED" });
+        pushEntry(url, loaderId);
+        commitErrorPage(url, loaderId);
+        return;
+      }
+      reply({ frameId: "F", loaderId });
+      if (neverLoads(url)) return;
+      pushEntry(url, loaderId);
+      commitDocument(url, loaderId, "Navigation");
+      return;
+    }
+    case "Page.reload": {
+      const current = history[historyIndex];
+      if (current === undefined) return reply({});
+      startNavigating(current.url, "reload");
+      current.loaderId = "L" + ++loads;
+      reply({});
+      if (failsToLoad(current.url)) return commitErrorPage(current.url, current.loaderId);
+      commitDocument(current.url, current.loaderId, "Navigation");
       return;
     }
     case "Page.getNavigationHistory": {
@@ -247,14 +297,18 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.navigateToHistoryEntry": {
       const target = history.findIndex(entry => entry.id === params.entryId);
       if (target === -1) return reply({});
-      const url = history[target].url;
-      const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
-      startNavigating(url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
-      if (!sameDocument) loads++;
+      const entry = history[target];
+      const sameDocument = documentOf(history[historyIndex].url) === documentOf(entry.url);
+      startNavigating(entry.url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
       reply({});
-      if (neverLoads(url) || stallsOnReturn(url)) return;
+      if (neverLoads(entry.url) || stallsOnReturn(entry.url)) return;
       historyIndex = target;
-      commit(url, sameDocument);
+      if (sameDocument) return commitSameDocument(entry.url);
+      // A restore commits the cached document again, under its original loader.
+      if (bfcached(entry.url)) return commitDocument(entry.url, entry.loaderId, "BackForwardCacheRestore");
+      entry.loaderId = "L" + ++loads;
+      if (failsToLoad(entry.url)) return commitErrorPage(entry.url, entry.loaderId);
+      commitDocument(entry.url, entry.loaderId, "Navigation");
       return;
     }
     case "Page.captureScreenshot":

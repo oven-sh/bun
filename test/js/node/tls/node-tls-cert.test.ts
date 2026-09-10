@@ -11,10 +11,14 @@ const clientTls = {
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
 };
+// agent10/ca2 come from the upstream-synced keys: the older copy under
+// ./fixtures has a 1024-bit ca2, which Node >= 26 rejects as CA_KEY_TOO_SMALL
+// before any of the chain assertions below can be reached.
+const upstreamKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const serverTls = {
-  key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
-  cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
-  ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
+  key: readFileSync(join(upstreamKeys, "agent10-key.pem"), "utf8"),
+  cert: readFileSync(join(upstreamKeys, "agent10-cert.pem"), "utf8"),
+  ca: readFileSync(join(upstreamKeys, "ca2-cert.pem"), "utf8"),
 };
 
 function split(file: any, into: any) {
@@ -32,6 +36,11 @@ function checkServerIdentity(hostname: string, cert: any) {
   expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
+
+// tlsClientError code when a requestCert + rejectUnauthorized server rejects an
+// incomplete client chain: Node emits ConnResetException('socket hang up'); Bun
+// emits the X509 verify error it aborted the handshake on.
+const REJECTED_CLIENT_CHAIN_CODES = ["ECONNRESET", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"];
 
 function connect(options: any) {
   let { promise, resolve, reject } = Promise.withResolvers();
@@ -246,9 +255,10 @@ it("Fail to complete client's chain.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    // Server aborts the handshake at the first X509 failure (fatal alert to the
-    // client); for a missing intermediate that is UNABLE_TO_GET_ISSUER_CERT_LOCALLY.
-    expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    // Node's server finishes the handshake then destroys the socket, so both peers
+    // see ECONNRESET (lib/internal/tls/wrap.js onServerSocketSecure/onSocketClose).
+    // Bun aborts inside the handshake and reports the X509 reason instead.
+    expect(REJECTED_CLIENT_CHAIN_CODES).toContain(err.code);
   }
 });
 
@@ -297,7 +307,7 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
     ]);
     expect(outcome).toBe("closed");
 
-    expect(clientError?.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    expect(REJECTED_CLIENT_CHAIN_CODES).toContain(clientError?.code);
     expect(secureConnections).toHaveLength(0);
     expect(handled).toHaveLength(0);
 
@@ -325,10 +335,10 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
   }
 });
 
-it("client sees a fatal TLS alert when the server rejects its certificate under rejectUnauthorized", async () => {
-  // The server must reject an unverifiable client cert inside the handshake
-  // (fatal alert), not after: a post-handshake clean close is invisible to the
-  // peer. Pinned to TLS 1.2; over TLS 1.3 the alert lands post-secureConnect.
+it("client sees a hard error, not a clean close, when the server rejects its certificate under rejectUnauthorized", async () => {
+  // A post-handshake close_notify would be indistinguishable from an empty reply.
+  // Pinned to TLS 1.2 so the rejection lands before the client's secureConnect
+  // on both runtimes; over TLS 1.3 the client finishes its handshake first.
   const untrustedClient = {
     key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
     cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
@@ -373,15 +383,18 @@ it("client sees a fatal TLS alert when the server rejects its certificate under 
       },
     );
 
-    // The client's handshake never completes (fatal alert from the server),
-    // and the server reports the specific X509 verification failure.
-    expect({ ...outcome, serverClientError: serverClientError?.code }).toEqual({
+    // The handler never runs, the client's handshake never completes, and the
+    // client is told the connection failed.
+    expect({ data: outcome.data, secureConnect: outcome.secureConnect, hadError: outcome.hadError }).toEqual({
       data: "",
       secureConnect: false,
-      error: "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA",
       hadError: true,
-      serverClientError: "DEPTH_ZERO_SELF_SIGNED_CERT",
     });
+    // Node destroys the socket without close_notify after verifying, so the
+    // client reads ECONNRESET and tlsClientError is ConnResetException('socket
+    // hang up'); Bun sends a fatal unknown_ca alert and reports the X509 reason.
+    expect(["ECONNRESET", "ERR_SSL_TLSV1_ALERT_UNKNOWN_CA"]).toContain(outcome.error);
+    expect(["ECONNRESET", "DEPTH_ZERO_SELF_SIGNED_CERT"]).toContain(serverClientError?.code);
   } finally {
     server.close();
   }

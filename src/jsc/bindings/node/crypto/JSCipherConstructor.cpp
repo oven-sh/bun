@@ -144,10 +144,6 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     WTF::String cipherString = cipherValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (keyData.size() > INT_MAX) [[unlikely]] {
-        return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s, 0, INT_MAX, jsNumber(keyData.size()));
-    }
-
     int32_t ivLen = 0;
     if (ivView) {
         if (ivView->byteLength() > INT_MAX) [[unlikely]] {

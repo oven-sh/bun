@@ -268,7 +268,7 @@ fn bun_vm_mut(_global: &JSGlobalObject) -> &mut VirtualMachine {
 /// body, kept non-generic and out of line.
 ///
 /// Every caller is an error branch that is essentially never taken on the
-/// node:http response hot path (`write_head` / `write_or_end` / `cork`). Marking
+/// node:http response hot path (`write_head` / `write_or_end`). Marking
 /// this `#[cold]` + `#[inline(never)]` keeps the `ErrorBuilder::throw` codegen —
 /// message formatting (`core::fmt`), error-code table lookup, JS error object
 /// allocation — physically separated from those hot functions so it neither
@@ -1031,9 +1031,7 @@ impl NodeHTTPResponse {
 
     /// `handle.writeHeadAndEnd(status, statusMessage, headersArray, chunk,
     /// encoding, strictContentLength)` — the writeHead + end pair under one
-    /// native cork and one JS->native crossing, replacing
-    /// `handle.cork(() => { handle.writeHead(...); handle.end(...) })` (three
-    /// crossings and a per-request closure) on the node:http response path.
+    /// native cork and one JS->native crossing on the node:http response path.
     pub(crate) fn write_head_and_end(
         &self,
         global_object: &JSGlobalObject,
@@ -1041,8 +1039,7 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
 
-        // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
-        // from cork() before either phase ran.
+        // Neither phase may run on a finished response.
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
@@ -1075,9 +1072,9 @@ impl NodeHTTPResponse {
         ];
         let this_value = callframe.this();
 
-        // BACKREF: same keep-alive pattern as cork() — either phase can reach
-        // JS (string coercions, drain callbacks), which could drop the last
-        // reference to this response mid-call.
+        // BACKREF: either phase can reach JS (string coercions, drain
+        // callbacks), which could drop the last reference to this response
+        // mid-call.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         let _guard = self.ref_guard();
 
@@ -1096,8 +1093,8 @@ impl NodeHTTPResponse {
             };
             if let Some(raw_response) = raw_response {
                 raw_response.corked(|| {
-                    // Capture `this` so a `self`-derived pointer reaches the
-                    // FFI closure-data slot (see cork()'s R-2 note).
+                    // Capture `this` so a `self`-derived pointer (not a
+                    // `noalias` `&mut`) reaches the FFI closure-data slot.
                     let _escape = this;
                     result = run();
                 });
@@ -2441,68 +2438,6 @@ impl NodeHTTPResponse {
         }
 
         raw.timeout(seconds);
-    }
-
-    pub(crate) fn cork(
-        &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // Perf: borrow the `arguments()` slice (ptr+len) instead of
-        // materialising `Arguments<1>` by value — `cork` runs on every
-        // `res.end()`, so the small-aggregate copy + bounds branch are pure
-        // per-request overhead with no upstream equivalent.
-        let Some(&corked_fn) = callframe.arguments().first() else {
-            return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
-        };
-
-        if !corked_fn.is_callable() {
-            return Err(global_object.throw_invalid_argument_type_value(
-                b"cork",
-                b"function",
-                corked_fn,
-            ));
-        }
-
-        let flags = self.flags.get();
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-        {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
-                "Stream is already ended",
-            );
-        }
-
-        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
-
-        // R-2: this method takes `&self`, so the `noalias` miscompile
-        // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
-        // `noalias`, so re-entrant writes through other `&self` views are
-        // sound. No `black_box` launder is needed; it was a hard optimization
-        // barrier on the node:http hot path (`cork` runs on every `res.end()`)
-        // that forced `self` to memory and blocked inlining/regalloc of the
-        // cork prologue.
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        // Keeps the live `m_ctx` heap payload alive across re-entry.
-        let _guard = self.ref_guard();
-
-        // Snapshot before re-entry; `raw_response` is `Copy`.
-        let raw_response = this.raw_response.get();
-        if let Some(raw_response) = raw_response {
-            raw_response.corked(|| {
-                // Capture `this` so a `self`-derived pointer reaches the FFI
-                // closure-data slot (see the R-2 note above).
-                let _escape = this;
-                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
-            });
-        } else {
-            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
-        }
-
-        result
     }
 
     pub(crate) fn finalize(&self) {

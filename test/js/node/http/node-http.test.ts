@@ -4366,3 +4366,28 @@ describe("response header values are written as latin-1 bytes", () => {
     ]);
   });
 });
+
+// The first res.write() after an await stays in the response's cork buffer until
+// the loop flushes it; ending the socket right behind it must put those bytes on
+// the wire before the FIN, as Node does.
+it("res.write() followed by res.socket.end() after an await delivers the written bytes", async () => {
+  await using server = http.createServer(async (req, res) => {
+    await new Promise(resolve => setImmediate(resolve));
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.write("hello");
+    res.socket!.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let received = "";
+  const client = connect(port, "127.0.0.1", () => client.write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"));
+  client.on("data", chunk => (received += chunk));
+  client.on("error", reject);
+  client.on("close", () => resolve(received));
+
+  const response = await promise;
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(response).toEndWith("\r\n\r\n5\r\nhello\r\n");
+});

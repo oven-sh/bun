@@ -778,6 +778,7 @@ private:
 
         if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            asyncSocket->uncork();
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
@@ -789,6 +790,9 @@ private:
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
+            /* What the callback corked has to be in front of the drained checks
+             * and the FIN below. */
+            asyncSocket->uncork();
 
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
@@ -903,6 +907,7 @@ private:
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
              * gates once they have flushed. */
+            asyncSocket->uncork();
             bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
                 || httpResponseData->onWritable != nullptr;
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
@@ -922,6 +927,7 @@ private:
              * HTTP_RESPONSE_PENDING set) closes here so onAborted / request.signal
              * fires on client disconnect. */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+            asyncSocket->uncork();
             uint32_t state = httpResponseData->state;
             bool tryEndTail = (state & HttpResponseData<SSL>::HTTP_END_CALLED)
                 && (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);

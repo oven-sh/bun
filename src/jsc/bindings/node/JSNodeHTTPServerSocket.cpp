@@ -245,7 +245,11 @@ bool JSNodeHTTPServerSocket::isClosed() const
 template<bool SSL>
 static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
 {
-    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+    auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
+    /* Response bytes still in the cork buffer go to the kernel (or the
+     * backpressure buffer) before deciding whether the FIN can be sent now. */
+    asyncSocket->uncork();
+    if (asyncSocket->getBufferedAmount() == 0) {
         return false;
     }
     /* HttpContext<SSL>::onWritable shuts the socket down once the buffered

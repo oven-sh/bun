@@ -6,13 +6,16 @@ import {
   bunExe,
   dumpStats,
   emptyProcessMaxRSS,
+  isAndroid,
   isASAN,
   isBroken,
   isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
   isPosix,
+  libcPathForDlopen,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -24,6 +27,9 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
@@ -4700,5 +4706,209 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
     server?.stop(true);
     client?.destroy();
     raw.destroy();
+  }
+});
+
+// A response written from outside the request callback (after an await, from a
+// timer, from another socket's event) must still be assembled into few send()
+// calls rather than one per status line / header fragment / chunk-size line /
+// payload / terminator. Each send() is one TCP segment on loopback (TCP_NODELAY),
+// counted from the client with TCP_INFO.
+describe.skipIf(!isLinux && !isAndroid)("response bytes written outside the request callback are batched", () => {
+  async function segmentsReceived(server: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { dlopen, ptr } from "bun:ffi";
+          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" },
+          });
+          // struct tcp_info: tcpi_data_segs_in is a u32 at byte 152 (linux/tcp.h, since 4.6).
+          function dataSegmentsIn(fd) {
+            const info = new Uint8Array(280);
+            const len = new Uint32Array([info.length]);
+            if (libc.symbols.getsockopt(fd, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, ptr(info), ptr(len)) !== 0) {
+              throw new Error("getsockopt(TCP_INFO) failed");
+            }
+            return new DataView(info.buffer).getUint32(152, true);
+          }
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          ${server}
+          const done = Promise.withResolvers();
+          let response = "";
+          const socket = await Bun.connect({
+            hostname: "127.0.0.1",
+            port,
+            socket: {
+              open(socket) {
+                socket.write("GET / HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n");
+              },
+              data(socket, data) {
+                response += data.toString();
+                if (response.endsWith("\\r\\n0\\r\\n\\r\\n") || response.endsWith("\\r\\n\\r\\nhello world")) done.resolve();
+              },
+              error(socket, error) {
+                done.reject(error);
+              },
+              close() {
+                done.resolve();
+              },
+            },
+          });
+          await done.promise;
+          console.log(JSON.stringify({ segments: dataSegmentsIn(socket.fd), body: response.slice(response.indexOf("\\r\\n\\r\\n") + 4) }));
+          socket.end();
+          stop();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const result = JSON.parse(stdout);
+    expect(exitCode).toBe(0);
+    return result;
+  }
+
+  it.concurrent("Bun.serve: async generator body", async () => {
+    // At most: status + headers when the Response is returned, the remaining
+    // headers with the first chunk, and the last chunk with the terminator.
+    const { segments, body } = await segmentsReceived(`
+        const server = Bun.serve({
+          port: 0,
+          async fetch() {
+            await tick();
+            return new Response(async function* () {
+              await tick();
+              yield "hello ";
+              await tick();
+              yield "world";
+            }, { headers: { "X-Custom": "1" } });
+          },
+        });
+        const port = server.port;
+        const stop = () => server.stop(true);
+      `);
+    expect(body).toBe("6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n");
+    expect(segments).toBeLessThanOrEqual(3);
+  });
+
+  it.concurrent("Bun.serve: ReadableStream that produces its only chunk later", async () => {
+    // At most: status + headers when the Response is returned, then the
+    // remaining headers with the body.
+    const { segments, body } = await segmentsReceived(`
+        const server = Bun.serve({
+          port: 0,
+          async fetch() {
+            await tick();
+            return new Response(new ReadableStream({
+              async pull(controller) {
+                await tick();
+                controller.enqueue("hello world");
+                controller.close();
+              },
+            }), { headers: { "X-Custom": "1" } });
+          },
+        });
+        const port = server.port;
+        const stop = () => server.stop(true);
+      `);
+    expect(body).toBe("hello world");
+    expect(segments).toBeLessThanOrEqual(2);
+  });
+
+  it.concurrent("node:http: write() then end() after an await", async () => {
+    // One segment: status, headers, both chunks and the terminating chunk, as
+    // Node.js sends them.
+    expect(
+      await segmentsReceived(`
+        import { createServer } from "node:http";
+        const server = createServer(async (req, res) => {
+          await tick();
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.write("hello ");
+          res.end("world");
+        });
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const port = server.address().port;
+        const stop = () => server.close();
+      `),
+    ).toEqual({ segments: 1, body: "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n" });
+  });
+});
+
+// The loop has two cork buffers shared by every socket. With many responses
+// writing from timers in the same tick, each write re-corks its own socket and
+// evicts whichever socket held the least recently used slot, so slots change
+// owner constantly; every byte must still reach the response that wrote it.
+// Plain and TLS sockets share the slots, and node:http shares the loop.
+it("interleaved responses written from timers never mix bytes across sockets", async () => {
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+  const requests = 12;
+  const rounds = 6;
+  // Below, at, and above the 16 KB cork buffer.
+  const sizes = [7, 1000, 16 * 1024 - 5, 16 * 1024 + 3, 40_000, 3];
+  const chunk = (tag: string, round: number) =>
+    Buffer.alloc(sizes[round % sizes.length], `${tag}:${round};`).toString("latin1");
+  const expected = (tag: string) => Array.from({ length: rounds }, (_, round) => chunk(tag, round)).join("");
+
+  async function* body(tag: string) {
+    for (let round = 0; round < rounds; round++) {
+      await tick();
+      yield chunk(tag, round);
+    }
+  }
+  const handler = async (req: Request) => {
+    await tick();
+    return new Response(body(new URL(req.url).searchParams.get("tag")!), { headers: { "X-Tag": "1" } });
+  };
+  using plain = Bun.serve({ port: 0, fetch: handler });
+  using secure = Bun.serve({ port: 0, tls, fetch: handler });
+  await using node = http.createServer(async (req, res) => {
+    const tag = new URL(req.url!, "http://x").searchParams.get("tag")!;
+    await tick();
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    for (let round = 0; round < rounds; round++) {
+      await tick();
+      res.write(chunk(tag, round));
+    }
+    await tick();
+    res.end();
+  });
+  await once(node.listen(0, "127.0.0.1"), "listening");
+  const nodeURL = `http://127.0.0.1:${(node.address() as AddressInfo).port}`;
+
+  const jobs: Promise<[string, string]>[] = [];
+  for (let i = 0; i < requests; i++) {
+    for (const [origin, kind] of [
+      [plain.url.origin, "p"],
+      [secure.url.origin, "s"],
+      [nodeURL, "n"],
+    ] as const) {
+      const tag = `${kind}${i}`;
+      jobs.push(
+        fetch(`${origin}/?tag=${tag}`, { tls: { rejectUnauthorized: false } })
+          .then(r => r.text())
+          .then(text => [tag, text]),
+      );
+    }
+  }
+  for (const [tag, text] of await Promise.all(jobs)) {
+    if (text !== expected(tag)) {
+      // Say which response got foreign or missing bytes, and where, without
+      // dumping 70 KB per side.
+      const want = expected(tag);
+      let at = 0;
+      while (at < text.length && text[at] === want[at]) at++;
+      expect({ tag, length: text.length, at, got: text.slice(at, at + 40) }).toEqual({
+        tag,
+        length: want.length,
+        at,
+        got: want.slice(at, at + 40),
+      });
+      expect.unreachable();
+    }
   }
 });

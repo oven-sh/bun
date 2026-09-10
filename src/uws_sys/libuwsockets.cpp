@@ -35,6 +35,10 @@ extern "C"
     loopData->updateDate();
   }
 
+  void uws_loop_drain_corks(us_loop_t *loop) {
+    uWS::Loop::drainCorks(uWS::Loop::data(loop));
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     uWS::SocketContextOptions socket_context_options;
@@ -1105,8 +1109,9 @@ extern "C"
   /* Completion gate for response-end paths that bypass internalEnd (the
    * sendfile path): closes the socket when the connection is marked to close
    * (Connection: close, peer FIN, close-when-idle), the response is complete,
-   * and every outgoing byte has been flushed. Corked responses are left to the
-   * cork() wrapper's own post-uncork gate. */
+   * and every outgoing byte has been flushed. Flushes what the response has
+   * corked first; inside this socket's own parse the close is left to onData's
+   * post-parse gate. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
     /* A callback upstream of this gate may already have closed the socket;
@@ -1118,18 +1123,12 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      if (!uwsRes->AsyncSocket<true>::isCorked())
-      {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
-      }
+      uwsRes->uncorkAndCloseIfDoneAndMarked(uwsRes->getHttpResponseData());
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      if (!uwsRes->AsyncSocket<false>::isCorked())
-      {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
-      }
+      uwsRes->uncorkAndCloseIfDoneAndMarked(uwsRes->getHttpResponseData());
     }
   }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
@@ -1174,6 +1173,7 @@ extern "C"
       }
       if (headers_open)
       {
+        uwsRes->AsyncSocket<true>::cork();
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
@@ -1182,9 +1182,9 @@ extern "C"
       /* No close gate here: callers (FileResponseStream::finish,
        * DevServer/HTMLBundle error paths) keep using the response after this
        * returns, so closing inside this call would destruct the ext under
-       * them. Corked callers get the cork() wrapper's post-uncork gate;
-       * uncorked ones run uws_res_close_if_done_and_marked themselves once
-       * they are done with the response. */
+       * them. They run uws_res_close_if_done_and_marked themselves once they
+       * are done with the response, or leave it to the cork() wrapper's
+       * post-uncork gate. */
     }
     else
     {
@@ -1204,6 +1204,7 @@ extern "C"
       {
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.
+        uwsRes->AsyncSocket<false>::cork();
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
@@ -1220,19 +1221,9 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      if (*length < 16 * 1024 && *length > 0) {
-        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
-          uwsRes->uWS::AsyncSocket<true>::cork();
-        }
-      }
       return uwsRes->write(stringViewFromC(data, *length), length);
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    if (*length < 16 * 1024 && *length > 0) {
-        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
-          uwsRes->uWS::AsyncSocket<false>::cork();
-        }
-      }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
   size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first) nonnull_fn_decl;

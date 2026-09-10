@@ -1,29 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isDebug, isWindows, tempDir } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
-// The module graph that `--compile` embeds: the bytes from the start of the payload up to its trailer. Reads from the
-// end of the executable instead of loading the whole file.
-function embeddedPayload(executable: string): Buffer {
-  const fd = openSync(executable, "r");
+// The first byte at which two files differ, with the text around it, or `null` when they are identical. Streams both
+// files in blocks: a compiled executable is a copy of bun, hundreds of MB in a debug build.
+function firstDifference(pathA: string, pathB: string): { offset: number; a: string; b: string } | null {
+  const [fdA, fdB] = [openSync(pathA, "r"), openSync(pathB, "r")];
   try {
-    const size = fstatSync(fd).size;
-    for (let window = Math.min(size, 1 << 20); ; window = Math.min(size, window * 8)) {
-      const tail = Buffer.alloc(window);
-      for (let read = 0; read < window; ) read += readSync(fd, tail, read, window - read, size - window + read);
-      const trailer = tail.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
-      // `Offsets` is the 32 bytes before the trailer. Its first field, `byte_count: usize`, counts every payload byte
-      // before `Offsets`.
-      if (trailer >= 32) {
-        const base = trailer - 32 - Number(tail.readBigUInt64LE(trailer - 32));
-        if (base >= 0) return Buffer.from(tail.subarray(base, trailer));
+    const [blockA, blockB] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
+    const readBlock = (fd: number, block: Buffer, position: number) => {
+      let length = 0;
+      while (length < block.length) {
+        const n = readSync(fd, block, length, block.length - length, position + length);
+        if (n === 0) break;
+        length += n;
       }
-      expect(window, `no embedded module graph found in ${executable}`).toBeLessThan(size);
+      return block.subarray(0, length);
+    };
+    for (let offset = 0; ; offset += blockA.length) {
+      const [a, b] = [readBlock(fdA, blockA, offset), readBlock(fdB, blockB, offset)];
+      if (!a.equals(b)) {
+        let i = 0;
+        while (i < a.length && i < b.length && a[i] === b[i]) i++;
+        const around = (block: Buffer) => block.toString("latin1", Math.max(0, i - 32), i + 32);
+        return { offset: offset + i, a: around(a), b: around(b) };
+      }
+      if (a.length < blockA.length) return null;
     }
   } finally {
-    closeSync(fd);
+    closeSync(fdA);
+    closeSync(fdB);
   }
 }
 
@@ -658,12 +666,12 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
 
-    // Building the same inputs twice must embed the same bytes. Imports between chunks are printed with a per-build
-    // placeholder as the specifier, and the linker swaps in the final path once chunk hashes are known. With
-    // `--bytecode`, the module record used to keep the placeholder as an extra string, and it was written to the
+    // Building the same inputs twice must write the same executable. Imports between chunks are printed with a
+    // per-build placeholder as the specifier, and the linker swaps in the final path once chunk hashes are known.
+    // With `--bytecode`, the module record used to keep the placeholder as an extra string, and it was written to the
     // executable's shared string table. Not concurrent: two in-process compiles would starve the tests beside it.
     test(
-      "--bytecode: the embedded module graph is the same on every build",
+      "--bytecode: every build of the same inputs writes the same executable",
       async () => {
         using dir = tempDir("compile-splitting-reproducible", {
           "entry.ts": /* js */ `
@@ -685,22 +693,15 @@ describe("bundler", () => {
           });
           expect(result.logs).toEqual([]);
           expect(result.success).toBe(true);
-          return { executable: result.outputs[0].path, payload: embeddedPayload(result.outputs[0].path) };
+          return result.outputs[0].path;
         };
         const first = await build("1");
         const second = await build("2");
 
-        const differAt = first.payload.findIndex((byte, i) => byte !== second.payload[i]);
-        const around = (payload: Buffer) =>
-          JSON.stringify(payload.toString("latin1", Math.max(0, differAt - 32), differAt + 32));
-        expect(
-          differAt,
-          `payloads differ at byte ${differAt}: ${around(first.payload)} vs ${around(second.payload)}`,
-        ).toBe(-1);
-        expect(second.payload.length).toBe(first.payload.length);
+        expect(firstDifference(first, second)).toBeNull();
 
         await using proc = Bun.spawn({
-          cmd: [first.executable],
+          cmd: [first],
           env: bunEnv,
           cwd: String(dir),
           stdout: "pipe",

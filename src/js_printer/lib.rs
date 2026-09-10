@@ -657,24 +657,34 @@ pub mod analyze_transpiled_module {
         pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
             debug_assert!(!self.finalized);
             let mut buf: Vec<u8> = Vec::with_capacity(self.strings_buf.len());
+            let mut changed = false;
             let mut offset = 0usize;
-            for (index, len) in self.strings_lens.iter_mut().enumerate() {
+            for len in self.strings_lens.iter_mut() {
                 let old = &self.strings_buf[offset..offset + *len as usize];
                 offset += *len as usize;
-                let Some(new) = replace(old) else {
-                    buf.extend_from_slice(old);
-                    continue;
-                };
-                self.strings_map.remove(old);
-                // If `new` was already interned, two ids now hold equal bytes and `str()`
-                // keeps returning the first.
-                if !self.strings_map.contains_key(new) {
-                    self.strings_map.insert(new.to_vec(), index as u32);
+                match replace(old) {
+                    Some(new) => {
+                        changed = true;
+                        buf.extend_from_slice(new);
+                        *len = u32::try_from(new.len()).unwrap();
+                    }
+                    None => buf.extend_from_slice(old),
                 }
-                buf.extend_from_slice(new);
-                *len = u32::try_from(new.len()).unwrap();
+            }
+            if !changed {
+                return;
             }
             self.strings_buf = buf;
+            // Re-key the content map. If two ids now hold equal bytes, `str()` returns the first.
+            self.strings_map.clear();
+            let mut offset = 0usize;
+            for (index, &len) in self.strings_lens.iter().enumerate() {
+                let string = &self.strings_buf[offset..offset + len as usize];
+                offset += len as usize;
+                if !self.strings_map.contains_key(string) {
+                    self.strings_map.insert(string.to_vec(), index as u32);
+                }
+            }
         }
 
         pub fn str(&mut self, value: &[u8]) -> StringID {

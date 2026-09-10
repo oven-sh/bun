@@ -8,9 +8,9 @@ import { totalmem } from "node:os";
 // and the ten quotes in the value percent-encode to 30, so the append that
 // passes the limit is the one inside the value encoder. The child needs ~4.3 GB
 // (a 2 GB name plus a 2 GB builder), and validating the name takes about a
-// minute in debug builds, so both entry points share one child and one cookie.
+// minute in debug builds, so every entry point shares one child and one cookie.
 describe.skipIf(totalmem() < 10 * 1024 ** 3)("serializing a cookie past the maximum string length", () => {
-  test("Bun.Cookie#toString() and Bun.CookieMap#toSetCookieHeaders() throw instead of aborting", async () => {
+  test("throws from toString() and toSetCookieHeaders(), and Bun.serve reports it and still responds", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -32,6 +32,22 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("serializing a cookie past the maxi
           } catch (e) {
             console.log("toSetCookieHeaders threw", e.name, e.message);
           }
+
+          // The status line is written before the cookies, so the server cannot
+          // turn this into an error response: it prints the error and sends the
+          // response without the Set-Cookie header.
+          using server = Bun.serve({
+            port: 0,
+            development: false,
+            routes: {
+              "/": req => {
+                req.cookies.set(cookie);
+                return new Response("hello");
+              },
+            },
+          });
+          const res = await fetch(server.url);
+          console.log("serve", res.status, res.headers.get("set-cookie"), res.headers.get("content-type"), await res.text());
         `,
       ],
       env: bunEnv,
@@ -39,10 +55,12 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("serializing a cookie past the maxi
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "toString threw RangeError Out of memory\ntoSetCookieHeaders threw RangeError Out of memory\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(stdout).toBe(
+      "toString threw RangeError Out of memory\n" +
+        "toSetCookieHeaders threw RangeError Out of memory\n" +
+        "serve 200 null text/plain;charset=utf-8 hello\n",
+    );
+    expect(stderr).toContain("RangeError: Out of memory");
+    expect(exitCode).toBe(0);
   }, 180_000);
 });

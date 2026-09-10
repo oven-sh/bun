@@ -3805,13 +3805,19 @@ where
         }
 
         if let Some(mut cookies) = self.cookies.replace(None) {
-            let global_this = self.server().global_this();
+            let server = self.server();
+            let global_this = server.global_this();
             let resp = self.resp.get().expect("infallible: resp bound");
-            let r = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr());
+            // The status line is already written, so a cookie that cannot be
+            // serialized (longer than the maximum string length) is reported
+            // and the response goes out without its Set-Cookie header.
+            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr()) {
+                server
+                    .vm()
+                    .as_mut()
+                    .run_error_handler(global_this.take_exception(err), None);
+            }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
-            if r.is_err() {
-                return;
-            } // TODO: properly propagate exception upwards
         }
         let blob = self.blob.get();
 

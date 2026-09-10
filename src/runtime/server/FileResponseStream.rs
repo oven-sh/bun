@@ -47,6 +47,8 @@ pub(crate) struct FileResponseStream {
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
+    /// Bytes still owed against the Content-Length the caller wrote; `None` streams to EOF.
+    remaining: Cell<Option<u64>>,
 
     state: Cell<State>,
 }
@@ -61,7 +63,6 @@ pub enum Mode {
 struct Sendfile {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     socket_fd: Fd,
-    remain: u64,
     offset: u64,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     has_set_on_writable: bool,
@@ -77,7 +78,6 @@ impl Default for Sendfile {
         Self {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_fd: Fd::INVALID,
-            remain: 0,
             offset: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             has_set_on_writable: false,
@@ -133,6 +133,8 @@ pub(crate) enum StreamOwner {
 enum StreamEnd {
     Complete,
     Abort,
+    /// EOF before the committed length (the file shrank after the `fstat`).
+    Truncated,
     Error(sys::Error),
 }
 
@@ -147,7 +149,7 @@ impl StreamOwner {
                 on_abort,
                 on_error,
             } => match end {
-                StreamEnd::Complete => on_complete(ctx, resp),
+                StreamEnd::Complete | StreamEnd::Truncated => on_complete(ctx, resp),
                 StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
                 StreamEnd::Error(err) => on_error(ctx, resp, err),
             },
@@ -180,6 +182,7 @@ impl FileResponseStream {
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
                 sendfile: JsCell::new(Sendfile::default()),
+                remaining: Cell::new(opts.length),
                 state: Cell::new(State::default()),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
@@ -214,7 +217,6 @@ impl FileResponseStream {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
-                remain: opts.length.expect("can_sendfile gates None"),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 has_set_on_writable: false,
             });
@@ -314,8 +316,13 @@ impl FileResponseStream {
 
         let resp = self.resp.get();
         resp.timeout(self.idle_timeout.get());
+        let remaining = self.charge_remaining(chunk.len() as u64);
 
         if state == ReadState::Eof {
+            if remaining.is_some_and(|n| n > 0) {
+                self.end_truncated();
+                return false;
+            }
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             resp.end(chunk, resp.should_close_connection());
@@ -406,8 +413,8 @@ impl FileResponseStream {
     fn on_sendfile(&self) -> bool {
         bun_output::scoped_log!(
             FileResponseStream,
-            "onSendfile remain={} offset={}",
-            self.sendfile.get().remain,
+            "onSendfile remain={:?} offset={}",
+            self.remaining.get(),
             self.sendfile.get().offset
         );
         if self.state.get().contains(State::RESPONSE_DONE) {
@@ -417,8 +424,9 @@ impl FileResponseStream {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
-            let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
-                let adjusted = sf.remain.min(i32::MAX as u64);
+            let remain = self.remaining.get().expect("can_sendfile gates None");
+            let (errno, sent) = self.sendfile.with_mut(|sf| {
+                let adjusted = remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
                 // SAFETY: both fds are valid open file descriptors owned by `self`;
                 // `off` is a stack local.
@@ -435,14 +443,21 @@ impl FileResponseStream {
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
                         .unwrap();
                 sf.offset = u64::try_from(off).expect("int cast");
-                sf.remain = sf.remain.saturating_sub(sent);
-                (errno, sent, sf.remain)
+                (errno, sent)
             });
+            let remain = self
+                .charge_remaining(sent)
+                .expect("can_sendfile gates None");
 
             match errno {
                 sys::E::SUCCESS => {
-                    if remain == 0 || sent == 0 {
+                    if remain == 0 {
                         self.end_sendfile();
+                        return false;
+                    }
+                    if sent == 0 {
+                        // EOF before the committed length: the file shrank.
+                        self.end_truncated();
                         return false;
                     }
                     return self.arm_sendfile_writable();
@@ -528,13 +543,34 @@ impl FileResponseStream {
         self.finish();
     }
 
+    fn charge_remaining(&self, sent: u64) -> Option<u64> {
+        let remaining = self.remaining.get().map(|n| n.saturating_sub(sent));
+        self.remaining.set(remaining);
+        remaining
+    }
+
     fn fail_with(&self, err: sys::Error) {
+        self.close_with(StreamEnd::Error(err));
+    }
+
+    /// The committed Content-Length can no longer be honoured, so a close is
+    /// the only signal left that tells the client the body is short.
+    fn end_truncated(&self) {
+        bun_output::scoped_log!(
+            FileResponseStream,
+            "endTruncated remaining={:?}",
+            self.remaining.get()
+        );
+        self.close_with(StreamEnd::Truncated);
+    }
+
+    fn close_with(&self, end: StreamEnd) {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE | State::ERRORED);
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();
-            self.deliver(resp, StreamEnd::Error(err));
+            self.deliver(resp, end);
         }
         self.finish();
     }
@@ -563,15 +599,13 @@ impl FileResponseStream {
         self.insert_state(State::FINISHED);
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
-            self.insert_state(State::RESPONSE_DONE);
-            self.detach_resp();
-            let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
-            // This end runs uncorked (reader callbacks), so no cork or parser
-            // gate will run the close check; do it here, after `on_complete`
-            // like `end_sendfile`, so the callbacks see a live socket.
-            resp.close_if_done_and_marked();
+            // An EOF with no final chunk arrives through `on_reader_done` and
+            // lands here; the nested `finish()` returns at the guard above.
+            if self.remaining.get().is_some_and(|n| n > 0) {
+                self.end_truncated();
+            } else {
+                self.end_complete_without_body();
+            }
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -579,6 +613,18 @@ impl FileResponseStream {
         // that guard's drop, not here.
         // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
         unsafe { Self::deref(self.as_ptr()) };
+    }
+
+    fn end_complete_without_body(&self) {
+        self.insert_state(State::RESPONSE_DONE);
+        self.detach_resp();
+        let resp = self.resp.get();
+        resp.end_without_body(resp.should_close_connection());
+        self.deliver(resp, StreamEnd::Complete);
+        // This end runs uncorked (reader callbacks), so no cork or parser
+        // gate will run the close check; do it here, after `on_complete`
+        // like `end_sendfile`, so the callbacks see a live socket.
+        resp.close_if_done_and_marked();
     }
 
     fn event_loop(&self) -> EventLoopHandle {

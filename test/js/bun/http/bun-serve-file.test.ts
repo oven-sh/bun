@@ -1,9 +1,11 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, truncateSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { connect as netConnect } from "node:net";
 import { join } from "node:path";
+import { connect as tlsConnect } from "node:tls";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -1301,6 +1303,72 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     "slice(5, 5)": { blob: exactly(""), stream: exactly("") },
     "slice(100)": { blob: exactly(""), stream: exactly("") },
     "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
+  });
+});
+
+// The server writes Content-Length from the fstat it takes when the response
+// starts. When the file shrinks before the body is fully sent, the read hits
+// EOF short of that length. The response used to end there as if the body
+// were whole, and the connection stayed open: the client waited for the
+// missing bytes until the idle timeout (forever with idleTimeout: 0). A body
+// that ends short of the committed length must close the connection. Plain
+// TCP on Linux takes the sendfile path; TLS (and every other platform) takes
+// the buffered reader path.
+describe.concurrent.each([
+  ["plain", false],
+  ["tls", true],
+])("Response(Bun.file) whose file shrinks mid-body over %s", (_label, useTls) => {
+  test("closes the connection instead of leaving the client waiting for the missing bytes", async () => {
+    using dir = tempDir("serve-file-shrinks", {});
+    const filePath = join(String(dir), "big.bin");
+    // Far more than the loopback socket buffers hold, so the file is still
+    // streaming when it shrinks.
+    const SIZE = 32 * 1024 * 1024;
+    writeFileSync(filePath, Buffer.alloc(SIZE, 67));
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      ...(useTls ? { tls } : {}),
+      fetch: () => new Response(Bun.file(filePath)),
+    });
+
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    let head = "";
+    let contentLength = -1;
+    let bodyBytes = 0;
+    let shrunk = false;
+
+    const socket = useTls
+      ? tlsConnect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false })
+      : netConnect({ host: "127.0.0.1", port: server.port });
+    socket.on("error", () => {});
+    socket.on("close", () => onClose());
+    socket.on("data", (chunk: Buffer) => {
+      if (contentLength < 0) {
+        head += chunk.toString("latin1");
+        const headEnd = head.indexOf("\r\n\r\n");
+        if (headEnd < 0) return;
+        contentLength = Number(/^content-length:\s*(\d+)/im.exec(head.slice(0, headEnd))![1]);
+        chunk = Buffer.from(head.slice(headEnd + 4), "latin1");
+      }
+      bodyBytes += chunk.length;
+      if (bodyBytes > 0 && !shrunk) {
+        // The head is on the wire with the full size and the body has
+        // started: shrink the file under the server.
+        shrunk = true;
+        truncateSync(filePath, 4096);
+      }
+    });
+    socket.once(useTls ? "secureConnect" : "connect", () => {
+      socket.write("GET /big HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+
+    // The server must hang up on its own. The client sends nothing more, so
+    // a server that treats the short body as complete never closes.
+    await closed;
+    expect({ contentLength, bodyShort: bodyBytes < contentLength }).toEqual({ contentLength: SIZE, bodyShort: true });
   });
 });
 

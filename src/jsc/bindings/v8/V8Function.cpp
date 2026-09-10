@@ -16,6 +16,8 @@ ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Function)
 
 namespace v8 {
 
+const int Function::kLineOffsetNotFound = -1;
+
 namespace {
 
 // 1-based position of the parameter list, source-map remapped. False without script source.

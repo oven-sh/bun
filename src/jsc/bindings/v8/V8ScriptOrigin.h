@@ -15,6 +15,10 @@ public:
         : flags_((is_shared_cross_origin ? kIsSharedCrossOrigin : 0) | (is_wasm ? kIsWasm : 0) | (is_opaque ? kIsOpaque : 0) | (is_module ? kIsModule : 0))
     {
     }
+    ScriptOriginOptions(int flags)
+        : flags_(flags & (kIsSharedCrossOrigin | kIsOpaque | kIsWasm | kIsModule))
+    {
+    }
 
     bool IsSharedCrossOrigin() const { return (flags_ & kIsSharedCrossOrigin) != 0; }
     bool IsOpaque() const { return (flags_ & kIsOpaque) != 0; }

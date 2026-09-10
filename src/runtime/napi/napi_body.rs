@@ -3575,6 +3575,7 @@ mod v8_api {
         pub(super) fn _ZNK2v812ScriptOrigin12SourceMapUrlEv() -> *mut c_void;
         pub(super) fn _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv() -> *mut c_void;
         pub(super) fn _ZNK2v812ScriptOrigin7OptionsEv() -> *mut c_void;
+        pub(super) static _ZN2v88Function19kLineOffsetNotFoundE: i32;
         pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
         pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
@@ -3936,6 +3937,8 @@ mod v8_api {
         pub(super) fn v8_ScriptOrigin_GetHostDefinedOptions() -> *mut c_void;
         #[link_name = "?Options@ScriptOrigin@v8@@QEBA?AVScriptOriginOptions@2@XZ"]
         pub(super) fn v8_ScriptOrigin_Options() -> *mut c_void;
+        #[link_name = "?kLineOffsetNotFound@Function@v8@@2HB"]
+        pub(super) static v8_Function_kLineOffsetNotFound: i32;
         #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
         pub(super) fn v8_Context_Global() -> *mut c_void;
         #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
@@ -5082,6 +5085,8 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
         );
+        // Data symbol: keep_symbols! only takes function paths.
+        ::core::hint::black_box(&raw const _ZN2v88Function19kLineOffsetNotFoundE);
     }
     #[cfg(windows)]
     {
@@ -5283,6 +5288,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Map_Set,
             v8_Map_Delete,
         );
+        ::core::hint::black_box(&raw const v8_Function_kLineOffsetNotFound);
     }
 
     // posix_platform_specific_v8_apis

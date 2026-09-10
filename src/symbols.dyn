@@ -165,6 +165,7 @@
     __ZNK2v812ScriptOrigin12SourceMapUrlEv;
     __ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv;
     __ZNK2v812ScriptOrigin7OptionsEv;
+    __ZN2v88Function19kLineOffsetNotFoundE;
     __ZN2v87Context6GlobalEv;
     __ZNK2v86Object18InternalFieldCountEv;
     __ZN2v86Object15GetIdentityHashEv;

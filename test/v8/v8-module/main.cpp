@@ -1496,6 +1496,7 @@ void get_function_script_origin(const FunctionCallbackInfo<Value> &info) {
   int column = fn->GetScriptColumnNumber();
   LOG_EXPR(line);
   LOG_EXPR(column);
+  LOG_EXPR(line == Function::kLineOffsetNotFound);
 
   Local<Object> result = Object::New(isolate);
   Local<Value> file = resource_name.IsEmpty() ? Local<Value>(Undefined(isolate))

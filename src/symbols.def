@@ -680,6 +680,7 @@ EXPORTS
   ?SourceMapUrl@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
   ?GetHostDefinedOptions@ScriptOrigin@v8@@QEBA?AV?$Local@VData@v8@@@2@XZ
   ?Options@ScriptOrigin@v8@@QEBA?AVScriptOriginOptions@2@XZ
+  ?kLineOffsetNotFound@Function@v8@@2HB DATA
   ?IsFunction@Value@v8@@QEBA_NXZ
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
   ?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z

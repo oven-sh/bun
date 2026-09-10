@@ -14,7 +14,7 @@ class Context;
 
 class Function : public Object {
 public:
-    static constexpr int kLineOffsetNotFound = -1;
+    BUN_EXPORT static const int kLineOffsetNotFound;
 
     BUN_EXPORT MaybeLocal<Object> NewInstance(Local<Context> context, int argc, Local<Value> argv[]) const;
 

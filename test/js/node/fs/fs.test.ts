@@ -6687,22 +6687,21 @@ it("a by-length path argument keeps its bytes while an async call is pending", a
   // reaches the pool instead of failing with ENAMETOOLONG).
   const N = 1020;
   const script = `
-    const fs = require("node:fs");
+    import fs from "node:fs";
     const cwd = process.cwd();
     const N = ${N};
     const name = n => {
       const pad = N - cwd.length - 1 - n.length;
       const u = new Uint8Array(N);
-      u.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + "/.".repeat(pad >> 1) + "/" + n));
+      const dots = Buffer.alloc((pad >> 1) * 2, "/.").toString();
+      u.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + dots + "/" + n));
       return u;
     };
     (async () => {
       for (let i = 0; i < 400; i++) fs.stat(cwd, () => {}); // park the pool
       const p = name("a.txt");
       const pending = fs.promises.readFile(p, "latin1");
-      try {
-        p.buffer.transfer(0);
-      } catch {}
+      p.buffer.transfer(0); // pinned: this copies, so the view keeps its bytes
       globalThis.keep = Array.from({ length: 64 }, () => name("b.txt"));
       console.log(JSON.stringify({ byteLength: p.byteLength, contents: await pending }));
     })().catch(err => {
@@ -6736,17 +6735,15 @@ it("fs.read keeps filling a by-length view when its storage is transferred while
   // ArrayBuffer nothing pins, the transfer moves the storage to an owner
   // nothing references, and the pool thread writes into freed memory.
   const script = `
-    const fs = require("node:fs");
-    const path = require("node:path");
+    import fs from "node:fs";
+    import path from "node:path";
     (async () => {
       const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
       const view = new Uint8Array(65536);
       const pending = new Promise((resolve, reject) => {
         fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
       });
-      try {
-        view.buffer.transfer();
-      } catch {}
+      view.buffer.transfer(); // pinned: this copies, so the read keeps its destination
       const bytesRead = await pending;
       fs.closeSync(fd);
       console.log(

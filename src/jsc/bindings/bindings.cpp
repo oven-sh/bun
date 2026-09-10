@@ -3586,7 +3586,7 @@ static bool pinStorage(JSC::JSValue value)
             return false;
         buf = view->possiblySharedBuffer();
     }
-    if (!buf)
+    if (!buf || buf->isDetached())
         return false;
     if (!buf->isShared())
         buf->pin();

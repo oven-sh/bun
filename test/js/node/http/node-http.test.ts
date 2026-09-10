@@ -4366,3 +4366,74 @@ describe("response header values are written as latin-1 bytes", () => {
     ]);
   });
 });
+
+// Node's net.Server#listen throws while the server still has a handle, and http.Server inherits
+// that. Here every listen() builds a new native listener, so without the guard each extra call
+// leaked a listening socket that close() never reached and that kept the process alive.
+test("listen() while already listening throws ERR_SERVER_ALREADY_LISTEN", async () => {
+  const alreadyListening = expect.objectContaining({ code: "ERR_SERVER_ALREADY_LISTEN" });
+  const server = createServer((req, res) => res.end("ok"));
+  try {
+    server.listen(0, "127.0.0.1");
+    // Same tick, before 'listening' fired.
+    expect(() => server.listen(0, "127.0.0.1")).toThrow(alreadyListening);
+    await once(server, "listening");
+    expect(() => server.listen(0, "127.0.0.1")).toThrow(alreadyListening);
+    expect(() => server.listen()).toThrow(alreadyListening);
+    // Node checks the handle before it registers the callback, so a rejected
+    // listen() leaves no 'listening' listener behind.
+    const rejectedCallback = mock(() => {});
+    expect(() => server.listen(0, "127.0.0.1", rejectedCallback)).toThrow(alreadyListening);
+    expect(server.listenerCount("listening")).toBe(1); // the server's own setupConnectionsTracking
+
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(await res.text()).toBe("ok");
+
+    // close() releases the handle, so listen() is allowed again (test-net-server-call-listen-multiple-times).
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(server.address()).toBeNull();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    expect(server.address()).not.toBeNull();
+    expect(rejectedCallback).not.toHaveBeenCalled();
+    expect(() => server.listen(0, "127.0.0.1")).toThrow(alreadyListening);
+  } finally {
+    server.close();
+  }
+});
+
+test("repeated listen() does not leak listeners that outlive close()", async () => {
+  // Without the guard the 19 extra listeners kept serving after close() and the process never exited.
+  const script = `
+    const http = require("node:http");
+    const server = http.createServer((req, res) => res.end("ok"));
+    let rejected = 0;
+    for (let i = 0; i < 20; i++) {
+      try {
+        server.listen(0, "127.0.0.1");
+        if (i > 0) {
+          console.log("listen " + i + " did not throw");
+          process.exit(1);
+        }
+      } catch (e) {
+        if (e.code === "ERR_SERVER_ALREADY_LISTEN") rejected++;
+      }
+      await new Promise(r => setImmediate(r));
+    }
+    const { port } = server.address();
+    const res = await fetch("http://127.0.0.1:" + port + "/");
+    console.log("rejected:" + rejected + " served:" + (await res.text()));
+    server.close(() => console.log("closed:" + server.address()));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["rejected:19 served:ok", "closed:null"]);
+  expect(exitCode).toBe(0);
+});

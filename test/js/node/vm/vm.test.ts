@@ -2107,22 +2107,32 @@ describe("deferred work of a context that is collected while the work is pending
     );
   });
 
-  // The other owner a ticket can belong to. A ShadowRealm's global is larger than
-  // MarkedSpace::largeCutoff, so it is a precise allocation and its destructor runs in the epilogue
-  // of the collection that kills it. That destructor cancels the realm's pending work, which is why
-  // the fixture above cannot reach this owner: it has to be a collection the loop did not ask for.
+  // The other owner a ticket can belong to. A ShadowRealm's global is larger than MarkedSpace::largeCutoff,
+  // so it is a precise allocation, destructed as soon as the collection that kills it finalizes, and the
+  // destructor cancels the realm's pending work. A synchronous fullGC() finalizes before it returns, which
+  // is why the fixture above cannot reach this owner: the realms have to die in collections the loop did
+  // not ask for.
   test.concurrent("a WebAssembly.instantiate completion does not run in a collected ShadowRealm", async () => {
     await run(`
-      const glue =
-        "const bytes = new Uint8Array([0,97,115,109,1,0,0,0,5,3,1,0,1,7,5,1,1,109,2,0]);" +
-        "WebAssembly.instantiate(bytes).then(r => { globalThis.byteLength = r.instance.exports.m.buffer.byteLength; });" +
-        "undefined";
-      for (let i = 0; i < 400; i++) {
-        new ShadowRealm().evaluate(glue);
+      // A realm that died before its completion ran had work pending when it was collected. That is the
+      // case under test, so the loop has to produce at least one.
+      const died = new Set();
+      const completed = new Set();
+      const realms = new FinalizationRegistry(i => died.add(i));
+      const instantiate =
+        "(done) => { const bytes = new Uint8Array([0,97,115,109,1,0,0,0,5,3,1,0,1,7,5,1,1,109,2,0]);" +
+        " WebAssembly.instantiate(bytes).then(r => done(r.instance.exports.m.buffer.byteLength)); }";
+      for (let i = 0; i < 150; i++) {
+        const realm = new ShadowRealm();
+        realms.register(realm, i);
+        realm.evaluate(instantiate)(() => { completed.add(i); });
         // Hand the queued completions a turn, so the realms die while their work is pending
         // instead of only growing the queue.
         if (i % 100 === 99) await Bun.sleep(0);
       }
+      const diedWithWorkPending = () => [...died].some(i => !completed.has(i));
+      for (let i = 0; i < 50 && !diedWithWorkPending(); i++) await Bun.sleep(1);
+      if (!diedWithWorkPending()) throw new Error("no ShadowRealm was collected while its completion was pending");
       console.log("done");
     `);
   });

@@ -4935,8 +4935,7 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
-  /// Backs `session.closed`: set by close() and by the socket's 'close' (node's socketOnClose
-  /// close()s the session). A bare destroy() leaves it false while `session.destroyed` flips.
+  /// Backs `session.closed`: set by close() and by the socket's 'close' handler, never by a bare destroy().
   #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
@@ -5409,9 +5408,7 @@ class ClientHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
-    // Node's socketOnClose close()s a still-attached session before destroying it; only the latch
-    // matters here, since close()'s GOAWAY has no transport left to reach.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (socketOnClose)
+    // Node's socketOnClose close()s a still-attached session first; with no transport only the latch matters.
     if (!this.destroyed) this.#closeCalled = true;
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;

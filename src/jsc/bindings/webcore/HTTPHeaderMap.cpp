@@ -223,10 +223,7 @@ std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
         break;
     }
 
-    // Sum the real lengths, in 64 bits. Every pair is joined by ", ", and the
-    // headers have independent lengths, so the first length times the count is
-    // both the wrong total and a product that wraps. A capacity past
-    // String::MaxLength aborts the process, and so does an append past it.
+    // ", " between each pair. StringBuilder crashes past String::MaxLength.
     uint64_t length = 2 * static_cast<uint64_t>(count - 1);
     for (const auto& header : m_setCookieHeaders)
         length += header.length();
@@ -245,11 +242,9 @@ std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
 
 String HTTPHeaderMap::get(HTTPHeaderName name) const
 {
-    if (name == HTTPHeaderName::SetCookie) {
-        // A joined value that does not fit in a String reads as absent here.
-        // FetchHeaders::get() reports it to JS as an out-of-memory error.
+    // A join past String::MaxLength reads as absent. FetchHeaders::get() throws.
+    if (name == HTTPHeaderName::SetCookie)
         return tryJoinSetCookieHeaders().value_or(String());
-    }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;

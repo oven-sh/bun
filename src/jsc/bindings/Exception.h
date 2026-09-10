@@ -70,11 +70,7 @@ inline Exception isolatedCopy(Exception&& value)
     return Exception { value.code(), value.releaseMessage().isolatedCopy(), value.releaseExtra().isolatedCopy() };
 }
 
-// makeString() aborts the process when the result is longer than a String can
-// be (String::MaxLength, 2**31 - 1 characters). A message that embeds a string
-// from JS can reach that length, so build it with tryMakeString() and report
-// the failure the way JSC reports an over-long string: RangeError: Out of
-// memory.
+// A message past String::MaxLength becomes OutOfMemoryError. makeString() would crash.
 template<typename... StringTypes>
 Exception exceptionWithMessage(ExceptionCode code, const StringTypes&... parts)
 {

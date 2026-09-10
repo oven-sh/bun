@@ -177,11 +177,8 @@ public:
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
-
-    // The ", "-joined Set-Cookie value, or nullopt when the join is longer than
-    // String::MaxLength.
+    // The ", "-joined Set-Cookie value. nullopt when it passes String::MaxLength.
     WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
-
     void set(HTTPHeaderName, const String& value);
     void add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;

@@ -271,9 +271,7 @@ ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
-        // A Headers object can hold more Set-Cookie bytes than one String can
-        // hold, and the ", "-joined value is the only value to return here.
-        // Report that instead of aborting the process.
+        // The stored Set-Cookie values can add up to more than one String holds.
         if (headerName == HTTPHeaderName::SetCookie) {
             auto joined = m_headers.tryJoinSetCookieHeaders();
             if (!joined) [[unlikely]]
@@ -283,7 +281,7 @@ ExceptionOr<String> FetchHeaders::get(const StringView name) const
         return m_headers.get(headerName);
     }
 
-    // A known header name is always a valid token, so only this path can fail.
+    // A known header name is always a valid token, so only this path checks.
     auto result = m_headers.getUncommonHeader(name);
     if (result.isEmpty() && !isValidHTTPToken(name))
         return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);

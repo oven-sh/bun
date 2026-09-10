@@ -92,6 +92,13 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
+    case "Page.crash":
+      // Real Chrome kills the tab's renderer process, reports the death on
+      // the view's session, and never answers this command or anything else
+      // the dead renderer owed. The session stays attached: a later
+      // Page.navigate gets a new renderer.
+      event("Inspector.targetCrashed", {});
+      return;
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
         if (noTitleReply) return;

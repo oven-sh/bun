@@ -526,6 +526,19 @@ The browser subprocess does **not** keep Bun's event loop alive on its own. An o
 
 If the browser subprocess dies unexpectedly (crash, OOM-kill, `SIGKILL`), every pending promise on every view rejects with an error describing how it died (`"Chrome killed by signal 9"`, `"WebView host process died"`). Further operations on those views throw.
 
+### Renderer death
+
+On the Chrome backend, one tab's renderer process can die while the browser keeps running. Pending promises on that view reject with `Error("page crashed (renderer process died)")`, and the view's [operation slots](#concurrency-model) are freed. The view stays open: the next `navigate()` makes Chrome create a new renderer for it.
+
+Chrome reports this as the CDP event `Inspector.targetCrashed`, which the view also dispatches to `addEventListener`:
+
+```ts
+view.addEventListener("Inspector.targetCrashed", () => {
+  console.log("the page crashed, reloading");
+  view.navigate(view.url);
+});
+```
+
 ---
 
 ## Concurrency model

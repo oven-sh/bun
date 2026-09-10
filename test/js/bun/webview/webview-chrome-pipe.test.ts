@@ -336,6 +336,71 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
   expect(result).toBe("retry was accepted and failed too");
 });
 
+// A tab's renderer process can die while the browser keeps running (OOM kill,
+// SIGKILL, Page.crash). Chrome reports it with Inspector.targetCrashed on the
+// view's session and never answers what the dead renderer owed, so the view
+// has to settle that work itself. The statuses are read inside the listener,
+// which runs after the rejections, so the check needs no timer.
+test.concurrent("a renderer crash rejects the view's pending work and frees its slots", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const hungEvaluate = view.evaluate("__fake_no_reply()");
+    const hungCdp = view.cdp("Page.crash");
+    const held = [outcome(hungEvaluate), outcome(hungCdp)];
+    const report = await new Promise(resolve => {
+      view.addEventListener("Inspector.targetCrashed", () => resolve({
+        evaluateStatus: Bun.peek.status(hungEvaluate),
+        cdpStatus: Bun.peek.status(hungCdp),
+      }));
+    });
+    // Awaiting a slot the crash left pending would never return, so report
+    // that instead of hanging.
+    const reason = (status, held) => status === "pending" ? { pending: true } : held;
+    report.evaluate = await reason(report.evaluateStatus, held[0]);
+    report.cdp = await reason(report.cdpStatus, held[1]);
+    // Both slots are free again, and the view still works. A taken slot
+    // throws ERR_INVALID_STATE from the call itself, not from its promise.
+    const begin = call => { try { return outcome(call()); } catch (e) { return { threw: e.message }; } };
+    report.nextEvaluate = await begin(() => view.evaluate("'alive'"));
+    report.nextCdp = await begin(() => view.cdp("Page.enable"));
+    view.close();
+    print(report);
+  `);
+  const crashed = { rejected: "page crashed (renderer process died)" };
+  expect(result).toEqual({
+    evaluateStatus: "rejected",
+    cdpStatus: "rejected",
+    evaluate: crashed,
+    cdp: crashed,
+    nextEvaluate: { resolved: "alive" },
+    nextCdp: { resolved: {} },
+  });
+});
+
+// The crash rejection is not a requested teardown, so a pending operation
+// nothing holds has to surface as an unhandled rejection, the way a browser
+// death does.
+test.concurrent("a floating operation killed by a renderer crash stays loud", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = newView();
+    await view.navigate("http://fake/");
+    view.evaluate("__fake_no_reply()"); // floating: nobody handles it
+    view.cdp("Page.crash").catch(() => {});
+    // Bounded so the scenario still reports when the report never comes.
+    const deadline = Date.now() + 2000;
+    while (unhandled.length === 0 && Date.now() < deadline) await Bun.sleep(10);
+    // Nothing announces "no second report is coming"; this is a bounded
+    // window for one to appear.
+    await Bun.sleep(50);
+    view.close();
+    print(unhandled);
+  `);
+  expect(result).toEqual(["page crashed (renderer process died)"]);
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

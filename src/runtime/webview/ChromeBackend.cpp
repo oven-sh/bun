@@ -1273,6 +1273,26 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
+    // Inspector.targetCrashed — the tab's renderer process died (crash, OOM
+    // kill, SIGKILL). Chrome keeps the session attached and re-creates the
+    // renderer on the next navigation, so the view stays open, but it never
+    // answers the commands the dead renderer owed: without this the pending
+    // promises hang and their slots stay taken for the life of the view.
+    // Target.detachedFromTarget does not fire for this — that is the
+    // whole-tab case, handled above.
+    //
+    // Reject before the EventTarget dispatch below so a listener can start
+    // a new operation from inside its handler, like settleFailure does for
+    // onNavigationFailed.
+    if (method.size() == 23 && memcmp(method.data(), "Inspector.targetCrashed", 23) == 0) {
+        rejectViewSlots(g, view, createError(g, "page crashed (renderer process died)"_s));
+        // Chrome answers these ids with "Target crashed" only if the view is
+        // navigated again; drop them now so the slots are free either way.
+        uint32_t vid = view->m_viewId;
+        m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
+        updateKeepAlive();
+    }
+
     // Unhandled CDP event — dispatch to the view's EventTarget if it has
     // a listener for this method name. Check hasEventListeners first:
     // Chrome is chatty (frameScheduledNavigation, lifecycleEvent, etc.)

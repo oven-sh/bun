@@ -5413,13 +5413,17 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
-    // See the client session's #onError: Node's socketOnError is a no-op once
+    // See the server session's #onError: Node's socketOnError is a no-op once
     // the session has been detached from the socket, so a transport error that
     // races our own teardown is not re-reported.
     if (this.destroyed) {
       return;
     }
-    this[bunHTTP2Socket] = null;
+    // Keep the socket attached: destroy() ends and destroys it, and it only
+    // detaches afterwards. Detaching here left destroy() with no socket to
+    // tear down, so a transport that reports an error without destroying
+    // itself (emit('error'), autoDestroy:false, a wrapper that forwards the
+    // error) stayed open and leaked the connection.
     if (this.#closed) {
       this.destroy();
       return;

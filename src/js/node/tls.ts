@@ -1517,7 +1517,6 @@ Server.prototype[kSharedCreds] = function () {
   return this._sharedCreds || buildSharedCreds(this);
 };
 
-// `this` is a tls.Server or node:http's TLS-mode Server (same fields, not a tls.Server here).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1259-L1286
 function tlsConnectionListener(this: Server, socket) {
   let secureContext;

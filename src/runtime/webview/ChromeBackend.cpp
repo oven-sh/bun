@@ -1298,8 +1298,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Every event, the ones above included, reaches a listener for its method name. Checking first skips the
-    // JSONParse for Chrome's unlistened chatter (frameScheduledNavigation, lifecycleEvent, ...).
+    // Every event, the ones above included, goes to listeners; checking first skips the JSONParse for unlistened chatter.
     if (!view->wrapped().hasEventListeners(methodAtom)) return;
 
     JSValue data = JSONParse(g, WTF::String::fromUTF8(params));

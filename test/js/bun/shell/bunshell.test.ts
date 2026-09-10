@@ -3473,15 +3473,21 @@ test("an output redirect stops when the target's WebAssembly.Memory grows", asyn
   // `Malloc=1` turns off the Gigacage, which recycles the freed block. The
   // target spans the whole memory so that a stale write sweeps the freed
   // mapping instead of a part of it that something else may have taken.
+  //
+  // `wroteBeforeGrow` is the proof that the grow lands mid-command: `yes`
+  // writes its first batch while `.then()` starts the interpreter, the
+  // microtask below runs before the event loop picks up the next batch, and
+  // the `ENOSPC` therefore comes from a write after the grow.
   const child = `
     const mem = new WebAssembly.Memory({ initial: 128, maximum: 132 });
     const target = new Uint8Array(mem.buffer);
     const promise = Bun.$\`yes > \${target}\`.quiet().nothrow();
     const running = promise.then(o => o);
     await Promise.resolve();
+    const wroteBeforeGrow = target[0] === 0x79 && target[1] === 0x0a;
     mem.grow(4);
     const result = await running;
-    console.log(JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() }));
+    console.log(JSON.stringify({ wroteBeforeGrow, exitCode: result.exitCode, stderr: result.stderr.toString() }));
   `;
   await using proc = Bun.spawn({
     cmd: [BUN, "-e", child],
@@ -3491,7 +3497,7 @@ test("an output redirect stops when the target's WebAssembly.Memory grows", asyn
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr }).toEqual({
-    stdout: JSON.stringify({ exitCode: 1, stderr: "yes: ENOSPC\n" }),
+    stdout: JSON.stringify({ wroteBeforeGrow: true, exitCode: 1, stderr: "yes: ENOSPC\n" }),
     stderr: "",
   });
   expect(exitCode).toBe(0);

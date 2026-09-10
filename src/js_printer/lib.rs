@@ -671,8 +671,7 @@ pub mod analyze_transpiled_module {
                 return;
             }
             self.strings_buf = buf;
-            // Re-key the content map. A rewrite onto bytes another id already holds would leave
-            // two ids (and possibly two requested modules) for one string; callers must not do that.
+            // Re-key the content map; a rewrite must not land on bytes another id already holds.
             self.strings_map.clear();
             let mut offset = 0usize;
             for (index, &len) in self.strings_lens.iter().enumerate() {

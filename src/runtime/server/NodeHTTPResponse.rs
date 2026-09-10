@@ -2074,8 +2074,8 @@ impl NodeHTTPResponse {
                             ab.unpin();
                             None
                         }
-                        Some(ab) if ab.pinned => Some(input_value),
-                        Some(_) | None => Some(JSValue::ZERO),
+                        Some(_) => Some(input_value),
+                        None => Some(JSValue::ZERO),
                     }
                 } else {
                     Some(JSValue::ZERO)

@@ -4451,7 +4451,7 @@ it("connectionListener aborts queued pipelined responses when the connection die
   // its request) are destroyed when the socket closes, so they emit 'close'
   // instead of hanging forever.
   const closedEvents: string[] = [];
-  const { promise: aborted, resolve: onAborted } = Promise.withResolvers<void>();
+  const { promise: aborted, resolve: onAborted, reject: onClientFailure } = Promise.withResolvers<void>();
   let closesPending = 3;
   const onQueuedClose = (tag: string) => {
     closedEvents.push(tag);
@@ -4469,6 +4469,7 @@ it("connectionListener aborts queued pipelined responses when the connection die
     serverSide.destroy();
   });
   const [clientSide, serverSide] = duplexPair();
+  clientSide.on("error", onClientFailure);
   server.emit("connection", serverSide);
   clientSide.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n");
   await aborted;
@@ -4481,7 +4482,7 @@ it("connectionListener ends the connection after a Connection: close response in
   // close must be the connection's final response (RFC 9112 9.6); the queued
   // pipelined response behind it is aborted by the close path, never sent.
   const closedEvents: string[] = [];
-  const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+  const { promise: done, resolve: onDone, reject: onClientFailure } = Promise.withResolvers<void>();
   let pending = 3;
   const tick = (tag: string) => {
     closedEvents.push(tag);
@@ -4501,6 +4502,7 @@ it("connectionListener ends the connection after a Connection: close response in
   server.emit("connection", serverSide);
   let received = "";
   clientSide.on("data", d => (received += d));
+  clientSide.on("error", onClientFailure);
   clientSide.on("end", () => {
     tick("clientEnd");
     // A well-behaved client answers the FIN, fully closing the connection.
@@ -4522,7 +4524,7 @@ it("connectionListener resets the connection when a queued pipelined response is
   // cannot skip a response slot, so Bun resets it (same as the native path),
   // aborting the requests queued behind the destroyed slot.
   const closedEvents: string[] = [];
-  const { promise: cAborted, resolve: onCAborted } = Promise.withResolvers<void>();
+  const { promise: cAborted, resolve: onCAborted, reject: onClientFailure } = Promise.withResolvers<void>();
   let cClosesPending = 2;
   let releaseFirst!: () => void;
   const firstGate = new Promise<void>(resolve => (releaseFirst = resolve));
@@ -4549,6 +4551,7 @@ it("connectionListener resets the connection when a queued pipelined response is
   server.emit("connection", serverSide);
   let received = "";
   clientSide.on("data", d => (received += d));
+  clientSide.on("error", onClientFailure);
   clientSide.write(
     "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\nGET /c HTTP/1.1\r\nHost: x\r\n\r\n",
   );

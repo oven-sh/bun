@@ -60,7 +60,19 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-pipe-read-req-count-across-callback: uv__process_pipe_read_req keeps
+  // the completed read counted in reqs_pending until it is done with the
+  // handle, like the tcp and tty read paths. Bun re-enters uv_run() from JS
+  // that runs inside read_cb; with upstream's early decrement a uv_close()
+  // from that JS let the nested uv_run() run the close callback and free the
+  // uv_pipe_t under uv__process_pipe_read_req. For oven-sh/libuv's `bun`
+  // branch, not upstream (upstream forbids re-entering uv_run).
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-pipe-read-req-count-across-callback.patch",
+  ],
 
   build: () => ({
     kind: "direct",

@@ -1,0 +1,56 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -2183,7 +2183,6 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
+   assert(handle->type == UV_NAMED_PIPE);
+ 
+   handle->flags &= ~(UV_HANDLE_READ_PENDING | UV_HANDLE_CANCELLATION_PENDING);
+-  DECREASE_PENDING_REQ_COUNT(handle);
+   eof_timer_stop(handle);
+ 
+   if (handle->read_req.wait_handle != INVALID_HANDLE_VALUE) {
+@@ -2191,11 +2190,23 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
+     handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
+   }
+ 
+-  /* At this point, we're done with bookkeeping. If the user has stopped
+-   * reading the pipe in the meantime, there is nothing left to do, since there
+-   * is no callback that we can call. */
+-  if (!(handle->flags & UV_HANDLE_READING))
++  /* The completed zero-read stays counted in reqs_pending until this function
++   * is done with the handle. Every other request processor in this file, and
++   * the tcp and tty read paths, decrement last for the same reason; the read
++   * one moved its decrement up here in libuv/libuv#1843. While the request is
++   * counted, a uv_close() from alloc_cb or read_cb cannot reach
++   * uv__want_endgame(), so the close callback - where the owner frees the
++   * handle - cannot run before this function returns, even when the read
++   * callback runs the loop again (Bun re-enters uv_run() from JS that runs
++   * inside read_cb). With the decrement at the top such a nested uv_run() ran
++   * the endgame and the handle was freed while it is still used below. */
++
++  /* If the user has stopped reading the pipe in the meantime, there is nothing
++   * left to do, since there is no callback that we can call. */
++  if (!(handle->flags & UV_HANDLE_READING)) {
++    DECREASE_PENDING_REQ_COUNT(handle);
+     return;
++  }
+ 
+   if (!REQ_SUCCESS(req)) {
+     /* An error occurred doing the zero-read. */
+@@ -2226,11 +2237,17 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
+     }
+   }
+ 
++  /* The read callback may have closed the handle, but its close callback -
++   * where the owner frees the handle - must not have run yet. */
++  assert(!(handle->flags & UV_HANDLE_CLOSED));
++
+   /* Start another zero-read request if necessary. */
+   if ((handle->flags & UV_HANDLE_READING) &&
+       !(handle->flags & UV_HANDLE_READ_PENDING)) {
+     uv__pipe_queue_read(loop, handle);
+   }
++
++  DECREASE_PENDING_REQ_COUNT(handle);
+ }
+ 
+ 

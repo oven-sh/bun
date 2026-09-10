@@ -512,8 +512,7 @@ fn delete_profile_dir(dir: &[u8]) {
     }
 }
 
-/// `<profile>/SingletonSocket` links into a second temp directory that a killed
-/// Chrome never removes: delete that socket, its cookie, then the directory if empty.
+/// `<profile>/SingletonSocket` links into a second temp dir a killed Chrome never removes.
 #[cfg(unix)]
 fn delete_singleton_socket(profile_dir: &[u8]) {
     let mut link_buf = path_buffer_pool::get();
@@ -553,8 +552,7 @@ extern "C" fn delete_temp_profiles_at_exit() {
     }
 }
 
-/// `pid` is running or an unreaped child of ours, so it cannot have been reused.
-/// Returns whether the process is known to be gone.
+/// `pid` is running or our unreaped child (never reused); returns whether it is gone.
 #[cfg(unix)]
 fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
     // SAFETY: plain syscalls on a pid; no memory is passed.

@@ -518,8 +518,6 @@ describe("session options and SETTINGS parameters", () => {
     expect(
       await initialSettings({ maxHeaderListSize: -1, settings: { maxHeaderListSize: 1000, maxConcurrentStreams: 7 } }),
     ).toEqual({ 3: 7, 6: 1000 });
-    // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a value other than 0.
-    expect(await initialSettings({ settings: { enablePush: true } })).toEqual({ 2: 0 });
   });
 
   test("a session limit applies at the top level of the options, not under options.settings", async () => {

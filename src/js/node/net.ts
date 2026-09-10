@@ -1569,11 +1569,13 @@ function Socket(options?) {
     validateInt32(options.fd, "options.fd", 0);
   }
 
+  // `readable` / `writable` pass through to the Duplex like node's do: a
+  // `readable: false` socket starts with its readable side finished (no 'end',
+  // so no allowHalfOpen teardown of the writable side).
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -1654,7 +1656,10 @@ function Socket(options?) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
-        if (optionsReadable !== true) {
+        // `readable: false` finished the readable side in the Duplex already.
+        // Reads on this path need a native pipe handle, so an unspecified
+        // `readable` still ends it here.
+        if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
           this.read(0);
         }

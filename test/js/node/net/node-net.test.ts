@@ -18,6 +18,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
+import { TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1252,6 +1253,22 @@ it.skipIf(isWindows)(
   60_000,
 );
 
+it("passes readable / writable through to the Duplex like node (a TLSSocket is always a full duplex)", () => {
+  // Values observed under node v26.3.0.
+  const a = new Socket({ readable: false });
+  const b = new Socket({ writable: false });
+  const c = new TLSSocket(undefined, { readable: false, writable: false });
+  expect({
+    a: [a.readable, a.writable, a.readableEnded],
+    b: [b.readable, b.writable, b.writableEnded, b.writableFinished],
+    c: [c.readable, c.writable],
+  }).toEqual({
+    a: [false, true, true],
+    b: [true, false, true, true],
+    c: [true, true],
+  });
+});
+
 describe("Socket fd adoption", () => {
   it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
     const path = join(tmpdirSync(), "adopted-fd.txt");
@@ -1268,6 +1285,72 @@ describe("Socket fd adoption", () => {
     // The adopted fd must be released on destroy (node closes the wrapping
     // libuv handle in the equivalent path).
     expect(() => fs.fstatSync(fd)).toThrow();
+  });
+
+  // node wraps a piped stdout/stderr exactly this way (new Socket({ fd, readable:
+  // false, writable: true })). The readable side must start out finished without
+  // an 'end' event; emitting one let allowHalfOpen=false end the writable side,
+  // destroy the socket and close the fd one tick after construction.
+  it("readable: false leaves the writable side and the adopted fd open", async () => {
+    const path = join(tmpdirSync(), "adopted-write-only.txt");
+    const fd = fs.openSync(path, "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    const events: string[] = [];
+    for (const name of ["end", "finish", "close"]) socket.on(name, () => events.push(name));
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+
+    // The teardown being guarded against ran purely on process.nextTick
+    // (end -> finish -> destroy -> close), so two immediate turns are past it.
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    expect(events).toEqual([]);
+    expect(socket.destroyed).toBe(false);
+    expect(fs.fstatSync(fd).isFile()).toBe(true);
+    expect([socket.readable, socket.readableEnded, socket.writable]).toEqual([false, true, true]);
+
+    await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
+    const closed = once(socket, "close");
+    socket.end();
+    await closed;
+    expect(events).toEqual(["finish", "close"]);
+    expect(fs.readFileSync(path, "utf8")).toBe("late");
+    let closeError: NodeJS.ErrnoException | undefined;
+    try {
+      fs.fstatSync(fd);
+    } catch (e) {
+      closeError = e as NodeJS.ErrnoException;
+    }
+    expect(closeError?.code).toBe("EBADF");
+  });
+
+  it("a write-only socket over the process's piped stdout keeps delivering later writes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("node:net");
+          const s = new net.Socket({ fd: 1, readable: false, writable: true });
+          const events = [];
+          for (const n of ["end", "finish", "close"]) s.on(n, () => events.push(n));
+          s.on("error", e => events.push("error:" + e.code));
+          s.write("now\\n");
+          setImmediate(() => setImmediate(() => {
+            s.write("late\\n", err => {
+              console.error(JSON.stringify({ events, destroyed: s.destroyed, cb: err ? err.code : null }));
+            });
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, report: JSON.parse(stderr.trim().split("\n").pop()!), exitCode }).toEqual({
+      stdout: "now\nlate\n",
+      report: { events: [], destroyed: false, cb: null },
+      exitCode: 0,
+    });
   });
 
   it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {

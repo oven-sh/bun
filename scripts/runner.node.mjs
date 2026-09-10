@@ -845,7 +845,13 @@ async function runTests() {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        let testContent = "";
+        try {
+          testContent = readFileSync(absoluteTestPath, "utf-8");
+        } catch {
+          // Gone since discovery (a wiped checkout). The step below fails on
+          // it with bun's own error instead of this throw ending the whole run.
+        }
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch
           ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))

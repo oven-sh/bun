@@ -5656,6 +5656,7 @@ class ClientHttp2Session extends Http2Session {
     function onConnect() {
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
+      // A constructor that throws sets #parser to null, so this cannot re-arm forever.
       if (this.#parser === undefined) {
         process.nextTick(onConnect.bind(this));
         return;
@@ -5707,17 +5708,29 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
+    try {
+      if (options?.settings !== undefined) {
+        validateSettings(options.settings);
+      }
+      const nativeSettings = { ...options, ...options?.settings };
+      this.#localSettings = initialLocalSettings(nativeSettings);
+      this.#parser = new H2FrameParser({
+        native: nativeSocket,
+        context: this,
+        settings: nativeSettings,
+        handlers: ClientHttp2Session.#Handlers,
+      });
+    } catch (e) {
+      // Nothing can drive this connect: the caller gets the error, not a session.
+      this.#parser = null;
+      this[bunHTTP2Socket] = null;
+      try {
+        socket.destroy();
+      } catch {
+        // A createConnection socket whose destroy() throws must not replace `e`.
+      }
+      throw e;
     }
-    const nativeSettings = { ...options, ...options?.settings };
-    this.#localSettings = initialLocalSettings(nativeSettings);
-    this.#parser = new H2FrameParser({
-      native: nativeSocket,
-      context: this,
-      settings: nativeSettings,
-      handlers: ClientHttp2Session.#Handlers,
-    });
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));

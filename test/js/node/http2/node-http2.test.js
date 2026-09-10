@@ -6009,3 +6009,72 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// The client session starts the TCP connect before it reads the rest of its options, so a
+// throw from the constructor left a connecting socket that no session could ever drive. Its
+// connect callback then re-queued itself on process.nextTick forever: one thread at 100% CPU,
+// and no timer or I/O ran again. A constructor that throws now drops that socket.
+it("a client session constructor that throws drops the socket it was connecting", async () => {
+  const fixture = `
+    const http2 = require("node:http2");
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const url = "http://127.0.0.1:" + server.address().port;
+      let reads = 0;
+      const cases = [
+        // validateSettings rejects the value, before the parser exists.
+        { settings: { initialWindowSize: -1 } },
+        // A getter that throws on the read after validateSettings' own two: the socket
+        // exists, the parser does not.
+        { settings: { get initialWindowSize() { if (++reads === 3) throw new Error("boom"); return 65535; } } },
+      ];
+      const thrown = [];
+      for (const options of cases) {
+        try {
+          http2.connect(url, options);
+          thrown.push("did not throw");
+        } catch (e) {
+          thrown.push(e.code || e.message);
+        }
+      }
+      // A session that completes a request proves the event loop still runs. The process
+      // then has to exit on its own, so the dropped sockets hold nothing open.
+      const client = http2.connect(url);
+      const req = client.request({ ":path": "/" });
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => {
+        console.log(JSON.stringify({ thrown, reads, body }));
+        client.close();
+        server.close();
+      });
+      req.end();
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // The failure mode is a process that never exits, so bound the wait: the pipes close
+  // only once the child is gone.
+  const { promise: starved, resolve: giveUp } = Promise.withResolvers();
+  const watchdog = setTimeout(() => giveUp("the event loop is starved"), 15_000);
+  watchdog.unref?.();
+  const exitCode = await Promise.race([proc.exited, starved]);
+  clearTimeout(watchdog);
+  if (exitCode !== 0) proc.kill();
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  const printed = stdout.trim() ? JSON.parse(stdout) : stdout;
+  expect({ printed, stderr, exitCode }).toEqual({
+    printed: { thrown: ["ERR_HTTP2_INVALID_SETTING_VALUE", "boom"], reads: 3, body: "ok" },
+    stderr: "",
+    exitCode: 0,
+  });
+}, 45_000);

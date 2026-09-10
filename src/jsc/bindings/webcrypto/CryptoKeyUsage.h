@@ -37,10 +37,20 @@ enum {
     CryptoKeyUsageDeriveKey = 1 << 4,
     CryptoKeyUsageDeriveBits = 1 << 5,
     CryptoKeyUsageWrapKey = 1 << 6,
-    CryptoKeyUsageUnwrapKey = 1 << 7
+    CryptoKeyUsageUnwrapKey = 1 << 7,
+    // Node appends the KEM usages after the eight WebCrypto Level 2 usages;
+    // CryptoKey.usages and JWK key_ops enumerate in this canonical order.
+    CryptoKeyUsageEncapsulateKey = 1 << 8,
+    CryptoKeyUsageEncapsulateBits = 1 << 9,
+    CryptoKeyUsageDecapsulateKey = 1 << 10,
+    CryptoKeyUsageDecapsulateBits = 1 << 11
 };
 
 typedef int CryptoKeyUsageBitmap;
+
+// The KEM usages are invalid for every non-KEM algorithm; exclusion-list
+// usage guards OR this in alongside their algorithm-specific bits.
+constexpr int CryptoKeyUsageKemMask = CryptoKeyUsageEncapsulateKey | CryptoKeyUsageEncapsulateBits | CryptoKeyUsageDecapsulateKey | CryptoKeyUsageDecapsulateBits;
 
 // Only for binding purpose.
 enum class CryptoKeyUsage {
@@ -51,7 +61,11 @@ enum class CryptoKeyUsage {
     DeriveKey,
     DeriveBits,
     WrapKey,
-    UnwrapKey
+    UnwrapKey,
+    EncapsulateKey,
+    EncapsulateBits,
+    DecapsulateKey,
+    DecapsulateBits
 };
 
 } // namespace WebCore

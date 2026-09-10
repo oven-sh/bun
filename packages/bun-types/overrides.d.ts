@@ -116,6 +116,14 @@ declare global {
       prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
       emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
 
+      // @types/node <= 24 does not declare `off`/`removeListener` directly on
+      // `Process` (they are only inherited from EventEmitter), so the
+      // `memoryPressure` overloads above would hide the inherited generic
+      // signatures and reject every other event name (#40003). Re-declare the
+      // generic signatures so both stay visible.
+      off(event: string | symbol, listener: (...args: any[]) => void): this;
+      removeListener(event: string | symbol, listener: (...args: any[]) => void): this;
+
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
         fs: typeof import("node:fs").constants;
@@ -263,7 +271,7 @@ declare global {
           "MKACTIVITY",
           "CHECKOUT",
           "MERGE",
-          "M - SEARCH",
+          "M-SEARCH",
           "NOTIFY",
           "SUBSCRIBE",
           "UNSUBSCRIBE",
@@ -300,7 +308,7 @@ declare global {
           "MKACTIVITY",
           "CHECKOUT",
           "MERGE",
-          "M - SEARCH",
+          "M-SEARCH",
           "NOTIFY",
           "SUBSCRIBE",
           "UNSUBSCRIBE",

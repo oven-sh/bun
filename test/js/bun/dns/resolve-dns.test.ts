@@ -7,7 +7,11 @@ import { join } from "node:path";
 const backends = ["system", "libc", "c-ares"];
 const validHostnames = ["localhost", "example.com"];
 const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
-const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname"];
+// Not host names at all: rejected before any resolver is asked, so the answer
+// does not depend on what the network's DNS server does with a label that has
+// a space in it (some never answer, and mDNSResponder then waits out its 5s or
+// 30s timeout).
+const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname", "a..b", "foo bar.example.com"];
 
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
@@ -111,8 +115,10 @@ describe("dns", () => {
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
       await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
+        code: "DNS_ENOTFOUND",
         name: "DNSException",
+        syscall: "getaddrinfo",
+        hostname,
       });
     });
   });
@@ -121,7 +127,8 @@ describe("dns", () => {
   // backends (bun.PathBuffer, which is MAX_PATH_BYTES: 1024 on macOS, 4096 on
   // Linux, ~98302 on Windows) previously overflowed when writing the NUL
   // terminator. They must reject cleanly on every backend. 100 000 bytes
-  // exceeds the buffer on every platform so the doLookup guard is what fires.
+  // exceeds the buffer on every platform so the doLookup guard (a host name is
+  // at most 253 bytes) is what fires.
   test.each(backends)("lookup() with oversized hostname rejects [backend: %s]", async backend => {
     const long = Buffer.alloc(100_000, "a").toString();
     // @ts-expect-error
@@ -223,6 +230,16 @@ describe("dns", () => {
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
 
+  test("lookup with null flags treats them as unset", async () => {
+    // `family: null` already meant unset; `flags: null` must too (node:dns
+    // forwards a null `hints` here). https://github.com/oven-sh/bun/issues/37318
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", { flags: null });
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+    expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
+
   describe("setServers", () => {
     test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error
@@ -277,7 +294,7 @@ describe("dns", () => {
     test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
       // @ts-expect-error
       expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
-        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
       );
     });
   });

@@ -1,5 +1,10 @@
 import express from "express";
 
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const app = express();
 const port = 0;
 const body = Buffer.alloc(10 * 1024, "X");
@@ -25,7 +30,7 @@ app.get("/response-body", (req, res) => {
 app.get("/rss", (req, res) => {
   typeof Bun !== "undefined" && Bun.gc(true);
   res.json({
-    rss: process.memoryUsage.rss(),
+    rss: rss(),
     objects: smallAssign(typeof Bun !== "undefined" ? require("bun:jsc").heapStats().objectTypeCounts : {}),
   });
 });

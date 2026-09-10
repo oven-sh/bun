@@ -2,8 +2,6 @@
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
-//! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
-//! back-edge into the schema crate).
 
 use crate::Range;
 use bun_paths::fs::Path;
@@ -30,24 +28,17 @@ pub struct ImportRecord {
     // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
-    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct Flags: u16 {
-        /// True for the following cases:
-        ///
-        ///   try { require('x') } catch { handle }
-        ///   try { await import('x') } catch { handle }
-        ///   try { require.resolve('x') } catch { handle }
-        ///   import('x').catch(handle)
-        ///   import('x').then(_, handle)
-        ///
-        /// In these cases we shouldn't generate an error if the path could not be
-        /// resolved.
+    pub struct Flags: u32 {
+        /// require() / await import() / require.resolve() inside the try or
+        /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
+        /// don't fail the build when the path can't be resolved.
         const HANDLES_IMPORT_ERRORS = 1 << 0;
 
         const IS_INTERNAL = 1 << 1;
@@ -72,10 +63,19 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
+        /// Resolution failed (ModuleNotFound). `path.is_disabled` alone can't
+        /// tell this apart from an intentional `"browser": false` disable.
+        const WAS_UNRESOLVED = 1 << 7;
+
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
+
+        /// A split `require()` (code splitting, target bun): the target is a chunk
+        /// of its own; `path` is pointed at that chunk and the call is printed as
+        /// `import.meta.require(path)`.
+        const CROSS_CHUNK_REQUIRE = 1 << 10;
 
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
@@ -93,6 +93,19 @@ bitflags::bitflags! {
         /// imported module until a property on the namespace object is
         /// accessed. Requires `CONTAINS_IMPORT_STAR`.
         const PHASE_DEFER = 1 << 15;
+
+        /// The linker pointed `path` at another output chunk (a split
+        /// `import()` / `require()`): `text` is its path, `pretty` its id; `source_index` is cleared.
+        const IMPORTS_CHUNK = 1 << 16;
+
+        /// `import()` / `require()` whose value nothing reads: the linker bound
+        /// every name read off it to an export, so it evaluates to `{}`.
+        const NAMESPACE_UNUSED = 1 << 17;
+
+        /// A split `require()` whose target is CommonJS at link time: the
+        /// chunk's namespace is `{ default: module.exports }`, so the call
+        /// reads `.default` to return `module.exports`.
+        const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
     }
 }
 
@@ -116,8 +129,6 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-
-    Tailwind,
 }
 
 impl Tag {

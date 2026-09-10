@@ -58,19 +58,24 @@ function assert_sentry() {
 function run_command() {
   set -x
   "$@"
-  { set +x; } 2>/dev/null
+  { local status=$?; set +x; } 2>/dev/null
+  return "$status"
 }
 
-# Probe with `sudo -n` first: agents that lack passwordless sudo would otherwise
-# block on a password prompt until the job times out.
-function maybe_sudo() {
-  if [ "$(id -u)" -eq 0 ]; then
-    run_command "$@"
-  elif command -v sudo &> /dev/null && sudo -n true &> /dev/null; then
-    run_command sudo -n "$@"
-  else
-    run_command "$@"
-  fi
+# Zips are read with unzip and written with cmake. Not one tool for both:
+# `cmake -E tar xf` streams, so it exits 0 on a truncated archive and leaves a
+# corrupt file behind where unzip exits 9, and `zip` is not on the agent image
+# (which has no root to install it). cmake is what wrote these zips in the
+# first place — scripts/build/ci.ts makeZip.
+function assert_archive_tools() {
+  for tool in "unzip" "cmake"; do
+    if ! command -v "$tool" &> /dev/null; then
+      echo "error: Cannot find $tool"
+      echo ""
+      echo "hint: the agent image is supposed to have it; see scripts/bootstrap.sh"
+      exit 1
+    fi
+  done
 }
 
 # Tools this script installs go to a writable directory on PATH instead of
@@ -86,28 +91,6 @@ function ensure_tools_bin() {
   fi
   TOOLS_BIN="$TOOLS_DIR/bin"
   export PATH="$TOOLS_BIN:$PATH"
-}
-
-function package_manager_install() {
-  if [ "$(id -u)" -ne 0 ] && ! { command -v sudo &> /dev/null && sudo -n true &> /dev/null; }; then
-    echo "error: Need root to install packages: $*"
-    echo ""
-    echo "hint: Pre-install them in the agent image, or grant the agent passwordless sudo"
-    exit 1
-  fi
-  if command -v dnf &> /dev/null; then
-    maybe_sudo dnf install -y "$@"
-  elif command -v yum &> /dev/null; then
-    maybe_sudo yum install -y "$@"
-  elif command -v apt-get &> /dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    maybe_sudo apt-get install -y "$@"
-  elif command -v apk &> /dev/null; then
-    maybe_sudo apk add "$@"
-  else
-    echo "error: No supported package manager found to install: $*"
-    exit 1
-  fi
 }
 
 function install_gh_linux() {
@@ -137,7 +120,6 @@ function install_gh_linux() {
 }
 
 function install_aws_linux() {
-  command -v unzip &> /dev/null || package_manager_install unzip
   local dir
   dir="$(mktemp -d)"
   run_command curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$dir/awscliv2.zip"
@@ -243,34 +225,43 @@ function download_buildkite_artifact() {
   fi
 }
 
-function upload_github_asset() {
-  local version="$1"
-  local tag="$(release_tag "$version")"
-  local file="$2"
-  run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-
-  # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
-  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
-    echo "warn: Uploading $file to $tag failed, retrying..."
-    sleep "$((RANDOM % 5 + 1))"
-    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-  done
+function upload_github_assets() {
+  local tag="$(release_tag "$1")"
+  run_command gh release upload "$tag" "${@:2}" --clobber --repo "$BUILDKITE_REPO"
 }
 
 function update_github_release() {
   local version="$1"
   local tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
-    sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
   fi
 }
 
-function upload_s3_file() {
-  local folder="$1"
-  local file="$2"
-  run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
+# S3 is a mirror; `bun upgrade` and install.sh read the GitHub release. A
+# canary that made it to GitHub but not S3 has shipped, so don't fail it.
+function upload_s3_files() {
+  local version="$1"
+  local files=("${@:2}")
+  local commit_folder="releases/$BUILDKITE_COMMIT"
+  if [ "$version" == "canary" ]; then
+    commit_folder="$commit_folder-canary"
+  fi
+  local status=0 file
+  for file in "${files[@]}"; do
+    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$commit_folder/$file" || status=1
+    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/releases/$version/$file" || status=1
+  done
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$version" == "canary" ]; then
+    echo "warn: Some S3 uploads failed, ignoring since this is a canary release"
+    return 0
+  fi
+  echo "error: Some S3 uploads failed"
+  exit 1
 }
 
 function send_discord_announcement() {
@@ -308,6 +299,7 @@ EOF
 function create_release() {
   assert_main
   assert_buildkite_agent
+  assert_archive_tools
   assert_github
   assert_aws
   assert_sentry
@@ -358,12 +350,12 @@ function create_release() {
     esac
   }
 
-  command -v unzip &> /dev/null || package_manager_install unzip
-  command -v zip &> /dev/null || package_manager_install zip
-
   # Repack `$src_zip` (inner dir = basename of $src_zip) as `$dst_zip` with the
-  # inner dir renamed to match `$dst_zip`'s basename. Works in a fresh mktemp
-  # dir so a caller-CWD change can't collide with the extracted names.
+  # inner dir renamed to match `$dst_zip`'s basename, which is what install.sh
+  # extracts. Not done in the build step's makeZip, where the staging dir is
+  # already in hand: the Windows zips are re-uploaded by the signing step, so
+  # an alias built there would carry the unsigned binary. Runs in a fresh
+  # mktemp dir so a caller-CWD change can't collide with the extracted names.
   function rezip_as() {
     local src_zip="$1" dst_zip="$2"
     local src_dir="${src_zip%.zip}" dst_dir="${dst_zip%.zip}"
@@ -371,41 +363,39 @@ function create_release() {
     local work; work="$(mktemp -d)"
     run_command unzip -q -d "$work" "$abs_src"
     run_command mv "$work/$src_dir" "$work/$dst_dir"
-    run_command rm -f "$abs_dst"
-    (cd "$work" && run_command zip -rq "$abs_dst" "$dst_dir")
+    (cd "$work" && run_command cmake -E tar cf "$abs_dst" --format=zip "$dst_dir")
     run_command rm -rf "$work"
   }
 
-  function upload_one() {
-    local artifact="$1"
-    if [ "$tag" == "canary" ]; then
-      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
-    else
-      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
-    fi
-    upload_s3_file "releases/$tag" "$artifact" &
-    upload_github_asset "$tag" "$artifact" &
-    wait
-  }
-
-  function upload_artifact() {
-    local artifact="$1"
-    download_buildkite_artifact "$artifact"
-    upload_one "$artifact"
+  # Fetch everything up front so the GitHub release can take all assets in one
+  # `gh release upload`; per-file uploads raced on the same release.
+  local files=() pids=() artifact
+  for artifact in "${artifacts[@]}"; do
+    download_buildkite_artifact "$artifact" & pids+=("$!")
+    files+=("$artifact")
+  done
+  # Per-pid: a bare `wait` returns 0 however the children exited.
+  local pid status=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  if [ "$status" -ne 0 ]; then
+    echo "error: Failed to download one or more Buildkite artifacts"
+    exit 1
+  fi
+  for artifact in "${artifacts[@]}"; do
     local alias="$(alias_baseline_artifact "$artifact")"
     if [ -n "$alias" ]; then
       rezip_as "$artifact" "$alias"
-      upload_one "$alias"
+      files+=("$alias")
     fi
-  }
-
-  for artifact in "${artifacts[@]}"; do
-    upload_artifact "$artifact"
   done
 
+  upload_github_assets "$tag" "${files[@]}"
   update_github_release "$tag"
   create_sentry_release "$tag"
   send_discord_announcement "$tag"
+  upload_s3_files "$tag" "${files[@]}"
 }
 
 function assert_canary() {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
 describe("randomInt args validation", () => {
@@ -57,6 +57,36 @@ describe("randomBytes", () => {
     });
 
     await promise;
+  });
+
+  // BoringSSL's RNG registers a pthread_atfork handler on first use and abort()s if that
+  // fails. macOS caps a process's atfork table (~680 entries on arm64); mimalloc once
+  // registered its fork handlers on every mi_heap_new (one per transpiled module) instead
+  // of once per process, so a program that imported ~700 modules and then asked for random
+  // bytes died with SIGABRT. Other libcs grow the table dynamically, so only Darwin bites.
+  it.skipIf(!isMacOS)("still works after transpiling hundreds of modules (atfork table not exhausted)", async () => {
+    const files: Record<string, string> = {};
+    let entry = "";
+    for (let i = 0; i < 800; i++) {
+      files[`m/m${i}.ts`] = `export const v${i}: number = ${i};\n`;
+      entry += `import "./m/m${i}.ts";\n`;
+    }
+    entry += `import { randomBytes } from "node:crypto";\nconsole.log("randomBytes", randomBytes(4).length);\n`;
+    files["entry.ts"] = entry;
+    using dir = tempDir("crypto-random-atfork", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      // Each fresh transpile creates a mimalloc heap; a cache hit would skip that.
+      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("randomBytes 4\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -15,8 +15,7 @@ pub(crate) fn to_be_array_of_size(
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<1>();
-    let arguments = &_arguments.ptr[0.._arguments.len];
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));

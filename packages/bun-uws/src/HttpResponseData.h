@@ -21,7 +21,6 @@
 
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
-#include "ProxyParser.h"
 #include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
@@ -59,7 +58,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
-        httpResponseData->isIdle = true;
+        /* A queued pipelined response (node:http) still owes output on this
+         * connection, so it is not idle between the responses. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -131,22 +132,31 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * and everything after the end of the message is opaque data for the
          * 'upgrade' listener's socket. */
         HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
-        /* The peer half-closed (FIN) while pipelined responses were still queued
-         * behind the in-flight one. Like Node's http server, the connection stays
-         * open so those responses can still be written; it is shut down once the
-         * pipeline has drained (see shouldCloseConnection()). */
+        /* The peer half-closed (FIN) while there was still something to flush
+         * before teardown: buffered/pinned response bytes, or (with
+         * httpAllowHalfOpen) an in-flight or queued pipelined response. The
+         * connection is shut down from the shouldCloseConnection()/onWritable
+         * gates once those have drained. Without httpAllowHalfOpen, onWritable
+         * forces the close as soon as the buffer has flushed (Node's
+         * socketOnEnd -> socket.end()). */
         HTTP_NODE_RECEIVED_FIN = 1 << 15,
         /* NodeHttpResponseData::nodeHttpResponseTrailers is non-empty. Mirrored
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* Close this connection the next time it is idle (no request being
+         * received, no response in flight or queued). Set by
+         * App::closeIdle(true) on connections that were busy during a graceful
+         * shutdown sweep; the shouldCloseConnection() gates act on it once the
+         * in-flight work completes. */
+        HTTP_CLOSE_WHEN_IDLE = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -155,6 +165,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * keep-alive socket; only the connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
+        /* A response is in flight again (a new request dispatched, or a queued
+         * pipelined response activated), so the connection is not idle. */
+        this->isIdle = false;
     }
 
     /* Set or clear a flag from a runtime bool. */
@@ -194,6 +207,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* Cleartext HTTP/2 preface sniffing: bytes of "PRI * HTTP/2.0..." matched
+     * and held back so far (0-3) while the first read(s) were too short to
+     * decide; PROTOCOL_DECIDED once this connection is known to be HTTP/1. */
+    static constexpr unsigned char PROTOCOL_DECIDED = 255;
+    unsigned char h2PrefaceMatched = 0;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
@@ -211,12 +229,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0);
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
-
-#ifdef UWS_WITH_PROXY
-    ProxyParser proxyParser;
-#endif
 };
 
 /* Per-connection state that only node:http compat servers need.

@@ -39,6 +39,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -265,7 +266,7 @@ static constexpr ShufTable BuildShufTable()
 alignas(16) static constexpr ShufTable kShufTable = BuildShufTable();
 
 // Wrapping i32 add/sub. Signed overflow is UB in C++; the Rust scalar path
-// (`Ordinal::add_scalar`, release build) wraps, and the subsequent `< 0`
+// (`i32::wrapping_add` in Mapping.rs) wraps, and the subsequent `< 0`
 // range check catches the wrapped result. Doing the arithmetic in the
 // unsigned domain gives the same defined-wrap behaviour here. With the
 // accumulator in [0, i32::MAX] (range-checked on the previous segment) and
@@ -915,7 +916,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
 
             // Accumulate and range-check. On any out-of-range value, bail at
             // this segment's start WITHOUT committing: scalar re-decodes it
-            // and reports the exact same ParseResult::Fail as before.
+            // and reports the exact same ParseFail as before.
             const int32_t n_gen_col = WrapAdd(gen_col, d_gen);
             if (HWY_UNLIKELY(n_gen_col < 0))
                 goto bail;
@@ -1016,7 +1017,7 @@ extern "C" {
 
 size_t highway_count_mapping_delims(const uint8_t* bytes, size_t len)
 {
-    return HWY_DYNAMIC_DISPATCH(CountDelimsImpl)(bytes, len);
+    return BUN_HWY_DISPATCH(CountDelimsImpl)(bytes, len);
 }
 
 size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
@@ -1025,7 +1026,7 @@ size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
     size_t cap, int32_t sources_count,
     int32_t* state, size_t* err_at)
 {
-    return HWY_DYNAMIC_DISPATCH(ParseMappingsImpl)(bytes, len,
+    return BUN_HWY_DISPATCH(ParseMappingsImpl)(bytes, len,
         out_generated, out_original, out_src_idx, out_name_idx,
         cap, sources_count, state, err_at);
 }

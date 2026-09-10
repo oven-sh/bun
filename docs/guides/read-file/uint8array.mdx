@@ -14,7 +14,7 @@ const file = Bun.file(path);
 
 const byteArray = await file.bytes();
 
-byteArray[0]; // first byteArray
+byteArray[0]; // first byte
 byteArray.length; // length of byteArray
 ```
 

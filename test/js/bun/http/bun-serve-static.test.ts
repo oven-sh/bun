@@ -252,3 +252,96 @@ describe("static route Date header", () => {
     expect(dates[0]).not.toContain(pinned);
   });
 });
+
+// RFC 9110 §13.2.2: preconditions evaluate in order (1) If-Match, else
+// (2) If-Unmodified-Since; then (3) If-None-Match, else (4) If-Modified-Since.
+// Steps 1/2 must short-circuit with 412 before steps 3/4 can yield 304.
+describe("static route preconditions (RFC 9110 §13.2.2)", () => {
+  const LM = "Wed, 21 Oct 2015 07:28:00 GMT";
+  const EARLIER = "Mon, 01 Jan 2001 00:00:00 GMT";
+  const LATER = "Sat, 01 Jan 2028 00:00:00 GMT";
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      routes: {
+        "/s": new Response("static-body", { headers: { etag: '"s1"', "last-modified": LM } }),
+        "/weak": new Response("static-body", { headers: { etag: 'W/"w1"', "last-modified": LM } }),
+      },
+      fetch: () => new Response("nf", { status: 404 }),
+    });
+  });
+  afterAll(() => server.stop(true));
+
+  const get = (path: string, headers: Record<string, string>, method = "GET") =>
+    fetch(new URL(path, server.url), { method, headers }).then(async r => ({
+      status: r.status,
+      body: await r.text(),
+      etag: r.headers.get("etag"),
+    }));
+
+  describe.each(["GET", "HEAD"])("%s", method => {
+    it("If-Match: non-matching tag → 412", async () => {
+      expect(await get("/s", { "If-Match": '"zz"' }, method)).toEqual({ status: 412, body: "", etag: '"s1"' });
+    });
+
+    it("If-Match: matching strong tag → 200", async () => {
+      const r = await get("/s", { "If-Match": '"s1"' }, method);
+      expect(r.status).toBe(200);
+      if (method === "GET") expect(r.body).toBe("static-body");
+    });
+
+    it("If-Match: list with one matching tag → 200", async () => {
+      expect((await get("/s", { "If-Match": '"a", "s1", "b"' }, method)).status).toBe(200);
+    });
+
+    it("If-Match: * → 200", async () => {
+      expect((await get("/s", { "If-Match": "*" }, method)).status).toBe(200);
+    });
+
+    it('If-Match: W/"s1" uses strong compare → 412', async () => {
+      // §8.8.3.2 strong comparison: a weak client tag never matches.
+      expect((await get("/s", { "If-Match": 'W/"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Match against a weak stored ETag → 412 (strong compare)", async () => {
+      expect((await get("/weak", { "If-Match": '"w1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Unmodified-Since earlier than Last-Modified → 412", async () => {
+      expect(await get("/s", { "If-Unmodified-Since": EARLIER }, method)).toEqual({
+        status: 412,
+        body: "",
+        etag: '"s1"',
+      });
+    });
+
+    it("If-Unmodified-Since equal to Last-Modified → 200", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": LM }, method)).status).toBe(200);
+    });
+
+    it("If-Unmodified-Since later than Last-Modified → 200", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": LATER }, method)).status).toBe(200);
+    });
+
+    it("If-Match failure + matching If-None-Match → 412 (not 304)", async () => {
+      // Step 1 fails: 412 is mandatory; step 3 must not run.
+      expect((await get("/s", { "If-Match": '"zz"', "If-None-Match": '"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Unmodified-Since failure + matching If-None-Match → 412 (not 304)", async () => {
+      expect((await get("/s", { "If-Unmodified-Since": EARLIER, "If-None-Match": '"s1"' }, method)).status).toBe(412);
+    });
+
+    it("If-Match present suppresses If-Unmodified-Since", async () => {
+      // Step 2 only runs when If-Match is absent: a passing If-Match with a
+      // failing IUS still yields 200.
+      expect((await get("/s", { "If-Match": '"s1"', "If-Unmodified-Since": EARLIER }, method)).status).toBe(200);
+    });
+
+    it("If-Match pass then If-None-Match match → 304", async () => {
+      expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
+    });
+  });
+});

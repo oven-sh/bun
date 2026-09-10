@@ -860,7 +860,7 @@ exports[`migrate migrate-bun-lockb-v2-most-features 1`] = `
       "literal": "workspace:",
       "name": "pkg-wat-2",
       "package_id": 42,
-      "workspace": "",
+      "workspace": "packages/pkg2",
     },
   ],
   "format": "v3",

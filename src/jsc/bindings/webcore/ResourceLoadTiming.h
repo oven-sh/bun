@@ -31,9 +31,6 @@ namespace WebCore {
 
 class ResourceLoadTiming {
 public:
-    void markStartTime() { m_startTime = MonotonicTime::now(); }
-    void markEndTime() { m_endTime = MonotonicTime::now(); }
-
     MonotonicTime startTime() const { return m_startTime; }
     MonotonicTime endTime() const { return m_endTime; }
 

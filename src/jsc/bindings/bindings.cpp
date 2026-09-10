@@ -694,20 +694,14 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-// The own index properties of an array live in its element vector and in its sparse map.
-// JSObject::getOwnPropertySlotByIndex reads those two places and nothing else, so every
-// other index is a hole. This reports where they are, so that a caller which walks indices
-// can jump over the holes instead of probing each one.
-//
-// `vectorEnd` receives the end of the element vector, and the sparse map's indices are
-// appended to `sparseIndices` unsorted. Returns false when the layout is not one of the
-// known ones, which means "probe every index".
+// Mirrors the storage reads of JSObject::getOwnPropertySlotByIndex: every own index property of `object` is
+// below `vectorEnd` or in `sparseIndices` (appended unsorted). False means an unknown layout: probe every index.
 static bool indexedStorageOfArray(JSObject* object, uint64_t& vectorEnd, WTF::Vector<uint32_t, 16>& sparseIndices)
 {
     switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
     case ALL_UNDECIDED_INDEXING_TYPES:
-        // No element was ever stored, so every index is a hole. The butterfly can be null here.
+        // The butterfly can be null here.
         vectorEnd = 0;
         return true;
     case ALL_INT32_INDEXING_TYPES:
@@ -1024,12 +1018,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         const uint64_t walkEnd = std::max(array1Length, array2Length);
 
-        // An index that is a hole in both arrays compares equal in every mode: the strict arm
-        // skips it, and the loose arm reaches Bun__deepEquals, which answers true for two empty
-        // values. An array only holds index properties inside its element storage, so every
-        // index outside the storage of both arrays is such a pair. Visit the rest only.
-        // Without this, `a = []; a.length = 2 ** 32 - 1` costs one index probe per claimed
-        // element, about 60 s, where node answers in 1 ms.
+        // A hole on both sides is equal in every mode, so visit only the indices that either array's storage can hold.
         uint64_t vectorEnd = walkEnd;
         WTF::Vector<uint32_t, 16> sparseIndices;
         uint64_t vectorEnd1 = 0;

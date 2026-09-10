@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -135,7 +135,96 @@ describe("zlib", () => {
       });
     }
   });
+
+  // libdeflate reads the input twice: it costs a block from the symbol
+  // frequencies of the first pass, checks the output reservation once, then
+  // emits the block in the second pass with no further bounds check. A worker
+  // that rewrites a SharedArrayBuffer input between the two passes used to make
+  // the emitted block longer than the costed one, which wrote past the output
+  // reservation.
+  describe("libdeflate of a SharedArrayBuffer", () => {
+    it.concurrent.each(["gzip", "deflate"])(
+      "%s stays inside the output reservation while another thread writes the input",
+      async kind => {
+        using dir = tempDir("libdeflate-shared", { "fixture.mjs": sharedArrayBufferRaceFixture });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs", kind],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toBe("");
+        expect(stdout).toBe("ok\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
 });
+
+// Compresses a SharedArrayBuffer `CALLS` times while a worker rewrites it
+// between two symbol sets: one that codes in few bits, one that costs more.
+// libdeflate reserves `SIZE + 23` bytes for a gzip stream of `SIZE` bytes, so
+// `LIMIT` leaves room for any output a correct compressor can produce.
+const sharedArrayBufferRaceFixture = `
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+const SIZE = 4096;
+const LIMIT = SIZE + 256;
+const CALLS = 500;
+
+if (isMainThread) {
+  const input = new SharedArrayBuffer(SIZE);
+  const worker = new Worker(new URL(import.meta.url), { workerData: input });
+  const ready = Promise.withResolvers();
+  worker.on("message", ready.resolve);
+  await ready.promise;
+  worker.unref();
+
+  const raw = process.argv[2] === "deflate";
+  const compress = raw ? Bun.deflateSync : Bun.gzipSync;
+  const decompress = raw ? Bun.inflateSync : Bun.gunzipSync;
+  const view = new Uint8Array(input);
+
+  for (let i = 0; i < CALLS; i++) {
+    const out = compress(view, { library: "libdeflate", level: 1 + (i % 12) });
+    if (out.length > LIMIT) {
+      console.error(\`call \${i}: wrote \${out.length} bytes into a \${LIMIT} byte reservation\`);
+      process.exit(1);
+    }
+    const back = decompress(out, { library: "libdeflate" });
+    if (back.length !== SIZE) {
+      console.error(\`call \${i}: round trip returned \${back.length} bytes, want \${SIZE}\`);
+      process.exit(1);
+    }
+  }
+
+  console.log("ok");
+  process.exit(0);
+} else {
+  const view = new Uint8Array(workerData);
+  let seed = 88172645;
+  const next = () => ((seed ^= seed << 13), (seed ^= seed >>> 17), (seed ^= seed << 5), seed >>> 0);
+  const cheap = new Uint8Array(view.length);
+  const costly = new Uint8Array(view.length);
+  for (let i = 0; i < view.length; i++) {
+    cheap[i] = next() & 127;
+    costly[i] = 0xf0 + (next() & 15);
+  }
+  for (let i = 0; i < 16; i++) cheap[next() % view.length] = 0xf0 + i;
+
+  parentPort.postMessage("ready");
+  for (;;) {
+    view.set(cheap);
+    for (let i = next() % 50000; i > 0; i--);
+    view.set(costly);
+    for (let i = next() % 5000; i > 0; i--);
+  }
+}
+`;
 
 function* window(buffer, size, advance = size) {
   let i = 0;

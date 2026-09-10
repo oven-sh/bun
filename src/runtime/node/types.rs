@@ -312,6 +312,17 @@ impl<'a> StringOrBuffer<'a> {
             Self::PinnedBuffer(buffer) => buffer.slice(),
         }
     }
+
+    /// True when [`slice`](Self::slice) reads a `SharedArrayBuffer`: another
+    /// thread can write those bytes while this one reads them. A caller that
+    /// needs the bytes to hold still must copy them first.
+    pub(crate) fn is_shared(&self) -> bool {
+        match self {
+            Self::Buffer(buffer) => buffer.buffer.shared,
+            Self::PinnedBuffer(buffer) => buffer.shared,
+            Self::String(_) | Self::ThreadIsolatedString(_) | Self::Utf8(_) => false,
+        }
+    }
 }
 
 impl StringOrBuffer<'_> {

@@ -2530,6 +2530,23 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
 
+                // libdeflate sizes a block from one pass over the input, checks
+                // the output space once, then emits the block from a second pass
+                // with no bounds check. Input that changes in between overruns
+                // the reservation, so a shared buffer is compressed from a copy.
+                let snapshot: Vec<u8>;
+                let compressed = if buffer.is_shared() {
+                    let mut copy: Vec<u8> = Vec::new();
+                    if copy.try_reserve_exact(compressed.len()).is_err() {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                    copy.extend_from_slice(compressed);
+                    snapshot = copy;
+                    snapshot.as_slice()
+                } else {
+                    compressed
+                };
+
                 let mut list: Vec<u8> = Vec::new();
                 let result = compressor
                     .compress_to_vec(compressed, &mut list, encoding)

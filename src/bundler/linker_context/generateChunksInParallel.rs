@@ -576,7 +576,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             };
 
             // In place, so the per-build placeholder does not survive as an extra string.
-            mi.rewrite_strings(|s| unique_key_to_path.get(s).map(|path| &path[..]));
+            mi.rewrite_strings(|s| {
+                if !s.starts_with(&c.unique_key_prefix) {
+                    return None;
+                }
+                unique_key_to_path.get(s).map(|path| &path[..])
+            });
 
             if mi.finalize().is_err() {
                 js.module_info = None;

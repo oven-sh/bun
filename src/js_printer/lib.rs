@@ -652,36 +652,38 @@ pub mod analyze_transpiled_module {
         /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
         pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
             debug_assert!(!self.finalized);
-            let mut buf: Vec<u8> = Vec::with_capacity(self.strings_buf.len());
-            let mut changed = false;
+            let mut buf: Vec<u8> = Vec::new();
+            let mut rewritten: Vec<(u32, &'r [u8])> = Vec::new();
             let mut offset = 0usize;
-            for len in self.strings_lens.iter_mut() {
-                let old = &self.strings_buf[offset..offset + *len as usize];
+            for (index, len) in self.strings_lens.iter_mut().enumerate() {
+                let start = offset;
                 offset += *len as usize;
-                match replace(old) {
-                    Some(new) => {
-                        changed = true;
-                        buf.extend_from_slice(new);
-                        *len = u32::try_from(new.len()).unwrap();
+                let old = &self.strings_buf[start..offset];
+                let Some(new) = replace(old) else {
+                    if !rewritten.is_empty() {
+                        buf.extend_from_slice(old);
                     }
-                    None => buf.extend_from_slice(old),
+                    continue;
+                };
+                if rewritten.is_empty() {
+                    buf.reserve(self.strings_buf.len() + new.len());
+                    buf.extend_from_slice(&self.strings_buf[..start]);
                 }
+                self.strings_map.remove(old);
+                rewritten.push((index as u32, new));
+                buf.extend_from_slice(new);
+                *len = u32::try_from(new.len()).unwrap();
             }
-            if !changed {
+            if rewritten.is_empty() {
                 return;
             }
             self.strings_buf = buf;
-            // Re-key the content map; a rewrite must not land on bytes another id already holds.
-            self.strings_map.clear();
-            let mut offset = 0usize;
-            for (index, &len) in self.strings_lens.iter().enumerate() {
-                let string = &self.strings_buf[offset..offset + len as usize];
-                offset += len as usize;
-                let previous = self.strings_map.insert(string.to_vec(), index as u32);
+            for (index, new) in rewritten {
+                let previous = self.strings_map.insert(new.to_vec(), index);
                 debug_assert!(
                     previous.is_none(),
                     "rewrite_strings: two ids now hold {:?}",
-                    bstr::BStr::new(string)
+                    bstr::BStr::new(new)
                 );
             }
         }

@@ -1,7 +1,7 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -212,38 +212,50 @@ describe("URLPattern", () => {
   // WTF::Vector, which holds at most 2^31 - 1 bytes. A pattern near 52 million
   // characters used to abort the process when that Vector could not grow. The
   // bound follows the synthetic allocation limit, so 1 MiB puts it below 64 Ki.
-  test("a pattern with more tokens than the token list can hold throws", () => {
+  describe("a pattern with more tokens than the token list can hold throws", () => {
     const dots = (length: number) => Buffer.alloc(length, ".").toString();
     const message = "URLPattern constructor: Failed to create URLPattern (from input string)";
+    const tooLong = 64 * 1024;
+    const fits = 8 * 1024;
 
-    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
-    try {
-      let tooLong = 64 * 1024;
-      for (const component of ["username", "password", "hostname", "pathname", "search", "hash"] as const) {
-        expect(() => new URLPattern({ [component]: dots(tooLong) })).toThrow(message);
-      }
+    let originalLimit: number;
+    beforeAll(() => {
+      originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    });
+    afterAll(() => {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    });
+
+    test.each(["username", "password", "hostname", "pathname", "search", "hash"] as const)("in %s", component => {
+      expect(() => new URLPattern({ [component]: dots(tooLong) })).toThrow(message);
+    });
+
+    test("in a constructor string", () => {
       expect(() => new URLPattern("https://example.com/" + dots(tooLong))).toThrow(message);
-      expect(() => new URLPattern({ search: "a", baseURL: "https://example.com/" + dots(tooLong) })).toThrow(message);
-
-      let fits = 8 * 1024;
       expect(new URLPattern("https://example.com/" + dots(fits)).test("https://example.com/" + dots(fits))).toBe(true);
+    });
 
-      // Find the longest pathname that parses. It must come back whole: the
-      // End token counts against the bound too, and without it the parser
-      // would drop the pending text instead of throwing.
-      while (fits + 1 < tooLong) {
-        const length = (fits + tooLong) >>> 1;
+    test("in a pathname inherited from baseURL", () => {
+      expect(() => new URLPattern({ search: "a", baseURL: "https://example.com/" + dots(tooLong) })).toThrow(message);
+    });
+
+    // Find the longest pathname that parses. It must come back whole: the
+    // End token counts against the bound too, and without it the parser
+    // would drop the pending text instead of throwing.
+    test("at the exact bound, and one code point below it parses whole", () => {
+      let low = fits;
+      let high = tooLong;
+      while (low + 1 < high) {
+        const length = (low + high) >>> 1;
         try {
           new URLPattern({ pathname: dots(length) });
-          fits = length;
+          low = length;
         } catch {
-          tooLong = length;
+          high = length;
         }
       }
-      expect(new URLPattern({ pathname: dots(fits) }).pathname).toBe(dots(fits));
-      expect(() => new URLPattern({ pathname: dots(tooLong) })).toThrow(message);
-    } finally {
-      setSyntheticAllocationLimitForTesting(originalLimit);
-    }
+      expect(new URLPattern({ pathname: dots(low) }).pathname).toBe(dots(low));
+      expect(() => new URLPattern({ pathname: dots(high) })).toThrow(message);
+    });
   });
 });

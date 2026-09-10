@@ -719,17 +719,22 @@ impl PinnedArrayBuffer {
     }
 
     /// [`slice_mut`](Self::slice_mut) for a writer that runs after user JS: a
-    /// pin stops a detach but not a `resize()`, so the range is re-read first.
+    /// pin stops a `transfer()` but not a `resize()` or a
+    /// `WebAssembly.Memory.prototype.grow()`, so the range is re-read first.
     pub fn live_slice_mut(&mut self) -> &mut [u8] {
         self.refresh();
         self.slice_mut()
     }
 
-    /// Re-reads the range from the JS value. Skipped unless it can change: a
-    /// [`copy_if_resizable`](Self::copy_if_resizable) copy is this value's own
-    /// allocation.
+    /// Re-reads the range from the JS value, for every kind of buffer: a
+    /// `resize()` unmaps the pages it trims, and a `grow()` of a
+    /// bounds-checked `WebAssembly.Memory` frees the whole block and detaches
+    /// its fixed-length buffer, which JSC permits while the buffer is pinned
+    /// (`ArrayBuffer::detach`). Skipped for a
+    /// [`copy_if_resizable`](Self::copy_if_resizable) copy, which is this
+    /// value's own allocation.
     fn refresh(&mut self) {
-        if !self.buffer.resizable || self.copy.is_some() {
+        if self.copy.is_some() {
             return;
         }
         let mut ptr = ptr::null_mut();

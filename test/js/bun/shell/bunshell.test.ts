@@ -3421,6 +3421,42 @@ test("a builtin output redirect fills the capacity a target buffer gained", asyn
   expect(result.exitCode).toBe(1);
 });
 
+test("an output redirect stops when the target's WebAssembly.Memory grows", async () => {
+  // `WebAssembly.Memory.prototype.grow` in BoundsChecking mode allocates a new
+  // block, copies into it, frees the old one, and then detaches the buffer the
+  // target view was made from. JSC allows that detach while the buffer is
+  // pinned, so the range the command captured points at freed pages.
+  //
+  // The child needs two settings for a stale write to fault instead of landing
+  // in memory that is still mapped: `BUN_JSC_useWasmFastMemory=0` picks
+  // BoundsChecking over the signaling mode, which grows in place, and
+  // `Malloc=1` turns off the Gigacage, which recycles the freed block. The
+  // target spans the whole memory so that a stale write sweeps the freed
+  // mapping instead of a part of it that something else may have taken.
+  const child = `
+    const mem = new WebAssembly.Memory({ initial: 128, maximum: 132 });
+    const target = new Uint8Array(mem.buffer);
+    const promise = Bun.$\`yes > \${target}\`.quiet().nothrow();
+    const running = promise.then(o => o);
+    await Promise.resolve();
+    mem.grow(4);
+    const result = await running;
+    console.log(JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [BUN, "-e", child],
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ exitCode: 1, stderr: "yes: ENOSPC\n" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.

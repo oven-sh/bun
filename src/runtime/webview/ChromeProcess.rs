@@ -478,17 +478,13 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
-/// A `--user-data-dir` this process created under the temp dir for a Chrome
-/// spawned without `dataStore` ("ephemeral" storage), and the browser using it.
+/// A temp-dir `--user-data-dir` made for a Chrome without `dataStore`, and its browser.
 struct TempProfile {
     pid: bun_spawn::PidT,
     dir: Box<[u8]>,
 }
 
-/// Profiles whose browser has not been reaped yet. [`ChromeProcess::on_exit`]
-/// deletes a profile once its browser is gone; [`delete_temp_profiles_at_exit`]
-/// handles a browser that is still running when Bun exits (the common case:
-/// nothing reaps the browser that `dispatch_on_exit` kills).
+/// Profiles whose browser has not been reaped yet; see [`delete_temp_profiles_at_exit`].
 static TEMP_PROFILES: bun_core::Mutex<Vec<TempProfile>> = bun_core::Mutex::new(Vec::new());
 
 fn register_temp_profile(pid: bun_spawn::PidT, dir: Box<[u8]>) {
@@ -516,10 +512,8 @@ fn delete_profile_dir(dir: &[u8]) {
     }
 }
 
-/// `<profile>/SingletonSocket` is a symlink to a socket in a second directory
-/// Chrome creates under the temp dir (next to the profile, not inside it) and
-/// removes only on a clean shutdown, which a killed browser never gets. Remove
-/// that socket and its cookie, then the directory if that leaves it empty.
+/// `<profile>/SingletonSocket` links into a second temp directory that a killed
+/// Chrome never removes: delete that socket, its cookie, then the directory if empty.
 #[cfg(unix)]
 fn delete_singleton_socket(profile_dir: &[u8]) {
     let mut link_buf = path_buffer_pool::get();
@@ -549,30 +543,32 @@ fn delete_singleton_socket(profile_dir: &[u8]) {
     let _ = bun_sys::rmdir(dir);
 }
 
-/// Chrome keeps files in the profile open (and on Windows, locked) for as long
-/// as it runs, so make sure each browser is dead before deleting its directory.
+/// A running Chrome holds (on Windows, locks) profile files: kill it before deleting.
 extern "C" fn delete_temp_profiles_at_exit() {
     let profiles = core::mem::take(&mut *TEMP_PROFILES.lock());
     for profile in profiles {
-        kill_and_wait(profile.pid);
-        delete_profile_dir(&profile.dir);
+        if kill_and_wait(profile.pid) {
+            delete_profile_dir(&profile.dir);
+        }
     }
 }
 
-/// SIGKILL `pid` (a child of ours that is running or not yet reaped, so the pid
-/// cannot have been reused) and wait until it is gone.
+/// `pid` is running or an unreaped child of ours, so it cannot have been reused.
+/// Returns whether the process is known to be gone.
 #[cfg(unix)]
-fn kill_and_wait(pid: bun_spawn::PidT) {
+fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
     // SAFETY: plain syscalls on a pid; no memory is passed.
     unsafe {
         libc::kill(pid, libc::SIGKILL);
         let mut status = 0;
+        // Returns once the child is reaped here, or fails with ECHILD if it already was.
         while libc::waitpid(pid, &mut status, 0) == -1 && bun_sys::last_errno() == libc::EINTR {}
     }
+    true
 }
 
 #[cfg(windows)]
-fn kill_and_wait(pid: bun_spawn::PidT) {
+fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
     use bun_sys::windows as w;
     unsafe extern "system" {
         // Opaque kernel HANDLE, validated by the kernel; no memory-safety preconditions.
@@ -580,15 +576,18 @@ fn kill_and_wait(pid: bun_spawn::PidT) {
     }
     const PROCESS_TERMINATE: w::DWORD = 0x0001;
     const SYNCHRONIZE: w::DWORD = 0x0010_0000;
-    // SAFETY: FFI; a stale pid yields a null handle, which is checked.
+    const WAIT_OBJECT_0: w::DWORD = 0;
+    // SAFETY: FFI; a pid that no longer exists yields a null handle.
     let handle = unsafe { w::OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid as w::DWORD) };
     if handle.is_null() {
-        return;
+        return true;
     }
+    // Fails if the process already exited, which the wait then reports.
     TerminateProcess(handle, 1);
-    w::kernel32::WaitForSingleObject(handle, 5000);
+    let gone = w::kernel32::WaitForSingleObject(handle, 5000) == WAIT_OBJECT_0;
     // SAFETY: `handle` came from OpenProcess above.
     unsafe { w::CloseHandle(handle) };
+    gone
 }
 
 /// Returns `Bun__Chrome__ensure`'s success value.
@@ -626,9 +625,7 @@ fn spawn(
         // layout every headless harness uses. Without it, ProcessSingleton locks
         // the default profile (~/Library/Application Support/Google/Chrome) and
         // aborts if a real Chrome is already running.
-        // With no `dataStore` directory the profile is a fresh directory under
-        // the temp dir, deleted again once this browser is gone (or right here
-        // if it never starts).
+        // No `dataStore`: a fresh temp profile, deleted with this browser (or below if it never starts).
         let mut temp_dir: Option<Box<[u8]>> = None;
         let data_dir: ZBox = if let Some(d) = user_data_dir {
             let d = d.to_bytes();

@@ -190,9 +190,7 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                  \
     }
 
-// An iterator returned by Statement.prototype.iterate() owns the statement's cursor until
-// it is exhausted or returned from. Anything else that resets or steps the cursor would
-// restart or corrupt that iteration, so it is an error (matching better-sqlite3).
+// A live iterate() owns the cursor; resetting or stepping it from anywhere else is an error, as in better-sqlite3.
 #define CHECK_NOT_ITERATING                                                                                                             \
     if (castedThis->isIterating) [[unlikely]] {                                                                                         \
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "This statement is busy executing a query"_s)); \
@@ -2203,9 +2201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
     return JSValue::encode(jsUndefined());
 }
 
-// Steps the iterate() cursor once and materializes the row (or jsNull when exhausted).
-// isIterating ends up true only when a row was successfully produced; every other exit
-// (done, SQLite error, JS exception) leaves it false so the statement is usable again.
+// Leaves isIterating set only when a row was produced, so done, SQLite errors, and JS exceptions all release the statement.
 static JSC::EncodedJSValue stepIterator(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, sqlite3_stmt* stmt)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2289,12 +2285,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd, (JSC::JSGlobalObject 
 
     CHECK_THIS
 
-    // Releases the cursor even when the iteration was abandoned early (break, throw,
-    // .return()), so a later get()/all()/iterate() starts from the first row again.
     castedThis->isIterating = false;
     if (castedThis->stmt) {
-        // For a write statement abandoned after SQLITE_ROW (INSERT ... RETURNING with an
-        // early break), this reset is what commits the change, and it can fail.
+        // For INSERT ... RETURNING abandoned after SQLITE_ROW, this reset is the commit, and it can fail.
         int statusCode = sqlite3_reset(castedThis->stmt);
         if (statusCode != SQLITE_OK) [[unlikely]] {
             throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(castedThis->stmt)));

@@ -200,9 +200,7 @@ class Statement {
     return this.#raw.all();
   }
 
-  // `firstRow` comes from a native iterate() call that just began a cursor and marked the
-  // statement busy. The finally runs even when the loop is abandoned early (break, throw,
-  // return), so the statement is always released and reset for whatever comes next.
+  // `firstRow` is the result of the native iterate() call that opened the cursor.
   *#drainIterator(firstRow) {
     const raw = this.#raw;
     try {

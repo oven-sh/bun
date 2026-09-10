@@ -2009,6 +2009,7 @@ Socket.prototype.connect = function connect(...args) {
       }
       this.authorized = false;
       this.secureConnecting = true;
+      this[kPreHandshakeWrite] = false;
       this._secureEstablished = false;
       this._securePending = true;
       this[kConnectOptions] = options;
@@ -3128,6 +3129,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     }
     self.authorized = false;
     self.secureConnecting = true;
+    self[kPreHandshakeWrite] = false;
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = options;
@@ -3278,6 +3280,7 @@ function internalConnectMultiple(context, canceled?) {
     }
     self.authorized = false;
     self.secureConnecting = true;
+    self[kPreHandshakeWrite] = false;
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = context.options;

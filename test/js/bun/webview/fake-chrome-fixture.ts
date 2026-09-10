@@ -46,9 +46,26 @@ const subframeNavigation = process.argv.includes("--subframe-navigation");
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// The session of the command being handled, so a __fake_* global that an
+// evaluate() runs can emit events on it.
+let currentSessionId: string | undefined;
+// One URL the page will "replaceState" to while the next
+// Page.getNavigationHistory is being answered (see __fake_replace_state_on_history_lookup).
+let replaceStateOnHistoryLookup: string | undefined;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The page commits a same-document navigation of its own, the way
+  // history.replaceState() or a scroll-driven `location.hash = ...` does:
+  // Page.navigatedWithinDocument with nothing before it, no new history entry.
+  __fake_replace_state(url: string) {
+    replaceState(url);
+  },
+  // The same, but timed to land while the runtime waits for the history
+  // lookup that goBack()/goForward() start with.
+  __fake_replace_state_on_history_lookup(url: string) {
+    replaceStateOnHistoryLookup = url;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -85,9 +102,22 @@ const history: { id: number; url: string }[] = [];
 let historyIndex = -1;
 const documentOf = (url: string) => url.split("#")[0];
 const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
+// A URL with "never-load" in it starts loading and never commits, the way a
+// server that accepts the connection and then says nothing looks.
+const neverLoads = (url: string) => url.includes("never-load");
+
+function replaceState(url: string) {
+  if (historyIndex >= 0) history[historyIndex].url = url;
+  send({
+    method: "Page.navigatedWithinDocument",
+    params: { frameId: "F", url, navigationType: "historyApi" },
+    sessionId: currentSessionId,
+  });
+}
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
+  currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
@@ -136,6 +166,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       // The reply names a loaderId only for a navigation that loads a
       // document.
       reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
+      if (neverLoads(params.url)) return;
       history.length = historyIndex + 1;
       history.push({ id: ++entries, url: params.url });
       historyIndex = history.length - 1;
@@ -143,6 +174,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return;
     }
     case "Page.getNavigationHistory":
+      if (replaceStateOnHistoryLookup !== undefined) {
+        replaceState(replaceStateOnHistoryLookup);
+        replaceStateOnHistoryLookup = undefined;
+      }
       return reply({ currentIndex: historyIndex, entries: history });
     case "Page.navigateToHistoryEntry": {
       const target = history.findIndex(entry => entry.id === params.entryId);
@@ -151,8 +186,9 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
       startNavigating(url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
       if (!sameDocument) loads++;
-      historyIndex = target;
       reply({});
+      if (neverLoads(url)) return;
+      historyIndex = target;
       commit(url, sameDocument);
       return;
     }

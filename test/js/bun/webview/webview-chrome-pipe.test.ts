@@ -140,6 +140,51 @@ test.concurrent("view.url follows the main frame and keeps its fragment", async 
   });
 });
 
+// A same-document commit the page makes on its own (an SPA router, a
+// scroll-driven location.hash) fires onNavigated with nothing pending. A
+// navigate() started from inside that callback is a new, cross-document
+// navigation: the commit that ran the callback must not settle it or clear
+// view.loading. Its page never loads here, so it has to stay pending.
+test.concurrent("a navigate() started from onNavigated of the page's own commit waits for its own load", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    let started;
+    view.onNavigated = url => {
+      if (url.endsWith("#spa")) started = view.navigate("http://fake/never-load");
+    };
+    await view.evaluate("__fake_replace_state('http://fake/page#spa')");
+    const loading = view.loading;
+    // The fake answers commands in order, so if the commit had queued a title
+    // fetch for the new navigation, its reply would beat this evaluate's.
+    const first = await Promise.race([
+      started.then(() => "navigate() settled before its page loaded", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ loading, first });
+    view.close();
+  `);
+  expect(result).toEqual({ loading: true, first: "navigate() still pending" });
+});
+
+// goBack() fills the slot and then looks the history entry up before it asks
+// Chrome to traverse. A same-document commit of the page's own that lands
+// during the lookup is not the traversal and must not settle the promise.
+test.concurrent("goBack() is not settled by a commit of the page's own during the history lookup", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/a");
+    await view.navigate("http://fake/b");
+    await view.evaluate("__fake_replace_state_on_history_lookup('http://fake/b#spa')");
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    await view.goBack();
+    print({ url: view.url, urls });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/a", urls: ["http://fake/b#spa", "http://fake/a"] });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

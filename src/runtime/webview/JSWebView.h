@@ -45,14 +45,19 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
-// Chrome: what the pending navigation ends with. A cross-document
-// navigation ends with Page.loadEventFired. A same-document one (a
-// #fragment target, a history.pushState URL) has no load event and ends
-// with Page.navigatedWithinDocument. Chrome names the kind in
-// Page.frameStartedNavigating before the navigation commits, and
-// Page.frameNavigated is a cross-document commit. Unknown settles on
-// either event, so a navigation Chrome did not classify cannot hang.
+// Chrome: which commit ends the navigation command the view has in flight.
+// A cross-document navigation ends with Page.loadEventFired. A
+// same-document one (a #fragment target, a history.pushState entry) fires
+// no load event and ends with Page.navigatedWithinDocument. Chrome names
+// the kind in Page.frameStartedNavigating and in the Page.navigate reply,
+// and Page.frameNavigated is itself a cross-document commit. While the kind
+// is Unknown either commit ends the navigation, so one that Chrome never
+// classifies cannot hang.
 enum class ChromeNavigationKind : uint8_t {
+    // No navigation command of the view's is in flight: nothing is pending,
+    // or goBack()/goForward() is still looking up the history entry. A
+    // same-document commit now is the page's own doing.
+    NotRequested,
     Unknown,
     SameDocument,
     CrossDocument,
@@ -115,7 +120,7 @@ public:
     // events carry a frameId; a subframe's navigation is not the view's, so
     // it must not touch m_url or settle the navigate() promise.
     WTF::String m_mainFrameId;
-    ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::Unknown;
+    ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

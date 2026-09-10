@@ -116,7 +116,7 @@ export LLVM_VERSION_MAJOR=19
 
 ## rust-lints.yml Workflow
 
-Four independent jobs that each run one cargo command over the Rust workspace. They share `.github/actions/rust-lint-setup`, a composite action that installs LLVM from apt.llvm.org (configure resolves a clang even though nothing here compiles C++), Bun, optionally a pinned Rust toolchain plus components, runs `bun install`, then `bun scripts/build.ts --configure-only` and the ninja targets a job asks for: `clone-lolhtml` (cargo cannot resolve the workspace until the vendored `lol_html` path dependency exists) and, for jobs that check `bun_runtime`/`bun_jsc`/`bun_core`, `codegen` (their `include!()`d sources under `build/debug/codegen`).
+Four independent jobs that each run one cargo command over the Rust workspace. They share `.github/actions/rust-lint-setup`, a composite action that installs LLVM from apt.llvm.org (configure resolves a clang even though nothing here compiles C++), Bun, optionally a pinned Rust toolchain plus components, runs `bun install`, then `bun scripts/build.ts --configure-only` and the ninja targets a job asks for: `clone-lolhtml clone-rust-argon2` (cargo cannot resolve the workspace until the vendored `lol_html` and `rust-argon2` path dependencies exist) and, for jobs that check `bun_runtime`/`bun_jsc`/`bun_core`, `codegen` (their `include!()`d sources under `build/debug/codegen`).
 
 | Job       | Check name            | Runs                                         | Blocking                       |
 | --------- | --------------------- | -------------------------------------------- | ------------------------------ |
@@ -134,6 +134,6 @@ Four independent jobs that each run one cargo command over the Rust workspace. T
 - The pack is pinned by commit in `Cargo.toml` under `[workspace.metadata.dylint]`. A bump can also fail if this workspace stops compiling on mordant's nightly.
 - `dylint.toml`'s `[mordant]` table points `baseline` at `mordant-baseline.toml` (per-(lint, file) counts of the findings that predate the job) and lists the lints this repo has switched off under `disabled`, each with its reason.
 - In baseline mode mordant prints findings over the baseline as warnings and writes them to `target/mordant/over-baseline.txt` (relative to the workspace root). The job deletes that file, runs dylint, and fails if the file is non-empty; absent or empty means clean. Fixing baselined findings needs no baseline update.
-- Locally, `bun run rust:mordant` is the same dylint invocation and `bun run rust:mordant:baseline` regenerates the baseline (`MORDANT_BASELINE_WRITE=1`). Both need `cargo install cargo-dylint dylint-link` once, and expect `build/debug/codegen` and `vendor/lolhtml` to exist, which any normal `bun bd` leaves behind.
+- Locally, `bun run rust:mordant` is the same dylint invocation and `bun run rust:mordant:baseline` regenerates the baseline (`MORDANT_BASELINE_WRITE=1`). Both need `cargo install cargo-dylint dylint-link` once, and expect `build/debug/codegen`, `vendor/lolhtml` and `vendor/rust-argon2` to exist, which any normal `bun bd` leaves behind.
 
 To bump mordant: change the `rev` in `Cargo.toml`, run `bun run rust:mordant`, fix what the new revision reports or regenerate `mordant-baseline.toml` with `bun run rust:mordant:baseline`, and put the triage in the PR description.

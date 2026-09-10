@@ -207,6 +207,13 @@ enum FreeCssMode {
     IgnoreCss,
 }
 
+/// `Route` on the server must also be registered in `DevServer::route_lookup`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum RouteKind {
+    NotRoute,
+    Route,
+}
+
 #[derive(Copy, Clone)]
 pub enum InsertFailureKey<'a> {
     AbsPath(&'a [u8]),
@@ -357,11 +364,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .map(|i| FileIndex::init(i as u32))
     }
 
-    /// `IncrementalGraph(.client).htmlRouteBundleIndex`.
-    pub(crate) fn html_route_bundle_index(&self, index: FileIndex<SIDE>) -> route_bundle::Index {
-        self.bundled_files.values()[index.get() as usize]
-            .html_route_bundle_index
-            .expect("html_route_bundle_index on non-HTML file")
+    /// `None` for an html file that is not the file of a route.
+    pub(crate) fn html_route_bundle_index(
+        &self,
+        index: FileIndex<SIDE>,
+    ) -> Option<route_bundle::Index> {
+        self.bundled_files.values()[index.get() as usize].html_route_bundle_index
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
@@ -1283,23 +1291,27 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn insert_stale(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
+        graph: bake::Graph,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
-        self.insert_stale_extra(abs_path, is_ssr_graph, false)
+        self.insert_stale_extra(abs_path, graph, RouteKind::NotRoute)
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
     pub(crate) fn insert_stale_extra(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
-        is_route: bool,
+        graph: bake::Graph,
+        route: RouteKind,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+        debug_assert!(match SIDE {
+            Side::Client => graph == bake::Graph::Client,
+            Side::Server => graph != bake::Graph::Client,
+        });
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
-            if matches!(SIDE, Side::Server) && is_route {
+            if matches!(SIDE, Side::Server) && route == RouteKind::Route {
                 gop.value_ptr.is_route = true;
             }
         } else {
@@ -1327,13 +1339,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Server => {
+                let is_ssr_graph = graph == bake::Graph::Ssr;
                 if !found_existing {
                     self.bundled_files.values_mut()[idx] = File {
                         kind: FileKind::Unknown,
                         failed: false,
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,
-                        is_route,
+                        is_route: route == RouteKind::Route,
                         is_client_component_boundary: false,
                         ..Default::default()
                     };
@@ -1552,8 +1565,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            let loader = self.bundled_files.values()[dep.dependency.get() as usize]
+                .html_route_bundle_index
+                .is_some()
+                .then_some(bun_ast::Loader::Html);
             bun_core::handle_oom(
-                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(key, target),
+                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
+                    key, target, loader,
+                ),
             );
         }
 
@@ -1566,6 +1585,24 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             map.remove(abs_path);
         }
         Ok(())
+    }
+
+    /// See `EntryPointList::append_html`.
+    fn append_client_entry_point(
+        &self,
+        entry_points: &mut EntryPointList,
+        index: usize,
+    ) -> Result<(), crate::Error> {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let abs_path = &self.bundled_files.keys()[index];
+        if self.bundled_files.values()[index]
+            .html_route_bundle_index
+            .is_some()
+        {
+            entry_points.append_html(abs_path)
+        } else {
+            entry_points.append_js(abs_path, bake::Graph::Client)
+        }
     }
 
     /// `IncrementalGraph(side).invalidate` (spec :1589). Given a set of paths,
@@ -1628,16 +1665,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             ) {
                                 entry_points.append_css(k)?;
                             } else {
-                                entry_points.append_js(k, bake::Graph::Client)?;
+                                self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
-                        entry_points.append_js(owned_path, bake::Graph::Client)?;
+                        self.append_client_entry_point(entry_points, index)?;
                     }
                     // When re-bundling SCBs, only bundle the server.
                     Content::Js(_) | Content::Unknown => {
                         if !self.bundled_files.values()[index].is_hmr_root {
-                            entry_points.append_js(owned_path, bake::Graph::Client)?;
+                            self.append_client_entry_point(entry_points, index)?;
                         }
                     }
                 },

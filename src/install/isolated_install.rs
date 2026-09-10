@@ -30,11 +30,11 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap,
+    StringArrayHashMap, index_sort,
 };
 use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath, PathBuffer};
+use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath};
 use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
@@ -158,14 +158,6 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
     }
-
-    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
-    }
 }
 
 struct Wait<'a, 'b> {
@@ -214,13 +206,20 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// Whether `build_store` reports how long each of its two passes took.
+#[derive(Clone, Copy)]
+pub(crate) enum Timings {
+    Print,
+    Quiet,
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    print_timings: bool,
+    timings: Timings,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -521,12 +520,11 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
-                                }
+                                // `invalid_package_id` is part of the key: an
+                                // unresolved peer auto-installs the declarer's own
+                                // `resolutions[peer_dep_id]`, which is position-
+                                // independent, so two positions that both leave
+                                // the name unresolved expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }
@@ -647,10 +645,10 @@ pub(crate) fn build_store(
         // and devDependency handling to match `hoistDependency`
         {
             let sorter = lockfile::DepSorter { lockfile };
-            dep_ids_sort_buf.sort_by(|a, b| {
-                if sorter.is_less_than(*a, *b) {
+            index_sort::sort_indices(&mut dep_ids_sort_buf, &mut |a, b| {
+                if sorter.is_less_than(a, b) {
                     core::cmp::Ordering::Less
-                } else if sorter.is_less_than(*b, *a) {
+                } else if sorter.is_less_than(b, a) {
                     core::cmp::Ordering::Greater
                 } else {
                     core::cmp::Ordering::Equal
@@ -862,7 +860,7 @@ pub(crate) fn build_store(
         node_queue[queue_mark..].reverse();
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let full_tree_end = timer.elapsed();
         timer = std::time::Instant::now();
         bun_core::pretty_errorln!(
@@ -1119,7 +1117,7 @@ pub(crate) fn build_store(
         }
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
             "Created store [{}]",
@@ -1151,13 +1149,18 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
+    let timings = if manager.options.log_level.is_verbose() {
+        Timings::Print
+    } else {
+        Timings::Quiet
+    };
     let store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
-        manager.options.log_level.is_verbose(),
+        timings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
@@ -1234,7 +1237,7 @@ pub(crate) fn install_isolated_packages(
                                 // shared global copy would either diverge from the
                                 // patch or be mutated underneath other projects.
                                 if lockfile.patched_dependencies.count() > 0 {
-                                    let mut name_version_buf = PathBuffer::uninit();
+                                    let mut name_version_buf = bun_paths::path_buffer_pool::get();
                                     let mut cursor =
                                         std::io::Cursor::new(&mut name_version_buf.0[..]);
                                     let name_version: &[u8] = match write!(
@@ -1590,9 +1593,11 @@ pub(crate) fn install_isolated_packages(
                                         scc_ext.put(ext.final_(), ())?;
                                     }
                                 }
-                                member_sub.sort_unstable();
+                                index_sort::sort_slice_unstable_by(&mut member_sub, |a, b| {
+                                    a.cmp(b)
+                                });
                                 let ext_keys = scc_ext.keys_mut();
-                                ext_keys.sort_unstable();
+                                index_sort::sort_slice_unstable_by(ext_keys, |a, b| a.cmp(b));
                                 let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
                                 for k in &member_sub {
                                     hasher.update(bun_core::bytes_of(k));
@@ -1797,7 +1802,7 @@ pub(crate) fn install_isolated_packages(
                     // 3. rename temp into 'node_modules/.old_modules-{hex}'
                     // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
                     // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-                    let mut temp_node_modules_buf = PathBuffer::uninit();
+                    let mut temp_node_modules_buf = bun_paths::path_buffer_pool::get();
                     let temp_node_modules = paths::fs::FileSystem::tmpname(
                         b"tmp_modules",
                         &mut temp_node_modules_buf.0,
@@ -2199,7 +2204,16 @@ pub(crate) fn install_isolated_packages(
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =
-                        installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                        match installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res) {
+                            Ok(patch_info) => patch_info,
+                            Err(err) => {
+                                // .monotonic is okay because the task isn't running on another thread.
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer.on_task_fail(entry_id, &err);
+                                continue;
+                            }
+                        };
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
@@ -2411,7 +2425,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2445,13 +2462,21 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            installer.manager_mut().enqueue_git_for_checkout(
+                            if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
-                            );
+                            ) == crate::package_manager::GitEnqueueResult::OfflineMiss
+                            {
+                                // --offline and not cached: nothing was queued
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer
+                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                continue;
+                            }
                         }
                         ResolutionTag::Github => {
                             // The `.git()` accessor has a `debug_assert_eq!(tag, Git)` that
@@ -2470,7 +2495,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2523,7 +2551,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]

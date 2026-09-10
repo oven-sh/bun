@@ -476,8 +476,14 @@ const noEscapeAuth = new Int8Array([
   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, // 0x70 - 0x7F
 ]);
 
-const hexTable = new Array(256);
-for (let i = 0; i < 256; ++i) hexTable[i] = "%" + ((i < 16 ? "0" : "") + i.toString(16)).toUpperCase();
+let hexTable: string[] | undefined;
+function getHexTable() {
+  if (hexTable === undefined) {
+    hexTable = new Array(256);
+    for (let i = 0; i < 256; ++i) hexTable[i] = "%" + ((i < 16 ? "0" : "") + i.toString(16)).toUpperCase();
+  }
+  return hexTable;
+}
 
 // Port of node's internal/querystring encodeStr, used for auth encoding.
 function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
@@ -660,7 +666,7 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
 Url.prototype.format = function format() {
   var auth: string = this.auth || "";
   if (auth) {
-    auth = encodeStr(auth, noEscapeAuth, hexTable);
+    auth = encodeStr(auth, noEscapeAuth, getHexTable());
     auth += "@";
   }
 
@@ -1068,30 +1074,6 @@ Url.prototype.parseHost = function parseHost() {
   if (host) this.hostname = host;
 };
 
-// function fileURLToPath(...args) {
-//   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
-//   // path checking. We patch this in to `node:url` for compatibility. Note that
-//   // this behavior is missing from WATWG URL.
-//   if (process.platform === "win32") {
-//     var url: string;
-//     if ($isObject(args[0]) && args[0] instanceof Url) {
-//       url = (args[0] as { href: string }).href;
-//     } else if (typeof args[0] === "string") {
-//       url = args[0];
-//     } else {
-//       throw $ERR_INVALID_ARG_TYPE("url", ["string", "URL"], args[0]);
-//     }
-
-//     for (var i = 0; i < url.length; i++) {
-//       if (url.charCodeAt(i) === Char.PERCENT && (i + 1) < url.length) {
-//         switch (url.charCodeAt(i + 1)) {
-//         break;
-//       }
-//     }
-//   }
-//   return Bun.fileURLToPath.$call(args);
-// }
-
 /**
  * Add new characters as needed from
  * [here](https://github.com/nodejs/node/blob/main/lib/internal/constants.js).
@@ -1131,7 +1113,6 @@ const enum Char {
   ZERO_WIDTH_NOBREAK_SPACE = 65279, //
 }
 
-const path = require("node:path");
 const isWindows = process.platform === "win32";
 
 // Mirrors the pre-encode table in node's src/node_url.cc EncodePathChars();
@@ -1188,6 +1169,7 @@ function createFileURL(filepath: string, windows: boolean, hostname?: string) {
 
 function pathToFileURL(filepath: string, options?: { windows?: boolean } | null) {
   validateString(filepath, "path");
+  const path = require("node:path");
   const windows = options?.windows ?? isWindows;
   const isUNC = windows && filepath.startsWith("\\\\");
   let resolved = isUNC ? filepath : windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);

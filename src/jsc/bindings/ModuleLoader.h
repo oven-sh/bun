@@ -30,7 +30,7 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
-    ZigString string;
+    EncodedSlice string;
     JSC::JSValue value;
     BunLoaderType loader;
 };
@@ -58,12 +58,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<PendingVirtualModuleResult, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<PendingVirtualModuleResult, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPendingVirtualModuleResult, m_subspaceForPendingVirtualModuleResult));
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
@@ -122,11 +117,24 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,
-    BunString* specifier);
+    const BunString* specifier);
 
-JSValue fetchBuiltinModuleWithoutResolution(
+struct BuiltinModule {
+    enum class Kind : uint8_t {
+        /// Not a builtin; `res` is untouched.
+        None,
+        /// `exports` is the module's exports value.
+        Exports,
+        /// `res` holds the module's source; the caller evaluates it.
+        Source,
+    };
+    Kind kind = Kind::None;
+    JSValue exports {};
+};
+
+BuiltinModule fetchBuiltinModuleWithoutResolution(
     Zig::GlobalObject* globalObject,
-    BunString* specifier,
+    const BunString* specifier,
     ErrorableResolvedSource* res);
 
 } // namespace Bun

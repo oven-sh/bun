@@ -334,11 +334,6 @@ impl Diagnostic {
             crate::Error::InvalidArgument => {
                 bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
             }
-            _ => bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                err,
-                name
-            ),
         }
         bun_core::Output::flush();
         Ok(())

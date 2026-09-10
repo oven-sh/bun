@@ -2097,6 +2097,55 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   expect(replies).toEqual(["got hi", "got bye"]);
 });
 
+// parentPort is a MessagePort: it queues what the parent posts until a 'message' listener is
+// attached, and again while none is, as in Node — unlike the Web Worker global scope, which drops
+// a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
+// parent posts everything, then says "go", so the listener is attached strictly afterwards.
+describe("parentPort queues messages until a 'message' listener is attached", () => {
+  async function run(workerSrc: string, batch: unknown[]) {
+    const { port1, port2 } = new MessageChannel();
+    const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
+    w.postMessage("early");
+    const replies: unknown[] = [];
+    w.on("message", m => {
+      if (m !== "started") return replies.push(m);
+      for (const item of batch) w.postMessage(item);
+      port1.postMessage("go");
+    });
+    const [code] = await once(w, "exit");
+    port1.close();
+    return { replies, code };
+  }
+
+  test("listener attached after a top-level await", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // All five are queued before the first listener exists, so one drain batch holds them; removing
+  // the listener after the first must put the rest back, in order, for the next one.
+  test("removing the last listener pauses delivery until one is attached again", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       const first = m => { parentPort.postMessage("first:" + m); parentPort.off("message", first); setImmediate(() => parentPort.on("message", second)); };
+       const second = m => { parentPort.postMessage("second:" + m); if (m === 3) process.exit(0); };
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", first);`,
+      [0, 1, 2, 3],
+    );
+    expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+});
+
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
@@ -2123,7 +2172,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 });
 
 // Static imports that are still being read/transpiled are loading, not a
-// top-level await: 'online' and message delivery wait for the graph to execute.
+// top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
@@ -2136,6 +2185,42 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   w.postMessage("hi");
   expect(await reply).toBe("got hi 0");
   await w.terminate();
+});
+
+// node posts 'online' before it evaluates the entry, so it always precedes a
+// message the entry's top-level code posts (#41375: @discordjs/ws attaches its
+// 'message' listener only after `once(worker, "online")`).
+describe("'online' precedes the worker's first message", () => {
+  test("in event order", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("message", m => order.push("message:" + m));
+    const [code] = await once(w, "exit");
+    expect(order).toEqual(["online", "message:ready"]);
+    expect(code).toBe(0);
+  });
+
+  test("a 'message' listener attached after 'online' sees it", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    await once(w, "online");
+    const ready = new Promise<string>(resolve => w.on("message", resolve));
+    const exited = once(w, "exit").then(() => "exited first");
+    expect(await Promise.race([ready, exited])).toBe("ready");
+    await exited;
+  });
+
+  test("a worker whose entry does not resolve reports 'online' then 'error'", async () => {
+    using dir = tempDir("worker-online-missing-entry", {});
+    const w = new Worker(join(String(dir), "missing.js"));
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("error", e => order.push("error:" + (e as any).code));
+    // not events.once(): it rejects on the 'error' event this test expects
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
+    expect(code).toBe(1);
+  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────
@@ -2269,8 +2354,8 @@ describe("terminate with work in flight", () => {
   });
 });
 
-// A JS preload's modules are not the entry: the worker counts as started (online,
-// parent messages delivered) only once its own entry graph has executed.
+// A JS preload's modules are not the entry: parent messages are delivered only
+// once the worker's own entry graph has executed.
 test("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,
@@ -2731,4 +2816,116 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(tags).toEqual([TAG.ready, TAG.exitHandler]);
     expect(code).toBe(7);
   });
+});
+
+// Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
+// onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
+// nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+describe("nothing queued runs after the worker's VM stops", () => {
+  const cases: [string, string, (w: Worker) => void][] = [
+    [
+      "process.exit() in a timer",
+      `setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+         parentPort.postMessage("sync code after exit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in Bun.spawn onExit",
+      `Bun.spawn({ cmd: [process.execPath, "-e", "0"], env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" }, onExit() {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+       }});`,
+      () => {},
+    ],
+    [
+      "terminate() landing mid-callback",
+      `parentPort.on("message", () => {});
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         parentPort.postMessage("ready");
+         const t = Date.now(); while (Date.now() - t < 5000) {}
+         parentPort.postMessage("busy loop was not interrupted");
+       }, 5);`,
+      w => w.on("message", m => m === "ready" && w.terminate()),
+    ],
+  ];
+  for (const [name, body, arm] of cases) {
+    test(name, async () => {
+      const w = new Worker(`const { parentPort } = require("worker_threads");\n${body}`, { eval: true });
+      const messages: string[] = [];
+      w.on("message", m => m !== "ready" && messages.push(m));
+      arm(w);
+      const [code] = await once(w, "exit");
+      expect(messages).toEqual([]);
+      expect(typeof code).toBe("number");
+    });
+  }
+});
+
+// A worker's stop makes JSC forbid execution in the step that throws its TerminationException (WebCore's
+// forbidExecutionOnTermination, armed per stop). Whatever was queued or in flight when a callback got stuck —
+// due timers, immediates, nextTicks, microtasks, socket data, MessagePort deliveries, intervals, 'exit'
+// listeners — must not enter JS once the termination has unwound that callback: any such entry is one that
+// happened after termination, by construction (only the termination could have unwound the endless loop).
+describe("no JS entry after a worker's termination has been thrown", () => {
+  const worker = (stuckIn: "portMessage" | "socketData") => `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const c = new Int32Array(workerData.sab);
+    let armed = false;
+    const B = i => () => { if (armed) Atomics.add(c, i, 1); };
+    let stuckOnce = false;
+    function scheduleEverythingThenGetStuck() {
+      if (stuckOnce) return;
+      stuckOnce = true;
+      for (let k = 0; k < 50; k++) { setTimeout(B(0), 0); setImmediate(B(1)); process.nextTick(B(2)); queueMicrotask(B(3)); Promise.resolve().then(B(3)); }
+      setInterval(B(6), 1);
+      process.on("exit", B(7));
+      parentPort.postMessage("stuck");
+      const t = Date.now(); while (Date.now() - t < 30) {}
+      // Stuck in native code each iteration, so no JIT tier can turn this into a poll-free loop.
+      for (;;) Atomics.wait(c, 7, 0, 5);
+    }
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+      open(s) { setInterval(() => { for (let k = 0; k < 8; k++) s.write("x"); }, 1); }, data() {}, drain() {} } });
+    Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open() {}, drain() {},
+      data() { if (!armed) return; B(4)(); if (${JSON.stringify(stuckIn)} === "socketData") scheduleEverythingThenGetStuck(); } } });
+    parentPort.on("message", m => {
+      if (m !== "go") { B(5)(); return; }
+      armed = true;
+      if (${JSON.stringify(stuckIn)} === "portMessage") scheduleEverythingThenGetStuck();
+    });
+  `;
+  for (const stuckIn of ["portMessage", "socketData"] as const) {
+    test(`stuck in a ${stuckIn} callback`, async () => {
+      const sab = new SharedArrayBuffer(4 * 8);
+      const counts = new Int32Array(sab);
+      const w = new Worker(worker(stuckIn), { eval: true, workerData: { sab } });
+      w.postMessage("go");
+      expect(await once(w, "message")).toEqual(["stuck"]);
+      for (let k = 0; k < 200; k++) w.postMessage("flood");
+      const t = Date.now();
+      while (Date.now() - t < 50) {}
+      await w.terminate();
+      const names = [
+        "timeout",
+        "immediate",
+        "nextTick",
+        "microtask",
+        "socketData",
+        "portMessage",
+        "interval",
+        "exitHandler",
+      ];
+      const after = Object.fromEntries(names.map((n, i) => [n, counts[i]]));
+      // The one socket data callback the worker got stuck in ran before termination.
+      if (stuckIn === "socketData") after.socketData -= 1;
+      expect(after).toEqual(Object.fromEntries(names.map(n => [n, 0])));
+    });
+  }
 });

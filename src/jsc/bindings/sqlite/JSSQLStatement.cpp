@@ -190,6 +190,15 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                  \
     }
 
+// An iterator returned by Statement.prototype.iterate() owns the statement's cursor until
+// it is exhausted or returned from. Anything else that resets or steps the cursor would
+// restart or corrupt that iteration, so it is an error (matching better-sqlite3).
+#define CHECK_NOT_ITERATING                                                                                                             \
+    if (castedThis->isIterating) [[unlikely]] {                                                                                         \
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "This statement is busy executing a query"_s)); \
+        return {};                                                                                                                      \
+    }
+
 namespace WebCore {
 class JSSQLStatement;
 static ASCIILiteral finalizedMessage(const JSSQLStatement* statement);
@@ -331,6 +340,8 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionIterateNext);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows);
 
@@ -529,6 +540,8 @@ public:
     // Created by db.query(); close(false) finalizes these but leaves db.prepare() statements usable.
     bool ownedByDatabase : 1 = false;
     bool finalizedByClose : 1 = false;
+    // True while an iterator from Statement.prototype.iterate() is mid-flight.
+    bool isIterating : 1 = false;
 
 protected:
     JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
@@ -667,6 +680,8 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionGet, 1 } },
     { "all"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionAll, 1 } },
     { "iterate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionIterate, 1 } },
+    { "iterateNext"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFunctionIterateNext, 0 } },
+    { "iterateEnd"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFunctionIterateEnd, 0 } },
     { "as"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetPrototypeFunction, 1 } },
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRows, 1 } },
     { "raw"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRawRows, 1 } },
@@ -2188,30 +2203,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// Steps the iterate() cursor once and materializes the row (or jsNull when exhausted).
+// isIterating ends up true only when a row was successfully produced; every other exit
+// (done, SQLite error, JS exception) leaves it false so the statement is usable again.
+static JSC::EncodedJSValue stepIterator(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, sqlite3_stmt* stmt)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
 
-    CHECK_THIS
-
-    auto* stmt = castedThis->stmt;
-    CHECK_PREPARED
-
-    int busy = sqlite3_stmt_busy(stmt);
-    if (!busy) {
-        int statusCode = sqlite3_reset(stmt);
-        if (statusCode != SQLITE_OK) [[unlikely]] {
-            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
-            return {};
-        }
-    }
-
-    if (callFrame->argumentCount() > 0) {
-        auto arg0 = callFrame->argument(0);
-        DO_REBIND(arg0);
-    }
+    castedThis->isIterating = false;
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
@@ -2223,22 +2223,86 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue result = jsNull();
     if (status == SQLITE_ROW) {
-        bool useBigInt64 = castedThis->useBigInt64;
-
-        result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
-                             : constructResultObject<false>(lexicalGlobalObject, castedThis);
+        JSValue result = castedThis->useBigInt64
+            ? constructResultObject<true>(lexicalGlobalObject, castedThis)
+            : constructResultObject<false>(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
+        castedThis->isIterating = true;
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
     }
 
-    if (status == SQLITE_DONE || status == SQLITE_OK || status == SQLITE_ROW) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(result));
-    } else {
+    if (status == SQLITE_DONE || status == SQLITE_OK) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsNull()));
+    }
+
+    throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
+    sqlite3_reset(stmt);
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+
+    CHECK_THIS
+
+    auto* stmt = castedThis->stmt;
+    CHECK_PREPARED
+    CHECK_NOT_ITERATING
+
+    int statusCode = sqlite3_reset(stmt);
+    if (statusCode != SQLITE_OK) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
-        sqlite3_reset(stmt);
         return {};
     }
+
+    if (callFrame->argumentCount() > 0) {
+        auto arg0 = callFrame->argument(0);
+        DO_REBIND(arg0);
+    }
+
+    RELEASE_AND_RETURN(scope, stepIterator(lexicalGlobalObject, castedThis, stmt));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateNext, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+
+    CHECK_THIS
+
+    auto* stmt = castedThis->stmt;
+    CHECK_PREPARED
+
+    RELEASE_AND_RETURN(scope, stepIterator(lexicalGlobalObject, castedThis, stmt));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+
+    CHECK_THIS
+
+    // Releases the cursor even when the iteration was abandoned early (break, throw,
+    // .return()), so a later get()/all()/iterate() starts from the first row again.
+    castedThis->isIterating = false;
+    if (castedThis->stmt) {
+        // For a write statement abandoned after SQLITE_ROW (INSERT ... RETURNING with an
+        // early break), this reset is what commits the change, and it can fail.
+        int statusCode = sqlite3_reset(castedThis->stmt);
+        if (statusCode != SQLITE_OK) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(castedThis->stmt)));
+            return {};
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2251,6 +2315,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
     int statusCode = sqlite3_reset(stmt);
 
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2346,6 +2411,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2400,6 +2466,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2489,6 +2556,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2580,6 +2648,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
@@ -2716,6 +2785,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
     CHECK_PREPARED
+    CHECK_NOT_ITERATING
 
     int count = sqlite3_column_count(castedThis->stmt);
 

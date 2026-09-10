@@ -11380,3 +11380,34 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// The JSON parser is depth-guarded, but the clone of the parsed manifest out of
+// the thread-local AST store recurses once per nesting level with larger frames.
+// Each depth below fell into that window on one build flavor (release or ASAN).
+for (const depth of [700, 16000]) {
+  it.concurrent(`reports a package.json nested ${depth} levels deep instead of crashing`, async () => {
+    const open = Buffer.alloc(depth * 5, '{"a":').toString();
+    const close = Buffer.alloc(depth, "}").toString();
+    using dir = tempDir("bun-install-deep-package-json", {
+      "package.json": `{"name":"h","version":"1.0.0","dependencies":${open}"file:./dep"${close}}`,
+      "dep/package.json": `{"name":"dep","version":"1.0.0"}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toStartWith("bun install v1.");
+    // A depth the native stack can hold reaches the dependencies validator;
+    // a deeper one is reported by the parser or the clone as too deeply nested.
+    if (!stderr.includes("dependencies expects a map of specifiers")) {
+      expect(stderr).toContain("error: JSON document is too deeply nested");
+      expect(stderr).toContain(`StackOverflow: failed to parse '${join(String(dir), "package.json")}'`);
+    }
+    expect(exitCode).toBe(1);
+  });
+}

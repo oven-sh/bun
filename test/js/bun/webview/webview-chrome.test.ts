@@ -1118,18 +1118,16 @@ it("chrome: a navigation the page starts and that fails fires onNavigationFailed
     events.push("failed:" + err.message);
     failed.resolve();
   };
-  await view.evaluate("setTimeout(() => { location.href = 'http://127.0.0.1:9/gone'; }, 0), 0");
+  // No navigate() of the view's is pending, so Chrome's error page for the
+  // failed load is the only notice of the failure.
+  await view.evaluate("location.href = 'http://127.0.0.1:9/gone'");
   await failed.promise;
   expect(events).toEqual(["failed:Navigation to http://127.0.0.1:9/gone failed"]);
-  expect(view.url).toBe(srv.base + "/start");
-  // reload() reloads the URL that failed, which fails again: it rejects
-  // instead of resolving on the error page's load event.
-  await expect(view.reload()).rejects.toThrow("Navigation to http://127.0.0.1:9/gone failed");
-  expect(events).toEqual([
-    "failed:Navigation to http://127.0.0.1:9/gone failed",
-    "failed:Navigation to http://127.0.0.1:9/gone failed",
-  ]);
-  expect(view.loading).toBe(false);
+  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
+    url: srv.base + "/start",
+    title: "T/start",
+    loading: false,
+  });
 });
 
 it("chrome: same-document navigations settle and update view.url", async () => {

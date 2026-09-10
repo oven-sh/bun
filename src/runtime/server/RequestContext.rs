@@ -3811,7 +3811,8 @@ where
             // The status line is already written, so a cookie that cannot be
             // serialized (longer than the maximum string length) is reported
             // and the response goes out without its Set-Cookie header.
-            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr()) {
+            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr())
+            {
                 server
                     .vm()
                     .as_mut()

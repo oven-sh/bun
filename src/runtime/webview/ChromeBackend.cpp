@@ -843,8 +843,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageNavigate: {
-        // {"frameId", "loaderId"?, "errorText"?}: errorText = failed before commit; no loaderId =
-        // same-document (settled by Page.navigatedWithinDocument or here, whichever is second).
+        // errorText: failed before commit. No loaderId: same-document, settled here or by its event.
         bool sameDocumentDone = std::exchange(view->m_chromeSameDocumentNavigated, false);
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         auto loaderId = jsonString(jsonField(result, { "loaderId", 8 }));
@@ -1112,16 +1111,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
-// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?}, type}: a document
-// committed. Only the main frame counts; onNavigated and navigate() wait for its load.
+// Page.frameNavigated {frame: {parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto* g = m_global;
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return;
 
-    // unreachableUrl: this commit is Chrome's error page for a failed load. A failure, not a
-    // new view.url; already reported if navigate()'s errorText named this loaderId.
+    // unreachableUrl: Chrome's error page for a failed load committed. Not a new view.url.
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
@@ -1148,8 +1145,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
         view->m_chromeDocumentLoading = true;
 }
 
-// Page.navigatedWithinDocument {frameId, url}: fragment change, pushState/replaceState or history
-// traversal between such entries. The whole navigation: no commit or load event follows.
+// Page.navigatedWithinDocument {frameId, url}: fragment/pushState/traversal; no load event follows.
 void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char> params)
 {
     auto* g = m_global;
@@ -1340,8 +1336,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // view.addEventListener("Network.responseReceived", e => e.data.response): check
-    // hasEventListeners before the JSONParse, Chrome is chatty.
+    // view.addEventListener("<Domain.event>", e => e.data): skip the JSONParse without a listener.
     auto methodAtom = AtomString::fromUTF8(method);
     if (!view->wrapped().hasEventListeners(methodAtom)) return;
 

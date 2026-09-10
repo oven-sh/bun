@@ -1053,6 +1053,10 @@ function normalizeSpawnArguments(file, args, options) {
       bunEnv[key] = value;
     }
   }
+  // node drops NODE_UNIQUE_ID from a worker's process.env at bootstrap, so a child spawned with
+  // the default env is not a worker; Bun drops it when node:cluster loads, which may be later.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/pre_execution.js#L638-L645
+  if (!options.env) delete bunEnv.NODE_UNIQUE_ID;
 
   return {
     // Make a shallow copy so we don't clobber the user's options object.

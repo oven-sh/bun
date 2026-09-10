@@ -134,6 +134,39 @@ if (cluster.isPrimary) {
   expect(await bunRun(joinP(dir, "index.ts"), bunEnv)).toSpawn();
 });
 
+test.concurrent("a child a worker forks before loading node:cluster is not a worker", async () => {
+  // Its http.listen() would otherwise ask its parent (a worker, not the primary) for the port and never listen.
+  const dir = tempDirWithFiles("cluster-grandchild", {
+    "main.js": `
+const role = process.argv[2];
+if (role === "grandchild") {
+  const server = require("node:http").createServer();
+  server.listen(0, "127.0.0.1", () => {
+    console.log(JSON.stringify({ uniqueId: process.env.NODE_UNIQUE_ID ?? null, listening: server.address().port > 0 }));
+    server.close();
+  });
+} else if (process.env.ROLE === "worker") {
+  require("node:child_process").fork(__filename, ["grandchild"], { stdio: "inherit" }).on("exit", () => process.exit(0));
+} else {
+  require("node:cluster").fork({ ROLE: "worker" }).on("exit", () => process.exit(0));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+    out: { uniqueId: null, listening: true },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("http listen() with an inherited NODE_UNIQUE_ID and no IPC channel still listens", async () => {
   // `-e` has no argv[1], so the worker is never set up (cluster.worker is null)
   // even though NODE_UNIQUE_ID says "worker"; the 'listening' hook has nothing to notify.

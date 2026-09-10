@@ -4357,8 +4357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut item_refs = ImportItemForNamespaceMap::new();
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-        let count_excluding_namespace =
-            stmt.items.len() + usize::from(stmt.default_name.is_some());
+        let count_excluding_namespace = stmt.items.len() + usize::from(stmt.default_name.is_some());
 
         item_refs.ensure_unused_capacity(count_excluding_namespace)?;
         // Even though we allocate ahead of time here

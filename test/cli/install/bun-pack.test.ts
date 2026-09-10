@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { chmod, exists, lstat, readdir, rm, symlink } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 // Runs `bun pm pack` for the package in `dir`, from `cwd`.
@@ -513,6 +514,39 @@ describe.concurrent("flags", () => {
     expect(err).toBe(`ENOSPC: No space left on device: failed to write tarball "/dev/full" (write)`);
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
+  });
+
+  // The tarball is written into the FIFO once. Nothing opens the destination a second time to hash
+  // it, which on a FIFO would block forever waiting for another writer.
+  test.skipIf(isWindows)("--filename can be a FIFO", async () => {
+    using dir = tempDir("pack-fifo", {
+      "package.json": JSON.stringify({ name: "pack-fifo-test", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+    mkfifo(join(dir, "out.fifo"));
+
+    const reader = file(join(dir, "out.fifo")).bytes();
+    const { out, err, exitCode } = await runPack(dir, ["--filename=out.fifo"]);
+    expect(err).toBe("");
+    expect(out.split("\n")).toEqual([
+      "bun pack <version> (<revision>)",
+      "",
+      "packed 52B package.json",
+      "packed 31B index.js",
+      "",
+      "out.fifo",
+      "",
+      "Total files: 2",
+      "Shasum: <shasum>",
+      "Integrity: <integrity>",
+      "Unpacked size: 83B",
+      "Packed size: <packed size>",
+    ]);
+    expect(exitCode).toBe(0);
+
+    await write(join(dir, "out.tgz"), await reader);
+    expect(tarballEntries(join(dir, "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+    expect((await lstat(join(dir, "out.fifo"))).isFIFO()).toBeTrue();
   });
 
   test("--filename and --destination", async () => {

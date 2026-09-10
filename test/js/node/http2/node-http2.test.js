@@ -6329,3 +6329,171 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe.concurrent("session.request() over a transport that delivers synchronously", () => {
+  // An in-memory transport pair that hands every write to the other side from inside
+  // socket.write(), the way a mock socket in a unit test does.
+  function synchronousDuplexPair() {
+    class Side extends Duplex {
+      _read() {}
+      _write(chunk, _encoding, callback) {
+        this.peer.push(chunk);
+        callback();
+      }
+    }
+    const a = new Side();
+    const b = new Side();
+    a.peer = b;
+    b.peer = a;
+    return [a, b];
+  }
+
+  function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, Buffer.from(payload)]);
+  }
+
+  // A peer that answers every HEADERS frame from inside its own 'data' handler: 200 with the
+  // body "ok". 0x88 is the static-table HPACK index for :status 200.
+  function replyToEveryRequestSynchronously(socket, onRequestFrame) {
+    const FRAME_HEADERS = 1;
+    const FRAME_DATA = 0;
+    const FRAME_SETTINGS = 4;
+    const PREFACE_LENGTH = 24;
+    let buffered = Buffer.alloc(0);
+    let prefaceSeen = false;
+    socket.write(frame(FRAME_SETTINGS, 0, 0));
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!prefaceSeen) {
+        if (buffered.length < PREFACE_LENGTH) return;
+        buffered = buffered.subarray(PREFACE_LENGTH);
+        prefaceSeen = true;
+      }
+      while (buffered.length >= 9) {
+        const length = buffered.readUIntBE(0, 3);
+        if (buffered.length < 9 + length) break;
+        const type = buffered[3];
+        const flags = buffered[4];
+        const streamId = buffered.readUInt32BE(5);
+        buffered = buffered.subarray(9 + length);
+        if (type === FRAME_SETTINGS && !(flags & 1)) socket.write(frame(FRAME_SETTINGS, 1, 0));
+        if (type === FRAME_HEADERS) {
+          onRequestFrame(streamId);
+          socket.write(frame(FRAME_HEADERS, 4, streamId, [0x88]));
+          socket.write(frame(FRAME_DATA, 1, streamId, "ok"));
+        }
+      }
+    });
+  }
+
+  // Node submits a session's frames from a scheduled write, so request() never reaches the
+  // transport itself. Bun flushed the HEADERS frame from inside request() (through the
+  // stream's _final), so over a transport that delivers synchronously the response came back
+  // before the caller could attach a 'response' listener: the status was lost while the body
+  // and 'close' still arrived.
+  it("submits nothing while request() is on the stack, so 'response' is never missed", async () => {
+    const [clientSide, peerSide] = synchronousDuplexPair();
+    let insideRequestCall = false;
+    const peerSawRequestInsideCall = [];
+    replyToEveryRequestSynchronously(peerSide, () => peerSawRequestInsideCall.push(insideRequestCall));
+
+    const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+    try {
+      const results = [];
+      // The first request connects the session (its submit is deferred to 'connect' anyway);
+      // every later one runs on a session that is already connected.
+      for (const path of ["/1", "/2", "/3"]) {
+        insideRequestCall = true;
+        const req = client.request({ ":path": path });
+        insideRequestCall = false;
+
+        let status = 0;
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("response", headers => (status = headers[":status"]));
+        req.on("data", chunk => (body += chunk));
+        await new Promise((resolve, reject) => {
+          req.on("close", resolve);
+          req.on("error", reject);
+        });
+        results.push({ status, body });
+      }
+
+      expect(results).toEqual([
+        { status: 200, body: "ok" },
+        { status: 200, body: "ok" },
+        { status: 200, body: "ok" },
+      ]);
+      expect(peerSawRequestInsideCall).toEqual([false, false, false]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // A session writes the frames it owes its transport at the end of the microtask checkpoint.
+  // Over a JS transport that write runs user code: the peer end parses the bytes, and its handlers
+  // queue nextTicks and cork frames of their own. Nothing else holds the event loop open for an
+  // in-process pair, so all of that has to be seen through before the loop can call the process
+  // done. It used to exit with the response written but never reported to the stream.
+  it.each([
+    [
+      "from inside the 'stream' handler",
+      `stream.respond({ ":status": 200 }); stream.write("he"); stream.end("llo");`,
+      ["response:200", "end:hello", "close"],
+    ],
+    [
+      "from a nextTick queued by the 'stream' handler",
+      `process.nextTick(() => process.nextTick(() => stream.respond({ ":status": 204 }, { endStream: true })));`,
+      ["response:204", "end:", "close"],
+    ],
+    [
+      "from a nextTick, with trailers sent from another",
+      `process.nextTick(() => {
+         stream.respond({ ":status": 200 }, { waitForTrailers: true });
+         stream.on("wantTrailers", () => process.nextTick(() => stream.sendTrailers({ "x-trailer": "1" })));
+         stream.end("hello");
+       });`,
+      ["response:200", "end:hello", "close"],
+    ],
+  ])("the whole response arrives before the process exits when the server answers %s", async (_, respond, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http2 = require("node:http2");
+        const { duplexPair } = require("node:stream");
+        const events = [];
+        process.on("exit", () => console.log(JSON.stringify(events)));
+
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          ${respond}
+        });
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+
+        const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("response", headers => events.push("response:" + headers[":status"]));
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => events.push("end:" + body));
+        req.on("close", () => events.push("close"));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+});

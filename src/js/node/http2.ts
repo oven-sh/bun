@@ -2729,11 +2729,6 @@ class Http2Stream extends Duplex {
             } else {
               this.emit("wantTrailers");
             }
-            // Hand the END_STREAM (or trailer) frame to the socket now: with deferred write
-            // completion, _final can run on the program's last live turn and a frame left in
-            // the cork for the auto-flusher would strand a generic-streams (duplexPair) peer
-            // waiting for 'end'.
-            native.flush();
             if (this[bunHTTP2StreamFinal] !== callback) {
               // markWritableDone already consumed and invoked the callback during the
               // synchronous streamEnd dispatch above.
@@ -2745,9 +2740,6 @@ class Http2Stream extends Duplex {
           return;
         }
         const settled = native.writeStream(this.#id, "", "ascii", true, callback);
-        // Same as above: don't leave the END_STREAM frame in the cork on what may be the
-        // program's last live turn.
-        native.flush();
         if (settled === 5) {
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           markWritableDone(this);

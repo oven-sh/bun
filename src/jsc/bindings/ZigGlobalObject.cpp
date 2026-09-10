@@ -3080,6 +3080,16 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
+// Whether a drain would run anything: either queue a checkpoint drains holds work.
+extern "C" bool JSC__JSGlobalObject__hasPendingMicrotasks(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    if (!vm.defaultMicrotaskQueue().isEmpty())
+        return true;
+    auto* nextTickQueue = globalObject->m_nextTickQueue.get();
+    return nextTickQueue && !nextTickQueue->isEmpty();
+}
+
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
     anything.visit(visitor);

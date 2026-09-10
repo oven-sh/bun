@@ -1061,7 +1061,7 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
 // written, so RSS stays small.
 it("node:crypto rejects >2 GiB buffer arguments with ERR_OUT_OF_RANGE instead of aborting", async () => {
   const script = `
-    const crypto = require("node:crypto");
+    import crypto from "node:crypto";
     let big;
     try {
       big = new Uint8Array(2 ** 31);

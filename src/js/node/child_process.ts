@@ -1738,8 +1738,6 @@ function streamFdOf(item): number | object | undefined {
 
   if (item.destroyed) return undefined;
 
-  // A native readable (a ChildProcess stdout/stderr, a Bun.file() stream):
-  // the source reads a descriptor of its own.
   const nativeFd = item.$bunNativePtr?.fd;
   if (typeof nativeFd === "number" && nativeFd >= 0) return nativeFd;
 
@@ -1866,11 +1864,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const length = normalizedStdio.length;
-  const bunStdio = new Array(length);
-  for (let i = 0; i < length; i++) {
-    bunStdio[i] = nodeToBun(normalizedStdio[i], i);
-  }
+  const bunStdio = normalizedStdio.map(nodeToBun);
   return bunStdio;
 }
 

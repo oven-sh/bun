@@ -509,9 +509,6 @@ impl Stdio {
             return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
         }
 
-        // A socket's handle or a subprocess stdin's FileSink, which
-        // node:child_process passes on Windows as node passes a handle wrap:
-        // the descriptor is a HANDLE, which a number cannot tell from a CRT fd.
         let shared = if let Some(sock) = value.as_class_ref::<crate::socket::TCPSocket>() {
             Some(sock.socket.get().fd())
         } else if let Some(sock) = value.as_class_ref::<crate::socket::TLSSocket>() {

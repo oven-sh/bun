@@ -135,10 +135,6 @@ function secureProtocolToVersionRange(secureProtocol) {
   return null;
 }
 
-function normalizeRejectUnauthorized(value) {
-  return value !== false;
-}
-
 let NativeSecureContext;
 
 /**
@@ -183,7 +179,6 @@ function processPfxOptions(options) {
 }
 
 export {
-  normalizeRejectUnauthorized,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

@@ -385,15 +385,7 @@ pub(super) fn get_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn get_tls_version(
-    this: &This,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    get_tls_version_of(this.socket.get().ssl(), global, frame)
-}
-
-pub(crate) fn get_tls_version_of(
+pub(crate) fn get_tls_version(
     ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -447,15 +439,7 @@ pub(super) fn set_max_send_fragment(
     ))
 }
 
-pub(super) fn get_peer_certificate(
-    this: &This,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    get_peer_certificate_of(this.socket.get().ssl(), global, frame)
-}
-
-pub(crate) fn get_peer_certificate_of(
+pub(crate) fn get_peer_certificate(
     ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -793,15 +777,7 @@ pub(super) fn get_shared_sigalgs(
     Ok(array)
 }
 
-pub(super) fn get_cipher(
-    this: &This,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    get_cipher_of(this.socket.get().ssl(), global, frame)
-}
-
-pub(crate) fn get_cipher_of(
+pub(crate) fn get_cipher(
     ssl: Option<*mut boringssl::SSL>,
     global: &JSGlobalObject,
     _frame: &CallFrame,

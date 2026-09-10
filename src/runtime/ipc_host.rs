@@ -464,8 +464,6 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     process_send(global, frame, false)
 }
 
-/// `process._send`: the internal entry point node's cluster and socket_list
-/// code calls with a boolean `swallowErrors` third argument.
 #[bun_jsc::host_fn(export = "Bun__Process__internalSend")]
 fn Bun__Process__internalSend(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();

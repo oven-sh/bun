@@ -2340,9 +2340,6 @@ mod spawn_process_body {
         Ok(Ok(result))
     }
 
-    /// The CRT fd for libuv's UV_INHERIT_FD. A HANDLE (a socket or pipe
-    /// shared as stdio) is inherited through a private duplicate, closed
-    /// after the spawn, so the owner's handle is left alone.
     #[cfg(windows)]
     fn inherit_fd(fd: Fd, uv_files_to_close: &mut Vec<uv::uv_file>) -> Maybe<uv::uv_file> {
         if fd.kind() == bun_sys::FdKind::Uv {

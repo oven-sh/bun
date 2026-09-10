@@ -362,8 +362,6 @@ function serverSetSecureContext(this: Server, options) {
   if (handle) setServerSecureContext(handle, tls);
 }
 
-// Stays registered: the listener socket is created on each listen(), so a
-// 'keylog' listener added after a later listen() must reach that socket too.
 function onKeylogNewListener(this: Server, event) {
   if (event !== "keylog") return;
   const handle = this[serverSymbol];
@@ -1313,8 +1311,6 @@ function onServerConnection(this: Server, socketHandle) {
     return;
   }
 
-  // Once a 'keylog' listener has armed the listener socket every connection
-  // parks its lines, so drain them even when the listener is gone by now.
   if (isTLS) {
     const lines = socketHandle.drainKeylog();
     if (lines !== null && this.listenerCount("keylog") > 0) {

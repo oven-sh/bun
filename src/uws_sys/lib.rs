@@ -334,7 +334,6 @@ impl WindowsNamedPipe {
         let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
-    /// The pipe's HANDLE as an `Fd`, for sharing with a child as stdio.
     #[inline]
     pub(crate) fn fd(&self) -> bun_core::Fd {
         WindowsNamedPipe__fd(self)

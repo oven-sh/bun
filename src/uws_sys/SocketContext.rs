@@ -332,8 +332,6 @@ pub mod c {
             ctx: *mut SSL_CTX,
             content: *const core::ffi::c_char,
         ) -> core::ffi::c_int;
-        /// Replaces `ctx`'s trust store with an empty one that the default
-        /// roots never seed; returns 0 on allocation failure.
         pub fn us_set_default_ca_certs(
             pem: *const *const core::ffi::c_char,
             count: usize,

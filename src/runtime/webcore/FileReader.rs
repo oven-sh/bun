@@ -1108,11 +1108,6 @@ impl readable_stream::SourceContext for FileReader {
         Self::set_flowing(self, flag)
     }
     fn fd(&self) -> Fd {
-        let fd = self.fd.get();
-        if fd.is_valid() {
-            return fd;
-        }
-        // A subprocess pipe carries its descriptor on the reader before `on_start`.
         self.reader().get_fd()
     }
     // toBufferedValue: null

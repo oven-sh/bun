@@ -300,9 +300,6 @@ static X509_STORE *us_new_flagged_store() {
   return store;
 }
 
-// The bundled roots plus the OpenSSL default locations, NODE_EXTRA_CA_CERTS and
-// (with --use-system-ca) the OS store: what every context trusts when neither
-// `ca` nor tls.setDefaultCACertificates() says otherwise.
 static X509_STORE *us_build_base_default_ca_store() {
   X509_STORE *store = us_new_flagged_store();
   if (store == NULL) {
@@ -367,11 +364,8 @@ static X509_STORE *us_build_base_default_ca_store() {
 // one set per setDefaultCACertificates() call.
 struct us_user_root_set {
   STACK_OF(X509) *certs;
-  // Built from `certs` when the set is published; handed out by
-  // us_get_shared_default_ca_store().
   X509_STORE *shared;
-  // The set this one superseded: kept reachable so LeakSanitizer does not
-  // report the sets that are left allocated on purpose.
+  // Keeps a superseded (never freed) set reachable, or LeakSanitizer reports it.
   us_user_root_set *prev;
 };
 static std::atomic<us_user_root_set *> us_user_roots{nullptr};
@@ -402,7 +396,6 @@ extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
     X509 *x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
     BIO_free(in);
     if (x == NULL) {
-      // The OpenSSL error stays queued: the caller reports it like node's ThrowCryptoError.
       sk_X509_pop_free(certs, X509_free);
       return 0;
     }
@@ -413,14 +406,12 @@ extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
     sk_X509_pop_free(certs, X509_free);
     return 0;
   }
-  // The previous set, if any, stays allocated; see the comment above.
   us_user_root_set *set = new us_user_root_set{certs, shared, us_user_roots.load(std::memory_order_relaxed)};
   while (!us_user_roots.compare_exchange_weak(set->prev, set, std::memory_order_release, std::memory_order_relaxed)) {
   }
   return 1;
 }
 
-// A fresh store the caller owns and may extend (addCACert).
 extern "C" X509_STORE *us_get_default_ca_store() {
   us_user_root_set *user = us_user_roots.load(std::memory_order_acquire);
   if (user != nullptr) {

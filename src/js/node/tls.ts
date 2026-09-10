@@ -10,7 +10,6 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
-  normalizeRejectUnauthorized,
   validateSecureProtocol,
 } = require("internal/tls");
 const {
@@ -580,7 +579,7 @@ function newNativeSecureContext(options, cached = false) {
     }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
-      options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
+      options = { ...options, rejectUnauthorized: true };
     }
     const allowPartialTrustChain = options.allowPartialTrustChain;
     if (allowPartialTrustChain !== undefined && typeof allowPartialTrustChain !== "boolean") {

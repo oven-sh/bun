@@ -3246,10 +3246,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             options,
                         );
                     }
-                } else {
-                    let _ = global.throw_invalid_arguments(format_args!(
-                        "fd cannot be used with an http3-only server"
-                    ));
                 }
             }
         }

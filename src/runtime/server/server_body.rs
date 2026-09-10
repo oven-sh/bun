@@ -3685,11 +3685,6 @@ fn server_set_secure_context(
     server: JSValue,
     options: JSValue,
 ) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set secure context: The 'this' value is not a Server."
-        )));
-    }
     let vm = global.bun_vm();
     macro_rules! handle {
         ($T:ty) => {
@@ -3724,12 +3719,7 @@ fn server_set_secure_context(
     )))
 }
 
-fn server_enable_keylog(global: &JSGlobalObject, server: JSValue) -> JsResult<JSValue> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to enable keylog: The 'this' value is not a Server."
-        )));
-    }
+fn server_enable_keylog(_global: &JSGlobalObject, server: JSValue) -> JsResult<JSValue> {
     macro_rules! handle {
         ($T:ty) => {
             if let Some(this) = server.as_::<$T>() {

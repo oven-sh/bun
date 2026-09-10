@@ -431,8 +431,6 @@ pub mod ssl_wrapper {
                             Some(always_continue_verify),
                         );
                     }
-                    // The default roots as they are now; a context holding
-                    // user CAs keeps its own store.
                     if us_ssl_ctx_has_user_ca(ctx.as_ptr()) == 0 {
                         if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
                             let _ = boring_sys::SSL_set0_verify_cert_store(
@@ -1275,7 +1273,6 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
-        /// 1 when `ctx`'s own store holds user-provided CAs (`ca`, `crl`, addCACert).
         fn us_ssl_ctx_has_user_ca(ctx: *mut boring_sys::SSL_CTX) -> core::ffi::c_int;
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.

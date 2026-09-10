@@ -114,9 +114,7 @@ public:
     // encoding → how the bytes are wrapped (Blob/Buffer/base64/shmem).
     ScreenshotFormat m_screenshotFormat = ScreenshotFormat::Png;
     ScreenshotEncoding m_screenshotEncoding = ScreenshotEncoding::Blob;
-    // Chrome: kept so a capture that a navigation stranded can be sent again
-    // with the options the call asked for (Transport::repeatStrandedCapture).
-    uint8_t m_screenshotQuality = 80;
+    uint8_t m_screenshotQuality = 80; // Chrome: re-sent by Transport::repeatStrandedCapture
 
     JSC::WriteBarrier<JSC::JSObject> m_onNavigated;
     JSC::WriteBarrier<JSC::JSObject> m_onNavigationFailed;

@@ -351,12 +351,8 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
-    // The view's main frame committed another document while this command
-    // was in flight. Chrome drops some commands at that point and never
-    // replies to them; Transport::repeatStrandedCapture acts on the mark.
-    bool acrossCommit = false;
-    // This command is itself the one repeat a stranded command gets.
-    bool repeat = false;
+    bool acrossCommit = false; // the view's main frame committed another document while this was in flight
+    bool repeat = false; // this is the one re-send a stranded command gets (Transport::repeatStrandedCapture)
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
@@ -483,12 +479,9 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
-    // A Page.captureScreenshot that is in flight when the main frame commits
-    // another document gets no reply from Chrome about half the time, ever.
-    // mainFrameCommitted marks the view's in-flight commands; once the new
-    // document is in place, repeatStrandedCapture drops the stranded id and
-    // captures that document instead, once per screenshot() call.
-    void mainFrameCommitted(JSWebView*);
+    // Recovery for a Page.captureScreenshot that a main-frame commit strands
+    // (Chrome never replies to it). See the definitions.
+    void mainFrameCommitted(JSC::JSGlobalObject*, JSWebView*);
     void repeatStrandedCapture(JSC::JSGlobalObject*, JSWebView*);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();

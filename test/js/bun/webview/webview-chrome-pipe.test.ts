@@ -151,8 +151,9 @@ test.concurrent("a screenshot the browser drops at a navigation is captured agai
   });
 });
 
-// One repeat per screenshot() call. A second navigation over the repeat
-// rejects it, so the promise settles and the slot frees either way.
+// One repeat per screenshot() call. A second commit over the repeat rejects it
+// at that commit, whether or not the new document ever fires a load event, so
+// the promise settles and the slot frees either way.
 test.concurrent("a screenshot two navigations drop rejects instead of hanging", async () => {
   const result = await runScenario(`
     const view = newView();
@@ -160,7 +161,11 @@ test.concurrent("a screenshot two navigations drop rejects instead of hanging", 
     await view.evaluate("__fake_drop_screenshots(2)");
     const shot = outcome(view.screenshot().then(blob => blob.size));
     await view.navigate("http://fake/2");
-    await view.navigate("http://fake/3");
+    const afterOneNavigation = Bun.peek.status(shot);
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "L9", url: "http://fake/3-never-loads", mimeType: "text/html" },
+      type: "Navigation",
+    })\`);
     const settled = await within(shot, 2000);
     let again;
     try {
@@ -168,10 +173,11 @@ test.concurrent("a screenshot two navigations drop rejects instead of hanging", 
     } catch (e) {
       again = { threw: e.message };
     }
-    print({ settled, again });
+    print({ afterOneNavigation, settled, again });
     view.close();
   `);
   expect(result).toEqual({
+    afterOneNavigation: "pending",
     settled: { rejected: "screenshot: the page navigated before the capture completed" },
     again: { resolved: SCREENSHOT_BYTES.length },
   });

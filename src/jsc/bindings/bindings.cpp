@@ -5551,7 +5551,13 @@ restart:
 
                 // Ignore exceptions from getters.
                 if (scope.exception()) [[unlikely]] {
-                    (void)scope.tryClearException();
+                    if (!scope.tryClearException())
+                        return;
+                    // A CustomValue getter produces a lazily built data property (Bun.$, Bun.sql). When it
+                    // throws there is no value yet, so leave the property out, like a lazy static property
+                    // whose builder throws inside getPropertySlot above.
+                    if (slot.attributes() & PropertyAttribute::CustomValue)
+                        continue;
                     propertyValue = jsUndefined();
                 }
 

@@ -42,26 +42,33 @@ test("cancelling a subprocess pipe and running the event loop from inside its re
     }),
   );
 
-  const decoder = new TextDecoder();
-  for (const proc of procs) {
-    let stderr = "";
-    let chunks = 0;
-    for await (const chunk of proc.stderr) {
-      stderr += decoder.decode(chunk, { stream: true });
-      if (++chunks >= 2 && stderr.includes("tick")) break;
+  try {
+    const decoder = new TextDecoder();
+    for (const proc of procs) {
+      let stderr = "";
+      let chunks = 0;
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (++chunks >= 2 && stderr.includes("tick")) break;
+      }
+      expect(stderr).toStartWith("ready\n");
+
+      // Both of these run the event loop synchronously (`expect().resolves`
+      // waits for the promise in place), from inside the read callback the
+      // `break` above returned into. The timer is the loop turn that used to
+      // run the freed pipe's close callback; the request reuses native memory in
+      // the same window, which is what turned the freed handle into a crash.
+      expect(Bun.sleep(1)).resolves.toBeUndefined();
+      expect(fetch(url).then(r => r.text())).resolves.toBe("ok");
+
+      proc.kill();
+      await proc.exited;
+      expect(proc.killed).toBe(true);
     }
-    expect(stderr).toStartWith("ready\n");
-
-    // Both of these run the event loop synchronously (`expect().resolves`
-    // waits for the promise in place), from inside the read callback the
-    // `break` above returned into. The timer is the loop turn that used to run
-    // the freed pipe's close callback; the request reuses native memory in the
-    // same window, which is what turned the freed handle into a crash.
-    expect(Bun.sleep(1)).resolves.toBeUndefined();
-    expect(fetch(url).then(r => r.text())).resolves.toBe("ok");
-
-    proc.kill();
-    await proc.exited;
-    expect(proc.killed).toBe(true);
+  } finally {
+    // The children never exit on their own; reap them even when an assertion
+    // above failed.
+    for (const proc of procs) proc.kill();
+    await Promise.all(procs.map(proc => proc.exited));
   }
 });

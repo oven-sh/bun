@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
-use crate::webcore::streams::{self, SourceHandle};
+use crate::webcore::streams::{self, SourceHandle, controller_abi};
 use bun_collections::TaggedPtrUnion;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -232,6 +232,31 @@ impl<T: JsSinkAbi> JSSink<T> {
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
+        ptr: NonNull<T>,
+    ) -> crate::webcore::jsc::JSValue
+    where
+        T: JsSinkType,
+    {
+        let controller = Self::create_controller(global, ptr);
+        Self::assign_controller_to_stream(global, stream, controller, ptr)
+    }
+
+    /// A new `JSReadable*SinkController` attached to the sink at `ptr`; it must be detached before the sink is freed.
+    pub fn create_controller(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        ptr: NonNull<T>,
+    ) -> crate::webcore::jsc::JSValue
+    where
+        T: JsSinkType,
+    {
+        T::create_controller_extern(global, ptr.as_ptr().cast::<c_void>())
+    }
+
+    /// [`assign_to_stream`](Self::assign_to_stream) through a `controller` from [`create_controller`](Self::create_controller).
+    pub fn assign_controller_to_stream(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        stream: crate::webcore::jsc::JSValue,
+        controller: crate::webcore::jsc::JSValue,
         mut ptr: NonNull<T>,
     ) -> crate::webcore::jsc::JSValue
     where
@@ -240,23 +265,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
         // call; the pointer is only stashed in C++ `m_sinkPtr`.
         let ptr = unsafe { ptr.as_mut() };
-        let controller =
-            T::create_controller_extern(global, std::ptr::from_mut::<T>(ptr).cast::<c_void>());
+        ptr.controller_created(controller, global);
         if let Some(src) = ptr.source() {
             *src = streams::SourceHandle::JSController(controller);
         }
-        let result = streams::controller_abi::assign_to_stream(global, stream, controller);
-        // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
-        // end()/close() the controller, and its destructor would otherwise run
-        // `${name}__finalize` on the sink after the caller has freed it. Detach
-        // it while `ptr` is live; that reaches `js_controller_detached`, which
-        // drops it from `source()` (a no-op if it already detached in the call).
-        if result.to_error().is_some() {
-            let _ = ::bun_jsc::call_check_slow(global, || {
-                streams::controller_abi::detach_ptr(controller)
-            });
-        }
-        result
+        start_pump(global, stream, controller)
     }
 
     /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
@@ -280,6 +293,23 @@ impl<T: JsSinkAbi> JSSink<T> {
             _ => {}
         }
     }
+}
+
+/// Start the pump from `stream` into `controller`, whose sink is live and
+/// already holds it as its `source()`. Out of line so the `JSSink<T>`
+/// instantiations share one copy.
+#[inline(never)]
+fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> JSValue {
+    let result = controller_abi::assign_to_stream(global, stream, controller);
+    // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
+    // end()/close() the controller, and its destructor would otherwise run
+    // `${name}__finalize` on the sink after its owner has freed it. Detach it
+    // while the sink is live; that reaches `js_controller_detached`, which
+    // drops it from `source()` (a no-op if it already detached in the call).
+    if result.to_error().is_some() {
+        let _ = bun_jsc::call_check_slow(global, || controller_abi::detach_ptr(controller));
+    }
+    result
 }
 
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
@@ -346,6 +376,13 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         None
+    }
+    /// `assign_to_stream` made `controller` for this sink: a sink that keeps JS values roots it and puts them on it.
+    fn controller_created(
+        &mut self,
+        _controller: crate::webcore::jsc::JSValue,
+        _global: &crate::webcore::jsc::JSGlobalObject,
+    ) {
     }
     /// Called from `js_controller_detached`: once per JS-pump controller, on
     /// every detach path including its GC destructor. A sink co-owned by

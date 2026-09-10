@@ -3452,6 +3452,18 @@ declare module "bun" {
     bytecodeDepth?: number;
 
     /**
+     * Build-time optimizations for `bytecode` builds.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+    };
+
+    /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
@@ -3748,6 +3760,17 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 1
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -5426,6 +5449,21 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
+     *
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
+     *
+     * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
+     */
+    function setJITPolicy(scale: number): void;
 
     /**
      * Accurate per-process memory footprint in bytes.

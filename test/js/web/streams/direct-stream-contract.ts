@@ -125,6 +125,24 @@ export const shapes: Record<string, Shape> = {
         } catch {}
       }),
   },
+  "sync pull: write, close(), then write() and flush() in the same call": {
+    expect: { body: "hello world" },
+    make: t =>
+      direct(t, c => {
+        c.write("hello world");
+        c.close();
+        // The reader path reports 0 bytes, a native sink throws: neither delivers the chunk.
+        for (const late of [() => c.write(" ignored"), () => c.flush()]) {
+          try {
+            late();
+          } catch {}
+        }
+      }),
+  },
+  "sync pull: write, end(), then close(error) in the same call": {
+    expect: { body: "hello world" },
+    make: t => direct(t, c => (c.write("hello world"), c.end(), c.close(new Error("too late to matter")))),
+  },
   "end(value) is a clean close, unlike close(error)": {
     oneShotOnly: true,
     expect: { body: "hello world" },

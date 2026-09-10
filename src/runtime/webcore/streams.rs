@@ -784,6 +784,109 @@ pub(crate) mod controller_abi {
             stream: ::bun_jsc::JSValue,
             c: ::bun_jsc::JSValue,
         ) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__setPipe"]
+        pub(crate) safe fn set_pipe(
+            c: ::bun_jsc::JSValue,
+            stream: ::bun_jsc::JSValue,
+            done: ::bun_jsc::JSValue,
+        );
+        #[link_name = "JSSinkController__pipeStream"]
+        pub(crate) safe fn pipe_stream(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__clearPipeStream"]
+        pub(crate) safe fn clear_pipe_stream(c: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__takePipeDone"]
+        pub(crate) safe fn take_pipe_done(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__pipeDone"]
+        pub(crate) safe fn pipe_done(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+        #[link_name = "JSSinkController__setPipeDone"]
+        pub(crate) safe fn set_pipe_done(c: ::bun_jsc::JSValue, done: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__setPipeError"]
+        pub(crate) safe fn set_pipe_error(c: ::bun_jsc::JSValue, error: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__pipeError"]
+        pub(crate) safe fn pipe_error(c: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+    }
+}
+
+/// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
+#[derive(Default)]
+pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
+
+impl PipeCell {
+    pub(crate) fn create(
+        cell: JSValue,
+        stream: JSValue,
+        done: JSValue,
+        global: &JSGlobalObject,
+    ) -> PipeCell {
+        controller_abi::set_pipe(cell, stream, done);
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    }
+
+    pub(crate) fn cell(&self) -> Option<JSValue> {
+        self.0.get()
+    }
+
+    /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
+    pub(crate) fn clear_slots(&self) {
+        if let Some(cell) = self.0.get() {
+            controller_abi::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
+        }
+    }
+
+    pub(crate) fn has_stream(&self) -> bool {
+        self.stream().is_some()
+    }
+
+    pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = controller_abi::pipe_stream(self.0.get()?);
+        if stream.is_empty() {
+            return None;
+        }
+        crate::webcore::ReadableStream::from_js_direct(stream)
+    }
+
+    pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = self.stream();
+        if let Some(cell) = self.0.get() {
+            controller_abi::clear_pipe_stream(cell);
+        }
+        stream
+    }
+
+    /// Root `cell` with nothing on it yet.
+    pub(crate) fn root(cell: JSValue, global: &JSGlobalObject) -> PipeCell {
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    }
+
+    pub(crate) fn has_done(&self) -> bool {
+        self.done().is_some()
+    }
+
+    /// The promise the sink's owner or source awaits, until it is taken to be settled.
+    pub(crate) fn done(&self) -> Option<*mut JSPromise> {
+        controller_abi::pipe_done(self.0.get()?).as_promise()
+    }
+
+    pub(crate) fn set_done(&self, done: JSValue) {
+        debug_assert!(self.0.has(), "no controller cell to hold the promise");
+        if let Some(cell) = self.0.get() {
+            controller_abi::set_pipe_done(cell, done);
+        }
+    }
+
+    pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
+        controller_abi::take_pipe_done(self.0.get()?).as_promise()
+    }
+
+    pub(crate) fn set_error(&self, error: JSValue) {
+        if let Some(cell) = self.0.get() {
+            controller_abi::set_pipe_error(cell, error);
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<JSValue> {
+        let error = controller_abi::pipe_error(self.0.get()?);
+        (!error.is_empty()).then_some(error)
     }
 }
 
@@ -921,12 +1024,26 @@ impl SourceHandle {
     /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
     pub fn abort(&mut self, reason: CommonAbortReason) {
         match *self {
+            SourceHandle::JSController(_) => {
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                self.cancel(reason.to_js(global));
+            }
+            _ => self.close(None),
+        }
+    }
+
+    /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
+    pub fn cancel(&mut self, reason: JSValue) {
+        match *self {
             SourceHandle::JSController(cpp) => {
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
-                Self::close_js_controller(global, cpp, reason.to_js(global));
+                Self::close_js_controller(global, cpp, reason);
             }
             _ => self.close(None),
         }
@@ -1031,7 +1148,8 @@ pub struct HTTPServerWritable<const SSL: bool> {
     // allocator field dropped — global mimalloc per §Allocators
     pub(crate) state: HTTPServerWritableState,
     pub(crate) source: SourceHandle,
-    pub(crate) pending_flush: Option<*mut JSPromise>,
+    /// The controller cell, rooted for the sink's life; it holds the `flush(true)` / `end()` promise ([`Self::pending_flush`]).
+    pub(crate) pipe: PipeCell,
     /// Backpressure promise returned from `write()` to a JS controller (direct
     /// stream `pull` or `readStreamIntoSink`). Resolved on drain via
     /// `flush_promise()` → `pending.run()`.
@@ -1079,7 +1197,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             wrote: 0,
             state: HTTPServerWritableState::Writing,
             source: SourceHandle::default(),
-            pending_flush: None,
+            pipe: PipeCell::default(),
             pending: WritablePending::default(),
             wrote_at_start_of_flush: 0,
             global_this: None,
@@ -1425,7 +1543,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 self.finalize();
                 return true;
             }
-            let had_flush_waiter = self.pending_flush.is_some();
+            let had_flush_waiter = self.pending_flush().is_some();
             self.flush_promise();
             if core::mem::take(&mut self.source_pending_pull)
                 && !had_flush_waiter
@@ -1487,7 +1605,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
 
         // flush the javascript promise from calling .flush()
-        let had_flush_waiter = self.pending_flush.is_some();
+        let had_flush_waiter = self.pending_flush().is_some();
         self.flush_promise();
 
         // pending_flush or callback could have caused another send()
@@ -1588,7 +1706,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return self.flush_from_js_no_wait();
         }
 
-        if let Some(prom) = self.pending_flush {
+        if let Some(prom) = self.pending_flush() {
             // A prior `flush(true)` is already waiting on the drain. Push any
             // data buffered since (below highWaterMark) so it reaches uWS now
             // rather than when `on_writable` fires.
@@ -1621,13 +1739,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
         }
         self.wrote_at_start_of_flush = self.wrote;
-        self.pending_flush = Some(JSPromise::create(global_this));
-        self.global_this = Some(BackRef::new(global_this));
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        let promise_value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-        promise_value.protect();
-
-        bun_sys::Result::Ok(promise_value)
+        bun_sys::Result::Ok(self.park_pending_flush(global_this))
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
@@ -1828,12 +1940,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         if readable_len > 0 {
             if !self.send_readable(0) {
-                self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = Some(BackRef::new(global_this));
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-                value.protect();
-                return bun_sys::Result::Ok(value);
+                return bun_sys::Result::Ok(self.park_pending_flush(global_this));
             }
         } else if let Some(res) = self.any_res() {
             res.end(b"", false);
@@ -1946,10 +2053,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // Drop the GC root so the promise can be collected.
         this.pending.result = Writable::Done;
         this.pending.run();
-        if let Some(prom) = this.pending_flush.take() {
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-            JSPromise::opaque_ref(prom).to_js().unprotect();
-        }
         // A sink torn down without finalize() (assignToStream failed synchronously) still holds its pool checkout.
         this.release_pooled_buffer();
         this.buffer.clear_and_free();
@@ -2021,6 +2124,26 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
     }
 
+    /// The unsettled `flush(true)` / `end()` promise, held by the controller cell.
+    pub(crate) fn pending_flush(&self) -> Option<*mut JSPromise> {
+        self.pipe.done()
+    }
+
+    pub(crate) fn take_pending_flush(&mut self) -> Option<*mut JSPromise> {
+        self.pipe.take_done()
+    }
+
+    fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        // end() while a flush(true) waits on the same drain: one promise settles both.
+        if let Some(parked) = self.pending_flush() {
+            return JSPromise::opaque_ref(parked).to_js();
+        }
+        let promise = JSPromise::create(global_this).to_js();
+        self.global_this = Some(BackRef::new(global_this));
+        self.pipe.set_done(promise);
+        promise
+    }
+
     /// Settle a parked `write()` and the pending `flush(true)`/`end()` promise.
     /// Terminal like the settle primitives (`Pending::run`): both resolve with
     /// values built here.
@@ -2028,12 +2151,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
-        if let Some(prom) = self.pending_flush.take() {
+        if let Some(prom) = self.take_pending_flush() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this();
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
-            JSPromise::opaque_ref(prom).to_js().unprotect();
+            let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
             let result = JSPromise::opaque_mut(prom).resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
@@ -2088,6 +2210,9 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // SAFETY: caller contract; `fail` does not free the sink.
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
+    }
+    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
+        self.pipe = PipeCell::root(controller, global);
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

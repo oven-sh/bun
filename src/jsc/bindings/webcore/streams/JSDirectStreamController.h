@@ -105,6 +105,9 @@ public:
     // Once closed, the five methods are no-ops (there is NO "swap all 5 methods to a
     // throwing stub" trick).
     bool m_closed : 1 { false };
+    // The source already ended the stream: closed, or end()/close() ran inside pull() and
+    // completes when pull() returns. The five methods no-op from this point, not from m_closed.
+    bool sourceEnded() const { return m_closed || m_deferClose == 1; }
     // An async pull()'s returned promise has not yet settled; cleared by its settlement
     // reactions. m_pullAgain is set only when a NEW read arrives while m_pullInFlight
     // (edge-triggered, matching the spec default controller's [[pullAgain]]).

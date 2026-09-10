@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -103,6 +104,11 @@ impl VM {
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
     pub(crate) fn collect_async_idle(&self) {
         JSC__VM__collectAsyncIdle(self)
+    }
+
+    /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
+    pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
+        JSC__VM__setStartupJITDeferralScale(self, scale)
     }
 
     pub fn execution_forbidden(&self) -> bool {

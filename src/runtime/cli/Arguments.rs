@@ -402,6 +402,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -434,6 +437,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
+            "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
         ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -2069,6 +2075,8 @@ fn parse_build_command_options(
             FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
+    ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
+
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
         ctx.args.target = Some(api::Target::Bun);
@@ -2247,6 +2255,25 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-jit-policy requires --compile", ());
+            Global::crash();
+        }
+        match strings::str_utf8(jit_policy).and_then(|s| s.parse::<f32>().ok()) {
+            Some(scale) if scale.is_finite() && scale >= 1.0 => {
+                ctx.bundler_options.compile_jit_policy = scale;
+            }
+            _ => {
+                Output::err_generic(
+                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number \\>= 1",
+                    format_args!("{}", BStr::new(jit_policy)),
+                );
+                Global::exit(1);
+            }
+        }
     }
 
     {

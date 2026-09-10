@@ -3144,11 +3144,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    auto* moduleLoader = global->moduleLoader();
-    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
-    // under cellLock(); take the same lock so the removal can't race it.
-    WTF::Locker locker { moduleLoader->cellLock() };
-    moduleLoader->removeEntry(identifier);
+    global->moduleLoader()->removeEntry(identifier); // takes the loader's cellLock itself
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm, bool full)
@@ -3168,6 +3164,11 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
     vm->heap.collectAsync(request);
+}
+
+void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
+{
+    vm->setStartupJITDeferralScale(scale);
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)
@@ -5037,11 +5038,7 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    {
-        auto* moduleLoader = globalObject->moduleLoader();
-        WTF::Locker cellLocker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    globalObject->moduleLoader()->clearAll(); // takes the loader's cellLock itself
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }

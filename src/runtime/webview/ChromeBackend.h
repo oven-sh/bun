@@ -351,6 +351,8 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
+    // PageTitle: the JSWebView::m_chromeNavigationSeq this fetch ends, or 0 for a title refresh that settles nothing.
+    uint32_t navigation = 0;
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,
@@ -477,8 +479,8 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
-    // Fetches document.title; the reply (PageTitle) settles the Navigate slot.
-    void sendTitleFetch(JSWebView*);
+    // Fetches document.title into m_title; with endsNavigation the reply also settles the Navigate slot.
+    void sendTitleFetch(JSWebView*, bool endsNavigation);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);

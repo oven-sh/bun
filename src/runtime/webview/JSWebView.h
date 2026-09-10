@@ -45,10 +45,12 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
-// Chrome: which event ends the navigation the view has in flight.
+// Chrome: which event ends the navigation the view has in flight. A commit
+// carries no loader id, so the state decides which commit is the view's.
 enum class ChromeNavigationKind : uint8_t {
-    NotRequested, // nothing asked of Chrome (slot empty, or goBack()/goForward() mid history lookup): no event ends it
-    Unknown, // command sent, not yet classified: Page.loadEventFired or Page.navigatedWithinDocument ends it
+    NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
+    Requested, // command written, no reply yet: a commit now can still be the page's own
+    Unknown, // command answered, kind unknown (a history traversal): the next commit of either shape ends it
     SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
     CrossDocument, // Page.loadEventFired ends it
 };
@@ -109,8 +111,10 @@ public:
     // Chrome: from the first Page.navigate reply. Subframe events are ignored.
     WTF::String m_mainFrameId;
     ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
-    // Chrome: a main frame commit has landed since the view's last navigation command.
+    // Chrome: a main frame document has committed since the view's last navigation command.
     bool m_chromeNavigationCommitted = false;
+    // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
+    uint32_t m_chromeNavigationSeq = 0;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

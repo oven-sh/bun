@@ -209,6 +209,73 @@ test.concurrent("goBack() is not settled by a commit of the page's own during th
   expect(result).toEqual({ url: "http://fake/a", urls: ["http://fake/b#spa", "http://fake/a"] });
 });
 
+// The same for the load event of a document the page navigated to during the
+// lookup: that document committed before the traversal was asked for, so its
+// load is not the traversal's. The traversal here never commits, so the
+// promise has to stay pending.
+test.concurrent("goBack() is not settled by the load of a document it did not commit", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/stall-on-return");
+    await view.navigate("http://fake/b");
+    await view.evaluate("__fake_page_load_on_history_lookup('http://fake/own')");
+    const started = view.goBack();
+    // The fake answers in order, so this resolves after it answered the
+    // history lookup: the traversal command is out and has not committed.
+    await view.evaluate("1");
+    await view.evaluate("__fake_load_event()");
+    const first = await Promise.race([
+      started.then(() => "goBack() settled", () => "goBack() rejected"),
+      view.evaluate("'goBack() still pending'"),
+    ]);
+    print({ first, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/own" });
+});
+
+// A same-document commit that reaches the runtime after it wrote a navigation
+// command, but before Chrome answered it, cannot be that command's: Chrome
+// answers a navigation before the document commits.
+test.concurrent("a commit that arrives before the navigate command is answered settles nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    await view.evaluate("__fake_replace_state_on_next_navigate('http://fake/page#spa')");
+    const started = view.navigate("http://fake/never-load");
+    const first = await Promise.race([
+      started.then(() => "navigate() settled", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ first, loading: view.loading, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    first: "navigate() still pending",
+    loading: true,
+    url: "http://fake/page#spa",
+  });
+});
+
+// Once the commit that ends a navigation has queued its title fetch, the
+// navigation is over. A second same-document commit behind it (a hashchange
+// handler rewriting the URL) is the page's own and fetches nothing.
+test.concurrent("a second same-document commit does not fetch the title again", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    // The fake counts document.title fetches only, so the difference is what
+    // the navigation below sent.
+    const before = await view.evaluate("__fake_title_fetches()");
+    await view.evaluate("__fake_replace_state_after_next_commit('http://fake/page#canonical')");
+    await view.navigate("http://fake/page#one");
+    const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
+    print({ url: view.url, titleFetches });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/page#canonical", titleFetches: 1 });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

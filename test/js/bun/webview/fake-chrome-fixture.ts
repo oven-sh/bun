@@ -52,6 +52,19 @@ let currentSessionId: string | undefined;
 // One URL the page will "replaceState" to while the next
 // Page.getNavigationHistory is being answered (see __fake_replace_state_on_history_lookup).
 let replaceStateOnHistoryLookup: string | undefined;
+// One URL the page navigates itself to while the next Page.getNavigationHistory
+// is being answered: that document commits during the lookup, and only
+// __fake_load_event() finishes it (see __fake_page_load_on_history_lookup).
+let pageLoadOnHistoryLookup: string | undefined;
+// One URL the page "replaceState"s to as the next navigation command is read,
+// before its reply: the way an event already in the pipe reaches the runtime
+// after it wrote the command (see __fake_replace_state_on_next_navigate).
+let replaceStateOnNextNavigate: string | undefined;
+// One URL the page "replaceState"s to right after the next same-document
+// commit, the way a hashchange handler canonicalizing the URL does.
+let replaceStateAfterNextCommit: string | undefined;
+// How many document.title fetches the runtime has sent: one per navigation.
+let titleFetches = 0;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
@@ -71,6 +84,25 @@ Object.assign(globalThis, {
   // document the page itself navigated to. It names no frame and no loader.
   __fake_load_event() {
     send({ method: "Page.loadEventFired", params: { timestamp: ++loads }, sessionId: currentSessionId });
+  },
+  // The page navigates itself to `url` while the runtime's next history
+  // lookup is in flight: a new document, committed but not finished.
+  __fake_page_load_on_history_lookup(url: string) {
+    pageLoadOnHistoryLookup = url;
+  },
+  // The page's own same-document commit reaches the runtime after it wrote
+  // the next navigation command and before Chrome answers it.
+  __fake_replace_state_on_next_navigate(url: string) {
+    replaceStateOnNextNavigate = url;
+  },
+  // The page's own same-document commit lands right behind the next one,
+  // the way a hashchange handler that rewrites the URL produces.
+  __fake_replace_state_after_next_commit(url: string) {
+    replaceStateAfterNextCommit = url;
+  },
+  // How many document.title fetches the runtime has sent so far.
+  __fake_title_fetches() {
+    return titleFetches;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -108,8 +140,11 @@ let historyIndex = -1;
 const documentOf = (url: string) => url.split("#")[0];
 const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
 // A URL with "never-load" in it starts loading and never commits, the way a
-// server that accepts the connection and then says nothing looks.
+// server that accepts the connection and then says nothing looks. One with
+// "stall-on-return" loads when navigated to, but a history traversal back to
+// it starts and never commits.
 const neverLoads = (url: string) => url.includes("never-load");
+const stallsOnReturn = (url: string) => url.includes("stall-on-return");
 
 function replaceState(url: string) {
   if (historyIndex >= 0) history[historyIndex].url = url;
@@ -118,6 +153,21 @@ function replaceState(url: string) {
     params: { frameId: "F", url, navigationType: "historyApi" },
     sessionId: currentSessionId,
   });
+}
+
+// The page navigates itself to a new document (a link, `location.href = ...`):
+// its own loader and commit. __fake_load_event() finishes it.
+function pageLoad(url: string) {
+  const event = (method: string, params: unknown) => send({ method, params, sessionId: currentSessionId });
+  loads++;
+  if (!noStartedNavigating) {
+    const started = { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" };
+    event("Page.frameStartedNavigating", started);
+  }
+  history.length = historyIndex + 1;
+  history.push({ id: ++entries, url });
+  historyIndex = history.length - 1;
+  event("Page.frameNavigated", { frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" } });
 }
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
@@ -138,6 +188,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const commit = (url: string, sameDocument: boolean) => {
     if (sameDocument) {
       event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
+      if (replaceStateAfterNextCommit !== undefined) {
+        replaceState(replaceStateAfterNextCommit);
+        replaceStateAfterNextCommit = undefined;
+      }
       return;
     }
     const fragment = fragmentOf(url);
@@ -162,6 +216,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      if (replaceStateOnNextNavigate !== undefined) {
+        replaceState(replaceStateOnNextNavigate);
+        replaceStateOnNextNavigate = undefined;
+      }
       // A #fragment target of the current document keeps that document.
       const current = history[historyIndex]?.url;
       const sameDocument =
@@ -178,12 +236,21 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       commit(params.url, sameDocument);
       return;
     }
-    case "Page.getNavigationHistory":
+    case "Page.getNavigationHistory": {
       if (replaceStateOnHistoryLookup !== undefined) {
         replaceState(replaceStateOnHistoryLookup);
         replaceStateOnHistoryLookup = undefined;
       }
-      return reply({ currentIndex: historyIndex, entries: history });
+      // The page's own navigation commits while the lookup is in flight: a
+      // new document, still loading. The reply describes the history the
+      // browser read before that commit.
+      const snapshot = { currentIndex: historyIndex, entries: history.map(entry => ({ ...entry })) };
+      if (pageLoadOnHistoryLookup !== undefined) {
+        pageLoad(pageLoadOnHistoryLookup);
+        pageLoadOnHistoryLookup = undefined;
+      }
+      return reply(snapshot);
+    }
     case "Page.navigateToHistoryEntry": {
       const target = history.findIndex(entry => entry.id === params.entryId);
       if (target === -1) return reply({});
@@ -192,7 +259,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       startNavigating(url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
       if (!sameDocument) loads++;
       reply({});
-      if (neverLoads(url)) return;
+      if (neverLoads(url) || stallsOnReturn(url)) return;
       historyIndex = target;
       commit(url, sameDocument);
       return;
@@ -201,6 +268,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
       if (params.expression === "document.title") {
+        titleFetches++;
         if (noTitleReply) return;
         return reply({ result: { type: "string", value: "fake chrome" } });
       }

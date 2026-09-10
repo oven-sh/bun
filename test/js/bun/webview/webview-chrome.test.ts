@@ -174,7 +174,10 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+//
+// Chrome refuses to start as root (containers) without --no-sandbox.
+const chromeArgv: string[] = process.platform !== "win32" && process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+const chrome = { type: "chrome" as const, url: false as const, argv: chromeArgv };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -571,7 +574,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -603,7 +606,7 @@ it("chrome: a new WebView respawns Chrome after the previous one died", async ()
       bunExe(),
       "-e",
       `
-        const backend = {type:"chrome", url:false};
+        const backend = {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}};
         const first = new Bun.WebView({ backend, width: 200, height: 200 });
         await first.navigate("data:text/html,<body>first</body>");
         const pending = first.evaluate("new Promise(() => {})");
@@ -748,7 +751,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -788,7 +791,11 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({
+    backend: { type: "chrome", path: chromePath, argv: chromeArgv },
+    width: 200,
+    height: 200,
+  });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -803,7 +810,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: [...${JSON.stringify(chromeArgv)}, "--user-agent=BunWebViewTest/1.0"] },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1029,10 +1036,150 @@ it("chrome: onNavigated fires with committed URL", async () => {
   view.onNavigated = (url: string) => urls.push(url);
   const url = html("<body>test</body>");
   await view.navigate(url);
-  // Page.frameNavigated fires before loadEventFired; the callback runs
-  // inside onData before the promise microtask.
+  // The callback runs when the load completes, inside onData, before the
+  // navigate() promise's microtask.
   expect(urls.length).toBeGreaterThanOrEqual(1);
   expect(urls[urls.length - 1]).toContain("data:text/html");
+});
+
+// A local server for the navigation-event tests below: http:// pages get
+// real history entries, fragments, subframes and the back-forward cache,
+// which data: URLs do not exercise the same way.
+function navServer() {
+  const page = (body: string) => new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/outer") return page('<title>outer</title><iframe src="/inner"></iframe>');
+      if (path === "/inner") return page("<title>inner</title>inner");
+      return page(`<title>T${path}</title><body>${path}</body>`);
+    },
+  });
+  return { server, base: `http://127.0.0.1:${server.port}`, [Symbol.dispose]: () => void server.stop(true) };
+}
+
+it("chrome: onNavigated receives (url, title) once per main-frame load; subframes do not count", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const seen: [string, string][] = [];
+  view.onNavigated = (url: string, title: string) => seen.push([url.replace(srv.base, ""), title]);
+  await view.navigate(srv.base + "/outer");
+  // The <iframe src=/inner> commits its own Page.frameNavigated (with a
+  // parentId). It must neither fire the callback nor replace view.url.
+  expect(seen).toEqual([["/outer", "outer"]]);
+  expect(view.url).toBe(srv.base + "/outer");
+  expect(view.title).toBe("outer");
+});
+
+it("chrome: view.url keeps the #fragment", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/page#frag");
+  // Chrome reports the fragment in frame.urlFragment, separate from frame.url.
+  expect(view.url).toBe(srv.base + "/page#frag");
+  expect(await view.evaluate("location.href")).toBe(srv.base + "/page#frag");
+});
+
+it("chrome: a failed navigate() reports one failure and no navigation, and leaves view.url alone", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/before");
+  const events: string[] = [];
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  // Port 9 is on Chrome's unsafe-port list: fails before any connection.
+  await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
+  // Chrome then commits its internal error page (chrome-error://chromewebdata/)
+  // and fires its load event. Round-trip an evaluate so those events have
+  // arrived: neither may surface as a navigation or as a second failure.
+  await view.evaluate("1");
+  expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT"]);
+  expect(view.url).toBe(srv.base + "/before");
+  expect(view.title).toBe("T/before");
+  expect(view.loading).toBe(false);
+});
+
+it("chrome: a navigation the page starts and that fails fires onNavigationFailed", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/start");
+  const events: string[] = [];
+  const failed = Promise.withResolvers<void>();
+  view.onNavigated = (url: string) => events.push("navigated:" + url);
+  view.onNavigationFailed = (err: Error) => {
+    events.push("failed:" + err.message);
+    failed.resolve();
+  };
+  await view.evaluate("setTimeout(() => { location.href = 'http://127.0.0.1:9/gone'; }, 0), 0");
+  await failed.promise;
+  expect(events).toEqual(["failed:Navigation to http://127.0.0.1:9/gone failed"]);
+  expect(view.url).toBe(srv.base + "/start");
+  // reload() reloads the URL that failed, which fails again: it rejects
+  // instead of resolving on the error page's load event.
+  await expect(view.reload()).rejects.toThrow("Navigation to http://127.0.0.1:9/gone failed");
+  expect(events).toEqual([
+    "failed:Navigation to http://127.0.0.1:9/gone failed",
+    "failed:Navigation to http://127.0.0.1:9/gone failed",
+  ]);
+});
+
+it("chrome: same-document navigations settle and update view.url", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/doc");
+  const seen: [string, string][] = [];
+  view.onNavigated = (url: string, title: string) => seen.push([url.replace(srv.base, ""), title]);
+
+  // Only the fragment differs: Chrome answers Page.navigate and then sends
+  // Page.navigatedWithinDocument, never Page.loadEventFired.
+  await view.navigate(srv.base + "/doc#section");
+  expect(view.url).toBe(srv.base + "/doc#section");
+  expect(view.loading).toBe(false);
+
+  // history.pushState from the page: view.url follows and onNavigated fires.
+  await view.evaluate("history.pushState({}, '', '/pushed?x=1#h'), 0");
+  expect(view.url).toBe(srv.base + "/pushed?x=1#h");
+
+  // Back across the pushState entry is a same-document history traversal.
+  await view.goBack();
+  expect(view.url).toBe(srv.base + "/doc#section");
+  expect(await view.evaluate("location.pathname + location.hash")).toBe("/doc#section");
+  await view.goForward();
+  expect(view.url).toBe(srv.base + "/pushed?x=1#h");
+
+  expect(seen).toEqual([
+    ["/doc#section", "T/doc"],
+    ["/pushed?x=1#h", "T/doc"],
+    ["/doc#section", "T/doc"],
+    ["/pushed?x=1#h", "T/doc"],
+  ]);
+});
+
+it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/a#top");
+  await view.navigate(srv.base + "/b");
+  const seen: [string, string][] = [];
+  view.onNavigated = (url: string, title: string) => seen.push([url.replace(srv.base, ""), title]);
+  // Chrome restores /a from its back-forward cache: Page.frameNavigated
+  // arrives with type "BackForwardCacheRestore" and no load event follows.
+  // (If this Chrome build decides not to cache the page, it is a regular
+  // load and the expectations are the same.)
+  await view.goBack();
+  expect(view.url).toBe(srv.base + "/a#top");
+  expect(view.title).toBe("T/a");
+  expect(view.loading).toBe(false);
+  expect(await view.evaluate("document.title")).toBe("T/a");
+  await view.goForward();
+  expect(view.url).toBe(srv.base + "/b");
+  expect(view.title).toBe("T/b");
+  expect(seen).toEqual([
+    ["/a#top", "T/a"],
+    ["/b", "T/b"],
+  ]);
 });
 
 it("chrome: press() dispatches keydown/keyup pair", async () => {
@@ -1134,7 +1281,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1194,7 +1341,7 @@ it("chrome: large evaluate result crosses the pipe", async () => {
 // resolved once per process, on the first spawn. The env var is consulted
 // right after backend.path, before $PATH and the install locations.
 const spawnWithEnv = `
-  const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: { type: "chrome", url: false, argv: ${JSON.stringify(chromeArgv)} }, width: 200, height: 200 });
   await view.navigate("data:text/html,<body>env</body>");
   console.log(await view.evaluate("document.body.textContent"));
   view.close();

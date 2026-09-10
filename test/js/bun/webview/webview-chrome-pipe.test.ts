@@ -199,8 +199,8 @@ test.concurrent("close() rejects a held navigate() catchably and a floating one 
 // The browser dying (instead of close()) rejects the same internal
 // constructor-url promise; that must be quiet too. A floating user promise
 // is the opposite: a crash is not a requested teardown, so its rejection
-// must stay loud. --no-title-reply keeps the Navigate slot pending past
-// onNavigated, like a real browser whose title fetch has not come back yet.
+// must stay loud. --no-title-reply keeps the Navigate slot pending past the
+// load event, like a real browser whose title fetch has not come back yet.
 test.concurrent(
   "a browser death is quiet for the constructor url promise and loud for a floating evaluate",
   async () => {
@@ -213,7 +213,7 @@ test.concurrent(
       height: 100,
       url: "http://fake/initial",
     });
-    await new Promise(resolve => { view.onNavigated = resolve; });
+    await new Promise(resolve => view.addEventListener("Page.loadEventFired", resolve, { once: true }));
     view.evaluate("__fake_exit(3)"); // floating: a crash rejection must stay loud
     const deadline = Date.now() + 5000;
     while (unhandled.length === 0 && Date.now() < deadline) await Bun.sleep(10);

@@ -478,6 +478,9 @@ public:
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
     void rejectAllAndMarkDead(const WTF::String& reason);
+    void onFrameNavigated(JSWebView*, std::span<const char> params);
+    void onNavigatedWithinDocument(JSWebView*, std::span<const char> params);
+    void finishNavigation(JSWebView*);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);
 

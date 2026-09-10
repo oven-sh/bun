@@ -128,12 +128,12 @@ test.concurrent.each([
 
     mock.completeLoads = false;
     const committed = Promise.withResolvers();
-    view.onNavigated = () => committed.resolve();
+    view.addEventListener("Page.frameNavigated", () => committed.resolve(), { once: true });
     let outcome = "pending";
     ${startOp}.then(() => (outcome = "resolved"), e => (outcome = "rejected: " + e.message));
-    // onNavigated fires on Page.frameNavigated, which the mock sends after
-    // the op's own reply, so by now the backend has consumed that reply and
-    // only the promise slot is waiting (for a load event that never comes).
+    // The mock sends Page.frameNavigated after the op's own reply, so by now
+    // the backend has consumed that reply and only the promise slot is
+    // waiting (for a load event that never comes).
     await committed.promise;
 
     // A request that is still waiting for its reply. It rejects as soon as
@@ -163,8 +163,8 @@ test.concurrent("a dropped connection rejects the committed navigation of every 
     mock.completeLoads = false;
     const committedA = Promise.withResolvers();
     const committedB = Promise.withResolvers();
-    a.onNavigated = () => committedA.resolve();
-    b.onNavigated = () => committedB.resolve();
+    a.addEventListener("Page.frameNavigated", () => committedA.resolve(), { once: true });
+    b.addEventListener("Page.frameNavigated", () => committedB.resolve(), { once: true });
     const nav = { a: "pending", b: "pending" };
     a.navigate("http://mock/a2").then(() => (nav.a = "resolved"), e => (nav.a = "rejected: " + e.message));
     b.navigate("http://mock/b2").then(() => (nav.b = "resolved"), e => (nav.b = "rejected: " + e.message));
@@ -205,7 +205,7 @@ test.concurrent.each([
 
     mock.completeLoads = false;
     const committed = Promise.withResolvers();
-    view.onNavigated = () => committed.resolve();
+    view.addEventListener("Page.frameNavigated", () => committed.resolve(), { once: true });
     const nav = view.navigate("http://mock/2").then(() => "resolved", e => "rejected: " + e.message);
     await committed.promise;
     const loadingBefore = view.loading;
@@ -258,8 +258,10 @@ const chromeInstalled =
             return new Response("<img src='/hang'>", { headers: { "content-type": "text/html" } });
           },
         });
+        // Page.frameNavigated is the commit; onNavigated would wait for the
+        // load that never finishes.
         const committed = Promise.withResolvers();
-        view.onNavigated = () => committed.resolve();
+        view.addEventListener("Page.frameNavigated", () => committed.resolve(), { once: true });
         let navigate = "pending";
         view.navigate(server.url.href).then(() => (navigate = "resolved"), e => (navigate = "rejected: " + e.message));
         await committed.promise;

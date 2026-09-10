@@ -192,7 +192,7 @@ await view.navigate("data:text/html,<h1>hello</h1>");
 await view.navigate("file:///path/to/index.html");
 ```
 
-`navigate()` resolves when the main frame's `load` event fires. After it resolves, `view.url` and `view.title` reflect the new page, and `view.loading` is `false`.
+`navigate()` resolves when the main frame's `load` event fires, or as soon as the URL changes when only the `#fragment` differs from the current page (a same-document navigation). After it resolves, `view.url` and `view.title` reflect the new page, and `view.loading` is `false`.
 
 If the navigation fails (DNS failure, connection refused, invalid URL), the promise rejects with an `Error` describing the failure.
 
@@ -222,7 +222,7 @@ view.onNavigationFailed = error => {
 };
 ```
 
-These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Set to `null` to remove.
+These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Same-document navigations by the page (`history.pushState()`, fragment changes) also update `view.url` and fire `onNavigated`. Navigations inside `<iframe>`s do not. Set to `null` to remove.
 
 ---
 

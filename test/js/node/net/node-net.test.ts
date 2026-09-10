@@ -2,6 +2,7 @@ import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1322,56 +1323,119 @@ it("passes readable / writable through to the Duplex like node (a TLSSocket is a
 });
 
 describe("Socket fd adoption", () => {
-  it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
-    const path = join(tmpdirSync(), "adopted-fd.txt");
-    const fd = fs.openSync(path, "w");
-    const socket = new Socket({ fd, readable: false, writable: true });
-    await new Promise<void>((resolve, reject) => {
-      socket.on("close", () => resolve());
-      socket.on("error", reject);
-      socket.end("hello");
-    });
-    expect(fs.readFileSync(path, "utf8")).toBe("hello");
-    // Sync fd writes must feed the byte counters (no native handle to do it).
-    expect(socket._bytesDispatched).toBe(5);
-    // The adopted fd must be released on destroy (node closes the wrapping
-    // libuv handle in the equivalent path).
-    expect(() => fs.fstatSync(fd)).toThrow();
+  // A named pipe with both ends open in this process: the non-blocking read end
+  // is opened first so opening the write end does not block. The other fd kind
+  // node's `new Socket({ fd })` accepts besides TCP sockets is a pipe.
+  function openFifo(name: string) {
+    const path = join(tmpdirSync(), name);
+    execFileSync("mkfifo", [path]);
+    const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const wfd = fs.openSync(path, "w");
+    return { rfd, wfd };
+  }
+  // Everything the (non-blocking) read end has right now; "" at EOF or when empty.
+  function drain(rfd: number) {
+    const chunk = Buffer.alloc(256);
+    let out = "";
+    for (;;) {
+      let n: number;
+      try {
+        n = fs.readSync(rfd, chunk);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EAGAIN") break;
+        throw e;
+      }
+      if (n === 0) break;
+      out += chunk.toString("utf8", 0, n);
+    }
+    return out;
+  }
+  function fstatCode(fd: number) {
+    try {
+      fs.fstatSync(fd);
+      return "open";
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code;
+    }
+  }
+
+  it.skipIf(isWindows)("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
+    const { rfd, wfd } = openFifo("adopted.fifo");
+    try {
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      await new Promise<void>((resolve, reject) => {
+        socket.on("close", () => resolve());
+        socket.on("error", reject);
+        socket.end("hello");
+      });
+      expect(drain(rfd)).toBe("hello");
+      // Sync fd writes must feed the byte counters (no native handle to do it).
+      expect(socket._bytesDispatched).toBe(5);
+      // The adopted fd must be released on destroy (node closes the wrapping
+      // libuv handle in the equivalent path).
+      expect(fstatCode(wfd)).toBe("EBADF");
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // Node's createHandle() wraps PIPE and TCP fds only; a regular file is
+  // ERR_INVALID_FD_TYPE there (process.stdout over a file is a SyncWriteStream,
+  // not a net.Socket).
+  it("rejects a regular-file fd with ERR_INVALID_FD_TYPE, like node", () => {
+    const fd = fs.openSync(join(tmpdirSync(), "not-a-pipe.txt"), "w");
+    try {
+      let error: any;
+      try {
+        new Socket({ fd, readable: false, writable: true });
+      } catch (e) {
+        error = e;
+      }
+      expect({ code: error?.code, message: error?.message }).toEqual({
+        code: "ERR_INVALID_FD_TYPE",
+        message: "Unsupported fd type: FILE",
+      });
+      expect(fstatCode(fd)).toBe("open");
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 
   // node wraps a piped stdout/stderr exactly this way (new Socket({ fd, readable:
   // false, writable: true })). The readable side must start out finished without
   // an 'end' event; emitting one let allowHalfOpen=false end the writable side,
   // destroy the socket and close the fd one tick after construction.
-  it("readable: false leaves the writable side and the adopted fd open", async () => {
-    const path = join(tmpdirSync(), "adopted-write-only.txt");
-    const fd = fs.openSync(path, "w");
-    const socket = new Socket({ fd, readable: false, writable: true });
-    const events: string[] = [];
-    for (const name of ["end", "finish", "close"]) socket.on(name, () => events.push(name));
-    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
-
-    // The teardown being guarded against ran purely on process.nextTick
-    // (end -> finish -> destroy -> close), so two immediate turns are past it.
-    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
-    expect(events).toEqual([]);
-    expect(socket.destroyed).toBe(false);
-    expect(fs.fstatSync(fd).isFile()).toBe(true);
-    expect([socket.readable, socket.readableEnded, socket.writable]).toEqual([false, true, true]);
-
-    await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
-    const closed = once(socket, "close");
-    socket.end();
-    await closed;
-    expect(events).toEqual(["finish", "close"]);
-    expect(fs.readFileSync(path, "utf8")).toBe("late");
-    let closeError: NodeJS.ErrnoException | undefined;
+  it.skipIf(isWindows)("readable: false leaves the writable side and the adopted fd open", async () => {
+    const { rfd, wfd } = openFifo("write-only.fifo");
     try {
-      fs.fstatSync(fd);
-    } catch (e) {
-      closeError = e as NodeJS.ErrnoException;
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      for (const name of ["end", "finish", "close"]) socket.on(name, () => events.push(name));
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+
+      // The teardown being guarded against ran purely on process.nextTick
+      // (end -> finish -> destroy -> close), so two immediate turns are past it.
+      await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+      expect({
+        events,
+        destroyed: socket.destroyed,
+        fd: fstatCode(wfd),
+        flags: [socket.readable, socket.readableEnded, socket.writable],
+      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true] });
+
+      await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
+      expect(drain(rfd)).toBe("late");
+      const closed = once(socket, "close");
+      socket.end();
+      await closed;
+      expect({ events, fd: fstatCode(wfd), eof: drain(rfd) }).toEqual({
+        events: ["finish", "close"],
+        fd: "EBADF",
+        eof: "",
+      });
+    } finally {
+      fs.closeSync(rfd);
     }
-    expect(closeError?.code).toBe("EBADF");
   });
 
   it("a write-only socket over the process's piped stdout keeps delivering later writes", async () => {
@@ -1424,10 +1488,9 @@ describe("Socket fd adoption", () => {
 
   // node's _writeGeneric restarts the idle timer before every write; the
   // synchronous fd write path has no handle doing that for it.
-  it("writes to an adopted fd restart the setTimeout() idle timer", async () => {
-    const path = join(tmpdirSync(), "adopted-timeout.txt");
-    const fd = fs.openSync(path, "w");
-    const socket = new Socket({ fd, readable: false, writable: true });
+  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+    const { rfd, wfd } = openFifo("timeout.fifo");
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
     try {
       const idle = 500;
       const writes: number[] = [];
@@ -1447,15 +1510,17 @@ describe("Socket fd adoption", () => {
       // a failure.) Without the restart the first one lands ~50ms after a write.
       const gaps = timeouts.map(at => at - Math.max(...writes.filter(w => w <= at)));
       expect(gaps.filter(gap => gap < idle * 0.9)).toEqual([]);
-      expect(fs.readFileSync(path, "utf8")).toBe(Buffer.alloc(20, "x").toString());
+      expect(drain(rfd)).toBe(Buffer.alloc(20, "x").toString());
     } finally {
       socket.destroy();
+      fs.closeSync(rfd);
     }
   });
 
   // node copies the options ({ ...options }) before reading fd / readable /
-  // writable, so inherited properties never adopt anything; the Duplex flags and
-  // the adoption decision must come from the same view.
+  // writable, so inherited properties never adopt anything (an own file fd
+  // would throw ERR_INVALID_FD_TYPE); the Duplex flags and the adoption
+  // decision must come from the same view.
   it("ignores fd / readable / writable that are not own properties of the options", async () => {
     const path = join(tmpdirSync(), "inherited-fd.txt");
     const fd = fs.openSync(path, "w");

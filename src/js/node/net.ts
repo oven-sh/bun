@@ -1621,7 +1621,7 @@ function Socket(options?) {
   this.on("end", onSocketEnd);
 
   if (fd !== undefined) {
-    // Adopt pipe/character-device/file fds with synchronous writes. Matches
+    // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
     // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
@@ -1640,16 +1640,15 @@ function Socket(options?) {
         // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
         throw $ERR_INVALID_FD_TYPE("UNKNOWN");
       }
+      // Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
+      if (stats.isFile()) {
+        throw $ERR_INVALID_FD_TYPE("FILE");
+      }
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
       const optionsReadable = opts.readable;
-      if (
-        stats.isFIFO() ||
-        stats.isCharacterDevice() ||
-        stats.isFile() ||
-        (stats.isSocket() && optionsReadable !== true)
-      ) {
+      if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;

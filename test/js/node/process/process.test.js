@@ -492,6 +492,53 @@ it("process.env coerces integer-like keys to string on every assignment", () => 
   }
 });
 
+it.concurrent("process.env survives a value whose toString() mutates process.env", async () => {
+  // put() ToStrings the value before it stores it, so the value's toString() runs
+  // in the middle of the store and can add or delete keys. A structure transition
+  // inside a store to an existing property is something JSC's put caches cannot
+  // model: slow_path_put_by_id asserts newStructure == oldStructure and aborts the
+  // process, release builds included. Opting out of put caching removes the abort
+  // along with the stale-value bug. Spawned because the failure is a SIGABRT.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // toString() creates the very key that the assignment then stores
+        process.env.SAME = { toString() { process.env.SAME = "inner"; return "same" } };
+        console.log("same", process.env.SAME);
+        // toString() adds a different key
+        process.env.ADD = "0";
+        process.env.ADD = { toString() { process.env.ADDED = "1"; return "add" } };
+        console.log("add", process.env.ADD, process.env.ADDED);
+        // toString() deletes a different key
+        process.env.DEL = "0";
+        process.env.DOOMED = "0";
+        process.env.DEL = { toString() { delete process.env.DOOMED; return "del" } };
+        console.log("del", process.env.DEL, String(process.env.DOOMED));
+        // Symbol.toPrimitive, from a site the JITs compile
+        const value = { [Symbol.toPrimitive]() { process.env.TMP = "1"; delete process.env.TMP; return "hot" } };
+        function write(v) { process.env.HOT = v }
+        process.env.HOT = "0";
+        for (let i = 0; i < 5000; i++) {
+          write(value);
+          if (typeof process.env.HOT !== "string") throw new Error("raw value stored at " + i);
+        }
+        console.log("hot", process.env.HOT);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "same same\nadd add 1\ndel del undefined\nhot hot\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.concurrent("process.env reads are never stale and writes always coerce across JIT tiers", async () => {
   // process.env sets ProhibitsPropertyCaching (JSEnvironmentVariableMap.h), so
   // neither reads nor writes to it may be served by an inline cache or folded by

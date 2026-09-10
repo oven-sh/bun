@@ -791,7 +791,11 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath, argv: chromeArgv }, width: 200, height: 200 });
+  await using view = new Bun.WebView({
+    backend: { type: "chrome", path: chromePath, argv: chromeArgv },
+    width: 200,
+    height: 200,
+  });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });

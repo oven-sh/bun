@@ -1253,6 +1253,49 @@ it.skipIf(isWindows)(
   60_000,
 );
 
+// node only reaches readStart() from _read(), and read(0) never calls _read once
+// the readable side has ended, so a `readable: false` client leaves the peer's
+// bytes unread. Bun's handle reads unless stopped, and pushing those bytes into
+// the ended Readable raised ERR_STREAM_PUSH_AFTER_EOF.
+it("a client dialed with readable: false never reads and keeps writing", async () => {
+  const done = Promise.withResolvers<string>();
+  const server = createServer(socket => {
+    socket.on("error", done.reject);
+    socket.setEncoding("utf8");
+    let got = "";
+    socket.on("data", chunk => {
+      got += chunk;
+      if (got.endsWith("second\n")) done.resolve(got);
+    });
+    socket.write("banner\n");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1", readable: false });
+    client.on("error", done.reject);
+    const events: string[] = [];
+    for (const name of ["data", "end", "close"]) client.on(name, () => events.push(name));
+    await once(client, "connect");
+    client.write("first\n");
+    // The banner is in flight the whole time; give the loop several turns to
+    // (wrongly) read it before the second write proves the socket still works.
+    for (let i = 0; i < 5; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    client.resume();
+    client.write("second\n");
+    expect(await done.promise).toBe("first\nsecond\n");
+    expect({ events, destroyed: client.destroyed, readable: client.readable, readableEnded: client.readableEnded }).toEqual({
+      events: [],
+      destroyed: false,
+      readable: false,
+      readableEnded: true,
+    });
+    client.destroy();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
 it("passes readable / writable through to the Duplex like node (a TLSSocket is always a full duplex)", () => {
   // Values observed under node v26.3.0.
   const a = new Socket({ readable: false });

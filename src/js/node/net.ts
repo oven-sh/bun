@@ -2342,6 +2342,9 @@ Socket.prototype.resume = function resume() {
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
+  // Nothing restarts the handle once the readable side has ended (EOF emitted,
+  // or built with `readable: false`): node only reaches readStart from _read.
+  if (this.readableEnded) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
@@ -2441,7 +2444,8 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 };
 
 Socket.prototype.read = function read(size) {
-  if (!this.connecting && !drainOnreadTail(this, true)) {
+  // See resume(): an ended readable side never restarts the handle.
+  if (!this.readableEnded && !this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
     restorePausedHold(this, this._handle);
   }
@@ -3383,7 +3387,8 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
-    const pausedBeforeConnect = self.isPaused();
+    // A socket built with `readable: false` never reads: read() cannot reach _read once the readable side has ended.
+    const pausedBeforeConnect = self.isPaused() || self.readableEnded;
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
     self.emit("connect");

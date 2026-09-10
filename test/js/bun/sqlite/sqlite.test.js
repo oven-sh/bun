@@ -1322,6 +1322,35 @@ it("empty blob", () => {
   ]);
 });
 
+it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
+  // A detached view has no backing store. It must bind the same way a live
+  // zero-length view does (and the same way node:sqlite binds it), not as NULL.
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, blob BLOB NOT NULL)");
+
+  const u8 = new Uint8Array([1, 2, 3]);
+  u8.buffer.transfer();
+  expect(u8.byteLength).toBe(0);
+  const view = new DataView(new ArrayBuffer(8));
+  structuredClone(view.buffer, { transfer: [view.buffer] });
+  expect(view.buffer.detached).toBe(true);
+
+  expect(db.query("SELECT typeof(?) AS type").get(u8)).toEqual({ type: "blob" });
+
+  const insert = db.prepare("INSERT INTO foo (id, blob) VALUES ($id, $blob)");
+  insert.run({ $id: 1, $blob: new Uint8Array(0) });
+  insert.run({ $id: 2, $blob: u8 });
+  db.run("INSERT INTO foo (id, blob) VALUES (?, ?)", [3, view]);
+
+  expect(db.query("SELECT id, typeof(blob) AS type, length(blob) AS length FROM foo ORDER BY id").all()).toEqual([
+    { id: 1, type: "blob", length: 0 },
+    { id: 2, type: "blob", length: 0 },
+    { id: 3, type: "blob", length: 0 },
+  ]);
+  expect(db.query("SELECT blob FROM foo WHERE id = 2").get()).toEqual({ blob: new Uint8Array(0) });
+  db.close();
+});
+
 it("multiple statements with a schema change", () => {
   const db = new Database(":memory:");
   db.run(

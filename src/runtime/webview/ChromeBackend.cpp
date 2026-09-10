@@ -1286,9 +1286,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
                 else
                     clientRef->groupCollapsed(g, WTF::move(scriptArgs));
             } else if (type == "groupEnd"_s) {
-                // Only groups the page opened: a stray groupEnd() must not
-                // dedent the parent's own console.group().
-                if (!view->m_consoleGroupDepth) return;
+                if (!view->m_consoleGroupDepth) return; // not the parent's own groups
                 --view->m_consoleGroupDepth;
                 clientRef->groupEnd(g, WTF::move(scriptArgs));
             } else

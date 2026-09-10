@@ -1178,13 +1178,25 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     bool alreadyFailed = !loaderId.isEmpty() && loaderId == view->m_chromeFailedLoaderId;
     // Page.navigate's reply named the loader it started; reload() and a traversal go by state alone.
     bool expectedLoader = view->m_chromeNavigationLoaderId.isEmpty() || view->m_chromeNavigationLoaderId == loaderId;
+    // Another document took the commit navigate() was waiting for, so its own loader will not commit.
+    bool interrupted = !expectedLoader && !alreadyFailed && view->m_pendingNavigate
+        && view->m_chromeNavigationKind == ChromeNavigationKind::CrossDocument && !view->m_chromeNavigationCommitted;
     if (!alreadyFailed && expectedLoader && commitIsNavigations(view)) {
         view->m_chromeNavigationCommitted = true;
         view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
     }
 
-    // unreachableUrl: this is Chrome's error page for a load that failed. view.url keeps the last real page.
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
+    if (interrupted) {
+        // Chrome normally answers a dropped Page.navigate with errorText first; this is the backstop, so no hang.
+        auto other = WTF::String::fromUTF8(unreachable.empty() ? jsonString(jsonField(frame, { "url", 3 })) : unreachable);
+        navigationConsumed(view);
+        view->m_chromeNavigationLoaderId = WTF::String();
+        settleFailure(m_global, view, PendingSlot::Navigate, Method::PageNavigate,
+            createError(m_global, makeString("Navigation interrupted by another one to "_s, other)));
+    }
+
+    // unreachableUrl: this is Chrome's error page for a load that failed. view.url keeps the last real page.
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
         // Reported once the error page has loaded and the tab takes commands again.

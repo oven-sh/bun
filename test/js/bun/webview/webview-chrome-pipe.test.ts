@@ -174,6 +174,29 @@ test.concurrent("a load event from a document the view did not ask for settles n
   });
 });
 
+// Chrome answered Page.navigate with a loaderId, but a document under another
+// loader committed instead: the page's own navigation won the frame and ours
+// will never commit. Chrome normally reports that with errorText first; when
+// it does not, navigate() must still settle, as a failure, and not hang.
+test.concurrent("a navigate() whose commit another document takes rejects instead of hanging", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const failures = [];
+    view.onNavigationFailed = e => failures.push(e.message);
+    const started = outcome(view.navigate("http://fake/never-load"));
+    await view.evaluate("__fake_page_load('http://fake/winner')");
+    print({ navigate: await started, failures, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    navigate: { rejected: "Navigation interrupted by another one to http://fake/winner" },
+    failures: ["Navigation interrupted by another one to http://fake/winner"],
+    url: "http://fake/winner",
+    loading: false,
+  });
+});
+
 // goBack() fills the slot and then looks the history entry up before it asks
 // Chrome to traverse. A same-document commit of the page's own that lands
 // during the lookup is not the traversal and must not settle the promise.

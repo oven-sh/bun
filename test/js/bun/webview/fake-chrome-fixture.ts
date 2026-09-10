@@ -87,6 +87,12 @@ Object.assign(globalThis, {
   __fake_page_load_on_history_lookup(url: string) {
     pageLoadOnHistoryLookup = url;
   },
+  // The page navigates itself to `url` and that document commits and loads,
+  // the way a `location.href = ...` that wins the frame does.
+  __fake_page_load(url: string) {
+    pageLoad(url);
+    event("Page.loadEventFired", { timestamp: loads });
+  },
   // The page navigates itself to `url` (a link, `location.href = ...`) and
   // the load fails: Chrome's error page commits in its place and loads.
   __fake_page_load_fails(url: string) {

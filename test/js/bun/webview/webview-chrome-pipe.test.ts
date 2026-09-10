@@ -156,6 +156,23 @@ test.concurrent("operations issued while the view attaches all complete", async 
   });
 });
 
+// The constructor's `url` navigation is the chain-starting operation a
+// user never sees a promise for. The next operation has to wait behind
+// it like behind an explicit navigate(): the fake reports which page it
+// had committed when the evaluate reached it.
+test.concurrent("an operation right after new Bun.WebView({ url }) waits behind the constructor navigation", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({ backend, width: 100, height: 100, url: "http://fake/ctor" });
+    const urlWhenTheEvaluateRan = await outcome(view.evaluate("__fake_url()"));
+    print({ urlWhenTheEvaluateRan, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    urlWhenTheEvaluateRan: { resolved: "http://fake/ctor" },
+    url: "http://fake/ctor",
+  });
+});
+
 // Target.attachToTarget answers one reply before Page.enable, so there
 // is a window where the view has a session id and an unfinished chain.
 // An operation started in that window still goes out behind the ones

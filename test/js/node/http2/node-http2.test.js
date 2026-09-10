@@ -6058,7 +6058,7 @@ it("a client session constructor that throws drops the socket it was connecting"
         req.setEncoding("utf8");
         req.on("data", chunk => (body += chunk));
         req.on("end", () => {
-          console.log(JSON.stringify({ thrown, reads, listenerCalls, body }));
+          console.log(JSON.stringify({ thrown, reads, listenerCalls, lateDestroyed: late.destroyed, body }));
           client.close();
           server.close();
         });
@@ -6092,6 +6092,7 @@ it("a client session constructor that throws drops the socket it was connecting"
       thrown: ["ERR_HTTP2_INVALID_SETTING_VALUE", "boom", "ERR_HTTP2_INVALID_SETTING_VALUE"],
       reads: 3,
       listenerCalls: 0,
+      lateDestroyed: true,
       body: "ok",
     },
     stderr: "",

@@ -612,14 +612,14 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
   };
 
   async function run(inject: (s: Scenario) => void | Promise<void>) {
-    const server = tls.createServer(COMMON_CERT_);
-    server.on("secureConnection", s => s.on("error", () => {}));
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const serverSecure = once(server, "secureConnection") as Promise<[TLSSocket]>;
-
     let toClient: net.Socket | undefined;
     let toServer: net.Socket | undefined;
+    let raw: net.Socket | undefined;
+    let client: TLSSocket | undefined;
+    let serverSocket: TLSSocket | undefined;
     let appendOnce: Buffer | undefined;
+    const server = tls.createServer(COMMON_CERT_);
+    server.on("secureConnection", s => s.on("error", () => {}));
     const proxy = net.createServer(c => {
       toClient = c;
       toServer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
@@ -635,23 +635,25 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
       c.on("error", () => {});
       toServer.on("error", () => {});
     });
-    await once(proxy.listen(0, "127.0.0.1"), "listening");
-
-    const raw = net.connect((proxy.address() as AddressInfo).port, "127.0.0.1");
-    await once(raw, "connect");
-    const client = tls.connect({ socket: new SocketProxy(raw), rejectUnauthorized: false });
-    // Settle on whichever comes first: the 'error' (expected), or a 'close'
-    // with no 'error' before it (the bug). Node emits no 'close' at all here.
-    const outcome = new Promise<{ event: string; code?: string; library?: string }>(resolve => {
-      client.once("error", (err: NodeJS.ErrnoException & { library?: string }) =>
-        resolve({ event: "error", code: err.code, library: err.library }),
-      );
-      client.once("close", () => resolve({ event: "close" }));
-    });
-    await once(client, "secureConnect");
-    const [serverSocket] = await serverSecure;
-
     try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const serverSecure = once(server, "secureConnection") as Promise<[TLSSocket]>;
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+      raw = net.connect((proxy.address() as AddressInfo).port, "127.0.0.1");
+      await once(raw, "connect");
+      client = tls.connect({ socket: new SocketProxy(raw), rejectUnauthorized: false });
+      // Settle on whichever comes first: the 'error' (expected), or a 'close'
+      // with no 'error' before it (the bug). Node emits no 'close' at all here.
+      const outcome = new Promise<{ event: string; code?: string; library?: string }>(resolve => {
+        client!.once("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+          resolve({ event: "error", code: err.code, library: err.library }),
+        );
+        client!.once("close", () => resolve({ event: "close" }));
+      });
+      await once(client, "secureConnect");
+      [serverSocket] = await serverSecure;
+
       await inject({
         toClient: toClient!,
         toServer: toServer!,

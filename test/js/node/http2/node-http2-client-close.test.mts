@@ -66,7 +66,9 @@ function rawH2Server(): net.Server {
 }
 
 function listen(server: net.Server): Promise<number> {
-  return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)));
+  return new Promise(resolve =>
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+  );
 }
 
 describe("ClientHttp2Stream.close(code) event sequence after data", () => {

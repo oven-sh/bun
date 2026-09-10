@@ -526,22 +526,17 @@ static void appendEscapedPatternStringForCharacters(StringBuilder& result, std::
     if (result.hasOverflowed()) [[unlikely]]
         return;
 
-    // An escape adds a character, so the result is never shorter than the input.
-    // A capacity above String::MaxLength cannot be reserved, and the appends
-    // below record that overflow.
-    auto requiredCapacity = static_cast<uint64_t>(result.length()) + characters.size();
-    if (requiredCapacity <= String::MaxLength)
-        result.reserveCapacity(static_cast<unsigned>(requiredCapacity));
+    // The result is at least this long. A capacity past String::MaxLength records the overflow here.
+    result.reserveCapacity(saturatingSum<unsigned>(result.length(), static_cast<unsigned>(characters.size())));
 
     for (auto character : characters) {
+        if (result.hasOverflowed()) [[unlikely]]
+            return;
+
         if (std::ranges::find(escapeCharacters, character) != escapeCharacters.end())
             result.append('\\');
 
         result.append(character);
-
-        // The rest of the input cannot change the outcome, and it can be long.
-        if (result.hasOverflowed()) [[unlikely]]
-            return;
     }
 }
 

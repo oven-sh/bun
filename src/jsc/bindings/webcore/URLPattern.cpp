@@ -221,8 +221,6 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             size_t slashIndex = baseURLPath.reverseFind('/');
 
             if (slashIndex != notFound) {
-                // The base path and the pathname are each below String::MaxLength,
-                // but their sum does not have to be.
                 auto joined = tryMakeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
 
                 if (joined.isNull()) [[unlikely]]

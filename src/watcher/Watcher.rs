@@ -297,10 +297,7 @@ impl Watcher {
                 false
             } else {
                 if close_descriptors && me.running.load() {
-                    let fds = me.watchlist.items_fd();
-                    for &fd in fds {
-                        let _ = bun_sys::close(fd);
-                    }
+                    close_watchlist_fds(&me.watchlist);
                 }
                 true
             }
@@ -366,12 +363,8 @@ impl Watcher {
             Ok(()) => false,
         };
 
-        // deinit and close descriptors if needed
         if self.close_descriptors.load() {
-            let fds = self.watchlist.items_fd();
-            for &fd in fds {
-                let _ = bun_sys::close(fd);
-            }
+            close_watchlist_fds(&self.watchlist);
         }
         owner_still_alive
     }
@@ -1136,5 +1129,15 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+}
+
+/// Outside kqueue a file entry may hold no descriptor (`add_file_by_path_slow`,
+/// plugin-served bundler files), so the `fd` column is optional there.
+fn close_watchlist_fds(watchlist: &WatchList) {
+    for &fd in watchlist.items_fd() {
+        if fd.is_valid() {
+            let _ = sys::close(fd);
+        }
     }
 }

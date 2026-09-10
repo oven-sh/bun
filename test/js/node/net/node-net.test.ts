@@ -1380,7 +1380,7 @@ describe("Socket fd adoption", () => {
         bunExe(),
         "-e",
         `
-          const net = require("node:net");
+          import net from "node:net";
           const s = new net.Socket({ fd: 1, readable: false, writable: true });
           const events = [];
           for (const n of ["end", "finish", "close"]) s.on(n, () => events.push(n));
@@ -1441,7 +1441,7 @@ describe("Socket fd adoption", () => {
       expect(timeouts).toEqual([]);
       // The timer is still armed from the last write and fires once it goes idle.
       await once(socket, "timeout");
-      expect(fs.readFileSync(path, "utf8")).toBe("x".repeat(20));
+      expect(fs.readFileSync(path, "utf8")).toBe(Buffer.alloc(20, "x").toString());
     } finally {
       socket.destroy();
     }

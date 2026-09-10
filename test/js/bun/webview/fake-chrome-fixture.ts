@@ -67,6 +67,11 @@ Object.assign(globalThis, {
   __fake_replace_state_on_history_lookup(url: string) {
     replaceStateOnHistoryLookup = url;
   },
+  // The load event of the document that is live, the way one arrives for a
+  // document the page itself navigated to. It names no frame and no loader.
+  __fake_load_event() {
+    send({ method: "Page.loadEventFired", params: { timestamp: ++loads }, sessionId: currentSessionId });
+  },
   // The command gets no reply, ever.
   __fake_no_reply() {
     return NO_REPLY;

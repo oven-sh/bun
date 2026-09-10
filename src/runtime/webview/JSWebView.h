@@ -109,6 +109,8 @@ public:
     // Chrome: from the first Page.navigate reply. Subframe events are ignored.
     WTF::String m_mainFrameId;
     ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
+    // Chrome: a main frame commit has landed since the view's last navigation command.
+    bool m_chromeNavigationCommitted = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

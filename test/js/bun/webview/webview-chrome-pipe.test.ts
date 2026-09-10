@@ -167,6 +167,30 @@ test.concurrent("a navigate() started from onNavigated of the page's own commit 
   expect(result).toEqual({ loading: true, first: "navigate() still pending" });
 });
 
+// Page.loadEventFired names no frame and no loader, so it is the load event
+// of whatever document is live. A document the page navigated to on its own
+// can finish loading after navigate() was called and before the navigation
+// commits. That load event is not the navigation's.
+test.concurrent("a load event from a document the view did not ask for settles nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const started = view.navigate("http://fake/never-load");
+    await view.evaluate("__fake_load_event()");
+    const first = await Promise.race([
+      started.then(() => "navigate() settled", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ first, loading: view.loading, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    first: "navigate() still pending",
+    loading: true,
+    url: "http://fake/page",
+  });
+});
+
 // goBack() fills the slot and then looks the history entry up before it asks
 // Chrome to traverse. A same-document commit of the page's own that lands
 // during the lookup is not the traversal and must not settle the promise.

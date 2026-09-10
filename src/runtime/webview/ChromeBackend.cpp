@@ -1191,6 +1191,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
         // A new document is live: its load event ends whatever the view has in flight.
+        view->m_chromeNavigationCommitted = true;
         if (view->m_chromeNavigationKind != ChromeNavigationKind::NotRequested)
             view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
 
@@ -1231,6 +1232,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // If no navigate is pending (uninitiated navigation, redirect), the
     // PageTitle handler settles a no-op and m_title still updates.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
+        // The event names no frame and no loader, so it is the load event of
+        // whatever document is live. Only a document the view's own
+        // navigation committed ends that navigation.
+        if (view->m_chromeNavigationKind != ChromeNavigationKind::NotRequested
+            && !view->m_chromeNavigationCommitted)
+            return;
         view->m_loading = false;
         sendTitleFetch(view);
         return;
@@ -1484,6 +1491,8 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
         promise->reject(vm, createError(g, "Chrome connection is not available"_s));
         return promise;
     }
+    // A fresh navigation command has committed nothing of its own yet.
+    if (ps == PendingSlot::Navigate) v->m_chromeNavigationCommitted = false;
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });

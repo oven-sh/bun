@@ -603,13 +603,12 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
-// Never null (a null String can't be an m_sessions key); empty = unusable.
-static WTF::String decodeSessionId(std::span<const char> utf8)
+// Session ids are ASCII (sidSpan relies on it). Never null; empty = unusable.
+static WTF::String decodeSessionId(std::span<const char> bytes)
 {
-    if (utf8.empty()) return WTF::emptyString();
-    auto decoded = WTF::String::fromUTF8(utf8);
-    if (decoded.isNull()) return WTF::emptyString();
-    return decoded;
+    auto chars = byteCast<Latin1Character>(bytes);
+    if (chars.empty() || !charactersAreAllASCII(chars)) return WTF::emptyString();
+    return WTF::String(chars);
 }
 
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent

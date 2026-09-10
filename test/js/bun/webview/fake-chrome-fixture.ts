@@ -39,6 +39,7 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 // produces these. One kind per run:
 //   attach-no-session-id   Target.attachToTarget answers {}
 //   attach-bad-utf8        ... answers a sessionId that is not valid UTF-8
+//   attach-non-ascii       ... answers a sessionId that is valid UTF-8 but not ASCII
 //   click-no-value         the click(selector) check answers without result.value
 //   click-huge-value       ... answers a position too large for a double (1e999)
 //   detach-no-session-id   Target.detachedFromTarget arrives with params {}
@@ -116,6 +117,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Target.attachToTarget":
       if (malformed === "attach-no-session-id") return reply({});
       if (malformed === "attach-bad-utf8") return sendInvalidSessionId({ id, result: { sessionId: BAD_SESSION_ID } });
+      if (malformed === "attach-non-ascii") return reply({ sessionId: "S\u0100" });
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });

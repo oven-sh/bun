@@ -337,10 +337,10 @@ test.concurrent("onNavigationFailed can retry navigate() immediately", async () 
 });
 
 // The browser addresses a page by the sessionId that Target.attachToTarget
-// hands back. Without a usable one the page is unreachable, so the load can
-// never finish. The reply handler used to store the sessionId whatever came
-// back and route the rest of the chain with it.
-for (const kind of ["attach-no-session-id", "attach-bad-utf8"]) {
+// hands back, and CDP session ids are ASCII. Without a usable one the page is
+// unreachable, so the load can never finish. The reply handler used to store
+// the sessionId whatever came back and route the rest of the chain with it.
+for (const kind of ["attach-no-session-id", "attach-bad-utf8", "attach-non-ascii"]) {
   test.concurrent(`an attach reply with no usable sessionId fails the navigation (${kind})`, async () => {
     const result = await runScenario(`
       const view = new Bun.WebView({

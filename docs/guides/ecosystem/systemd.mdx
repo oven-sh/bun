@@ -8,16 +8,16 @@ mode: center
 
 ---
 
-To run a Bun application as a daemon with **systemd**, create a _service file_ in `/lib/systemd/system/`.
+To run a Bun application as a daemon with **systemd**, create a _service file_ in `/etc/systemd/system/`.
 
 ```sh terminal icon="terminal"
-cd /lib/systemd/system
+cd /etc/systemd/system
 touch my-app.service
 ```
 
 ---
 
-Here is a typical service file that runs an application on system start. Use it as a template for your own service. Replace `YOUR_USER` with the name of the user to run the application as. To run as `root`, replace `YOUR_USER` with `root`, though this is not recommended for security reasons.
+Here is a typical service file that runs an application on system start. Use it as a template for your own service. Replace `YOUR_USER` with the name of the user to run the application as. To run as `root`, replace `YOUR_USER` with `root` and `/home/YOUR_USER` with `/root` (root's home directory). For security reasons, we don't recommend running as `root`.
 
 Refer to the [systemd documentation](https://www.freedesktop.org/software/systemd/man/systemd.service.html) for details on each setting.
 
@@ -25,7 +25,8 @@ Refer to the [systemd documentation](https://www.freedesktop.org/software/system
 [Unit]
 # describe the app
 Description=My App
-# start the app after the network is available
+# start the app after the network management stack has started
+# (this does not wait for the network to be up, see https://systemd.io/NETWORK_ONLINE)
 After=network.target
 
 [Service]
@@ -50,15 +51,17 @@ WantedBy=multi-user.target
 
 ---
 
-If your application starts a webserver, non-`root` users cannot listen on ports 80 or 443 by default. To permanently allow Bun to listen on these ports when run by a non-`root` user, use the following command. This step isn't necessary when running as `root`.
+If your application starts a webserver, non-`root` users cannot listen on ports 80 or 443 by default. To allow Bun to listen on these ports when run by a non-`root` user, use the following command. The command requires `sudo` permissions. This step isn't necessary when running as `root`.
 
 ```bash terminal icon="terminal"
-setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
+setcap CAP_NET_BIND_SERVICE=+eip /home/YOUR_USER/.bun/bin/bun
 ```
+
+The command attaches the capability to the `bun` binary itself. Replacing the binary, for example with `bun upgrade`, removes the capability. Re-run the command after upgrading. Alternatively, add `AmbientCapabilities=CAP_NET_BIND_SERVICE` to the `[Service]` section of the service file instead.
 
 ---
 
-With the service file configured, _enable_ the service. Once enabled, it starts automatically on reboot. This requires `sudo` permissions.
+With the service file configured, _enable_ the service. Once enabled, it starts automatically on reboot. Enabling the service requires `sudo` permissions.
 
 ```bash terminal icon="terminal"
 systemctl enable my-app
@@ -82,14 +85,14 @@ systemctl status my-app
 
 ```txt
 ● my-app.service - My App
-     Loaded: loaded (/lib/systemd/system/my-app.service; enabled; preset: enabled)
+     Loaded: loaded (/etc/systemd/system/my-app.service; enabled; preset: enabled)
      Active: active (running) since Thu 2023-10-12 11:34:08 UTC; 1h 8min ago
    Main PID: 309641 (bun)
       Tasks: 3 (limit: 503)
      Memory: 40.9M
         CPU: 1.093s
      CGroup: /system.slice/my-app.service
-             └─309641 /home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/index.ts
+             └─309641 /home/YOUR_USER/.bun/bin/bun run index.ts
 ```
 
 ---

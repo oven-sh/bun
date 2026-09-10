@@ -26,5 +26,8 @@ public:
 
     bool isEmpty();
     void drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    // Teardown: whatever was queued no longer runs (field 0 = scheduled flag, field 2 = the JS
+    // drain function). The queued callbacks go with the heap.
+    void discard(JSC::VM& vm);
 };
 }

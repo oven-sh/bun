@@ -8,6 +8,7 @@
 #include "BunStreamSource.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSReadRequest.h"
 #include "JSReadableByteStreamController.h"
 #include "JSReadableStream.h"
@@ -22,6 +23,7 @@
 #include "JSStreamsRuntime.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
+#include "ObjectBindings.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -31,7 +33,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -72,19 +73,16 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
     return nullptr;
 }
 
-// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
-// stream's controller slot in their finally step, so a tee reaction queued before that
-// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
-static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
-    if (branch->m_controllerKind != ControllerKind::Default)
+    if (!branch || branch->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
-static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
-    if (branch->m_controllerKind != ControllerKind::Byte)
+    if (!branch || branch->m_controllerKind != ControllerKind::Byte)
         return nullptr;
     return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
 }
@@ -93,7 +91,7 @@ static JSReadableByteStreamController* teeBranchByteController(JSReadableStream*
 // reader base through the two concrete classes.
 static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
 {
-    JSCell* cell = teeState->m_reader.get();
+    JSCell* cell = teeState->reader();
     if (auto* byobReader = dynamicDowncast<WebCore::JSReadableStreamBYOBReader>(cell))
         return byobReader;
     return uncheckedDowncast<WebCore::JSReadableStreamDefaultReader>(cell);
@@ -259,7 +257,7 @@ void readableStreamFulfillReadIntoRequest(JSGlobalObject* globalObject, JSReadab
 void readableStreamClearSourceBarriers(JSReadableStream* stream)
 {
     stream->m_asyncContext.clear();
-    stream->m_directUnderlyingSource.clear();
+    stream->m_directSource.clear();
 }
 
 // ReadableStreamClose(stream)
@@ -347,17 +345,17 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
             JSPromise* found = nullptr;
             switch (request->kind()) {
             case ReadRequestKind::Promise:
-                found = dynamicDowncast<JSPromise>(request->m_context.get());
+                found = dynamicDowncast<JSPromise>(request->context());
                 break;
             case ReadRequestKind::AsyncIterator:
-                if (auto* tuple = dynamicDowncast<JSC::InternalFieldTuple>(request->m_context.get())) {
+                if (auto* tuple = dynamicDowncast<JSC::InternalFieldTuple>(request->context())) {
                     if (auto* iterator = dynamicDowncast<JSReadableStreamAsyncIterator>(tuple->getInternalField(0)))
                         found = iterator->m_ongoingPromise.get();
                 }
                 break;
             case ReadRequestKind::PipeTo:
-                if (auto* op = dynamicDowncast<JSStreamPipeToOperation>(request->m_context.get()))
-                    found = op->m_promise.get();
+                if (auto* op = dynamicDowncast<JSStreamPipeToOperation>(request->context()))
+                    found = op->promise();
                 break;
             default:
                 break;
@@ -372,7 +370,7 @@ void readableStreamError(JSGlobalObject* globalObject, JSReadableStream* stream,
         WTF::Locker locker { byobReader->cellLock() };
         for (auto& request : byobReader->m_readIntoRequests) {
             if (request->kind() == ReadIntoRequestKind::Promise) {
-                if (auto* promise = dynamicDowncast<JSPromise>(request->m_context.get())) {
+                if (auto* promise = dynamicDowncast<JSPromise>(request->context())) {
                     awaited = promise;
                     break;
                 }
@@ -422,7 +420,12 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     case ControllerKind::None:
         if (stream->m_bunMode == BunStreamMode::NativePending)
             sourceCancelPromise = cancelPendingNativeSource(globalObject, stream, reason);
-        else {
+        else if (auto* directSource = stream->m_directSource.get()) {
+            // DirectPending: never pulled, but the source may already hold something to release
+            // (an async-iterable body holds its iterator).
+            stream->m_bunMode = BunStreamMode::Default;
+            sourceCancelPromise = directSource->cancel(globalObject, stream, reason);
+        } else {
             stream->m_bunMode = BunStreamMode::Default;
             sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         }
@@ -433,25 +436,9 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     case ControllerKind::Byte:
         sourceCancelPromise = byteControllerOf(stream)->cancelSteps(globalObject, reason);
         break;
-    case ControllerKind::Direct: {
-        auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        controller->onClose(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        // readableStreamClose above already moved the stream out of Readable, so onClose
-        // early-returned; a direct read still pending on the controller settles as done here
-        // (a canceled read resolves with { value: undefined, done: true }).
-        if (auto* pendingRead = controller->m_pendingRead.get()) {
-            controller->m_pendingRead.clear();
-            JSObject* doneResult = createIteratorResultObject(globalObject, jsUndefined(), true);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            pendingRead->fulfill(vm, doneResult);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        controller->m_closed = true;
-        directStreamControllerClearSource(controller);
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+    case ControllerKind::Direct:
+        sourceCancelPromise = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->cancelSteps(globalObject, reason);
         break;
-    }
     case ControllerKind::NativeSink: {
         auto* sinkController = stream->m_controller.get();
         JSValue closeFunction = sinkController->getIfPropertyExists(globalObject, builtinNames(vm).closePublicName());
@@ -876,88 +863,65 @@ JSReadableStream* readableStreamFromIterable(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = WebCore::JSStreamFromIterableContext::create(vm, runtime->fromIterableContextStructure(domGlobalObject));
-    context->m_iterator.set(vm, context, asObject(iteratorRecord.iterator));
-    context->m_nextMethod.set(vm, context, iteratorRecord.nextMethod);
+    context->setIterator(vm, asObject(iteratorRecord.iterator));
+    context->setNextMethod(vm, iteratorRecord.nextMethod);
     RELEASE_AND_RETURN(scope, createReadableStream(globalObject, SourceKind::FromIterable, context, jsUndefined(), 0, nullptr));
 }
 
 // ReadableStream.from's pullAlgorithm.
 JSPromise* fromIterablePullAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
-    IterationRecord iteratorRecord { context->m_iterator.get(), context->m_nextMethod.get() };
-
-    JSValue nextResult;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        nextResult = iteratorNextExported(globalObject, iteratorRecord);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
-    auto* nextPromise = promiseResolvedWith(globalObject, nextResult);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    nextPromise->performPromiseThenWithContext(vm, globalObject, runtime->onFromIterablePullFulfilled(), jsUndefined(), result, controller);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return result;
+    // Spec steps 3-4: "Let nextResult be IteratorNext(iteratorRecord). If nextResult is an abrupt
+    // completion, return a promise rejected with nextResult.[[Value]]."
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
+        IterationRecord iteratorRecord { context->iterator(), context->nextMethod() };
+        JSValue nextResult = iteratorNextExported(globalObject, iteratorRecord);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* nextPromise = promiseResolvedWith(globalObject, nextResult);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+        nextPromise->performPromiseThenWithContext(vm, globalObject, runtime->onFromIterablePullFulfilled(), jsUndefined(), result, controller);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return result;
+    });
 }
 
 // ReadableStream.from's cancelAlgorithm.
 JSPromise* fromIterableCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
-    JSObject* iterator = context->m_iterator.get();
-
-    JSValue returnMethod;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
-    if (returnMethod.isUndefinedOrNull())
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-    if (!returnMethod.isCallable()) {
-        JSObject* notCallable = createTypeError(globalObject, "The async iterator's return property must be callable"_s);
+    // Spec steps 3-4 / 6-7: GetMethod(iterator, "return") and Call(returnMethod, ...) are completion
+    // records; an abrupt one is "return a promise rejected with [[Value]]".
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* runtime = JSStreamsRuntime::from(globalObject);
+        const auto* context = uncheckedDowncast<WebCore::JSStreamFromIterableContext>(controller->m_algorithms.algorithmContext.get());
+        JSObject* iterator = context->iterator();
+        JSValue returnMethod = iterator->get(globalObject, vm.propertyNames->returnKeyword);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, notCallable));
-    }
-
-    JSValue returnResult;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (returnMethod.isUndefinedOrNull())
+            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        if (!returnMethod.isCallable()) {
+            throwTypeError(globalObject, scope, "The async iterator's return property must be callable"_s);
+            return nullptr;
+        }
         auto callData = JSC::getCallData(returnMethod);
         MarkedArgumentBuffer args;
         args.append(reason);
         ASSERT(!args.hasOverflowed());
-        returnResult = JSC::call(globalObject, returnMethod, callData, iterator, args);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-            RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-        }
-    }
-    auto* returnPromise = promiseResolvedWith(globalObject, returnResult);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    returnPromise->performPromiseThenWithContext(vm, globalObject, runtime->onFromIterableCancelFulfilled(), jsUndefined(), result, controller);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return result;
+        JSValue returnResult = JSC::call(globalObject, returnMethod, callData, iterator, args);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* returnPromise = promiseResolvedWith(globalObject, returnResult);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+        returnPromise->performPromiseThenWithContext(vm, globalObject, runtime->onFromIterableCancelFulfilled(), jsUndefined(), result, controller);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return result;
+    });
 }
 
 // The [reaction-convention] body of onFromIterablePullFulfilled(iterResult, controller).
@@ -967,15 +931,13 @@ static EncodedJSValue fromIterablePullFulfilled(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!iterResult.isObject())
         return throwVMTypeError(globalObject, scope, "The promise returned by the async iterator's next() method must fulfill with an object"_s);
-    bool done = iteratorCompleteExported(globalObject, iterResult);
+    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(iterResult), Bun::IteratorDoneValue::Skip);
     RETURN_IF_EXCEPTION(scope, {});
-    if (done) {
+    if (doneValue.toBoolean(globalObject)) {
         readableStreamDefaultControllerClose(globalObject, controller);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    JSValue value = iteratorValue(globalObject, iterResult);
-    RETURN_IF_EXCEPTION(scope, {});
     readableStreamDefaultControllerEnqueue(globalObject, controller, value);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
@@ -1023,19 +985,13 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A pull algorithm returns a promise: a throw from the read is its rejection.
+    RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         readableStreamDefaultReaderRead(globalObject, reader, readRequest);
-        if (catchScope.exception()) [[unlikely]] {
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-            if (thrown.isEmpty())
-                return nullptr;
-        }
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    }));
 }
 
 JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
@@ -1138,7 +1094,7 @@ JSPromise* defaultTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeStat
     }
     teeState->m_reading = true;
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::DefaultTee, teeState);
-    readableStreamDefaultReaderRead(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(teeState->m_reader.get()), readRequest);
+    readableStreamDefaultReaderRead(globalObject, uncheckedDowncast<JSReadableStreamDefaultReader>(teeState->reader()), readRequest);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
 }
@@ -1150,20 +1106,20 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!branch) {
         teeState->m_canceled1 = true;
-        teeState->m_reason1.set(vm, teeState, reason);
+        teeState->setReason1(vm, reason);
     } else {
         teeState->m_canceled2 = true;
-        teeState->m_reason2.set(vm, teeState, reason);
+        teeState->setReason2(vm, reason);
     }
     if ((!branch && teeState->m_canceled2) || (branch && teeState->m_canceled1)) {
-        JSArray* compositeReason = constructArrayPair(globalObject, teeState->m_reason1.get(), teeState->m_reason2.get());
+        JSArray* compositeReason = constructArrayPair(globalObject, teeState->reason1(), teeState->reason2());
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), compositeReason);
+        auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), compositeReason);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
+        resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    return teeState->m_cancelPromise.get();
+    return teeState->cancelPromise();
 }
 
 // The default-tee read request's chunk steps run as a microtask
@@ -1173,8 +1129,8 @@ static EncodedJSValue defaultTeeChunkStepsMicrotask(JSGlobalObject* globalObject
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     teeState->m_readAgain1 = false;
-    auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get());
-    auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get());
+    auto* controller1 = teeBranchDefaultController(teeState->branch1());
+    auto* controller2 = teeBranchDefaultController(teeState->branch2());
     if (!teeState->m_canceled1 && controller1) {
         readableStreamDefaultControllerEnqueue(globalObject, controller1, chunk);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1196,16 +1152,16 @@ static EncodedJSValue defaultTeeReaderClosedRejected(JSGlobalObject* globalObjec
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get())) {
+    if (auto* controller1 = teeBranchDefaultController(teeState->branch1())) {
         readableStreamDefaultControllerError(globalObject, controller1, reason);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get())) {
+    if (auto* controller2 = teeBranchDefaultController(teeState->branch2())) {
         readableStreamDefaultControllerError(globalObject, controller2, reason);
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (!teeState->m_canceled1 || !teeState->m_canceled2) {
-        resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
+        resolvePromise(globalObject, teeState->cancelPromise(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
@@ -1224,19 +1180,23 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     RETURN_IF_EXCEPTION(scope, failure);
 
     auto* teeState = WebCore::JSStreamTeeState::create(vm, runtime->teeStateStructure(domGlobalObject));
-    teeState->m_stream.set(vm, teeState, stream);
-    teeState->m_reader.set(vm, teeState, reader);
-    teeState->m_cancelPromise.set(vm, teeState, JSPromise::create(vm, globalObject->promiseStructure()));
+    teeState->setStream(vm, stream);
+    teeState->setReader(vm, reader);
+    teeState->setCancelPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
 
     auto* branch1 = createReadableStream(globalObject, SourceKind::TeeBranch, teeState, jsUndefined());
     RETURN_IF_EXCEPTION(scope, failure);
     defaultControllerOf(branch1)->m_algorithms.teeBranchIndex = 0;
-    teeState->m_branch1.set(vm, teeState, branch1);
+    teeState->setBranch1(vm, branch1);
 
     auto* branch2 = createReadableStream(globalObject, SourceKind::TeeBranch, teeState, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, failure);
+    if (scope.exception()) [[unlikely]] {
+        // branch1's start reaction is already queued: make the half-built tee inert for it.
+        teeState->m_canceled1 = teeState->m_canceled2 = true;
+        return failure;
+    }
     defaultControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
-    teeState->m_branch2.set(vm, teeState, branch2);
+    teeState->setBranch2(vm, branch2);
 
     reader->m_closedPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onDefaultTeeReaderClosedRejected(), jsUndefined(), teeState);
     RETURN_IF_EXCEPTION(scope, failure);
@@ -1262,9 +1222,9 @@ static void byteTeePullWithDefaultReader(JSC::VM& vm, JSGlobalObject* globalObje
         ASSERT(byobReader->m_readIntoRequests.isEmpty());
         readableStreamBYOBReaderRelease(globalObject, byobReader);
         RETURN_IF_EXCEPTION(scope, void());
-        auto* defaultReader = acquireReadableStreamDefaultReader(globalObject, teeState->m_stream.get());
+        auto* defaultReader = acquireReadableStreamDefaultReader(globalObject, teeState->stream());
         RETURN_IF_EXCEPTION(scope, void());
-        teeState->m_reader.set(vm, teeState, defaultReader);
+        teeState->setReader(vm, defaultReader);
         byteTeeForwardReaderError(vm, globalObject, teeState, defaultReader);
         RETURN_IF_EXCEPTION(scope, void());
         reader = defaultReader;
@@ -1284,9 +1244,9 @@ static void byteTeePullWithBYOBReader(JSC::VM& vm, JSGlobalObject* globalObject,
         ASSERT(defaultReader->m_readRequests.isEmpty());
         readableStreamDefaultReaderRelease(globalObject, defaultReader);
         RETURN_IF_EXCEPTION(scope, void());
-        auto* byobReader = acquireReadableStreamBYOBReader(globalObject, teeState->m_stream.get());
+        auto* byobReader = acquireReadableStreamBYOBReader(globalObject, teeState->stream());
         RETURN_IF_EXCEPTION(scope, void());
-        teeState->m_reader.set(vm, teeState, byobReader);
+        teeState->setReader(vm, byobReader);
         byteTeeForwardReaderError(vm, globalObject, teeState, byobReader);
         RETURN_IF_EXCEPTION(scope, void());
         reader = byobReader;
@@ -1311,7 +1271,7 @@ JSPromise* byteTeePullAlgorithm(JSGlobalObject* globalObject, JSStreamTeeState* 
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     }
     teeState->m_reading = true;
-    auto* branchStream = branch ? teeState->m_branch2.get() : teeState->m_branch1.get();
+    auto* branchStream = branch ? teeState->branch2() : teeState->branch1();
     const auto* byobRequest = readableByteStreamControllerGetBYOBRequest(globalObject, byteControllerOf(branchStream));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!byobRequest)
@@ -1335,19 +1295,18 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     teeState->m_readAgain1 = false;
     teeState->m_readAgain2 = false;
-    auto* controller1 = teeBranchByteController(teeState->m_branch1.get());
-    auto* controller2 = teeBranchByteController(teeState->m_branch2.get());
+    auto* controller1 = teeBranchByteController(teeState->branch1());
+    auto* controller2 = teeBranchByteController(teeState->branch2());
     auto* chunk1 = uncheckedDowncast<JSArrayBufferView>(chunk);
     JSArrayBufferView* chunk2 = chunk1;
     if (!teeState->m_canceled1 && !teeState->m_canceled2) {
-        JSUint8Array* cloneResult = nullptr;
+        // Spec chunk steps 3.2: "If cloneResult is an abrupt completion" error both branches and
+        // resolve cancelPromise with ReadableStreamCancel(stream, cloneResult.[[Value]]).
+        JSUint8Array* cloneResult = cloneAsUint8Array(globalObject, chunk1);
         {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            cloneResult = cloneAsUint8Array(globalObject, chunk1);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty())
-                    return {};
+            if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+                TRY_CLEAR_EXCEPTION(scope, {});
+                JSValue thrown = exception->value();
                 if (controller1) {
                     readableByteStreamControllerError(globalObject, controller1, thrown);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1356,9 +1315,9 @@ static EncodedJSValue byteTeeChunkStepsMicrotask(JSGlobalObject* globalObject, J
                     readableByteStreamControllerError(globalObject, controller2, thrown);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
-                auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), thrown);
+                auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), thrown);
                 RETURN_IF_EXCEPTION(scope, {});
-                resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
+                resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
                 RETURN_IF_EXCEPTION(scope, {});
                 return JSValue::encode(jsUndefined());
             }
@@ -1395,22 +1354,20 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
 
     teeState->m_readAgain1 = false;
     teeState->m_readAgain2 = false;
-    auto* byobBranch = forBranch2 ? teeState->m_branch2.get() : teeState->m_branch1.get();
-    auto* otherBranch = forBranch2 ? teeState->m_branch1.get() : teeState->m_branch2.get();
+    auto* byobBranch = forBranch2 ? teeState->branch2() : teeState->branch1();
+    auto* otherBranch = forBranch2 ? teeState->branch1() : teeState->branch2();
     auto* byobController = teeBranchByteController(byobBranch);
     auto* otherController = teeBranchByteController(otherBranch);
     bool byobCanceled = forBranch2 ? teeState->m_canceled2 : teeState->m_canceled1;
     bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
 
     if (!otherCanceled) {
-        JSUint8Array* clonedChunk = nullptr;
+        // Same spec step as the default-reader chunk steps: a clone failure errors both branches.
+        JSUint8Array* clonedChunk = cloneAsUint8Array(globalObject, chunk);
         {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            clonedChunk = cloneAsUint8Array(globalObject, chunk);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty())
-                    return {};
+            if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+                TRY_CLEAR_EXCEPTION(scope, {});
+                JSValue thrown = exception->value();
                 if (byobController) {
                     readableByteStreamControllerError(globalObject, byobController, thrown);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1419,9 +1376,9 @@ static EncodedJSValue byteTeeReadIntoChunkStepsMicrotask(JSGlobalObject* globalO
                     readableByteStreamControllerError(globalObject, otherController, thrown);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
-                auto* cancelResult = readableStreamCancel(globalObject, teeState->m_stream.get(), thrown);
+                auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), thrown);
                 RETURN_IF_EXCEPTION(scope, {});
-                resolvePromise(globalObject, teeState->m_cancelPromise.get(), cancelResult);
+                resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
                 RETURN_IF_EXCEPTION(scope, {});
                 return JSValue::encode(jsUndefined());
             }
@@ -1455,18 +1412,18 @@ static EncodedJSValue byteTeeReaderClosedRejected(JSGlobalObject* globalObject, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     const auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
-    if (context->getInternalField(1) != teeState->m_reader.get())
+    if (context->getInternalField(1) != teeState->reader())
         return JSValue::encode(jsUndefined());
-    if (auto* controller1 = teeBranchByteController(teeState->m_branch1.get())) {
+    if (auto* controller1 = teeBranchByteController(teeState->branch1())) {
         readableByteStreamControllerError(globalObject, controller1, reason);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (auto* controller2 = teeBranchByteController(teeState->m_branch2.get())) {
+    if (auto* controller2 = teeBranchByteController(teeState->branch2())) {
         readableByteStreamControllerError(globalObject, controller2, reason);
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (!teeState->m_canceled1 || !teeState->m_canceled2) {
-        resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
+        resolvePromise(globalObject, teeState->cancelPromise(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
@@ -1486,19 +1443,23 @@ std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSGlobalOb
     RETURN_IF_EXCEPTION(scope, failure);
 
     auto* teeState = WebCore::JSStreamTeeState::create(vm, runtime->teeStateStructure(domGlobalObject));
-    teeState->m_stream.set(vm, teeState, stream);
-    teeState->m_reader.set(vm, teeState, reader);
-    teeState->m_cancelPromise.set(vm, teeState, JSPromise::create(vm, globalObject->promiseStructure()));
+    teeState->setStream(vm, stream);
+    teeState->setReader(vm, reader);
+    teeState->setCancelPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
 
     auto* branch1 = createReadableByteStream(globalObject, SourceKind::ByteTeeBranch, teeState);
     RETURN_IF_EXCEPTION(scope, failure);
     byteControllerOf(branch1)->m_algorithms.teeBranchIndex = 0;
-    teeState->m_branch1.set(vm, teeState, branch1);
+    teeState->setBranch1(vm, branch1);
 
     auto* branch2 = createReadableByteStream(globalObject, SourceKind::ByteTeeBranch, teeState);
-    RETURN_IF_EXCEPTION(scope, failure);
+    if (scope.exception()) [[unlikely]] {
+        // branch1's start reaction is already queued: make the half-built tee inert for it.
+        teeState->m_canceled1 = teeState->m_canceled2 = true;
+        return failure;
+    }
     byteControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
-    teeState->m_branch2.set(vm, teeState, branch2);
+    teeState->setBranch2(vm, branch2);
 
     byteTeeForwardReaderError(vm, globalObject, teeState, reader);
     RETURN_IF_EXCEPTION(scope, failure);
@@ -1539,22 +1500,22 @@ JSPromise* readableStreamPipeTo(JSGlobalObject* globalObject, JSReadableStream* 
     source->m_disturbed = true;
 
     auto* operation = WebCore::JSStreamPipeToOperation::create(vm, runtime->pipeToOperationStructure(domGlobalObject));
-    operation->m_source.set(vm, operation, source);
-    operation->m_destination.set(vm, operation, destination);
-    operation->m_reader.set(vm, operation, reader);
-    operation->m_writer.set(vm, operation, writer);
+    operation->setSource(vm, source);
+    operation->setDestination(vm, destination);
+    operation->setReader(vm, reader);
+    operation->setWriter(vm, writer);
     operation->m_preventClose = preventClose;
     operation->m_preventAbort = preventAbort;
     operation->m_preventCancel = preventCancel;
     if (signal)
-        operation->m_signal.set(vm, operation, signal);
-    operation->m_promise.set(vm, operation, JSPromise::create(vm, globalObject->promiseStructure()));
+        operation->setSignal(vm, signal);
+    operation->setPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
     reader->m_pipeOperation.set(vm, reader, operation);
     writer->m_pipeOperation.set(vm, writer, operation);
 
     startPipeToOperation(globalObject, operation);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return operation->m_promise.get();
+    return operation->promise();
 }
 
 } // namespace WebStreams

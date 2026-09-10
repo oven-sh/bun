@@ -377,6 +377,27 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
       exitCode: 0,
     });
   });
+
+  test.concurrent("zlib: params() after a buffered writeSync keeps the pending input in the stream", async () => {
+    expect(
+      await run(
+        `const d = zlib.createDeflate({ level: 0 });
+         const h = d._handle;
+         const ws = d._writeState;
+         const input = Buffer.alloc(1024, 97);
+         const out1 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_NO_FLUSH, input, 0, input.length, out1, 0, out1.length);
+         const head = Buffer.from(out1.subarray(0, out1.length - ws[0]));
+         out1.buffer.transfer();
+         h.params(1, 0);
+         const out2 = Buffer.alloc(4096);
+         h.writeSync(zlib.constants.Z_FINISH, null, 0, 0, out2, 0, out2.length);
+         const tail = out2.subarray(0, out2.length - ws[0]);
+         const result = zlib.inflateSync(Buffer.concat([head, tail]));
+         console.log(head.length + " " + result.length + " " + result.equals(input));`,
+      ),
+    ).toEqual({ stdout: "2 1024 true", exitCode: 0 });
+  });
 });
 
 describe.concurrent("zlib native handle argument validation", () => {

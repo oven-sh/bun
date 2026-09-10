@@ -26,7 +26,6 @@ pub struct ClientSession {
     /// `quic.Socket` ext slot while connected (1, transferred from the registry
     /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
     /// an extra ref while DNS is in flight.
-    // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
@@ -163,8 +162,19 @@ impl ClientSession {
         false
     }
 
+    /// Unlink and free `stream`, releasing the ref `enqueue` took for it.
+    ///
+    /// That release is never the session's last one: the connection's own ref
+    /// (`ClientSession::new`'s, held by the registry and then the quic socket)
+    /// is released only by `callbacks::on_conn_close` and
+    /// `PendingConnect::fail_session`, and both empty `pending` through here
+    /// first. So the session outlives this call and `&mut self` is a sound
+    /// receiver; the release still goes through the pending entry's own
+    /// backref rather than the receiver, like every other holder's does.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
+        let session = st.session.as_ptr();
+        debug_assert!(core::ptr::eq(session, self));
         if let Some(cl) = st.client {
             client_mut(cl).h3 = None;
         }
@@ -188,8 +198,9 @@ impl ClientSession {
         // SAFETY: stream was heap-allocated by Stream::new; ownership is reclaimed
         // here. `Stream::Drop` decrements live_streams.
         unsafe { drop(bun_core::heap::take(stream)) };
-        // SAFETY: `self` is a live heap allocation produced by `new`.
-        unsafe { ClientSession::deref(self) };
+        // SAFETY: the entry held the ref taken in `enqueue`, and the session is
+        // live because this is not its last ref (see above).
+        unsafe { ClientSession::deref(session) };
     }
 
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {

@@ -62,6 +62,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) state: State<'a>,
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
 // ArgIterator is the
@@ -301,9 +302,20 @@ where
     }
 
     fn parse_next_arg(&mut self) -> Result<Option<ArgInfo<'a>>, ArgError> {
-        let Some(full_arg) = self.iter.next() else {
+        let Some(mut full_arg) = self.iter.next() else {
             return Ok(None);
         };
+        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
+        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
+        // per the contract on `ParseOptions::short_aliases`.
+        if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
+            for (from, to) in self.short_aliases {
+                if full_arg == *from {
+                    full_arg = to;
+                    break;
+                }
+            }
+        }
         if full_arg == b"--" || full_arg == b"-" {
             return Ok(Some(ArgInfo {
                 arg: full_arg,
@@ -355,6 +367,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -387,6 +400,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,

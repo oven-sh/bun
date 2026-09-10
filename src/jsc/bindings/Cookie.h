@@ -59,8 +59,6 @@ public:
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
 
-    static String serialize(JSC::VM& vm, const std::span<const Ref<Cookie>> cookies);
-
     const String& name() const { return m_name; }
 
     const String& value() const { return m_value; }

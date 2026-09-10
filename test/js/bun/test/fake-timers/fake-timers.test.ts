@@ -1,3 +1,8 @@
+import { RedisClient, SQL } from "bun";
+import { heapStats } from "bun:jsc";
+import { setSystemTime } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -128,6 +133,13 @@ describe("advanceTimersByTime", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
+
+  test.each([NaN, -1, Infinity, 2 ** 32])("advanceTimersByTime(%p) throws and does not move the clock", ms => {
+    vi.useFakeTimers({ now: 1000 });
+    expect(() => vi.advanceTimersByTime(ms)).toThrow("ms is out of range. It must be >= 0 and <= 4294967295");
+    expect(Date.now()).toBe(1000);
+    expect(performance.now()).toBe(0);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
@@ -199,6 +211,235 @@ describe("clearAllTimers", () => {
   test("throws error if fake timers not active", () => {
     expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
   });
+});
+describe("AbortSignal.timeout", () => {
+  const N = 500;
+
+  function liveAbortSignals(): number {
+    Bun.gc(true);
+    Bun.gc(true);
+    return heapStats().objectTypeCounts.AbortSignal ?? 0;
+  }
+
+  // A pending timeout signal with an abort listener is kept alive by the
+  // runtime itself (the listener has to run when the timer fires), so with no
+  // JS reference to them these wrappers live exactly as long as the runtime
+  // believes their timer is still pending. The bounds below leave room for the
+  // odd wrapper that conservative stack scanning keeps alive or lets go of.
+  function leakObservedTimeouts() {
+    for (let i = 0; i < N; i++) {
+      AbortSignal.timeout(1_000_000).addEventListener("abort", () => {});
+    }
+  }
+
+  test("pending signals stay alive while the fake heap holds their timer", () => {
+    vi.useFakeTimers();
+    const before = liveAbortSignals();
+    leakObservedTimeouts();
+    expect(vi.getTimerCount()).toBe(N);
+    expect(liveAbortSignals() - before).toBeGreaterThan(N * 0.9);
+  });
+
+  // useRealTimers() and clearAllTimers() drop the pending fake timers, so these
+  // signals can never abort anymore and nothing should keep them alive. They
+  // used to stay pinned (with their listeners) for the rest of the process.
+  test("useRealTimers() releases the signals whose timers it dropped", () => {
+    const before = liveAbortSignals();
+    vi.useFakeTimers();
+    leakObservedTimeouts();
+    vi.useRealTimers();
+    expect(liveAbortSignals() - before).toBeLessThan(N * 0.1);
+  });
+
+  test("clearAllTimers() releases the signals whose timers it cleared", () => {
+    vi.useFakeTimers();
+    const before = liveAbortSignals();
+    leakObservedTimeouts();
+    vi.clearAllTimers();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(liveAbortSignals() - before).toBeLessThan(N * 0.1);
+  });
+
+  test("a signal the program still holds is left unaborted once its fake timer is dropped", () => {
+    vi.useFakeTimers();
+    const signal = AbortSignal.timeout(1);
+    vi.useRealTimers();
+    const dependent = AbortSignal.any([signal]);
+    signal.addEventListener("abort", () => {});
+    liveAbortSignals();
+    expect({ aborted: signal.aborted, dependentAborted: dependent.aborted }).toEqual({
+      aborted: false,
+      dependentAborted: false,
+    });
+  });
+
+  test("fires through advanceTimersByTime", () => {
+    vi.useFakeTimers();
+    const signal = AbortSignal.timeout(1000);
+    const reasons: string[] = [];
+    signal.addEventListener("abort", () => reasons.push(signal.reason.name));
+    vi.advanceTimersByTime(999);
+    expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: false, reasons: [] });
+    vi.advanceTimersByTime(1);
+    expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: true, reasons: ["TimeoutError"] });
+  });
+});
+// Only the timers a test schedules itself are faked. Timeouts the runtime arms
+// for its own purposes keep running on the real clock: getTimerCount() does not
+// count them, they fire while fake timers are active, and useRealTimers(), which
+// drops every fake timer, does not disarm them.
+describe("runtime timeouts are not fake timers", () => {
+  // Outlives the 50ms timeout by a wide margin but still exits on its own, so a
+  // timeout that never fires shows up as a normal exit instead of a hang.
+  const sleepArgs = ["-e", "await Bun.sleep(3000)"];
+  const sleepingChild = () => ({
+    cmd: [bunExe(), ...sleepArgs],
+    env: bunEnv,
+    stdout: "ignore" as const,
+    stderr: "ignore" as const,
+    timeout: 50,
+    killSignal: "SIGKILL" as const,
+  });
+
+  test("Bun.spawn({ timeout }) kills the child while fake timers are active", async () => {
+    vi.useFakeTimers();
+    await using proc = Bun.spawn(sleepingChild());
+    expect(vi.getTimerCount()).toBe(0);
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: "SIGKILL" });
+  });
+
+  test("Bun.spawn({ timeout }) armed under fake timers survives useRealTimers()", async () => {
+    vi.useFakeTimers();
+    await using proc = Bun.spawn(sleepingChild());
+    vi.useRealTimers();
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: "SIGKILL" });
+  });
+
+  test("Bun.spawnSync({ timeout }) times out while fake timers are active", () => {
+    vi.useFakeTimers();
+    const result = Bun.spawnSync(sleepingChild());
+    expect({ exitedDueToTimeout: result.exitedDueToTimeout, signalCode: result.signalCode }).toEqual({
+      exitedDueToTimeout: true,
+      signalCode: "SIGKILL",
+    });
+  });
+
+  // node:child_process's sync functions hand their timeout to Bun.spawnSync.
+  test("child_process.spawnSync({ timeout }) times out while fake timers are active", () => {
+    vi.useFakeTimers();
+    const result = childProcessSpawnSync(bunExe(), sleepArgs, {
+      env: bunEnv,
+      stdio: "ignore",
+      timeout: 50,
+      killSignal: "SIGKILL",
+    });
+    expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
+  });
+
+  // Accepts connections and never answers, so only the client's own connection
+  // timeout can end a connection attempt.
+  function silentServer() {
+    const accepted = Promise.withResolvers<void>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          accepted.resolve();
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    return {
+      port: listener.port,
+      accepted: accepted.promise,
+      [Symbol.dispose]() {
+        listener.stop(true);
+      },
+    };
+  }
+
+  test.each([
+    ["postgres", "ERR_POSTGRES_CONNECTION_TIMEOUT"],
+    ["mysql", "ERR_MYSQL_CONNECTION_TIMEOUT"],
+  ])("%s connectionTimeout armed under fake timers survives useRealTimers()", async (protocol, code) => {
+    using server = silentServer();
+    vi.useFakeTimers();
+    const db = new SQL({ url: `${protocol}://user:pass@127.0.0.1:${server.port}/db`, connectionTimeout: 0.1, max: 1 });
+    try {
+      const connecting = db.connect().then(
+        () => "connected",
+        error => error.code,
+      );
+      await server.accepted;
+      const fakeTimers = vi.getTimerCount();
+      vi.useRealTimers();
+      expect(fakeTimers).toBe(0);
+      expect(await connecting).toBe(code);
+    } finally {
+      await db.close({ timeout: 0 });
+    }
+  });
+
+  test("RedisClient connectionTimeout armed under fake timers survives useRealTimers()", async () => {
+    using server = silentServer();
+    vi.useFakeTimers();
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, {
+      connectionTimeout: 100,
+      autoReconnect: false,
+    });
+    try {
+      const command = client.get("key").then(
+        () => "replied",
+        error => error.code,
+      );
+      await server.accepted;
+      const fakeTimers = vi.getTimerCount();
+      vi.useRealTimers();
+      expect(fakeTimers).toBe(0);
+      expect(await command).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
+    } finally {
+      client.close();
+    }
+  });
+});
+// Bun.cron() is mockable, so a job created under fake timers lives in the fake
+// heap, and useRealTimers() / clearAllTimers() drop it with the rest. Like a
+// dropped setInterval it has to end up stopped, rather than holding the process
+// open for a timer that can never fire.
+describe("Bun.cron() job dropped from the fake heap", () => {
+  test.each(["jest.useRealTimers()", "jest.clearAllTimers(); jest.useRealTimers()"])(
+    "does not keep the process alive after %s",
+    async drop => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { jest } = Bun.jest();
+           jest.useFakeTimers();
+           Bun.cron("* * * * *", () => {});
+           ${drop};
+           console.log("exiting");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        // A child that hangs (the bug) is killed rather than left behind.
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "exiting\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
 });
 describe("isFakeTimers", () => {
   test("returns true when fake timers are active", () => {
@@ -365,6 +606,75 @@ describe("performance.now() mocking", () => {
     expect(performance.now()).toBe(perfStart + 1500);
     expect(Date.now()).toBe(dateStart + 1500);
   });
+
+  test("performance.timeOrigin follows the fake clock", () => {
+    const realTimeOrigin = performance.timeOrigin;
+    const fakeNow = new Date("2000-01-01T00:00:00.000Z").getTime();
+    vi.useFakeTimers({ now: fakeNow });
+
+    // performance.now() restarts at 0, so the fake epoch is the origin.
+    expect(performance.now()).toBe(0);
+    expect(performance.timeOrigin).toBe(fakeNow);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+
+    vi.advanceTimersByTime(5000);
+    expect(performance.timeOrigin).toBe(fakeNow);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+
+    // setSystemTime moves Date.now() but not performance.now(), so the origin moves with it.
+    const jumped = new Date("2010-06-15T12:00:00.000Z").getTime();
+    setSystemTime(jumped);
+    expect(Date.now()).toBe(jumped);
+    expect(performance.now()).toBe(5000);
+    expect(performance.timeOrigin).toBe(jumped - 5000);
+    expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+    expect(performance.toJSON().timeOrigin).toBe(performance.timeOrigin);
+
+    vi.useRealTimers();
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+  });
+
+  test("performance.timeOrigin is not affected by setSystemTime without fake timers", () => {
+    const realTimeOrigin = performance.timeOrigin;
+    setSystemTime(new Date("2000-01-01T00:00:00.000Z"));
+    expect(new Date().getUTCFullYear()).toBe(2000);
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+    setSystemTime();
+  });
+
+  // setSystemTime() with no argument, NaN, or an Invalid Date resets Date.now()
+  // to the real clock. The origin goes back to real with it.
+  test.each([undefined, NaN, new Date(NaN)])(
+    "setSystemTime(%p) under fake timers resets performance.timeOrigin too",
+    reset => {
+      const realTimeOrigin = performance.timeOrigin;
+      const realBefore = Date.now();
+      vi.useFakeTimers({ now: 5000 });
+      expect(performance.timeOrigin).toBe(5000);
+
+      setSystemTime(reset);
+      expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+      expect(performance.timeOrigin).toBe(realTimeOrigin);
+      expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
+
+      // The next tick of the fake clock overrides Date.now() again, and the origin follows it.
+      vi.advanceTimersByTime(1000);
+      expect(Date.now()).toBe(6000);
+      expect(performance.timeOrigin).toBe(5000);
+      expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+    },
+  );
+
+  test.each([Infinity, -Infinity])("setSystemTime(%p) throws and leaves the clocks alone", ms => {
+    const realBefore = Date.now();
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+
+    vi.useFakeTimers({ now: 5000 });
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBe(5000);
+    expect(performance.timeOrigin).toBe(5000);
+  });
 });
 
 describe("useFakeTimers with options", () => {
@@ -457,5 +767,15 @@ describe("useFakeTimers with options", () => {
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
     expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  // NaN is the "no override" sentinel of the Date.now() override. A NaN clock
+  // left Date.now() real while performance.timeOrigin read NaN.
+  test.each([NaN, Infinity, -Infinity, new Date(NaN)])("useFakeTimers({ now: %p }) throws", now => {
+    const realTimeOrigin = performance.timeOrigin;
+    expect(() => vi.useFakeTimers({ now })).toThrow("'now' must be a finite number or a valid Date");
+    expect(vi.isFakeTimers()).toBe(false);
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+    expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
   });
 });

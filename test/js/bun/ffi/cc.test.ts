@@ -1,6 +1,15 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, promises as fs, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  promises as fs,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
@@ -1078,7 +1087,7 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
-describe.skipIf(isWindows || isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
+describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {
     "sentinel.txt": "sentinel-unchanged\n",
@@ -1111,7 +1120,7 @@ describe.skipIf(isWindows || isASAN)("compiler runtime header directory under BU
     return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   }
 
-  it("compiles a source that includes a compiler runtime header", async () => {
+  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir", files);
 
     const [stdout, stderr, exitCode] = await runFixture(String(dir));
@@ -1123,7 +1132,7 @@ describe.skipIf(isWindows || isASAN)("compiler runtime header directory under BU
     expect(exitCode).toBe(0);
   });
 
-  it("does not write compiler runtime headers through a symlinked entry", async () => {
+  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
     for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
       const headerDir = path.join(String(dir), name);
@@ -1139,22 +1148,162 @@ describe.skipIf(isWindows || isASAN)("compiler runtime header directory under BU
     expect(exitCode).toBe(0);
   });
 
-  it("does not place compiler runtime headers in a pre-existing group- and world-writable directory", async () => {
-    using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
-    const sharedName = `bun-cc-${process.getuid!()}`;
-    for (const name of ["bun-cc", sharedName]) {
-      const headerDir = path.join(String(dir), name);
-      mkdirSync(headerDir, { recursive: true });
-      writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
-    }
-    chmodSync(path.join(String(dir), "bun-cc"), 0o755);
-    chmodSync(path.join(String(dir), sharedName), 0o777);
+  it.skipIf(isWindows)(
+    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
+    async () => {
+      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
+      const sharedName = `bun-cc-${process.getuid!()}`;
+      for (const name of ["bun-cc", sharedName]) {
+        const headerDir = path.join(String(dir), name);
+        mkdirSync(headerDir, { recursive: true });
+        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      }
+      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
+      chmodSync(path.join(String(dir), sharedName), 0o777);
+
+      const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);
+    const fixedDir = path.join(String(dir), "bun-cc");
+    mkdirSync(fixedDir, { recursive: true });
+    writeFileSync(path.join(fixedDir, "stdbool.h"), plantedHeader);
 
     const [stdout, stderr, exitCode] = await runFixture(String(dir));
 
-    expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
-    expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+    const staged = readdirSync(String(dir)).filter(
+      name => name !== "bun-cc" && name.includes("bun-cc") && existsSync(path.join(String(dir), name, "stdbool.h")),
+    );
+    expect(staged.length).toBe(1);
+    expect(readFileSync(path.join(String(dir), staged[0], "stdbool.h"), "utf8")).toContain("_STDBOOL_H");
+    expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
+    expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
     expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The gate runs before any option is read or any C is compiled, so these do
+// not need a working TinyCC and run under ASan too. Without the gate, the
+// empty `symbols` object makes cc() fail with a plain validation error, which
+// is the control for "cc() was not blocked".
+describe.concurrent("disabling cc()", () => {
+  // `report` receives one string: the error code, or the message for an
+  // error without a code, or "no-error".
+  const probeWith = (report: string) => /* js */ `
+    const { cc } = require("bun:ffi");
+    try {
+      cc({ source: "does-not-exist.c", symbols: {} });
+      ${report}("no-error");
+    } catch (e) {
+      ${report}(e.code ?? e.message);
+    }
+  `;
+  const probe = probeWith("console.log");
+
+  async function run(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it("cc() is allowed by default", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", probe);
+    expect(stdout).toBe("Expected at least one exported symbol\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the error message names the disabled compiler", async () => {
+    const [stdout, stderr, exitCode] = await run(
+      "--no-ffi-cc",
+      "-p",
+      'require("bun:ffi").cc({ source: "does-not-exist.c", symbols: {} })',
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: Cannot compile C code because the bun:ffi C compiler is disabled.");
+    expect(stderr).toContain('code: "ERR_FFI_CC_DISABLED"');
+    expect(exitCode).toBe(1);
+  });
+
+  it("BUN_OPTIONS=--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe],
+      env: { ...bunEnv, BUN_OPTIONS: "--no-ffi-cc" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The Worker runs the probe and posts its one line back to the parent. A
+  // worker that fails before it posts is reported on stdout instead of
+  // hanging the process.
+  const workerHost = (execArgv: string) => /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const source = ${JSON.stringify(probeWith("require('node:worker_threads').parentPort.postMessage"))};
+    const worker = new Worker(source, { eval: true, execArgv: ${execArgv} });
+    let reported = false;
+    worker.on("message", msg => {
+      reported = true;
+      console.log(msg);
+      worker.terminate();
+    });
+    worker.on("error", e => {
+      reported = true;
+      console.log("worker error: " + (e.code ?? e.message));
+      worker.terminate();
+    });
+    worker.on("exit", code => {
+      if (!reported) console.log("worker exited with " + code + " before posting");
+    });
+  `;
+
+  it("--no-ffi-cc stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker can disable cc() for itself with execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", workerHost('["--no-ffi-cc"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker cannot re-enable cc() that its parent disabled", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost('["--smol"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
     expect(exitCode).toBe(0);
   });
 });

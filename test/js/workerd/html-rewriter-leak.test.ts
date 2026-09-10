@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -623,6 +623,54 @@ test("never-settling handler promises with a realized body release their parked 
   expect(after - before).toBeLessThan(N / 3);
 });
 
+// Abandoning a transform whose JS-pump input stream never closes makes the
+// Transform cell and the pump's sink controller garbage in the same GC cycle.
+// The controller's destructor dispatches `__controllerDetached`/`__finalize`
+// into the shared RewriterPipe, and cells sweep in unspecified order, so the
+// pipe must survive whichever cell dies first (unfixed: ASAN
+// heap-use-after-free in `js_controller_detached`, Sink.rs). Only ASAN builds
+// observe the stale read, so release lanes skip it.
+test.skipIf(!isASAN)(
+  "abandoned transforms over a never-closing JS stream survive GC sweep order",
+  async () => {
+    const code = /* js */ `
+      function once() {
+        const rs = new ReadableStream({
+          pull(c) {
+            c.enqueue(new TextEncoder().encode("<p>x</p>"));
+            return new Promise(() => {});
+          },
+        });
+        new HTMLRewriter().on("p", { element() {} }).transform(new Response(rs));
+      }
+      for (let round = 0; round < 10; round++) {
+        for (let i = 0; i < 150; i++) once();
+        await Bun.sleep(0);
+        Bun.gc(true);
+      }
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(
+      stderr
+        .split("\n")
+        .filter(l => !l.startsWith("WARNING: ASAN"))
+        .join("\n")
+        .trim(),
+    ).toBe("");
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 // Input-side sibling of the realized-body case: a `type: 'direct'` pull
 // parked on `await controller.flush(true)` holds a pending-flush promise
 // whose reactions reach back to the Transform cell through the pump promise.
@@ -661,4 +709,25 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
     msg = await Promise.race([text, Promise.resolve(undefined)]);
   }
   expect(msg).toContain("will never settle");
+});
+
+test("element.attributes iterator does not leak names/values", async () => {
+  const code = /* js */ `
+    const big = Buffer.alloc(256 * 1024, "a").toString();
+    const html = '<a x="' + big + '"></a>';
+    async function once() {
+      let n = 0;
+      await new HTMLRewriter().on("a", { element(el) { for (const [k, v] of el.attributes) n += v.length; } }).transform(new Response(html)).text();
+      return n;
+    }
+    for (let i = 0; i < 20; i++) await once();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 400; i++) await once();
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~120 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 50, debug: 70 });
 });

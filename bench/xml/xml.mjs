@@ -1,4 +1,8 @@
+import { DOMParser } from "@xmldom/xmldom";
 import { XMLBuilder, XMLParser } from "fast-xml-parser";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import * as txml from "txml";
 import xml2js from "xml2js";
 import { bench, group, run } from "../runner.mjs";
 
@@ -69,18 +73,30 @@ const parseXml2js = doc => {
   return result;
 };
 
-for (const [label, doc] of [
+const docs = [
   ["small", small],
   ["S3 listing", large],
   ["Atom feed", mixed],
-]) {
+];
+// Real-world files: every *.xml / *.svg in $BUN_XML_BENCH_FIXTURES.
+if (process.env.BUN_XML_BENCH_FIXTURES) {
+  const dir = process.env.BUN_XML_BENCH_FIXTURES;
+  for (const f of readdirSync(dir).sort()) {
+    if (/\.(xml|svg)$/.test(f)) docs.push([f, readFileSync(join(dir, f), "utf8")]);
+  }
+}
+const xmldom = new DOMParser();
+
+for (const [label, doc] of docs) {
   group(`parse ${label} (${sizeLabel(doc.length)})`, () => {
     if (isBun) {
       bench("Bun.XML.parse", () => Bun.XML.parse(doc));
       bench("Bun.XML.parse { compact: false }", () => Bun.XML.parse(doc, { compact: false }));
     }
+    bench("txml", () => txml.parse(doc));
     bench("fast-xml-parser", () => fxp.parse(doc));
-    bench("xml2js", () => parseXml2js(doc));
+    bench("@xmldom/xmldom DOMParser", () => xmldom.parseFromString(doc, "text/xml"));
+    if (doc.length < 512 * 1024) bench("xml2js", () => parseXml2js(doc));
   });
 }
 

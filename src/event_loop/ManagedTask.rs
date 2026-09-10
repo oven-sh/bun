@@ -33,6 +33,18 @@ impl ManagedTask {
         callback(ctx.unwrap().as_ptr())
     }
 
+    /// Free without running: the owned context (if `new_owned`) is dropped.
+    ///
+    /// # Safety
+    /// As [`run`](Self::run); the task is not queued anywhere.
+    pub unsafe fn release(this: *mut ManagedTask) {
+        // SAFETY: fn contract.
+        let this = unsafe { bun_core::heap::take(this) };
+        if let (Some(cleanup), Some(ctx)) = (this.cleanup, this.ctx) {
+            cleanup(ctx.as_ptr());
+        }
+    }
+
     // A per-(Type, Callback) trampoline is folded away by storing
     // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {

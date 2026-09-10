@@ -29,6 +29,7 @@ pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -51,17 +52,6 @@ pub struct DependencyMap {
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
-}
-
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -177,9 +167,6 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
     fn version(&self) -> &[u8] {
         &self.version
     }
-    fn source_path(&self) -> &[u8] {
-        self.source.path.text
-    }
     fn dependency_source_buf(&self) -> &[u8] {
         self.dependencies.source_buf
     }
@@ -286,28 +273,13 @@ impl SideEffects {
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
-/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
-/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
-/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
-/// call-sites that only need a transient borrow.
+/// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
-    fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
-    }
-    fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
-        let out = resolve_path::resolve_path::normalize_string::<
-            true,
-            resolve_path::resolve_path::platform::Auto,
-        >(str);
-        Box::from(&*out)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
     }
 }
 
@@ -624,9 +596,8 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
+                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.get().properties() {
-                        let _key_str = prop.key.slice();
-
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
                         // relative paths for these values because some tools (i.e. Browserify)
@@ -636,21 +607,24 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
+                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
+                            true,
+                            resolve_path::platform::Auto,
+                        >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(&key, Box::from(str.slice()))
+                                    .put(key, Box::from(str.slice()))
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
                                 if !*boolean {
                                     package_json
                                         .browser_map
-                                        .put(&key, Box::default())
+                                        .put(key, Box::default())
                                         .expect("unreachable");
                                 }
                             }
@@ -878,7 +852,7 @@ impl PackageJSON {
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.field) {
+                    if let Some(group_json) = json.get(group.prop) {
                         total_dependency_count += group_json.property_count();
                     }
                 }
@@ -898,7 +872,7 @@ impl PackageJSON {
                         .expect("unreachable");
 
                     for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.field) {
+                        if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
@@ -1159,7 +1133,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {
@@ -1276,8 +1252,6 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
-    // allocator dropped — global mimalloc
-    pub(crate) module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
@@ -1321,9 +1295,6 @@ pub enum Status {
     /// The package or module requested does not exist.
     ModuleNotFound,
 
-    /// The user just needs to add the missing extension
-    ModuleNotFoundMissingExtension,
-
     /// The resolved path corresponds to a directory, which is not a supported target for module imports.
     UnsupportedDirectoryImport,
 
@@ -1353,16 +1324,6 @@ pub struct Package<'a> {
     pub(crate) subpath: &'a [u8],
 }
 
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct PackageExternal {
     pub name: Semver::String,
@@ -1375,7 +1336,7 @@ impl<'a> Package<'a> {
 
     pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
+            name: builder.append_without_pool::<Semver::String>(self.name, 0),
         }
     }
 
@@ -1528,6 +1489,19 @@ struct ModuleBufs {
     resolve_target_buf2: PathBuffer,
 }
 
+/// Same shape as `resolver::BufsSlot`: the `Drop` reclaims the box when a worker thread exits.
+struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
+impl Drop for ModuleBufsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `into_raw` in `module_bufs`; this thread is exiting, so no
+            // resolution frame still points into the buffers.
+            unsafe { bun_core::heap::destroy(p) };
+        }
+    }
+}
+
 thread_local! {
     // Heap-allocate the buffer struct on first use and store only a pointer
     // in TLS so the static-TLS template stays small (PE/COFF has no
@@ -1536,28 +1510,26 @@ thread_local! {
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
     // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
     // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static MODULE_BUFS: ModuleBufsSlot =
+        const { ModuleBufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|c| {
-        let mut p = c.get();
+    MODULE_BUFS.with(|slot| {
+        let mut p = slot.0.get();
         if p.is_null() {
             p = bun_core::heap::into_raw(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
             }));
-            c.set(p);
+            slot.0.set(p);
         }
         p
     })
 }
 
-// `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
-// requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,
@@ -2073,18 +2045,11 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Wildcard expansion: tag for `probe_target_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
+                        status: Status::ExactEndsWithStar,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2118,7 +2083,6 @@ impl<'a> ESModule<'a> {
                             ));
                         }
 
-                        let prev_module_type = *self.module_type;
                         let result = self.resolve_target::<PATTERN>(
                             package_url,
                             &entry.value,
@@ -2126,16 +2090,7 @@ impl<'a> ESModule<'a> {
                             internal,
                         );
                         if result.status.is_undefined() {
-                            *self.module_type = prev_module_type;
                             continue;
-                        }
-
-                        if key == b"import" {
-                            *self.module_type = ModuleType::Esm;
-                        }
-
-                        if key == b"require" {
-                            *self.module_type = ModuleType::Cjs;
                         }
 
                         return result;
@@ -2177,7 +2132,6 @@ impl<'a> ESModule<'a> {
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
-                    let prev_module_type = *self.module_type;
                     let result = self.resolve_target::<PATTERN>(
                         package_url,
                         target_value,
@@ -2191,7 +2145,6 @@ impl<'a> ESModule<'a> {
                     }
 
                     if result.status.is_undefined() {
-                        *self.module_type = prev_module_type;
                         continue;
                     }
 

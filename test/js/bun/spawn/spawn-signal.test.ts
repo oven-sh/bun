@@ -68,6 +68,7 @@ test("spawn AbortSignal already aborted carries signal.reason as cause", () => {
     expect.objectContaining({
       name: "AbortError",
       code: "ABORT_ERR",
+      message: "The operation was aborted",
       cause: reason,
     }),
   );
@@ -100,6 +101,7 @@ test("spawnSync AbortSignal throws if already aborted", () => {
     expect.objectContaining({
       name: "AbortError",
       code: "ABORT_ERR",
+      message: "The operation was aborted",
       cause: reason,
     }),
   );

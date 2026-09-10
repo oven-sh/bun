@@ -11,9 +11,11 @@ async function memoryUsage() {
   return rss();
 }
 
+const http2 = process.argv.includes("--http2");
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
+  ...(http2 ? { tls: require("harness").tls, http2: true } : {}),
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {

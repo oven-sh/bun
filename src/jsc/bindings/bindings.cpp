@@ -694,6 +694,44 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
+// The own index properties of an array live in its element vector and in its sparse map.
+// JSObject::getOwnPropertySlotByIndex reads those two places and nothing else, so every
+// other index is a hole. This reports where they are, so that a caller which walks indices
+// can jump over the holes instead of probing each one.
+//
+// `vectorEnd` receives the end of the element vector, and the sparse map's indices are
+// appended to `sparseIndices` unsorted. Returns false when the layout is not one of the
+// known ones, which means "probe every index".
+static bool indexedStorageOfArray(JSObject* object, uint64_t& vectorEnd, WTF::Vector<uint32_t, 16>& sparseIndices)
+{
+    switch (object->indexingType()) {
+    case ALL_BLANK_INDEXING_TYPES:
+    case ALL_UNDECIDED_INDEXING_TYPES:
+        // No element was ever stored, so every index is a hole. The butterfly can be null here.
+        vectorEnd = 0;
+        return true;
+    case ALL_INT32_INDEXING_TYPES:
+    case ALL_DOUBLE_INDEXING_TYPES:
+    case ALL_CONTIGUOUS_INDEXING_TYPES:
+        vectorEnd = object->butterfly()->vectorLength();
+        return true;
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
+        JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
+        vectorEnd = std::min<uint64_t>(storage->length(), storage->vectorLength());
+        JSC::SparseArrayValueMap* map = storage->m_sparseMap.get();
+        if (!map)
+            return true;
+        if (!sparseIndices.tryReserveCapacity(sparseIndices.size() + map->size()))
+            return false;
+        for (const auto& entry : *map)
+            sparseIndices.append(entry.index());
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
@@ -976,16 +1014,63 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);
         JSC::JSArray* array2 = uncheckedDowncast<JSC::JSArray>(v2);
 
-        size_t array1Length = array1->length();
-        size_t array2Length = array2->length();
+        uint64_t array1Length = array1->length();
+        uint64_t array2Length = array2->length();
         if constexpr (isStrict) {
             if (array1Length != array2Length) {
                 return false;
             }
         }
 
-        uint64_t i = 0;
-        for (; i < array1Length; i++) {
+        const uint64_t walkEnd = std::max(array1Length, array2Length);
+
+        // An index that is a hole in both arrays compares equal in every mode: the strict arm
+        // skips it, and the loose arm reaches Bun__deepEquals, which answers true for two empty
+        // values. An array only holds index properties inside its element storage, so every
+        // index outside the storage of both arrays is such a pair. Visit the rest only.
+        // Without this, `a = []; a.length = 2 ** 32 - 1` costs one index probe per claimed
+        // element, about 60 s, where node answers in 1 ms.
+        uint64_t vectorEnd = walkEnd;
+        WTF::Vector<uint32_t, 16> sparseIndices;
+        uint64_t vectorEnd1 = 0;
+        uint64_t vectorEnd2 = 0;
+        if (indexedStorageOfArray(o1, vectorEnd1, sparseIndices) && indexedStorageOfArray(o2, vectorEnd2, sparseIndices)) {
+            vectorEnd = std::min(walkEnd, std::max(vectorEnd1, vectorEnd2));
+            std::sort(sparseIndices.begin(), sparseIndices.end());
+            // Keep the indices the vector walk does not already cover, once each.
+            size_t kept = 0;
+            for (uint32_t index : sparseIndices) {
+                if (index < vectorEnd || index >= walkEnd)
+                    continue;
+                if (kept && sparseIndices[kept - 1] == index)
+                    continue;
+                sparseIndices[kept++] = index;
+            }
+            sparseIndices.shrink(kept);
+        } else {
+            sparseIndices.clear();
+        }
+
+        for (uint64_t i = 0, sparseCursor = 0;; i++) {
+            if (i >= vectorEnd) {
+                if (sparseCursor >= sparseIndices.size())
+                    break;
+                i = sparseIndices[sparseCursor++];
+            }
+            if (i >= walkEnd)
+                break;
+
+            if (i >= array1Length) {
+                JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+                RETURN_IF_EXCEPTION(scope, false);
+
+                if (((right.isEmpty() || right.isUndefined()))) {
+                    continue;
+                }
+
+                return false;
+            }
+
             JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
             RETURN_IF_EXCEPTION(scope, false);
             JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
@@ -1009,17 +1094,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, false);
             if (!eql) return false;
-        }
-
-        for (; i < array2Length; i++) {
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if (((right.isEmpty() || right.isUndefined()))) {
-                continue;
-            }
-
-            return false;
         }
 
         if constexpr (checkPrototypes) {

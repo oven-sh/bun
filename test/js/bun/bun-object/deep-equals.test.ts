@@ -148,6 +148,83 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// The array comparison probed every index from 0 to the array's length, so an
+// array that only claims a length cost one probe per claimed element: about a
+// minute for `a = []; a.length = 2 ** 32 - 1`, where node answers in 1 ms. An
+// index outside the element storage of both arrays is a hole on both sides,
+// and two holes are equal in every mode, so the walk skips those indices now.
+// The child is killed if it is still running after 20 s, which empties stdout.
+describe("sparse arrays that only claim a length", () => {
+  const cases = [
+    ["all holes strict", "equal(holes(), holes())", "true"],
+    ["all holes loose", "loose(holes(), holes())", "true"],
+    ["last index equal", "equal(at(last, 1), at(last, 1))", "true"],
+    ["last index differs", "equal(at(last, 1), at(last, 2))", "false"],
+    ["last index against a hole", "equal(at(last, 1), holes())", "false"],
+    ["first index against a hole", "equal(at(0, 1), holes())", "false"],
+    ["undefined against a hole loose", "loose(at(last, undefined), holes())", "true"],
+    ["undefined against a hole strict", "strict(at(last, undefined), holes())", "false"],
+    ["nested strict", "equal([holes()], [holes()])", "true"],
+  ] as const;
+
+  it("compare without walking every index", async () => {
+    const fixture = `
+      const util = require('node:util');
+      const assert = require('node:assert');
+
+      const last = 2 ** 32 - 2;
+      const holes = () => { const a = []; a.length = 2 ** 32 - 1; return a; };
+      const at = (index, value) => { const a = holes(); a[index] = value; return a; };
+      const equal = util.isDeepStrictEqual;
+      const loose = (a, b) => Bun.deepEquals(a, b);
+      const strict = (a, b) => Bun.deepEquals(a, b, true);
+
+      ${cases.map(([name, expression]) => `console.log(${JSON.stringify(name)}, ${expression});`).join("\n      ")}
+
+      assert.deepStrictEqual(holes(), holes());
+      console.log('assert.deepStrictEqual', true);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      [...cases.map(([name, , answer]) => `${name} ${answer}`), "assert.deepStrictEqual true", ""].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
+  // An index that a sparse array does hold lives in its sparse map, which the
+  // walk reads instead of probing the gaps around it.
+  it.each([true, false])("still see the indices a sparse map holds (strict: %p)", strict => {
+    const sparse = (...indices: number[]) => {
+      const a: unknown[] = [];
+      a.length = 200_000;
+      for (const index of indices) a[index] = index;
+      return a;
+    };
+    const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+
+    expect(deepEquals(sparse(199_999), sparse(199_999))).toBe(true);
+    expect(deepEquals(sparse(199_999), sparse(199_998))).toBe(false);
+    expect(deepEquals(sparse(199_999), sparse())).toBe(false);
+    expect(deepEquals(sparse(), sparse(199_999))).toBe(false);
+    expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_999))).toBe(true);
+    expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_998))).toBe(false);
+    expect(deepEquals(sparse(0, 199_999), sparse(0))).toBe(false);
+    expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_999)))).toBe(true);
+    expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

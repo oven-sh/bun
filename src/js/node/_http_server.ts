@@ -256,12 +256,10 @@ function normalizeServerTls(tls) {
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
-// An https.Server is a tls.Server there: 'connection' runs tls.Server's tlsConnectionListener,
-// which puts the server-side TLS layer over the fed duplex, and the parser attaches on the
-// 'secureConnection' its handshake emits. https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L93-L99
 function connectionListener(this: Server, socket) {
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
   if (this[tlsSymbol]) {
+    // Node's https.Server is a tls.Server: https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L93-L99
     tlsConnectionListener ??= lazyTls().Server.prototype[kTlsConnectionListener];
     if (socket) tlsConnectionListener.$call(this, socket);
     return;
@@ -394,8 +392,7 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       }));
-      // The tls.Server fields its tlsConnectionListener reads for a fed connection (with
-      // [kSharedCreds] below). https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1391
+      // tls.Server state that tlsConnectionListener reads. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1391
       this._requestCert = tls.requestCert;
       this._rejectUnauthorized = tls.rejectUnauthorized;
       const { SNICallback, ALPNCallback, ALPNProtocols } = options;
@@ -431,13 +428,14 @@ Server.prototype[kServerResponse] = undefined;
 
 Server.prototype[kConnectionsCheckingInterval] = undefined;
 
-// Node's https.Server inherits _sharedCreds from tls.Server. The native listener builds its own
-// context from this[tlsSymbol]; this one serves fed connections (tlsConnectionListener) and is
-// built on first use, with tls.Server's server-cipher-preference default.
+// tls.Server's _sharedCreds, for fed connections only: the native listener takes this[tlsSymbol].
 Server.prototype[kSharedCreds] = function () {
   const options = this[optionsSymbol];
+  const { requestCert, rejectUnauthorized } = this[tlsSymbol];
   return (this._sharedCreds ??= lazyTls().createSecureContext({
     ...options,
+    requestCert,
+    rejectUnauthorized,
     honorCipherOrder: options.honorCipherOrder !== false,
   }));
 };

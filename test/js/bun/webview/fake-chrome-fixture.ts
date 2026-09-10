@@ -81,6 +81,10 @@ function send(message: unknown) {
 let targets = 0;
 let loads = 0;
 let lastUrl = "about:blank";
+// Chrome sends a domain's events only to sessions that enabled it, so a
+// session whose Page.enable failed gets no frameNavigated and no
+// loadEventFired.
+const pageEnabled = new Set<string>();
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
@@ -89,6 +93,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const committed = (url: string) => {
     lastUrl = url;
     const loaderId = "L" + ++loads;
+    if (!pageEnabled.has(sessionId!)) return loaderId;
     event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
     event("Page.loadEventFired", { timestamp: loads });
     return loaderId;
@@ -124,6 +129,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return;
     }
     case "Page.enable": {
+      pageEnabled.add(sessionId!);
       // The event reaches the runtime while the view has a sessionId and
       // an unfinished attach chain: anything a listener starts there has
       // to queue behind what the user asked for first.

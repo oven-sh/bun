@@ -243,6 +243,32 @@ test.concurrent("navigate() retried from onNavigationFailed after an attach fail
   });
 });
 
+// A chain that fails after Target.attachToTarget leaves a session that
+// Page.enable never reached. Chrome sends that session no load event, so
+// the failure has to forget it: otherwise the next operation takes the
+// attached path on it and its promise never settles. The fake fails
+// Page.enable once and, like Chrome, only emits Page events to sessions
+// that enabled the domain.
+test.concurrent("an operation after a Page.enable failure attaches a new session", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-once=Page.enable"] },
+      width: 100,
+      height: 100,
+    });
+    const failed = await outcome(view.navigate("http://fake/first"));
+    const retried = await outcome(view.navigate("http://fake/retry"));
+    print({ failed, retried, url: view.url, title: view.title });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: { rejected: "Cannot navigate to invalid URL" },
+    retried: {}, // resolves undefined
+    url: "http://fake/retry",
+    title: "fake chrome",
+  });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

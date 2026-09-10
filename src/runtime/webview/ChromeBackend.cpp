@@ -766,6 +766,17 @@ void Transport::failDeferred(JSWebView* view, JSValue error)
         m_deferred.removeAt(i);
     }
     view->m_chromeAttaching = false;
+    // A chain that got past Target.attachToTarget leaves a session
+    // Page.enable never reached, and such a session sends no load event.
+    // Forget it and close its tab so the next operation attaches again.
+    if (!view->m_sessionId.isEmpty()) {
+        m_sessions.remove(view->m_sessionId);
+        view->m_sessionId = WTF::String();
+    }
+    if (!view->m_targetId.isEmpty()) {
+        send(0, Command(nextId(), "Target.closeTarget"_s).str("targetId"_s, view->m_targetId));
+        view->m_targetId = WTF::String();
+    }
     for (auto& entry : parked) {
         // The untracked half of a pair owns no slot, and 0 is the
         // HashMap's empty key, so a lookup would assert.

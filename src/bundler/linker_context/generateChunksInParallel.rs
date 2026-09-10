@@ -1462,8 +1462,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(result)
 }
 
-/// A `unique_key` placeholder (per-build random prefix) left in an output makes builds of the
-/// same input differ; debug builds check every in-memory output for the prefix.
+/// Debug check: no in-memory output may still contain the per-build `unique_key` placeholder prefix.
 fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputFile]) {
     if !cfg!(debug_assertions) || c.unique_key_prefix.is_empty() {
         return;

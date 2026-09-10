@@ -649,8 +649,7 @@ pub mod analyze_transpiled_module {
             (&self.strings_buf, &self.strings_lens)
         }
 
-        /// Rewrites interned strings in place (`None` keeps one). Ids do not change, so
-        /// records and requested modules keep naming the same entries.
+        /// Rewrites interned strings in place (`None` keeps one); ids, and so every record, stay valid.
         pub fn rewrite_strings<'r>(&mut self, mut replace: impl FnMut(&[u8]) -> Option<&'r [u8]>) {
             debug_assert!(!self.finalized);
             let mut buf: Vec<u8> = Vec::with_capacity(self.strings_buf.len());

@@ -44,7 +44,8 @@ describe("deeply nested define value does not overflow the stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(proc.signalCode).toBeNull();
+    // A crash banner or sanitizer report lands on stderr; show it with the signal.
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
     expect(stdout).toMatch(/^(ok|error: StackOverflow Failed to load define)\n$/);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -72,7 +73,8 @@ describe("deeply nested define value does not overflow the stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(proc.signalCode).toBeNull();
+    // A crash banner or sanitizer report lands on stderr; show it with the signal.
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
     expect(stdout).toMatch(new RegExp(`^(ok|error: BuildMessage: ${TOO_DEEP})\n$`));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -92,7 +94,8 @@ describe("deeply nested define value does not overflow the stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(proc.signalCode).toBeNull();
+    // A crash banner or sanitizer report lands on stderr; show it with the signal.
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
     if (exitCode === 0) {
       expect(stdout).toBe("ran\n");
     } else {
@@ -114,7 +117,8 @@ describe("deeply nested define value does not overflow the stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(proc.signalCode).toBeNull();
+    // A crash banner or sanitizer report lands on stderr; show it with the signal.
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
     if (exitCode === 0) {
       expect(stdout).toBe("ran\n");
     } else {

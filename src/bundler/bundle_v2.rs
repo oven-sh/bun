@@ -6687,9 +6687,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // `<object data="./page.html">` links to another page. That page is
-                // not an asset of this one (its scripts must not join this bundle),
-                // so leave the URL as written.
+                // `<object data="./page.html">` links to a page; bundling it would run its scripts here.
                 if loader == Loader::Html
                     && import_record.kind == ImportKind::Url
                     && import_record

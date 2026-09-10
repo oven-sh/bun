@@ -110,7 +110,7 @@ Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 
 These references are left exactly as written. If they point at a local file, that file will not be next to the output:
 
-- `<iframe src>` and `<a href>`
+- `<iframe src>`, `<a href>`, and any other reference from one HTML page to another (`<object data="./page.html">`)
 - `url()` inside a `style="..."` attribute or an inline `<style>` block (put the CSS in a `.css` file and `<link>` it instead)
 - `import` specifiers inside an inline `<script type="module">` block (use `<script src>` instead)
 - Anything inside `<noscript>`

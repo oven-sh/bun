@@ -464,7 +464,7 @@ Bun automatically handles all common web assets:
 
 A `?query` or `#fragment` on the URL is kept on the rewritten path, so `<use href="./icons.svg#menu">` becomes `<use href="./icons-a1b2c3.svg#menu">`. URLs with a scheme (`https://...`, `data:...`) and protocol-relative URLs (`//cdn.example.com/...`) are left as-is.
 
-Not processed: `<iframe src>`, `<a href>`, inline `style="..."` attributes and `<style>` blocks, `import` specifiers inside inline `<script>` blocks, and anything inside `<noscript>`.
+Not processed: `<iframe src>`, `<a href>` and other references from one HTML page to another, inline `style="..."` attributes and `<style>` blocks, `import` specifiers inside inline `<script>` blocks, and anything inside `<noscript>`.
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.
 

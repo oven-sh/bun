@@ -104,8 +104,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     }
 
     fn on_resource_hint(&mut self, element: &mut Element<'_, '_>) {
-        // Everything local is inline in a standalone file, so a preload of it
-        // points at nothing (or repeats the bytes as a second data: URL).
+        // In a standalone file every local target is already inline, so a hint for it is dead weight.
         if self.compile_to_standalone_html
             && element
                 .get_attribute("href")
@@ -141,8 +140,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         } else {
             Loader::File
         };
-        // `./sprite.svg#icon` was resolved as `./sprite.svg`; put `#icon` back
-        // on whatever URL replaces it.
+        // Resolved as `./sprite.svg`; put `#icon` back on whatever URL replaces it.
         let suffix = split_url_suffix(url).1;
         let replace = |new_url: &[u8], suffix| UrlAction::Replace([new_url, suffix].concat());
 

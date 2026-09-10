@@ -68,9 +68,7 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
-/// True for `//host/...` and `scheme:...` (two or more scheme characters, so
-/// not a Windows drive letter). Neither names a local file; the resolver marks
-/// them external (or inlines a `data:` module) from the text as written.
+/// `//host/...` or `scheme:...` (two or more scheme chars, so not a drive letter): not a local file.
 pub(crate) fn is_external_url(url: &[u8]) -> bool {
     url.starts_with(b"//")
         || url
@@ -79,9 +77,7 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
             .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic())
 }
 
-/// Splits `./sprite.svg?v=2#icon` into `./sprite.svg` and `?v=2#icon`. A URL
-/// that does not name a local file (`https://...`, `data:...`, a bare `#icon`)
-/// comes back whole with an empty suffix, so nothing is appended to it later.
+/// `./sprite.svg?v=2#icon` -> (`./sprite.svg`, `?v=2#icon`). Non-file URLs (`https:`, bare `#icon`) are not split.
 pub(crate) fn split_url_suffix(url: &[u8]) -> (&[u8], &[u8]) {
     match strings::index_of_any(url, b"?#") {
         Some(i) if i > 0 && !is_external_url(url) => url.split_at(i),
@@ -91,9 +87,7 @@ pub(crate) fn split_url_suffix(url: &[u8]) -> (&[u8], &[u8]) {
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
 
-/// Yields each `srcset` image candidate as `(url, descriptor)`:
-/// `"./a.png, ./b.png 2x"` gives `("./a.png", "")`, `("./b.png", "2x")`.
-/// <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>
+/// `srcset` candidates as `(url, descriptor)` per <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>.
 struct SrcsetCandidates<'a>(&'a [u8]);
 
 impl<'a> Iterator for SrcsetCandidates<'a> {
@@ -104,8 +98,7 @@ impl<'a> Iterator for SrcsetCandidates<'a> {
         if rest.is_empty() {
             return None;
         }
-        // The URL runs to the first whitespace; a comma right before that
-        // whitespace (or the end) ends the candidate with no descriptor.
+        // The URL runs to whitespace; a comma right before that ends the candidate with no descriptor.
         let url_end = strings::index_of_any(rest, HTML_WHITESPACE).unwrap_or(rest.len());
         let url = strings::trim_right(&rest[..url_end], b",");
         let desc_end = if url.len() < url_end {
@@ -135,8 +128,7 @@ impl<'a> Iterator for SrcsetCandidates<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // The browser requests the file without `?query#fragment`; the
-        // rewrite pass appends it back from the attribute text.
+        // Resolve without `?query#fragment`; the rewrite pass re-appends it from the attribute text.
         let (input_path, _suffix) = split_url_suffix(url);
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
@@ -225,16 +217,12 @@ pub(crate) enum UrlAction {
 
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
-    /// Called once per URL in a matched attribute, in document order: once
-    /// for `src`/`href`, once per image candidate for `srcset`. The scan pass
-    /// creates one import record per call and the rewrite pass consumes one,
-    /// so both passes must see the same calls.
+    /// Once per URL (per `srcset` candidate), in document order: one import record made or consumed per call.
     fn on_url(&mut self, url: &[u8], kind: ImportKind) -> UrlAction;
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
-    /// `<link rel="preload|modulepreload|prefetch" href>`, before `on_url`
-    /// sees its `href`.
+    /// `<link rel="preload|modulepreload|prefetch" href>`, before `on_url` sees its `href`.
     fn on_resource_hint(&mut self, _element: &mut Element<'_, '_>) {}
 
     // Only required when VISIT_DOCUMENT_TAGS == true; `run` only calls
@@ -286,9 +274,7 @@ impl TagHandler {
     }
 }
 
-/// Keep the selector lists in `docs/bundler/loaders.mdx`,
-/// `docs/runtime/file-types.mdx`, `docs/bundler/html-static.mdx` and
-/// `docs/bundler/standalone-html.mdx` in sync with this list.
+/// Listed in docs/bundler/{loaders,html-static,standalone-html}.mdx and docs/runtime/file-types.mdx.
 const TAG_HANDLERS: &[TagHandler] = &[
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
@@ -394,8 +380,7 @@ fn element_entry<'h>(
     ))
 }
 
-/// lol-html escapes only `"` when it serializes the value, so entities in
-/// `value` pass through as written.
+/// lol-html escapes only `"` on output, so entities in `value` pass through as written.
 fn set_attribute(element: &mut Element<'_, '_>, name: &str, value: &[u8]) {
     let ok = match core::str::from_utf8(value) {
         Ok(value) => element.set_attribute(name, value).is_ok(),
@@ -414,8 +399,7 @@ fn rewrite_srcset<T: HTMLProcessorHandler>(
 ) -> UrlAction {
     let mut out = Vec::with_capacity(value.len());
     let (mut changed, mut remove) = (false, false);
-    // Every candidate goes through `on_url`, even after one asks for removal,
-    // so the rewrite pass consumes as many import records as the scan made.
+    // No early exit: every candidate reaches `on_url` so both passes stay in step.
     for (url, descriptor) in SrcsetCandidates(value) {
         if !out.is_empty() {
             out.extend_from_slice(b", ");
@@ -453,8 +437,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         let mut element_content_handlers = Vec::with_capacity(SELECTOR_CAP);
 
-        // Registered first: lol-html runs handlers in registration order, and
-        // this one must read `href` before a `TAG_HANDLERS` entry rewrites it.
+        // First, so it reads `href` before a `TAG_HANDLERS` handler rewrites it (they run in order).
         element_content_handlers.push(element_entry(
             RESOURCE_HINT_SELECTOR,
             Box::new(

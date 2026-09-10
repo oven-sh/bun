@@ -2106,4 +2106,24 @@ describe("deferred work of a context that is collected while the work is pending
       `),
     );
   });
+
+  // The other owner a ticket can belong to. A ShadowRealm's global is larger than
+  // MarkedSpace::largeCutoff, so it is a precise allocation and its destructor runs in the epilogue
+  // of the collection that kills it. That destructor cancels the realm's pending work, which is why
+  // the fixture above cannot reach this owner: it has to be a collection the loop did not ask for.
+  test.concurrent("a WebAssembly.instantiate completion does not run in a collected ShadowRealm", async () => {
+    await run(`
+      const glue =
+        "const bytes = new Uint8Array([0,97,115,109,1,0,0,0,5,3,1,0,1,7,5,1,1,109,2,0]);" +
+        "WebAssembly.instantiate(bytes).then(r => { globalThis.byteLength = r.instance.exports.m.buffer.byteLength; });" +
+        "undefined";
+      for (let i = 0; i < 400; i++) {
+        new ShadowRealm().evaluate(glue);
+        // Hand the queued completions a turn, so the realms die while their work is pending
+        // instead of only growing the queue.
+        if (i % 100 === 99) await Bun.sleep(0);
+      }
+      console.log("done");
+    `);
+  });
 });

@@ -830,6 +830,7 @@ test("constructor options are type- and range-checked", () => {
   expect(ctor("http://example.com/")).toBe(
     `ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type string ('http://example.com/')`,
   );
+  expect(ctor(() => {})).toStartWith(`ERR_INVALID_ARG_TYPE: The "options" argument must be of type object.`);
   expect(ctor({ backend: 42 })).toStartWith("ERR_INVALID_ARG_TYPE: backend must be");
   expect(ctor({ backend: null })).toStartWith("ERR_INVALID_ARG_TYPE: backend must be");
   expect(ctor({ backend: spawn, dataStore: 5 })).toStartWith("ERR_INVALID_ARG_TYPE: dataStore must be");
@@ -851,9 +852,12 @@ test("constructor options are type- and range-checked", () => {
   );
 
   // An argv (even empty) or path asks for a spawned browser; url asks for an
-  // existing one.
+  // existing one; neither means anything to the WebKit backend.
   expect(ctor({ backend: { type: "chrome", url: "ws://127.0.0.1:1/devtools/browser/x", argv: [] } })).toMatch(
     /connect mode.*cannot be combined.*spawn/,
+  );
+  expect(ctor({ backend: { type: "webkit", argv: ["--flag"] } })).toBe(
+    `ERR_INVALID_ARG_VALUE: backend.path and backend.argv require type: "chrome"`,
   );
 });
 
@@ -907,7 +911,11 @@ it("chrome: method arguments are type- and range-checked", async () => {
     `ERR_INVALID_ARG_TYPE: The "y" argument must be of type number. Received undefined`,
   );
   expect(code(() => v.click(1, NaN))).toBe(`ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite. Received NaN`);
+  // Coordinates travel as floats; a double beyond float range would arrive as Infinity.
+  expect(code(() => v.click(Number.MAX_VALUE, 0))).toStartWith(`ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite.`);
   expect(code(() => v.click(1, 2, "opts"))).toStartWith("ERR_INVALID_ARG_TYPE:");
+  expect(code(() => v.click(1, 2, () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");
+  expect(code(() => v.scrollTo("#a", () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");
 
   expect(code(() => v.scrollTo("#a", { block: 5 }))).toBe(
     `ERR_INVALID_ARG_VALUE: The property 'options.block' must be "start", "center", "end", or "nearest". Received 5`,

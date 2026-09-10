@@ -439,7 +439,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     uint32_t timeout = 30000;
     auto parseOpts = [&](JSValue opts) -> bool {
         if (opts.isUndefined()) return true;
-        if (!opts.isObject()) {
+        if (!opts.isObject() || opts.isCallable()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
             return false;
         }
@@ -497,10 +497,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
             "click() takes a selector string or x and y coordinates (numbers)"_s);
     if (!arg1.isNumber())
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "y"_s, "number"_s, arg1);
+    // The wire format carries float coordinates.
     double x = arg0.asNumber();
     double y = arg1.asNumber();
-    if (!std::isfinite(x) || !std::isfinite(y))
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "x/y"_s, jsNumber(std::isfinite(x) ? y : x), "must be finite"_s);
+    if (!std::isfinite(static_cast<float>(x)) || !std::isfinite(static_cast<float>(y)))
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "x/y"_s, jsNumber(std::isfinite(static_cast<float>(x)) ? y : x), "must be finite"_s);
     if (!parseOpts(callFrame->argument(2))) return {};
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
@@ -540,7 +541,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
 
     uint8_t mods = 0;
     JSValue opts = callFrame->argument(1);
-    if (!opts.isUndefined() && !opts.isObject())
+    if (!opts.isUndefined() && (!opts.isObject() || opts.isCallable()))
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
     if (opts.isObject()) {
         JSValue m = opts.getObject()->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
@@ -603,7 +604,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
     uint32_t timeout = 30000;
     uint8_t block = 1; // center
     JSValue opts = callFrame->argument(1);
-    if (!opts.isUndefined() && !opts.isObject())
+    if (!opts.isUndefined() && (!opts.isObject() || opts.isCallable()))
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
     if (opts.isObject()) {
         JSObject* o = opts.getObject();

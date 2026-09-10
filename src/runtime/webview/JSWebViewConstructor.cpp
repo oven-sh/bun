@@ -128,7 +128,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     // the documented type (ERR_INVALID_ARG_TYPE) and range (ERR_OUT_OF_RANGE,
     // reported with the value as passed).
     JSValue options = callFrame->argument(0);
-    if (!options.isUndefined() && !options.isObject())
+    if (!options.isUndefined() && (!options.isObject() || options.isCallable()))
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
     if (options.isObject()) {
         JSObject* opts = options.getObject();
@@ -262,6 +262,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             if (!chromeWsUrl.isEmpty() && spawnOptionGiven)
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "backend.url (connect mode) cannot be combined with backend.path or backend.argv (spawn mode)"_s);
+            if (backend != WebViewBackend::Chrome && spawnOptionGiven)
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "backend.path and backend.argv require type: \"chrome\""_s);
 
             // stdout/stderr: "inherit" | "ignore" — whether the subprocess's
             // streams flow to Bun's. Chrome is chatty on stderr (GCM

@@ -4274,6 +4274,7 @@ describe("https.Server adopts connections fed through emit()", () => {
               method,
               path,
               agent,
+              ALPNProtocols: ["h2", "http/1.1"],
               rejectUnauthorized: false,
             },
             res => {
@@ -4302,6 +4303,8 @@ describe("https.Server adopts connections fed through emit()", () => {
     expect(sockets[0]).toBeInstanceOf(TLSSocket);
     expect(sockets[0].encrypted).toBe(true);
     expect(sockets[0].server).toBe(server);
+    // https.createServer() answers ALPN from its ['http/1.1'] default, as in Node.
+    expect(sockets[0].alpnProtocol).toBe("http/1.1");
   });
 
   it("emit('secureConnection', tlsSocket) parses HTTP over that socket", async () => {
@@ -4384,6 +4387,10 @@ describe("https.Server adopts connections fed through emit()", () => {
     } finally {
       front.close();
     }
+    // The constructor stores a static list the same way (tls.Server does it in Node).
+    expect(new https.Server({ ...tlsCert, ALPNProtocols: ["h2", "http/1.1"] }).ALPNProtocols).toEqual(
+      Buffer.from("\u0002h2\u0008http/1.1", "latin1"),
+    );
   });
 });
 

@@ -398,12 +398,13 @@ function Server(options, callback): void {
       // [kSharedCreds] below). https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1391
       this._requestCert = tls.requestCert;
       this._rejectUnauthorized = tls.rejectUnauthorized;
-      const { SNICallback, ALPNCallback } = options;
+      const { SNICallback, ALPNCallback, ALPNProtocols } = options;
       if (SNICallback != null) validateFunction(SNICallback, "options.SNICallback");
       if (ALPNCallback != null) {
         validateFunction(ALPNCallback, "options.ALPNCallback");
-        if (options.ALPNProtocols) throw $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS();
+        if (ALPNProtocols) throw $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS();
       }
+      if (ALPNProtocols) lazyTls().convertALPNProtocols(ALPNProtocols, this);
       this._SNICallback = SNICallback;
       this._ALPNCallback = ALPNCallback;
       const handshakeTimeout = options.handshakeTimeout || 120 * 1000;

@@ -932,6 +932,7 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         }
     }
 
+    // An unresolved optional peer keeps `invalid_package_id` as its resolution.
     let packages_len = lockfile.packages.len();
     for &package_id in buffers.resolutions.iter() {
         if package_id != invalid_package_id && package_id as usize >= packages_len {
@@ -939,8 +940,9 @@ fn validate_buffer_ranges(lockfile: &Lockfile) -> Result<(), Error> {
         }
     }
 
+    // `Builder::clean` drops unresolved dependencies, so no sentinel here.
     for &dependency_id in buffers.hoisted_dependencies.iter() {
-        if dependency_id != invalid_dependency_id && dependency_id as usize >= dependencies_len {
+        if dependency_id as usize >= dependencies_len {
             return Err(crate::Error::InvalidLockfile);
         }
     }

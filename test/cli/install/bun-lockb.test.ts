@@ -459,11 +459,30 @@ function corruptRootTreeParent(lockb: Buffer) {
   lockb.writeUInt32LE(0, treesStart + 8);
 }
 
+// `hoisted_dependencies` (the `u32` array right behind the tree list) holds
+// the dependency ids each tree's window selects. The writer never stores the
+// unresolved sentinel there, and the readers that walk a loaded tree index
+// `dependencies` with every element, so the sentinel must be rejected too.
+function corruptHoistedDependency(lockb: Buffer) {
+  const trees = lockb.indexOf("\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n");
+  expect(trees).toBeGreaterThan(16);
+  const prefix = lockb.indexOf("\n<u32> 4 sizeof, 4 alignof\n", trees + 1);
+  expect(prefix).toBeGreaterThan(trees);
+  const hoistedStart = Number(lockb.readBigUInt64LE(prefix - 16));
+  const hoistedEnd = Number(lockb.readBigUInt64LE(prefix - 8));
+  // The root tree holds both packages: two ids, each one of the three
+  // dependencies in the lockfile.
+  expect(hoistedEnd - hoistedStart).toBe(8);
+  expect(lockb.readUInt32LE(hoistedStart)).toBeLessThan(3);
+  lockb.writeUInt32LE(0xffffffff, hoistedStart);
+}
+
 for (const [what, corrupt] of [
   ["package dependencies offset is out of range", corruptPackageColumn("dependencies", 0xfffffff0)],
   ["package resolutions offset is out of range", corruptPackageColumn("resolutions", 0xfffffff0)],
   ["package resolutions window does not match dependencies", corruptPackageColumn("resolutions", 0)],
   ["root tree is its own parent", corruptRootTreeParent],
+  ["hoisted dependency id is the unresolved sentinel", corruptHoistedDependency],
 ] as const) {
   it(`rejects a binary lockfile whose ${what}`, async () => {
     const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });

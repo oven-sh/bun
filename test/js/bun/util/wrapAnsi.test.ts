@@ -1,5 +1,7 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import os from "node:os";
 
 describe("Bun.wrapAnsi", () => {
   describe("basic wrapping", () => {
@@ -1012,5 +1014,90 @@ describe("Bun.wrapAnsi", () => {
       expect(stdout).toBe("match\n");
       expect(exitCode).toBe(0);
     });
+  });
+
+  // The output is not bounded by the input: every wrapped row re-emits the open
+  // hyperlink sequence, so a long URI and enough rows build a string past
+  // WTF::StringImpl::MaxLength (2^31 - 1). The StringBuilder aborted the process
+  // there (SIGABRT in StringBuilder::didOverflow) instead of throwing.
+  describe("output past the string length limit", () => {
+    const stringTooLong = {
+      name: "Error",
+      code: "ERR_STRING_TOO_LONG",
+      message: "Cannot create a string longer than 2147483647 characters",
+    };
+
+    // An open hyperlink with a URI of `uriLength` characters, then `words`
+    // one-character words. At columns: 1 every word is a row of its own, and
+    // every row boundary re-emits the URI.
+    function hyperlinkedWords(uriLength: number, words: number) {
+      const uri = Buffer.alloc(uriLength, "a").toString();
+      return `\x1b]8;;http://example.com/${uri}\x07` + Buffer.alloc(words * 2, "a ").toString();
+    }
+
+    function caught(input: string) {
+      try {
+        return `UNEXPECTED_SUCCESS:${Bun.wrapAnsi(input, 1).length}`;
+      } catch (e) {
+        return e;
+      }
+    }
+
+    test("throws ERR_STRING_TOO_LONG when the output passes the limit", () => {
+      // The limit is process-wide, so put it back. 1 MiB is the lowest value the
+      // hook accepts.
+      const previousLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+      try {
+        expect(caught(hyperlinkedWords(100_000, 64))).toMatchObject(stringTooLong);
+        // The same input as a 16-bit string: the other template instantiation.
+        expect(caught(hyperlinkedWords(100_000, 64) + "\u2603")).toMatchObject(stringTooLong);
+
+        // An output under the limit still wraps.
+        expect(Bun.wrapAnsi(hyperlinkedWords(1_000, 2), 1)).toHaveLength(2059);
+      } finally {
+        setSyntheticAllocationLimitForTesting(previousLimit);
+      }
+    });
+
+    // The real limit needs the child to build 2 GiB. os.totalmem() reports the
+    // host's RAM inside a container, process.constrainedMemory() the cgroup
+    // limit. Measured peak for this child: 4.5 GiB.
+    const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+    test.skipIf(memory < 10 * 1024 ** 3)(
+      "throws at 2^31 output characters instead of aborting",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            [
+              `const uri = Buffer.alloc(1_000_000, "a").toString();`,
+              `const input = "\\x1b]8;;http://example.com/" + uri + "\\x07" + Buffer.alloc(4600, "a ").toString();`,
+              `let result;`,
+              `try {`,
+              `  result = "UNEXPECTED_SUCCESS:" + Bun.wrapAnsi(input, 1).length;`,
+              `} catch (e) {`,
+              `  result = { name: e.name, code: e.code, message: e.message };`,
+              `}`,
+              `console.log(JSON.stringify(result));`,
+            ].join("\n"),
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // One assertion: an abort shows its signal and its stderr next to the
+        // missing stdout.
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: JSON.stringify(stringTooLong) + "\n",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      120_000,
+    );
   });
 });

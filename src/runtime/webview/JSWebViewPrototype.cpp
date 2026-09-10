@@ -360,14 +360,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
             "WebView.cdp() requires backend: \"chrome\""_s);
 
-    // Must have attached (first navigate() completes the target→session
-    // chain). Before attach there's no sessionId; a browser-level CDP
-    // command here would reach the wrong target. The user can `await
-    // navigate(...)` first to get a session, or use Bun.WebView.chrome()
-    // for browser-level commands (v2).
+    // The raw escape hatch asks for a session up front instead of starting
+    // the attach chain itself: the first awaited operation of any kind
+    // (navigate(), evaluate(), ...) produces one.
     if (thisObject->m_sessionId.isEmpty())
         return Bun::ERR::INVALID_STATE(scope, globalObject,
-            "WebView.cdp(): no session - await navigate() first"_s);
+            "WebView.cdp(): no session yet - await another operation (such as navigate()) first"_s);
 
     JSValue methodArg = callFrame->argument(0);
     if (!methodArg.isString())

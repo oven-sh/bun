@@ -9612,8 +9612,10 @@ declare module "bun" {
      * tab). Returns the decoded `result` object from the CDP response, or
      * rejects with the `error.message` if Chrome reports a protocol error.
      *
-     * Call `await view.navigate(...)` at least once before using `cdp()` —
-     * the first navigate sets up the CDP session.
+     * `await` one other operation (such as `view.navigate(...)` or
+     * `view.evaluate(...)`) before using `cdp()` — the first operation on a
+     * view sets up the CDP session, and `cdp()` throws `ERR_INVALID_STATE`
+     * until one has.
      *
      * @param method Domain-qualified method name, e.g.
      *   `"Runtime.evaluate"`, `"DOM.querySelector"`,

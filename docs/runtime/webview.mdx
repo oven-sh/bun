@@ -455,7 +455,7 @@ When using `backend: "chrome"`, you can drop down to raw [CDP](https://chromedev
 
 ```ts
 const view = new Bun.WebView({ backend: "chrome" });
-await view.navigate("https://example.com"); // required: sets up the CDP session
+await view.navigate("https://example.com"); // the first awaited operation sets up the CDP session
 
 await view.cdp("Emulation.setUserAgentOverride", {
   userAgent: "MyBot/1.0",

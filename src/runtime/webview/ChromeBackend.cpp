@@ -1559,8 +1559,9 @@ JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& scrip
 // decoded JSValue — caller gets the same object shape CDP documents.
 //
 // Scoped to the view's sessionId, so commands target THIS tab. The
-// prototype guard (m_sessionId empty → ERR_INVALID_STATE) means this
-// never parks: the user has already run an operation that attached.
+// prototype guard (m_sessionId empty → ERR_INVALID_STATE) lets this
+// through once Target.attachToTarget has answered; if Page.enable has
+// not, it parks like any other op and goes out in order.
 JSPromise* cdp(JSGlobalObject* g, JSWebView* view, const WTF::String& method, const WTF::String& paramsJson)
 {
     auto& t = transport();

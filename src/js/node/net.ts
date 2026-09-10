@@ -1565,14 +1565,17 @@ function Socket(options?) {
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
   }
 
-  if (options?.fd !== undefined) {
-    validateInt32(options.fd, "options.fd", 0);
+  // Like node's `options = { ...options }`: `fd`, `readable` and `writable` are
+  // read from own properties only, the same view the Duplex gets below.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
+  const fd = opts.fd;
+  if (fd !== undefined) {
+    validateInt32(fd, "options.fd", 0);
   }
 
   // `readable` / `writable` pass through to the Duplex like node's do: a
   // `readable: false` socket starts with its readable side finished (no 'end',
   // so no allowHalfOpen teardown of the writable side).
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
@@ -1621,9 +1624,7 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
-    const { fd } = options;
-    validateInt32(fd, "fd", 0);
+  if (fd !== undefined) {
     // Adopt pipe/character-device/file fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
@@ -1634,7 +1635,7 @@ function Socket(options?) {
     // here would end its readable side and stomp its write path.
     // Network-socket fds are not supported (handle adoption needs native
     // support); those keep the previous validated-but-inert behavior.
-    if (options.writable === true) {
+    if (opts.writable === true) {
       let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
@@ -1646,7 +1647,7 @@ function Socket(options?) {
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
-      const optionsReadable = options.readable;
+      const optionsReadable = opts.readable;
       if (
         stats.isFIFO() ||
         stats.isCharacterDevice() ||
@@ -2542,6 +2543,8 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 
 function fdSyncWrite(chunk, encoding, callback) {
   const fs = require("node:fs");
+  // node's _writeGeneric restarts the idle timer on every write.
+  this._unrefTimer();
   try {
     const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     let offset = 0;
@@ -2559,6 +2562,7 @@ function fdSyncWrite(chunk, encoding, callback) {
 
 function fdSyncWritev(data, callback) {
   const fs = require("node:fs");
+  this._unrefTimer();
   try {
     let total = 0;
     for (let i = 0; i < data.length; i++) {

@@ -1271,7 +1271,11 @@ it("a client dialed with readable: false never reads and keeps writing", async (
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   try {
-    const client = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1", readable: false });
+    const client = connect({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      readable: false,
+    });
     client.on("error", done.reject);
     const events: string[] = [];
     for (const name of ["data", "end", "close"]) client.on(name, () => events.push(name));
@@ -1283,7 +1287,12 @@ it("a client dialed with readable: false never reads and keeps writing", async (
     client.resume();
     client.write("second\n");
     expect(await done.promise).toBe("first\nsecond\n");
-    expect({ events, destroyed: client.destroyed, readable: client.readable, readableEnded: client.readableEnded }).toEqual({
+    expect({
+      events,
+      destroyed: client.destroyed,
+      readable: client.readable,
+      readableEnded: client.readableEnded,
+    }).toEqual({
       events: [],
       destroyed: false,
       readable: false,
@@ -1411,6 +1420,56 @@ describe("Socket fd adoption", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
     expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+
+  // node's _writeGeneric restarts the idle timer before every write; the
+  // synchronous fd write path has no handle doing that for it.
+  it("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+    const path = join(tmpdirSync(), "adopted-timeout.txt");
+    const fd = fs.openSync(path, "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    try {
+      const timeouts: number[] = [];
+      const start = performance.now();
+      socket.on("timeout", () => timeouts.push(performance.now() - start));
+      socket.setTimeout(500);
+      // Two full timeout periods of steady writes: never 500ms idle.
+      for (let i = 0; i < 20; i++) {
+        socket.write("x");
+        await Bun.sleep(50);
+      }
+      expect(timeouts).toEqual([]);
+      // The timer is still armed from the last write and fires once it goes idle.
+      await once(socket, "timeout");
+      expect(fs.readFileSync(path, "utf8")).toBe("x".repeat(20));
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  // node copies the options ({ ...options }) before reading fd / readable /
+  // writable, so inherited properties never adopt anything; the Duplex flags and
+  // the adoption decision must come from the same view.
+  it("ignores fd / readable / writable that are not own properties of the options", async () => {
+    const path = join(tmpdirSync(), "inherited-fd.txt");
+    const fd = fs.openSync(path, "w");
+    try {
+      const socket = new Socket(Object.create({ fd, readable: false, writable: true }));
+      const readableAfterConstruct = socket.readable;
+      socket.on("error", () => {});
+      const writeError = await new Promise<string | undefined>(resolve =>
+        socket.write("x", err => resolve((err as NodeJS.ErrnoException | null)?.code)),
+      );
+      // No handle and nothing adopted: the write fails the way node's does.
+      expect({ writeError, readableAfterConstruct, file: fs.readFileSync(path, "utf8") }).toEqual({
+        writeError: "ERR_SOCKET_CLOSED",
+        readableAfterConstruct: true,
+        file: "",
+      });
+      expect(fs.fstatSync(fd).isFile()).toBe(true);
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 });
 

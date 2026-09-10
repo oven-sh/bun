@@ -709,7 +709,11 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
 
 void Transport::sendToView(JSWebView* view, uint32_t cdpId, Command&& cmd)
 {
-    if (!view->m_sessionId.isEmpty()) {
+    // The gate is the whole chain, not the session id alone.
+    // Target.attachToTarget fills in m_sessionId one reply before
+    // Page.enable drains the queue, and a command written in that
+    // window would reach Chrome ahead of the ones already parked.
+    if (!view->m_chromeAttaching && !view->m_sessionId.isEmpty()) {
         send(cdpId, WTF::move(cmd), sidSpan(view->m_sessionId));
         return;
     }
@@ -753,23 +757,33 @@ void Transport::failDeferred(JSWebView* view, JSValue error)
 {
     auto* g = m_global;
     uint32_t vid = view->m_viewId;
-    view->m_chromeAttaching = false;
+    // Take the queue out before settling anything. settleFailure calls
+    // into JS (onNavigationFailed), and a navigate() retry from that
+    // callback parks a command and starts a fresh chain. Iterating the
+    // live queue would reject that retry with this error too, and a
+    // callback that always retries would never finish the loop.
+    WTF::Vector<DeferredCmd> parked;
     for (size_t i = 0; i < m_deferred.size();) {
         if (m_deferred[i].viewId != vid) {
             ++i;
             continue;
         }
-        uint32_t id = m_deferred[i].id;
+        parked.append(WTF::move(m_deferred[i]));
         m_deferred.removeAt(i);
+    }
+    // Cleared before the callbacks run, so a retry starts a new chain
+    // instead of parking behind the one that just failed.
+    view->m_chromeAttaching = false;
+    for (auto& entry : parked) {
         // id 0 is the untracked half of a pair (click's mousePressed). It
         // owns no slot, and 0 is the HashMap's empty key, so looking it
         // up asserts. The tracked half carries the rejection.
-        if (!id) continue;
-        auto it = m_pending.find(id);
+        if (!entry.id) continue;
+        auto it = m_pending.find(entry.id);
         if (it == m_pending.end()) continue; // cancelled by close()
-        auto entry = it->value;
+        auto pending = it->value;
         m_pending.remove(it);
-        settleFailure(g, view, entry.slot, entry.method, error);
+        settleFailure(g, view, pending.slot, pending.method, error);
     }
     updateKeepAlive();
 }

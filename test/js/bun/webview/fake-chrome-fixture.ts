@@ -34,11 +34,25 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--cdp-error-once=<method>`: the same, for the first call only. A retry
+// of whatever failed then gets through.
+let cdpErrorOnce = process.argv.find(a => a.startsWith("--cdp-error-once="))?.slice("--cdp-error-once=".length);
+
+// `--event-before-page-enable`: emit a session event just before the
+// Page.enable reply, so the runtime runs a listener while the attach
+// chain has a sessionId but has not finished.
+const eventBeforePageEnable = process.argv.includes("--event-before-page-enable");
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The page the last Page.navigate committed, as this process saw the
+  // commands arrive. Tells a test where its evaluate landed in the order.
+  __fake_url() {
+    return lastUrl;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -80,7 +94,8 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     return loaderId;
   };
 
-  if (method === cdpErrorOn) {
+  if (method === cdpErrorOn || method === cdpErrorOnce) {
+    if (method === cdpErrorOnce) cdpErrorOnce = undefined;
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
   }
@@ -108,6 +123,13 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       committed(lastUrl);
       return;
     }
+    case "Page.enable": {
+      // The event reaches the runtime while the view has a sessionId and
+      // an unfinished attach chain: anything a listener starts there has
+      // to queue behind what the user asked for first.
+      if (eventBeforePageEnable) event("Page.frameStartedLoading", { frameId: "F" });
+      return reply({});
+    }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
@@ -129,7 +151,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ result: { type: typeof value, value } });
     }
     default:
-      // Page.enable, Runtime.enable, Target.closeTarget, Input.*: nothing to say.
+      // Runtime.enable, Target.closeTarget, Input.*: nothing to say.
       return reply({});
   }
 }

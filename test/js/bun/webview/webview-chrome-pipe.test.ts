@@ -156,6 +156,32 @@ test.concurrent("operations issued while the view attaches all complete", async 
   });
 });
 
+// Target.attachToTarget answers one reply before Page.enable, so there
+// is a window where the view has a session id and an unfinished chain.
+// An operation started in that window still goes out behind the ones
+// already waiting. The fake emits an event in exactly that window and
+// reports, from its own process, which command it saw first.
+test.concurrent("an operation started while the chain finishes stays behind the parked ones", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--event-before-page-enable"] },
+      width: 100,
+      height: 100,
+    });
+    let inWindow;
+    view.addEventListener("Page.frameStartedLoading", () => {
+      inWindow ??= view.evaluate("__fake_url()");
+    });
+    const navigated = await outcome(view.navigate("http://fake/first"));
+    print({ navigated, urlWhenTheEvaluateRan: await inWindow });
+    view.close();
+  `);
+  expect(result).toEqual({
+    navigated: {}, // resolves undefined
+    urlWhenTheEvaluateRan: "http://fake/first",
+  });
+});
+
 // The attach chain settles no promise of its own, so a failure in it has
 // to reach every operation parked behind it. "Cannot navigate to invalid
 // URL" is the fake's one canned protocol error, here on attachToTarget.
@@ -184,6 +210,36 @@ test.concurrent("an attach failure rejects every operation waiting on it", async
       { rejected: "Cannot navigate to invalid URL" },
     ],
     loading: false,
+  });
+});
+
+// onNavigationFailed runs from inside the failure handling, and a
+// navigate() from it is documented to work. The retry has to start a
+// fresh attach chain, not collect the failure that is being delivered.
+test.concurrent("navigate() retried from onNavigationFailed after an attach failure attaches", async () => {
+  const result = await runScenario(`
+    // The fake fails the first Target.attachToTarget only, so the retry's
+    // chain completes.
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-once=Target.attachToTarget"] },
+      width: 100,
+      height: 100,
+    });
+    const failures = [];
+    const { promise, resolve } = Promise.withResolvers();
+    view.onNavigationFailed = error => {
+      failures.push(error.message);
+      if (failures.length > 1) return resolve("the retry failed too");
+      view.navigate("http://fake/retry").then(() => resolve("the retry attached"), e => resolve("rejected: " + e.message));
+    };
+    view.navigate("http://fake/first").catch(() => {});
+    print({ outcome: await promise, failures, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({
+    outcome: "the retry attached",
+    failures: ["Cannot navigate to invalid URL"],
+    url: "http://fake/retry",
   });
 });
 

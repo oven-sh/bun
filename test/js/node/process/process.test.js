@@ -705,6 +705,39 @@ it("process.binding", () => {
   expect(() => process.binding(Object.freeze({ __proto__: null }))).toThrow();
 });
 
+it("spreading a process.binding() object passes exception check validation", async () => {
+  // { ...binding } runs every lazy PropertyCallback builder of the object back to back
+  // (JSObject::reifyAllStaticProperties). Builds with exception scope verification (debug,
+  // ASAN) abort if one of them returns with an unchecked simulated throw; release builds
+  // ignore the option, so there this only checks the copy is complete.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const missing = [];
+       for (const name of ["buffer", "config", "constants", "crypto/x509", "fs", "http_parser", "natives", "tty_wrap", "util", "uv"]) {
+         const binding = process.binding(name);
+         const spread = { ...binding };
+         for (const key of Object.keys(binding)) {
+           if (!(key in spread) || spread[key] !== binding[key]) missing.push(name + "." + key);
+         }
+       }
+       const { methods, allMethods } = process.binding("http_parser");
+       const { statValues, bigintStatValues } = process.binding("fs");
+       console.log(JSON.stringify({ missing, methods: methods.length, allMethods: allMethods.length, statValues: statValues.length, bigintStatValues: bigintStatValues.length }));`,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ missing: [], methods: 35, allMethods: 47, statValues: 36, bigintStatValues: 36 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
   expect(process.argv[0]).toBe(process.execPath);

@@ -13,7 +13,10 @@ static constexpr ASCIILiteral httpAllMethodNames[] = { HTTP_ALL_METHOD_MAP(METHO
 
 static JSValue methodNamesArray(VM& vm, JSObject* binding, std::span<const ASCIILiteral> names)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope,
+    // so it checks at the top rather than leaving a ThrowScope's simulated throw for the
+    // next builder in JSObject::reifyAllStaticProperties ({ ...process.binding("http_parser") }).
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSGlobalObject* globalObject = binding->globalObject();
     JSArray* methods = constructEmptyArray(globalObject, nullptr, names.size());
     RETURN_IF_EXCEPTION(scope, {});

@@ -111,28 +111,38 @@ PROCESS_BINDING_NOT_IMPLEMENTED(writeFileUtf8)
 
 PROCESS_BINDING_NOT_IMPLEMENTED(writeString)
 
+// A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope, so
+// the ThrowScope inside JSGenericTypedArrayView::create is checked here at the top rather than
+// leaving its simulated throw for the next builder in JSObject::reifyAllStaticProperties
+// ({ ...process.binding("fs") }).
+template<typename ArrayType>
+static JSValue statValuesArray(VM& vm, JSObject* binding, size_t length)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalObject = binding->globalObject();
+    auto* array = ArrayType::create(globalObject, globalObject->typedArrayStructureWithTypedArrayType<ArrayType::TypedArrayStorageType>(), length);
+    RETURN_IF_EXCEPTION(scope, {});
+    return array;
+}
+
 static JSValue ProcessBindingFs_statValues(VM& vm, JSObject* object)
 {
-    auto* globalObject = object->globalObject();
-    return JSC::JSFloat64Array::create(globalObject, globalObject->m_typedArrayFloat64.get(globalObject), 36);
+    return statValuesArray<JSC::JSFloat64Array>(vm, object, 36);
 }
 
 static JSValue ProcessBindingFs_bigintStatValues(VM& vm, JSObject* object)
 {
-    auto* globalObject = object->globalObject();
-    return JSC::JSBigInt64Array::create(globalObject, globalObject->m_typedArrayBigInt64.get(globalObject), 36);
+    return statValuesArray<JSC::JSBigInt64Array>(vm, object, 36);
 }
 
 static JSValue ProcessBindingFs_statFsValues(VM& vm, JSObject* object)
 {
-    auto* globalObject = object->globalObject();
-    return JSC::JSFloat64Array::create(globalObject, globalObject->m_typedArrayFloat64.get(globalObject), 7);
+    return statValuesArray<JSC::JSFloat64Array>(vm, object, 7);
 }
 
 static JSValue ProcessBindingFs_bigintStatFsValues(VM& vm, JSObject* object)
 {
-    auto* globalObject = object->globalObject();
-    return JSC::JSBigInt64Array::create(globalObject, globalObject->m_typedArrayBigInt64.get(globalObject), 7);
+    return statValuesArray<JSC::JSBigInt64Array>(vm, object, 7);
 }
 
 /* Source for ProcessBindingFs.lut.h

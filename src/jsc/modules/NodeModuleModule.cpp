@@ -632,8 +632,13 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
     return zigGlobalObject->JSSourceMapConstructor();
 }
 
+// A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope, so the
+// ThrowScope inside constructArray / constructEmptyArray is checked here at the top rather than
+// leaving its simulated throw for the next builder in JSObject::reifyAllStaticProperties
+// (Object.entries(require("node:module")), as jest-runtime does).
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -642,7 +647,9 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    auto* builtinModules = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RETURN_IF_EXCEPTION(scope, {});
+    return builtinModules;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -670,9 +677,13 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
+    // See getBuiltinModulesObject for why this checks at the top.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalPaths = JSC::constructEmptyArray(
         moduleObject->globalObject(),
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    return globalPaths;
 }
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a

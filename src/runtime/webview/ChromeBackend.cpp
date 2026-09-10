@@ -1148,6 +1148,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
+        view->m_chromeDocumentLoading = false;
         auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
         if (loaderId != view->m_chromeFailedLoaderId) {
             settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate,
@@ -1163,11 +1164,13 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     view->m_url = makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
 
     // A back/forward entry restored from the back-forward cache is complete at
-    // commit: no load event follows. A regular commit keeps m_loading true
-    // until loadEventFired.
+    // commit: no load event follows. A regular commit is loading until
+    // loadEventFired.
     auto type = jsonString(jsonField(params, { "type", 4 }));
     if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
         finishNavigation(view);
+    else
+        view->m_chromeDocumentLoading = true;
 }
 
 // Page.navigatedWithinDocument — fragment change, history.pushState /
@@ -1181,13 +1184,16 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     auto frameId = WTF::String::fromUTF8(jsonString(jsonField(params, { "frameId", 7 })));
     if (frameId != view->m_targetId) return;
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
+    // A document that is still loading (an SPA router calling replaceState on
+    // boot) is reported once, with this URL, when its load completes.
+    if (view->m_chromeDocumentLoading) return;
     // Settles a navigate()/goBack()/goForward() that Chrome has already
     // answered. While a navigation command is still unanswered, note the
     // event instead: that command's reply settles if it turns out to be a
     // same-document navigation, and its commit or load does otherwise.
     bool commandInFlight = false;
     for (auto& entry : m_pending.values()) {
-        if (entry.viewId == view->m_viewId && entry.slot == PendingSlot::Navigate) {
+        if (entry.viewId == view->m_viewId && entry.slot == PendingSlot::Navigate && entry.method != Method::PageTitle) {
             commandInFlight = true;
             break;
         }
@@ -1208,6 +1214,7 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
 void Transport::finishNavigation(JSWebView* view)
 {
     view->m_loading = false;
+    view->m_chromeDocumentLoading = false;
     uint32_t tid = nextId();
     m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
     send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
@@ -1519,6 +1526,7 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
+    if (ps == PendingSlot::Navigate) v->m_chromeSameDocumentNavigated = false;
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });
     t.send(id, WTF::move(cmd));
     t.updateKeepAlive();

@@ -103,6 +103,8 @@ public:
     WTF::String m_chromeFailedLoaderId;
     // The committed main-frame document is Chrome's error page.
     bool m_chromeOnErrorPage = false;
+    // A main-frame document has committed and not fired its load event yet.
+    bool m_chromeDocumentLoading = false;
     // Page.navigatedWithinDocument arrived while a navigation command was
     // unanswered; that command's reply settles if it was same-document.
     bool m_chromeSameDocumentNavigated = false;

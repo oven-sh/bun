@@ -1054,6 +1054,8 @@ function navServer() {
       const path = new URL(req.url).pathname;
       if (path === "/outer") return page('<title>outer</title><iframe src="/inner"></iframe>');
       if (path === "/inner") return page("<title>inner</title>inner");
+      // An SPA router rewriting the URL while the document is still loading.
+      if (path === "/spa") return page("<title>SPA</title><script>history.replaceState({}, '', '/app/home')</script>");
       return page(`<title>T${path}</title><body>${path}</body>`);
     },
   });
@@ -1155,6 +1157,38 @@ it("chrome: same-document navigations settle and update view.url", async () => {
     ["/doc#section", "T/doc"],
     ["/pushed?x=1#h", "T/doc"],
   ]);
+});
+
+it("chrome: a replaceState while the document loads is part of that load, not an early settle", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/first");
+  const seen: [string, string, boolean][] = [];
+  view.onNavigated = (url: string, title: string) => seen.push([url.replace(srv.base, ""), title, view.loading]);
+  // /spa's inline script calls history.replaceState before the load event.
+  // navigate() must still wait for the load (title known, loading false) and
+  // report the navigation once, with the rewritten URL.
+  await view.navigate(srv.base + "/spa");
+  expect({ url: view.url, title: view.title, loading: view.loading, seen }).toEqual({
+    url: srv.base + "/app/home",
+    title: "SPA",
+    loading: false,
+    seen: [["/app/home", "SPA", false]],
+  });
+  // A later pushState by the loaded page is its own navigation again, and a
+  // cross-document goBack() after it still waits for the old page to load.
+  await view.evaluate("history.pushState({}, '', '/app/next'), 0");
+  await view.goBack(); // same-document: /app/next -> /app/home
+  await view.goBack(); // cross-document: back to /first
+  expect({ url: view.url, title: view.title, seen: seen.slice(1) }).toEqual({
+    url: srv.base + "/first",
+    title: "T/first",
+    seen: [
+      ["/app/next", "SPA", false],
+      ["/app/home", "SPA", false],
+      ["/first", "T/first", false],
+    ],
+  });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

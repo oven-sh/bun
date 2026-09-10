@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
@@ -182,6 +183,107 @@ describe("HTTPParser.prototype.execute", () => {
     expect(bodyChunks.join("")).toBe("hello world");
     expect(executed).toBe(inputLength);
   });
+
+  // A callback can shrink a resizable ArrayBuffer, or grow a WebAssembly.Memory, while llhttp is
+  // still scanning the input. Both unmap the input bytes, which a pin does not stop, so each case
+  // runs in a child process: the parse must finish on bytes that stay mapped.
+  const head = "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
+  const tail = "0\r\n\r\n";
+  const payloadSize = 1024;
+  const chunkSize = `${payloadSize.toString(16)}\r\n`.length + payloadSize + "\r\n".length;
+  // A resizable ArrayBuffer of its own, or one WebAssembly.Memory page.
+  const inputSizes = { resizable: 1024 * 1024, wasm: 64 * 1024 };
+
+  const fixture = (mode: keyof typeof inputSizes) => `
+    const { HTTPParser } = process.binding("http_parser");
+
+    let bytes, mutate;
+    if (${JSON.stringify(mode)} === "resizable") {
+      const size = ${inputSizes.resizable};
+      const buffer = new ArrayBuffer(size, { maxByteLength: size });
+      bytes = new Uint8Array(buffer);
+      // resize() decommits the trimmed pages.
+      mutate = () => buffer.resize(0);
+    } else {
+      // Fill the signaling memory pool first so that the next memory is bounds checked. A bounds
+      // checked memory can move its bytes when it grows.
+      globalThis.hold = Array.from({ length: 12 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+      bytes = new Uint8Array(memory.buffer);
+      // grow() detaches the old buffer and releases its block.
+      mutate = () => memory.grow(1);
+    }
+
+    const payload = Buffer.alloc(${payloadSize}, 0x61);
+    const chunk = Buffer.concat([Buffer.from(${JSON.stringify(`${payloadSize.toString(16)}\r\n`)}), payload, Buffer.from("\\r\\n")]);
+    const head = Buffer.from(${JSON.stringify(head)});
+    const tail = Buffer.from(${JSON.stringify(tail)});
+
+    bytes.set(head, 0);
+    let end = head.byteLength;
+    while (end + chunk.byteLength + tail.byteLength <= bytes.byteLength) {
+      bytes.set(chunk, end);
+      end += chunk.byteLength;
+    }
+    bytes.set(tail, end);
+    end += tail.byteLength;
+
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+
+    let mutated = false;
+    let bodyBytes = 0;
+    let bodyMatches = true;
+    let complete = false;
+    let currentBuffer = -1;
+    parser[HTTPParser.kOnHeadersComplete] = () => 0;
+    parser[HTTPParser.kOnBody] = received => {
+      bodyBytes += received.byteLength;
+      if (!received.equals(payload.subarray(0, received.byteLength))) bodyMatches = false;
+      if (!mutated) {
+        mutated = true;
+        mutate();
+        // getCurrentBuffer() copies out of the same bytes llhttp is reading.
+        currentBuffer = parser.getCurrentBuffer().byteLength;
+      }
+    };
+    parser[HTTPParser.kOnMessageComplete] = () => {
+      complete = true;
+    };
+
+    const executed = parser.execute(bytes.subarray(0, end));
+    console.log(JSON.stringify({ executed, bodyBytes, bodyMatches, complete, mutated, currentBuffer: currentBuffer === end }));
+  `;
+
+  test.each(Object.keys(inputSizes) as (keyof typeof inputSizes)[])(
+    "finishes the parse when a callback unmaps the input (%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(mode)],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const chunks = Math.floor((inputSizes[mode] - head.length - tail.length) / chunkSize);
+
+      // `executed` covers the whole request, so llhttp read every chunk that follows the callback
+      // which unmapped the input, and each one held the bytes the request was built with.
+      expect({ stdout: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+        stdout: {
+          executed: head.length + chunks * chunkSize + tail.length,
+          bodyBytes: chunks * payloadSize,
+          bodyMatches: true,
+          complete: true,
+          mutated: true,
+          currentBuffer: true,
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("rejects re-entrant execute, even after a nested finish()", async () => {
     const parser = new HTTPParser();

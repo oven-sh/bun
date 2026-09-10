@@ -1156,15 +1156,18 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
     if (view->m_chromeDocumentLoading) return; // folded into that load's single onNavigated
     // An unanswered navigation command settles from its reply instead (see PageNavigate).
-    bool commandInFlight = false;
+    bool commandInFlight = false, titleFetchInFlight = false;
     for (auto& entry : m_pending.values()) {
-        if (entry.viewId == view->m_viewId && entry.slot == PendingSlot::Navigate && entry.method != Method::PageTitle) {
+        if (entry.viewId != view->m_viewId || entry.slot != PendingSlot::Navigate) continue;
+        if (entry.method != Method::PageTitle)
             commandInFlight = true;
-            break;
-        }
+        else if (entry.navGeneration == view->m_chromeNavGeneration)
+            titleFetchInFlight = true;
     }
     if (commandInFlight)
         view->m_chromeSameDocumentNavigated = true;
+    else if (titleFetchInFlight)
+        return; // that load's title reply settles and reports, with this URL
     else {
         view->m_loading = false;
         settle(g, view, PendingSlot::Navigate, true, jsUndefined());

@@ -5653,10 +5653,12 @@ class ClientHttp2Session extends Http2Session {
       this.#authority = needsBrackets ? `[${authorityHost}]:${port}` : `${authorityHost}:${port}`;
     }
 
+    // Set when the constructor throws: nobody holds this session.
+    let abandoned = false;
     function onConnect() {
+      if (abandoned) return;
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
-      // A constructor that throws sets #parser to null, so this cannot re-arm forever.
       if (this.#parser === undefined) {
         process.nextTick(onConnect.bind(this));
         return;
@@ -5704,11 +5706,10 @@ class ClientHttp2Session extends Http2Session {
       );
       this[bunHTTP2Socket] = socket;
     }
-    this.#encrypted = socket instanceof TLSSocket;
-    const nativeSocket = socket._handle;
-    this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
-
     try {
+      this.#encrypted = socket instanceof TLSSocket;
+      const nativeSocket = socket._handle;
+      this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
       if (options?.settings !== undefined) {
         validateSettings(options.settings);
       }
@@ -5721,8 +5722,7 @@ class ClientHttp2Session extends Http2Session {
         handlers: ClientHttp2Session.#Handlers,
       });
     } catch (e) {
-      // Nothing can drive this connect: the caller gets the error, not a session.
-      this.#parser = null;
+      abandoned = true;
       this[bunHTTP2Socket] = null;
       try {
         socket.destroy();

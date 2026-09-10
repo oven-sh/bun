@@ -6013,10 +6013,12 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
 // The client session starts the TCP connect before it reads the rest of its options, so a
 // throw from the constructor left a connecting socket that no session could ever drive. Its
 // connect callback then re-queued itself on process.nextTick forever: one thread at 100% CPU,
-// and no timer or I/O ran again. A constructor that throws now drops that socket.
+// and no timer or I/O ran again. A constructor that throws now drops that socket, and the
+// connect that was in flight reaches neither the session nor the caller's listener.
 it("a client session constructor that throws drops the socket it was connecting", async () => {
   const fixture = `
     const http2 = require("node:http2");
+    const { Duplex } = require("node:stream");
     const server = http2.createServer();
     server.on("stream", stream => {
       stream.respond({ ":status": 200 });
@@ -6025,17 +6027,23 @@ it("a client session constructor that throws drops the socket it was connecting"
     server.listen(0, "127.0.0.1", () => {
       const url = "http://127.0.0.1:" + server.address().port;
       let reads = 0;
+      let listenerCalls = 0;
+      // A transport that reports 'connect' after it was destroyed. The session never
+      // reached the caller, so its connect listener must not run either.
+      const late = new Duplex({ read() {}, write(chunk, encoding, cb) { cb(); } });
+      late.connecting = true;
       const cases = [
         // validateSettings rejects the value, before the parser exists.
         { settings: { initialWindowSize: -1 } },
         // A getter that throws on the read after validateSettings' own two: the socket
         // exists, the parser does not.
         { settings: { get initialWindowSize() { if (++reads === 3) throw new Error("boom"); return 65535; } } },
+        { createConnection: () => late, settings: { initialWindowSize: -1 } },
       ];
       const thrown = [];
       for (const options of cases) {
         try {
-          http2.connect(url, options);
+          http2.connect(url, options, () => listenerCalls++);
           thrown.push("did not throw");
         } catch (e) {
           thrown.push(e.code || e.message);
@@ -6043,17 +6051,24 @@ it("a client session constructor that throws drops the socket it was connecting"
       }
       // A session that completes a request proves the event loop still runs. The process
       // then has to exit on its own, so the dropped sockets hold nothing open.
-      const client = http2.connect(url);
-      const req = client.request({ ":path": "/" });
-      let body = "";
-      req.setEncoding("utf8");
-      req.on("data", chunk => (body += chunk));
-      req.on("end", () => {
-        console.log(JSON.stringify({ thrown, reads, body }));
-        client.close();
-        server.close();
+      const request = () => {
+        const client = http2.connect(url);
+        const req = client.request({ ":path": "/" });
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => {
+          console.log(JSON.stringify({ thrown, reads, listenerCalls, body }));
+          client.close();
+          server.close();
+        });
+        req.end();
+      };
+      setImmediate(() => {
+        late.connecting = false;
+        late.emit("connect");
+        setImmediate(request);
       });
-      req.end();
     });
   `;
   await using proc = Bun.spawn({
@@ -6073,7 +6088,12 @@ it("a client session constructor that throws drops the socket it was connecting"
   const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
   const printed = stdout.trim() ? JSON.parse(stdout) : stdout;
   expect({ printed, stderr, exitCode }).toEqual({
-    printed: { thrown: ["ERR_HTTP2_INVALID_SETTING_VALUE", "boom"], reads: 3, body: "ok" },
+    printed: {
+      thrown: ["ERR_HTTP2_INVALID_SETTING_VALUE", "boom", "ERR_HTTP2_INVALID_SETTING_VALUE"],
+      reads: 3,
+      listenerCalls: 0,
+      body: "ok",
+    },
     stderr: "",
     exitCode: 0,
   });

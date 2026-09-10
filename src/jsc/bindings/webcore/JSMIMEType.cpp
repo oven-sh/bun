@@ -426,8 +426,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
         return {};
     }
 
-    // makeString aborts the process when the result does not fit in a string,
-    // and the type and the subtype come from the caller.
+    // makeString aborts the process when the result does not fit in a string.
     const String& type = thisObject->type();
     const String& subtype = thisObject->subtype();
     String essence = tryMakeString(type, '/', subtype);
@@ -473,9 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     String paramsStr = paramsStrValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The type, the subtype and the serialized parameters all come from the
-    // caller. A crash-on-overflow builder aborts the process once the result
-    // passes String::MaxLength, so record the overflow and throw below instead.
+    // RecordOverflow: the default policy aborts the process past String::MaxLength.
     StringBuilder builder(WTF::OverflowPolicy::RecordOverflow);
     builder.append(thisObject->type());
     builder.append('/');

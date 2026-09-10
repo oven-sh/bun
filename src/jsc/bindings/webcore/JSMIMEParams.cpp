@@ -165,9 +165,7 @@ static String removeBackslashes(const StringView& view)
     return builder.toString();
 }
 
-// Returns the number of characters the escaped view adds to the result. The
-// builder stops counting at WTF::String::MaxLength and this count does not, so
-// the caller can tell a result that is too long from a failed allocation.
+// Returns the characters it adds. The builder's own length stops at String::MaxLength.
 static uint64_t escapeQuoteOrBackslash(const StringView& view, StringBuilder& builder)
 {
     if (view.find([](char16_t c) { return c == '"' || c == '\\'; }) == notFound) {
@@ -200,8 +198,7 @@ static uint64_t escapeQuoteOrBackslash(const StringView& view, StringBuilder& bu
     return length;
 }
 
-// Encodes a parameter value for serialization. Returns the number of
-// characters it adds to the result.
+// Encodes a parameter value for serialization. Returns the characters it adds.
 static uint64_t encodeParamValue(const StringView& value, StringBuilder& builder)
 {
     if (value.isEmpty()) {
@@ -535,9 +532,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     }
 
     JSMap* map = thisObject->jsMap();
-    // The result length comes from the parameters, and escaping doubles a value.
-    // A crash-on-overflow builder aborts the process once the result passes
-    // String::MaxLength, so record the overflow and throw below instead.
+    // RecordOverflow: the default policy aborts the process past String::MaxLength.
     StringBuilder builder(WTF::OverflowPolicy::RecordOverflow);
     uint64_t intendedLength = 0;
     bool first = true;

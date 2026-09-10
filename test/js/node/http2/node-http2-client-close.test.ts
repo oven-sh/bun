@@ -4,8 +4,8 @@
  *   any other code     -> 'error', 'close'           (no 'end': the body was killed by RST_STREAM)
  *
  * Works with both:
- *   bun bd test test/js/node/http2/node-http2-client-close.test.mts
- *   node --test test/js/node/http2/node-http2-client-close.test.mts
+ *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
+ *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
 import http2 from "node:http2";
@@ -184,10 +184,11 @@ describe("ClientHttp2Stream.close(code) while pending", () => {
 });
 
 if (typeof Bun !== "undefined") {
+  const node = Bun.which("node");
   describe("Node.js compatibility", () => {
-    test("tests should run on node.js", async () => {
+    test("tests should run on node.js", { skip: !node }, async () => {
       await using proc = Bun.spawn({
-        cmd: [Bun.which("node") || "node", "--test", import.meta.filename],
+        cmd: [node as string, "--test", import.meta.filename],
         stdout: "inherit",
         stderr: "inherit",
         stdin: "ignore",

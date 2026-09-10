@@ -1098,8 +1098,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
     if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
-        // The capability stays internal from here: `derived` adopts it once pull() settles, so a close(error)
-        // that rejects it earlier is not an unhandled rejection of its own.
+        // `derived` adopts the capability once pull() settles; a close(error) that rejects it earlier is reported there.
         markPromiseAsHandled(vm, capability);
         auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), derived, sink);

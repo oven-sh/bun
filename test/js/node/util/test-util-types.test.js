@@ -376,7 +376,8 @@ test("util/types functions are rejected as a species constructor", async () => {
       bunExe(),
       "-e",
       `
-        const f = require("util").types.isDate;
+        import { types } from "util";
+        const f = types.isDate;
         const lines = [];
         const run = (label, fn) => {
           try {

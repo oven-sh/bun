@@ -2019,10 +2019,7 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
-          connection.on("end", events[1]);
-          connection.on("drain", events[2]);
-          connection.on("close", events[3]);
+          attachUpgradedDuplex(this, connection, events);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2070,10 +2067,7 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
-                connection.on("end", events[1]);
-                connection.on("drain", events[2]);
-                connection.on("close", events[3]);
+                attachUpgradedDuplex(this, connection, events);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2303,6 +2297,28 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
+// Wire a transport driven by the stream-level TLS engine (a generic Duplex, a
+// named pipe, a socket with unflushed writes) to `self`, the TLS socket over
+// it. events[0..3] are the native data/end/drain/close thunks the engine is
+// fed from.
+//
+// The destroy goes on before the native 'close' thunk. Node tears the TLS
+// socket down from its stream wrap's 'close' the same way
+// (`wrap.on('close', () => this.destroy())`,
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741),
+// and the order is what makes the teardown match: the engine's own close
+// unwinds the pending handshake, and a socket destroyed first reports neither
+// that aborted handshake as an error nor a second 'close'. A transport that
+// goes away before the engine exists (the engine is created on a later
+// event-loop turn) is reported by this listener alone.
+function attachUpgradedDuplex(self, connection, events) {
+  connection.on("close", () => self.destroy());
+  connection.on("data", events[0]);
+  connection.on("end", events[1]);
+  connection.on("drain", events[2]);
+  connection.on("close", events[3]);
+}
+
 function drainOnreadTail(self, fromRead?) {
   if (self[kOnreadTail] === undefined) return false;
   if (fromRead) self[kOnreadReadRequested] = true;
@@ -2372,10 +2388,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
-    connection.on("data", events[0]);
-    connection.on("end", events[1]);
-    connection.on("drain", events[2]);
-    connection.on("close", events[3]);
+    attachUpgradedDuplex(this, connection, events);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2401,10 +2414,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
-      connection.on("data", events[0]);
-      connection.on("end", events[1]);
-      connection.on("drain", events[2]);
-      connection.on("close", events[3]);
+      attachUpgradedDuplex(this, connection, events);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;

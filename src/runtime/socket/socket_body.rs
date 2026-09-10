@@ -4399,6 +4399,17 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
+                // The transport closed while this task was queued.
+                // `UpgradedDuplex::close` had no engine to shut down then, so
+                // it staged the close instead. A closed transport can carry no
+                // handshake: report the close through the normal teardown
+                // rather than starting an engine that nothing can drive (which
+                // would also leave this context, its SSL and its strong refs
+                // alive until the VM stops).
+                if this.upgrade.pending_close.replace(false) {
+                    Self::on_close(this);
+                    return;
+                }
                 log!(
                     "DuplexUpgradeContext.startTLS mode={}",
                     <&'static str>::from(this.mode)

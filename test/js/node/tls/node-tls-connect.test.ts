@@ -1031,6 +1031,32 @@ describe("application data written over a Duplex transport before the handshake 
   });
 });
 
+it("tls.connect({ socket: duplex }) closes when the transport is destroyed before the handshake starts", async () => {
+  // The engine over a Duplex transport is created on a later event-loop turn,
+  // so this destroy lands before it exists. Node wraps the stream at once and
+  // destroys the TLS socket from the wrap's 'close'
+  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741),
+  // which reports 'close' with hadError === false wherever the destroy lands.
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+  client.on("close", hadError => {
+    events.push(`close:${hadError}`);
+    closed.resolve();
+  });
+  transport.destroy();
+  await closed.promise;
+  expect(events).toEqual(["close:false"]);
+  expect(client.destroyed).toBe(true);
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

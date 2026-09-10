@@ -912,7 +912,9 @@ it("chrome: method arguments are type- and range-checked", async () => {
   );
   expect(code(() => v.click(1, NaN))).toBe(`ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite. Received NaN`);
   // Coordinates travel as floats; a double beyond float range would arrive as Infinity.
-  expect(code(() => v.click(Number.MAX_VALUE, 0))).toStartWith(`ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite.`);
+  expect(code(() => v.click(Number.MAX_VALUE, 0))).toStartWith(
+    `ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite.`,
+  );
   expect(code(() => v.click(1, 2, "opts"))).toStartWith("ERR_INVALID_ARG_TYPE:");
   expect(code(() => v.click(1, 2, () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");
   expect(code(() => v.scrollTo("#a", () => {}))).toStartWith("ERR_INVALID_ARG_TYPE:");

@@ -55,13 +55,15 @@ public:
     {
     }
 
-    Local<Value> ResourceName() const { return resource_name_; }
-    int LineOffset() const { return resource_line_offset_; }
-    int ColumnOffset() const { return resource_column_offset_; }
-    int ScriptId() const { return script_id_; }
-    Local<Value> SourceMapUrl() const { return source_map_url_; }
-    Local<Data> GetHostDefinedOptions() const { return host_defined_options_; }
-    ScriptOriginOptions Options() const { return options_; }
+    // Inline in v8-message.h, but under dllimport MSVC emits a call to each of these instead of
+    // inlining, so addons built with MSVC (debug) reference them as imports.
+    BUN_EXPORT Local<Value> ResourceName() const;
+    BUN_EXPORT int LineOffset() const;
+    BUN_EXPORT int ColumnOffset() const;
+    BUN_EXPORT int ScriptId() const;
+    BUN_EXPORT Local<Value> SourceMapUrl() const;
+    BUN_EXPORT Local<Data> GetHostDefinedOptions() const;
+    BUN_EXPORT ScriptOriginOptions Options() const;
 
 private:
     // V8's inline constructor calls this, so an addon that builds a ScriptOrigin links against it.

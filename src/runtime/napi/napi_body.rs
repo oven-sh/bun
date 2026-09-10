@@ -3568,6 +3568,13 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
         pub(super) fn _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ResourceNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin10LineOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12ColumnOffsetEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin8ScriptIdEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin12SourceMapUrlEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812ScriptOrigin7OptionsEv() -> *mut c_void;
         pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
         pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
@@ -3915,6 +3922,20 @@ mod v8_api {
         pub(super) fn v8_Int32_Value() -> *mut c_void;
         #[link_name = "?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ"]
         pub(super) fn v8_ScriptOrigin_VerifyHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?ResourceName@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_ResourceName() -> *mut c_void;
+        #[link_name = "?LineOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_LineOffset() -> *mut c_void;
+        #[link_name = "?ColumnOffset@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ColumnOffset() -> *mut c_void;
+        #[link_name = "?ScriptId@ScriptOrigin@v8@@QEBAHXZ"]
+        pub(super) fn v8_ScriptOrigin_ScriptId() -> *mut c_void;
+        #[link_name = "?SourceMapUrl@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_SourceMapUrl() -> *mut c_void;
+        #[link_name = "?GetHostDefinedOptions@ScriptOrigin@v8@@QEBA?AV?$Local@VData@v8@@@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_GetHostDefinedOptions() -> *mut c_void;
+        #[link_name = "?Options@ScriptOrigin@v8@@QEBA?AVScriptOriginOptions@2@XZ"]
+        pub(super) fn v8_ScriptOrigin_Options() -> *mut c_void;
         #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
         pub(super) fn v8_Context_Global() -> *mut c_void;
         #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
@@ -5017,6 +5038,13 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
             _ZNK2v85Int325ValueEv,
             _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin12ResourceNameEv,
+            _ZNK2v812ScriptOrigin10LineOffsetEv,
+            _ZNK2v812ScriptOrigin12ColumnOffsetEv,
+            _ZNK2v812ScriptOrigin8ScriptIdEv,
+            _ZNK2v812ScriptOrigin12SourceMapUrlEv,
+            _ZNK2v812ScriptOrigin21GetHostDefinedOptionsEv,
+            _ZNK2v812ScriptOrigin7OptionsEv,
             _ZN2v87Context6GlobalEv,
             _ZNK2v86Object18InternalFieldCountEv,
             _ZN2v86Object15GetIdentityHashEv,
@@ -5202,6 +5230,13 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Value_ToInt32,
             v8_Int32_Value,
             v8_ScriptOrigin_VerifyHostDefinedOptions,
+            v8_ScriptOrigin_ResourceName,
+            v8_ScriptOrigin_LineOffset,
+            v8_ScriptOrigin_ColumnOffset,
+            v8_ScriptOrigin_ScriptId,
+            v8_ScriptOrigin_SourceMapUrl,
+            v8_ScriptOrigin_GetHostDefinedOptions,
+            v8_ScriptOrigin_Options,
             v8_Context_Global,
             v8_Object_InternalFieldCount,
             v8_Object_GetIdentityHash,

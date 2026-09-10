@@ -5,6 +5,7 @@
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
+#include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/WriteBarrier.h"
 #include "headers-handwritten.h"
@@ -277,6 +278,46 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // on one line ("Received { abc: 123 }") the way Node does.
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
 
+// Appends a value that user code controls the length of. A message longer than
+// String::MaxLength cannot exist: StringBuilder::didOverflow() calls CRASH(),
+// which kills the process. Throw what JSC throws for a string that gets too
+// long ("RangeError: Out of memory") instead. `trailing` is the number of
+// characters the caller appends after the value (a closing quote, "n)", ...).
+// The caller checks its own scope for the exception, as it does for every other
+// throwing step of a message.
+static void appendUserValue(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, StringView value, unsigned trailing = 0)
+{
+    ASSERT(!builder.hasOverflowed());
+    if (static_cast<uint64_t>(value.length()) + trailing > WTF::String::MaxLength - builder.length()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    builder.append(value);
+}
+
+// The number of characters appendEscapedQuotedChar() appends for `c`. Keep the
+// two in step.
+template<typename CharType>
+static unsigned escapedQuotedCharLength(CharType c, char quote)
+{
+    switch (c) {
+    case '\b':
+    case '\t':
+    case '\n':
+    case '\f':
+    case '\r':
+    case '\\':
+        return 2;
+    default:
+        if (c == static_cast<CharType>(quote))
+            return 2;
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f))
+            return 4;
+        return 1;
+    }
+}
+
 // util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 // strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
 template<typename CharType>
@@ -320,6 +361,42 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
     }
 }
 
+// Appends `string` quoted and escaped. Escaping turns one character into up to
+// four ("\x1f"), so the result can pass String::MaxLength even when the string
+// itself fits. Measure it when the cheap upper bound says it might not, and
+// throw rather than let StringBuilder abort the process (see appendUserValue).
+static void appendQuotedUserValue(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, StringView string)
+{
+    ASSERT(!builder.hasOverflowed());
+    const char quote = string.contains('\'') ? '"' : '\'';
+    const uint64_t room = WTF::String::MaxLength - builder.length();
+    if (static_cast<uint64_t>(string.length()) * 4 + 2 > room) {
+        uint64_t length = 2;
+        if (string.is8Bit()) {
+            for (const auto c : string.span<Latin1Character>())
+                length += escapedQuotedCharLength(c, quote);
+        } else {
+            for (const auto c : string.span<char16_t>())
+                length += escapedQuotedCharLength(c, quote);
+        }
+        if (length > room) {
+            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+    }
+
+    builder.append(quote);
+    if (string.is8Bit()) {
+        for (const auto c : string.span<Latin1Character>())
+            appendEscapedQuotedChar(builder, c, quote);
+    } else {
+        for (const auto c : string.span<char16_t>())
+            appendEscapedQuotedChar(builder, c, quote);
+    }
+    builder.append(quote);
+}
+
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
@@ -328,34 +405,28 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         return;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
         JSString* jsString = dynamicDowncast<JSString>(cell);
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
-            const char quote = str->contains('\'') ? '"' : '\'';
-            builder.append(quote);
-            if (str->is8Bit()) {
-                for (const auto c : str->span<Latin1Character>())
-                    appendEscapedQuotedChar(builder, c, quote);
-            } else {
-                for (const auto c : str->span<char16_t>())
-                    appendEscapedQuotedChar(builder, c, quote);
-            }
-            builder.append(quote);
+            appendQuotedUserValue(globalObject, builder, str);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
-        builder.append(str);
+        appendUserValue(globalObject, builder, str);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     case JSC::JSType::SymbolType: {
         auto symbol = uncheckedDowncast<Symbol>(cell);
         if (!symbol->uid().isNullSymbol() && !symbol->uid().isEmpty()) {
-            builder.append(symbol->tryGetDescriptiveString().value_or(String()));
+            appendUserValue(globalObject, builder, symbol->tryGetDescriptiveString().value_or(String()));
+            RETURN_IF_EXCEPTION(scope, );
         } else {
             builder.append(globalObject->vm().smallStrings.symbolString());
         }
@@ -363,12 +434,12 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
-        auto& vm = JSC::getVM(globalObject);
         auto name = Zig::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
-            builder.append(name);
+            appendUserValue(globalObject, builder, name, 1);
+            RETURN_IF_EXCEPTION(scope, );
             builder.append(']');
         } else {
             builder.append("[Function (anonymous)]"_s);
@@ -382,7 +453,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     }
 
     // Node renders objects inline in error messages ("Received { abc: 123 }").
-    builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
+    appendUserValue(globalObject, builder, Bun__inspect_singleline(globalObject, arg).transferToWTFString());
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
@@ -420,7 +492,8 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         auto view = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         builder.append("type bigint ("_s);
-        builder.append(view);
+        appendUserValue(globalObject, builder, view, 2);
+        RETURN_IF_EXCEPTION(scope, );
         builder.append("n)"_s);
         return;
     }
@@ -433,7 +506,8 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         auto result = symbol->tryGetDescriptiveString();
         if (result.has_value()) {
             builder.append("type symbol ("_s);
-            builder.append(result.value());
+            appendUserValue(globalObject, builder, result.value(), 1);
+            RETURN_IF_EXCEPTION(scope, );
             builder.append(")"_s);
         } else {
             builder.append("type symbol (Symbol())"_s);
@@ -445,7 +519,8 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         auto name = Zig::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
-            builder.append(name);
+            appendUserValue(globalObject, builder, name);
+            RETURN_IF_EXCEPTION(scope, );
         }
         return;
     }
@@ -513,13 +588,15 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             builder.append("an instance of "_s);
             auto view = str->view(globalObject);
             RETURN_IF_EXCEPTION(scope, );
-            builder.append(view);
+            appendUserValue(globalObject, builder, view);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });
     JSValueToStringSafe(globalObject, builder, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* globalObject, EncodedJSValue value)
@@ -592,7 +669,9 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, WTF::Str
         builder.append('n');
         return;
     }
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     JSValueToStringSafe(globalObject, builder, input);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 namespace Message {

@@ -477,6 +477,15 @@ setTimeout(() => query.cancel(), 100);
 await query;
 ```
 
+Parameters are lazy too. Bun keeps a reference to each interpolated value and serializes it when it sends the query, not when the template literal is evaluated. This can be later than the `.execute()` call, for example while the statement is still being prepared. A `TypedArray`, `Buffer`, `ArrayBuffer`, `Date` or `sql(object)` value that you modify before the query settles is sent with its new contents, and a buffer that you transfer or detach before then is sent without its bytes. If you need to reuse a buffer right away, pass a copy (`new Uint8Array(bytes)`, not a view such as `subarray()` or `Buffer#slice()`).
+
+```ts
+const bytes = new Uint8Array([1, 2, 3, 4]);
+const query = sql`INSERT INTO files (data) VALUES (${bytes})`;
+bytes.fill(0); // the query has not read `bytes` yet
+await query; // stores 00000000, not 01020304
+```
+
 ---
 
 ## Database Environment Variables

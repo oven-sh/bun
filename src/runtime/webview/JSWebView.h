@@ -98,15 +98,13 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // loaderId of the last Page.navigate that answered with errorText, so
-    // the error page Chrome then commits is not reported as a second failure.
+    // loaderId whose failure navigate() already reported (its error page commits later).
     WTF::String m_chromeFailedLoaderId;
     // The committed main-frame document is Chrome's error page.
     bool m_chromeOnErrorPage = false;
     // A main-frame document has committed and not fired its load event yet.
     bool m_chromeDocumentLoading = false;
-    // Page.navigatedWithinDocument arrived while a navigation command was
-    // unanswered; that command's reply settles if it was same-document.
+    // A same-document navigation happened while a navigation command was unanswered.
     bool m_chromeSameDocumentNavigated = false;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields

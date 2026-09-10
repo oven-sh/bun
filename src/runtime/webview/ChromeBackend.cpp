@@ -843,20 +843,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageNavigate: {
-        // {"frameId", "loaderId"?, "errorText"?}. errorText → the navigation
-        // failed before commit (bad URL, net::ERR_*): reject now. A loaderId
-        // without errorText → a new document is loading and
-        // Page.loadEventFired resolves. No loaderId → same-document
-        // navigation (only the #fragment changed): nothing loads, and
-        // Page.navigatedWithinDocument is the whole navigation. That event
-        // and this reply arrive in either order; whichever comes second
-        // settles, so view.url is current once navigate() resolves.
+        // {"frameId", "loaderId"?, "errorText"?}: errorText = failed before commit; no loaderId =
+        // same-document (settled by Page.navigatedWithinDocument or here, whichever is second).
         bool sameDocumentDone = std::exchange(view->m_chromeSameDocumentNavigated, false);
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         auto loaderId = jsonString(jsonField(result, { "loaderId", 8 }));
         if (!err.empty()) {
-            // Chrome may still commit an error page for this loaderId; its
-            // frameNavigated must not report the failure a second time.
             view->m_chromeFailedLoaderId = WTF::String::fromUTF8(loaderId);
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
         } else if (loaderId.empty() && sameDocumentDone) {
@@ -871,10 +863,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageTitle: {
-        // Runtime.evaluate("document.title") chained from loadEventFired.
-        // result.result.value is the string. Set m_title, settle Navigate,
-        // then run onNavigated: the slot is free again if the callback
-        // navigates, and it still runs before the awaiting code resumes.
+        // document.title after a load: set m_title, settle Navigate, then onNavigated (slot already free).
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonString(jsonField(inner, { "value", 5 }));
         view->m_title = WTF::String::fromUTF8(value);
@@ -914,11 +903,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
     case Method::PageNavigateToHistoryEntry:
-        // Response is empty {} on success. A different-document entry loads
-        // (or is restored from the back-forward cache) and settles through
-        // frameNavigated/loadEventFired. An entry in the same document (one
-        // made by pushState, or only a #fragment away) settles through
-        // Page.navigatedWithinDocument, which may already have arrived.
+        // {} on success. Settled by the entry's load, bfcache restore, or same-document event.
         if (std::exchange(view->m_chromeSameDocumentNavigated, false)) {
             view->m_loading = false;
             settle(g, view, entry.slot, true, jsUndefined());
@@ -1127,24 +1112,16 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 }
 
-// Page.frameNavigated — a document committed in some frame of the page.
-// params.frame: {id, parentId?, url, urlFragment?, unreachableUrl?, ...},
-// params.type: "Navigation" | "BackForwardCacheRestore". Only the main frame
-// (no parentId) is the view's document. m_url updates here, at commit;
-// onNavigated and the navigate() promise wait for the load
-// (Page.loadEventFired → PageTitle), like WKWebView's didFinishNavigation.
+// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?}, type}: a document
+// committed. Only the main frame counts; onNavigated and navigate() wait for its load.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto* g = m_global;
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return;
 
-    // A failed load commits Chrome's error page (frame.url is
-    // chrome-error://chromewebdata/) and names the URL that failed. That is a
-    // failed navigation, not a new view.url. navigate() already reported its
-    // own failure from Page.navigate's errorText, keyed by the same loaderId;
-    // anything else (the page navigating itself, reload(), goBack()) is
-    // reported here.
+    // unreachableUrl: this commit is Chrome's error page for a failed load. A failure, not a
+    // new view.url; already reported if navigate()'s errorText named this loaderId.
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
@@ -1163,9 +1140,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     auto fragment = jsonString(jsonField(frame, { "urlFragment", 11 }));
     view->m_url = makeString(WTF::String::fromUTF8(url), WTF::String::fromUTF8(fragment));
 
-    // A back/forward entry restored from the back-forward cache is complete at
-    // commit: no load event follows. A regular commit is loading until
-    // loadEventFired.
+    // A back-forward cache restore is complete at commit: no load event follows.
     auto type = jsonString(jsonField(params, { "type", 4 }));
     if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
         finishNavigation(view);
@@ -1173,10 +1148,8 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
         view->m_chromeDocumentLoading = true;
 }
 
-// Page.navigatedWithinDocument — fragment change, history.pushState /
-// replaceState, or a back/forward between such entries. The document stays,
-// so no frameNavigated and no loadEventFired follow: this event is the whole
-// navigation. params: {frameId, url, navigationType}.
+// Page.navigatedWithinDocument {frameId, url}: fragment change, pushState/replaceState or history
+// traversal between such entries. The whole navigation: no commit or load event follows.
 void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char> params)
 {
     auto* g = m_global;
@@ -1184,13 +1157,8 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     auto frameId = WTF::String::fromUTF8(jsonString(jsonField(params, { "frameId", 7 })));
     if (frameId != view->m_targetId) return;
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
-    // A document that is still loading (an SPA router calling replaceState on
-    // boot) is reported once, with this URL, when its load completes.
-    if (view->m_chromeDocumentLoading) return;
-    // Settles a navigate()/goBack()/goForward() that Chrome has already
-    // answered. While a navigation command is still unanswered, note the
-    // event instead: that command's reply settles if it turns out to be a
-    // same-document navigation, and its commit or load does otherwise.
+    if (view->m_chromeDocumentLoading) return; // folded into that load's single onNavigated
+    // An unanswered navigation command settles from its reply instead (see PageNavigate).
     bool commandInFlight = false;
     for (auto& entry : m_pending.values()) {
         if (entry.viewId == view->m_viewId && entry.slot == PendingSlot::Navigate && entry.method != Method::PageTitle) {
@@ -1207,10 +1175,7 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     fireOnNavigated(g, view);
 }
 
-// The main frame finished loading (or was restored whole from the back-forward
-// cache). Fetch document.title; the PageTitle reply sets m_title, settles the
-// Navigate slot and fires onNavigated, so `await navigate(); view.title` works.
-// With no navigate pending (the page navigated itself) the settle is a no-op.
+// Main frame loaded (or restored): fetch document.title; its reply settles Navigate and fires onNavigated.
 void Transport::finishNavigation(JSWebView* view)
 {
     view->m_loading = false;
@@ -1261,16 +1226,13 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Navigation events update the view first and then, like any other CDP
-    // event, reach addEventListener("Page.frameNavigated", ...) listeners.
+    // Navigation events update the view, then reach addEventListener() like any CDP event.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0)
         onFrameNavigated(view, params);
     else if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
         onNavigatedWithinDocument(view, params);
     else if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
-        // The main frame's load event. An error page finishing its load is not
-        // a navigation: its failure was reported at commit.
-        if (view->m_chromeOnErrorPage)
+        if (view->m_chromeOnErrorPage) // its failure was reported at commit
             view->m_loading = false;
         else
             finishNavigation(view);
@@ -1378,12 +1340,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Dispatch to the view's EventTarget if it has a listener for this
-    // method name. Check hasEventListeners first: Chrome is chatty
-    // (frameScheduledNavigation, lifecycleEvent, etc.) and most events won't
-    // have listeners; skipping the JSONParse saves an alloc per unwanted
-    // event. The listener was added via
-    // view.addEventListener("Network.responseReceived", e => e.data.response).
+    // view.addEventListener("Network.responseReceived", e => e.data.response): check
+    // hasEventListeners before the JSONParse, Chrome is chatty.
     auto methodAtom = AtomString::fromUTF8(method);
     if (!view->wrapped().hasEventListeners(methodAtom)) return;
 

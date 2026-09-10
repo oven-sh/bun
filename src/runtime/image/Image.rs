@@ -716,11 +716,9 @@ impl Image {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
-                // Classify the storage mode and pin what the worker reads. A
-                // fresh `new Uint8Array(N)` (the common path — `await
-                // res.bytes()`, `Buffer.from(file)`) is `OversizeTypedArray`:
-                // bytes in fastMalloc, no JSArrayBuffer wrapper yet. The helper
-                // adopts one in place so the pin has somewhere to live.
+                // Classify the storage mode and pin what the worker reads. The
+                // common input (`await res.bytes()`, `Buffer.from(file)`) has
+                // no ArrayBuffer yet, so the helper adopts one in place.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 // SAFETY: FFI call; out-params are valid pointers to locals.

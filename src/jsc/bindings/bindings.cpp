@@ -3570,16 +3570,12 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
-// past fastSizeLimit: OversizeTypedArray) is adopted first, because a pin needs
-// an ArrayBuffer to live on: `possiblySharedBuffer()` wraps the storage where it
-// already is (`ArrayBuffer::createAdopted`, no byte copy). Holding such a view
-// without adopting it does not keep the storage alive. JS reaches the same bytes
-// through `view.buffer`, which materializes an ArrayBuffer no pin covers, and a
-// transfer of that buffer moves the storage into a fresh ArrayBufferContents.
-// When nothing references the new owner, `Heap::sweepArrayBuffers` frees the
-// bytes while the borrower still reads them. Adoption costs one ArrayBuffer per
-// borrow, and only a full collection reclaims it.
+// A pin needs an ArrayBuffer to live on, so a view that has none yet
+// (OversizeTypedArray) is adopted first: `possiblySharedBuffer()` wraps the
+// storage where it already is (`createAdopted`, no byte copy). Holding such a
+// view instead does not keep its storage alive: `view.buffer` makes an
+// ArrayBuffer no pin covers, a transfer re-homes the storage, and
+// `Heap::sweepArrayBuffers` frees it under the borrower.
 static bool pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;

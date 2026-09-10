@@ -2807,45 +2807,32 @@ Socket.prototype._writev = function _writev(data, callback) {
     return;
   }
 
-  const socket = this._handle;
-  this._pendingData = null;
-  this._pendingEncoding = "";
-  this[kwriteCallback] = null;
+  dispatchWritev(this, data, callback);
+};
+
+function dispatchWritev(self, data, callback) {
+  const socket = self._handle;
+  self._pendingData = null;
+  self._pendingEncoding = "";
+  self[kwriteCallback] = null;
   if (!socket) {
     callback($ERR_SOCKET_CLOSED());
-    return false;
+    return;
   }
-  this._unrefTimer();
+  self._unrefTimer();
   if (socket.readyState < 0) {
     process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
-    return false;
+    return;
   }
-
-  if (writeChunksUntilFull(this, socket, data, callback)) {
-    if (this.encrypted) process.nextTick(callback);
+  if (writeChunksUntilFull(self, socket, data, callback)) {
+    if (self.encrypted) process.nextTick(callback);
     else callback();
   }
-};
+}
 
 function onWritevHandleReady(data, callback) {
   if (this[kwriteCallback] !== callback) return;
-  const socket = this._handle;
-  this._pendingData = null;
-  this._pendingEncoding = "";
-  this[kwriteCallback] = null;
-  if (!socket) {
-    callback($ERR_SOCKET_CLOSED());
-    return;
-  }
-  this._unrefTimer();
-  if (socket.readyState < 0) {
-    process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
-    return;
-  }
-  if (writeChunksUntilFull(this, socket, data, callback)) {
-    if (this.encrypted) process.nextTick(callback);
-    else callback();
-  }
+  dispatchWritev(this, data, callback);
 }
 
 function onWritevCloseBeforeReady(connecting, callback) {

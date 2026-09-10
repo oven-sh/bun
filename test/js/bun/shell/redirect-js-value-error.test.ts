@@ -48,7 +48,7 @@ describe("a redirect to a JS value the command cannot use rejects the shell prom
   });
 
   test.concurrent("inside && after another command", async () => {
-    expect(await run("$`${bun} --version && echo hi > ${new Response('r')} && echo no`.quiet()")).toEqual({
+    expect(await run("$`${bun} --version && echo hi > ${new Blob(['x'])} && echo no`.quiet()")).toEqual({
       out: [builtin, "resolved 0"],
       exitCode: 0,
     });
@@ -57,7 +57,7 @@ describe("a redirect to a JS value the command cannot use rejects the shell prom
   // This already rejected (the error comes straight out of `.run()`), but the
   // interpreter was never finished, so it kept the event loop alive forever.
   test.concurrent("as the first command, and the process still exits", async () => {
-    expect(await run("$`echo hi > ${new Response('r')}; echo no`.quiet().nothrow()")).toEqual({
+    expect(await run("$`echo hi > ${new Blob(['x'])}; echo no`.quiet().nothrow()")).toEqual({
       out: [builtin, "resolved 0"],
       exitCode: 0,
     });

@@ -717,7 +717,7 @@ static bool indexedStorageOfArray(JSObject* object, uint64_t& vectorEnd, WTF::Ve
         return true;
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
-        vectorEnd = std::min<uint64_t>(storage->length(), storage->vectorLength());
+        vectorEnd = storage->vectorLength();
         JSC::SparseArrayValueMap* map = storage->m_sparseMap.get();
         if (!map)
             return true;

@@ -18,10 +18,8 @@ namespace v8 {
 
 namespace {
 
-// The source position of a function's parameter list, remapped through the source map of the
-// transpiled file when there is one, so the result points into the file the user wrote. Returns
-// false for a function with no script source: a host function, a builtin, or a function created
-// from a FunctionTemplate. Line and column are 1-based on return.
+// 1-based position of the parameter list, remapped through the source map. False when the
+// function has no script source (host function, builtin, FunctionTemplate).
 bool functionSourcePosition(const JSC::JSCell* cell, WTF::String& url, JSC::LineColumn& lineColumn)
 {
     auto* function = dynamicDowncast<const JSC::JSFunction>(cell);

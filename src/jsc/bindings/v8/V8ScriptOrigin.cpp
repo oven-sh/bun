@@ -43,8 +43,7 @@ ScriptOriginOptions ScriptOrigin::Options() const
 
 void ScriptOrigin::VerifyHostDefinedOptions() const
 {
-    // V8 checks that host_defined_options_ is a PrimitiveArray. Bun does not use host defined
-    // options, so there is nothing to check.
+    // Bun has no host defined options to check.
 }
 
 } // namespace v8

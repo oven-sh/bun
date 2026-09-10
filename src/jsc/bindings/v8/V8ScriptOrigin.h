@@ -8,8 +8,7 @@ namespace v8 {
 
 class Value;
 
-// Layout-compatible with v8-message.h. Addons read the fields through the inline accessors, so the
-// field order and types must match V8 exactly.
+// Same field layout as v8-message.h: release builds of an addon read the fields inline.
 class ScriptOriginOptions {
 public:
     ScriptOriginOptions(bool is_shared_cross_origin = false, bool is_opaque = false, bool is_wasm = false, bool is_module = false)
@@ -55,8 +54,7 @@ public:
     {
     }
 
-    // Inline in v8-message.h, but under dllimport MSVC emits a call to each of these instead of
-    // inlining, so addons built with MSVC (debug) reference them as imports.
+    // Inline in v8-message.h, but MSVC debug builds of an addon import them (see Function::NewInstance).
     BUN_EXPORT Local<Value> ResourceName() const;
     BUN_EXPORT int LineOffset() const;
     BUN_EXPORT int ColumnOffset() const;
@@ -66,8 +64,7 @@ public:
     BUN_EXPORT ScriptOriginOptions Options() const;
 
 private:
-    // V8's inline constructor calls this, so an addon that builds a ScriptOrigin links against it.
-    // Private to match V8's declaration (affects the MSVC mangling).
+    // Called by V8's inline constructor. Private to match V8 (affects the MSVC mangling).
     BUN_EXPORT void VerifyHostDefinedOptions() const;
 
     Local<Value> resource_name_;

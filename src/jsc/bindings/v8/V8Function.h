@@ -28,9 +28,7 @@ public:
     BUN_EXPORT void SetName(Local<String> name);
     BUN_EXPORT Local<Value> GetName() const;
 
-    // The resource name is an empty Local for a native function, a builtin, or a function created
-    // from a FunctionTemplate, as in V8. Line and column are 0-based and kLineOffsetNotFound (-1)
-    // for those same functions.
+    // 0-based, or kLineOffsetNotFound and an empty resource name without script source, as in V8.
     BUN_EXPORT ScriptOrigin GetScriptOrigin() const;
     BUN_EXPORT int GetScriptLineNumber() const;
     BUN_EXPORT int GetScriptColumnNumber() const;

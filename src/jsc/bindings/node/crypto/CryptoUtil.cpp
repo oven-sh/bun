@@ -787,6 +787,16 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     return std::nullopt;
 }
 
+std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
+{
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
+    if (bytes.size() > INT32_MAX) [[unlikely]] {
+        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
+        return std::nullopt;
+    }
+    return Vector<uint8_t>(bytes);
+}
+
 bool isStringOrBuffer(JSValue value)
 {
     if (value.isString()) {

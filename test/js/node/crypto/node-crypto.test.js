@@ -1053,6 +1053,71 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
   });
 });
 
+// node:crypto copies key/data/salt/info/signature/oaepLabel arguments into a
+// WTF::Vector<uint8_t>, which cannot hold more than INT32_MAX bytes and crashes the
+// process past that. Node rejects the same arguments with ERR_OUT_OF_RANGE
+// "<name> is too big" (createSecretKey is the one Node accepts). Runs in a subprocess
+// so an unfixed build's abort does not take out the runner; the 2 GiB buffer is never
+// written, so RSS stays small.
+it("node:crypto rejects >2 GiB buffer arguments with ERR_OUT_OF_RANGE instead of aborting", async () => {
+  const script = `
+    const crypto = require("node:crypto");
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log("SKIP");
+      process.exit(0);
+    }
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const results = {};
+    const record = (label, fn) => {
+      try {
+        fn();
+        results[label] = "returned";
+      } catch (e) {
+        results[label] = e.code + ": " + e.message;
+      }
+    };
+    record("createSecretKey", () => crypto.createSecretKey(big));
+    record("createSecretKey ArrayBuffer", () => crypto.createSecretKey(big.buffer));
+    record("createHmac", () => crypto.createHmac("sha256", big));
+    record("createCipheriv", () => crypto.createCipheriv("aes-128-gcm", big, Buffer.alloc(12)));
+    record("hkdfSync ikm", () => crypto.hkdfSync("sha256", big, "salt", "info", 16));
+    record("hkdfSync ikm ArrayBuffer", () => crypto.hkdfSync("sha256", big.buffer, "salt", "info", 16));
+    record("hkdfSync salt", () => crypto.hkdfSync("sha256", "key", big, "info", 16));
+    record("hkdfSync info", () => crypto.hkdfSync("sha256", "key", "salt", big, 16));
+    record("sign data", () => crypto.sign("sha256", big, privateKey));
+    record("verify signature", () => crypto.verify("sha256", Buffer.from("x"), publicKey, big));
+    record("publicEncrypt oaepLabel", () =>
+      crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
+    );
+    // Normal-sized inputs keep working in the same process.
+    results["small hmac"] = crypto.createHmac("sha256", big.subarray(0, 32)).update("x").digest("hex").length;
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  if (stdout.trim() !== "SKIP") {
+    expect(JSON.parse(stdout)).toEqual({
+      "createSecretKey": "ERR_OUT_OF_RANGE: key is too big",
+      "createSecretKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "createHmac": "ERR_OUT_OF_RANGE: key is too big",
+      "createCipheriv": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+      "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+      "hkdfSync info": "ERR_OUT_OF_RANGE: info is too big",
+      "sign data": "ERR_OUT_OF_RANGE: data is too big",
+      "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+      "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+      "small hmac": 64,
+    });
+  }
+  expect(exitCode).toBe(0);
+});
+
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

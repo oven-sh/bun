@@ -36,9 +36,24 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+// The session of the command being handled, for globals that emit events.
+let currentSessionId: string | undefined;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // A child frame (an <iframe>) of the page commits a navigation. Real Chrome
+  // reports it on the page's session with frame.parentId set.
+  __fake_child_frame_navigated(url: string) {
+    send({
+      method: "Page.frameNavigated",
+      params: {
+        frame: { id: "F.1", parentId: "F", loaderId: "L.child", url, mimeType: "text/html" },
+        type: "Navigation",
+      },
+      sessionId: currentSessionId,
+    });
+    return true;
   },
   // The command gets no reply, ever.
   __fake_no_reply() {
@@ -69,6 +84,7 @@ let loads = 0;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
+  currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 

@@ -1140,9 +1140,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
 
     // Page.frameNavigated — commit. Update m_url and fire onNavigated.
     // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
-    // now the new document, resources may still be loading.
+    // now the new document, resources may still be loading. Child frames
+    // (<iframe>) fire it too, with frame.parentId set. Only the main frame
+    // is the view's URL, which is also all the WebKit backend reports.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return; // child frame
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;

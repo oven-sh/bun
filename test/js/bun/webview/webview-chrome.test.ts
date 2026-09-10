@@ -1035,6 +1035,32 @@ it("chrome: onNavigated fires with committed URL", async () => {
   expect(urls[urls.length - 1]).toContain("data:text/html");
 });
 
+it("chrome: an iframe's navigation does not change url or fire onNavigated", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => urls.push(url);
+  const inner = html("<p>inner</p>");
+  const outer = html(`<h1>outer</h1><iframe src="${inner}"></iframe>`);
+  await view.navigate(outer);
+  // Chrome sends Page.frameNavigated for the child frame too (with
+  // frame.parentId), between the main frame's frameNavigated and
+  // loadEventFired. Only the main frame is the view's URL.
+  expect(view.url).toBe(outer);
+  expect(urls).toEqual([outer]);
+  // An iframe added after load commits before its load event, so its
+  // frameNavigated has been handled by the time this evaluate resolves.
+  const late = html("<p>late</p>");
+  const loaded = await view.evaluate(`new Promise(resolve => {
+    const frame = document.createElement("iframe");
+    frame.onload = () => resolve(frames.length);
+    frame.src = ${JSON.stringify(late)};
+    document.body.append(frame);
+  })`);
+  expect(loaded).toBe(2);
+  expect(view.url).toBe(outer);
+  expect(urls).toEqual([outer]);
+});
+
 it("chrome: press() dispatches keydown/keyup pair", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   // Listeners in the HTML so they're live before any press. evaluate() wraps

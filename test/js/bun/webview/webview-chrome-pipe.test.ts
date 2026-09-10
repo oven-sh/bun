@@ -74,6 +74,24 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+// Chrome sends Page.frameNavigated for a child frame (an <iframe>) on the
+// page's session too, with frame.parentId set. Only the main frame's
+// navigation is the view's: view.url and onNavigated ignore the rest, as the
+// WebKit backend does. The fake emits the child event before it answers the
+// evaluate, so the event has been handled by the time evaluate() resolves.
+test.concurrent("a child frame navigating does not change url or fire onNavigated", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    const navigated = [];
+    view.onNavigated = url => navigated.push(url);
+    await view.navigate("http://fake/top");
+    await view.evaluate("__fake_child_frame_navigated('http://fake/iframe')");
+    print({ url: view.url, navigated });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/top", navigated: ["http://fake/top"] });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

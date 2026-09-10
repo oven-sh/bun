@@ -1085,9 +1085,12 @@ it("chrome: press() accepts a character outside the BMP", async () => {
   // One code point, two UTF-16 units.
   await view.press("😀");
   expect(await view.evaluate("[document.getElementById('i').value, __keys]")).toEqual(["😀", ["😀"]]);
-  // Two code points is still not a single character.
+  // Two code points is still not a single character, and half of one is not
+  // a character at all.
   expect(() => view.press("ab")).toThrow(/single character/);
   expect(() => view.press("👍🏽")).toThrow(/single character/);
+  expect(() => view.press("\uD83D")).toThrow(/single character/);
+  expect(() => view.press("\uDE00")).toThrow(/single character/);
 });
 
 it("chrome: goBack/goForward navigates history", async () => {

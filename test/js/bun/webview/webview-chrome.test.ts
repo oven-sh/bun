@@ -174,7 +174,10 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+//
+// Chrome refuses to start as root (containers) without --no-sandbox.
+const chromeArgv: string[] = process.platform !== "win32" && process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+const chrome = { type: "chrome" as const, url: false as const, argv: chromeArgv };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -571,7 +574,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -603,7 +606,7 @@ it("chrome: a new WebView respawns Chrome after the previous one died", async ()
       bunExe(),
       "-e",
       `
-        const backend = {type:"chrome", url:false};
+        const backend = {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}};
         const first = new Bun.WebView({ backend, width: 200, height: 200 });
         await first.navigate("data:text/html,<body>first</body>");
         const pending = first.evaluate("new Promise(() => {})");
@@ -748,7 +751,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -784,11 +787,152 @@ test("backend option validates", () => {
   );
 });
 
+// The constructor validates every option before it spawns anything, so none of
+// these need a browser. undefined means the default; any other value must have
+// the documented type and range, and the error reports the value as passed.
+test("constructor options are type- and range-checked", () => {
+  const code = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return `${(e as NodeJS.ErrnoException).code}: ${(e as Error).message}`;
+    }
+    return "did not throw";
+  };
+  const ctor = (opts: unknown) => code(() => new (Bun.WebView as any)(opts));
+  const spawn = { type: "chrome", url: false };
+
+  // width/height: previously converted with ToUint32 before the range check
+  // (2**32 + 5 became a 5px viewport, "100" and null became the default).
+  expect(ctor({ backend: spawn, width: 2 ** 32 + 5 })).toBe(
+    `ERR_OUT_OF_RANGE: The value of "width" is out of range. It must be >= 1 && <= 16384. Received 4_294_967_301`,
+  );
+  expect(ctor({ backend: spawn, width: -1 })).toBe(
+    `ERR_OUT_OF_RANGE: The value of "width" is out of range. It must be >= 1 && <= 16384. Received -1`,
+  );
+  expect(ctor({ backend: spawn, height: 0.5 })).toBe(
+    `ERR_OUT_OF_RANGE: The value of "height" is out of range. It must be an integer. Received 0.5`,
+  );
+  expect(ctor({ backend: spawn, height: NaN })).toBe(
+    `ERR_OUT_OF_RANGE: The value of "height" is out of range. It must be an integer. Received NaN`,
+  );
+  expect(ctor({ backend: spawn, width: "100" })).toBe(
+    `ERR_INVALID_ARG_TYPE: The "width" argument must be of type number. Received type string ('100')`,
+  );
+  expect(ctor({ backend: spawn, width: null })).toBe(
+    `ERR_INVALID_ARG_TYPE: The "width" argument must be of type number. Received null`,
+  );
+  expect(ctor({ backend: spawn, height: 600n })).toBe(
+    `ERR_INVALID_ARG_TYPE: The "height" argument must be of type number. Received type bigint (600n)`,
+  );
+
+  // Wrong-typed options used to fall back to their defaults silently.
+  expect(ctor("http://example.com/")).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type string ('http://example.com/')`,
+  );
+  expect(ctor({ backend: 42 })).toStartWith("ERR_INVALID_ARG_TYPE: backend must be");
+  expect(ctor({ backend: null })).toStartWith("ERR_INVALID_ARG_TYPE: backend must be");
+  expect(ctor({ backend: spawn, dataStore: 5 })).toStartWith("ERR_INVALID_ARG_TYPE: dataStore must be");
+  expect(ctor({ backend: spawn, dataStore: null })).toStartWith("ERR_INVALID_ARG_TYPE: dataStore must be");
+  expect(ctor({ backend: spawn, headless: "no" })).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options.headless" property must be of type boolean. Received type string ('no')`,
+  );
+
+  // Strings that end up as C strings must not be cut short by a NUL byte.
+  expect(ctor({ backend: spawn, dataStore: { directory: "/tmp/a\0b" } })).toStartWith(
+    `ERR_INVALID_ARG_VALUE: The property 'dataStore.directory' must be a non-empty path without null bytes.`,
+  );
+  expect(ctor({ backend: spawn, dataStore: { directory: "" } })).toStartWith("ERR_INVALID_ARG_VALUE:");
+  expect(ctor({ backend: { type: "chrome", url: false, argv: ["--a\0b"] } })).toStartWith(
+    `ERR_INVALID_ARG_VALUE: The property 'backend.argv' must be a string without null bytes.`,
+  );
+  expect(ctor({ backend: { type: "chrome", path: "/usr/bin/x\0y" } })).toStartWith(
+    `ERR_INVALID_ARG_VALUE: The property 'backend.path' must be a string without null bytes.`,
+  );
+
+  // An argv (even empty) or path asks for a spawned browser; url asks for an
+  // existing one.
+  expect(ctor({ backend: { type: "chrome", url: "ws://127.0.0.1:1/devtools/browser/x", argv: [] } })).toMatch(
+    /connect mode.*cannot be combined.*spawn/,
+  );
+});
+
+it("chrome: method arguments are type- and range-checked", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const code = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return `${(e as NodeJS.ErrnoException).code}: ${(e as Error).message}`;
+    }
+    return "did not throw";
+  };
+  const v = view as any;
+
+  expect(code(() => v.resize(2 ** 32 + 7, 100))).toBe(
+    `ERR_OUT_OF_RANGE: The value of "width" is out of range. It must be >= 1 && <= 16384. Received 4_294_967_303`,
+  );
+  expect(code(() => v.resize("800", 600))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "width" argument must be of type number. Received type string ('800')`,
+  );
+  expect(code(() => v.resize(800, 600.5))).toBe(
+    `ERR_OUT_OF_RANGE: The value of "height" is out of range. It must be an integer. Received 600.5`,
+  );
+
+  expect(code(() => v.click("#a", { timeout: "300" }))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options.timeout" property must be of type number. Received type string ('300')`,
+  );
+  expect(code(() => v.click("#a", { timeout: -1 }))).toStartWith(
+    `ERR_OUT_OF_RANGE: The value of "options.timeout" is out of range.`,
+  );
+  expect(code(() => v.click("#a", { clickCount: "2" }))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options.clickCount" property must be of type number. Received type string ('2')`,
+  );
+  expect(code(() => v.click("#a", { clickCount: 4 }))).toBe(
+    `ERR_OUT_OF_RANGE: The value of "options.clickCount" is out of range. It must be >= 1 && <= 3. Received 4`,
+  );
+  expect(code(() => v.click("#a", { button: "bogus" }))).toBe(
+    `ERR_INVALID_ARG_VALUE: The property 'options.button' must be "left", "right", or "middle". Received 'bogus'`,
+  );
+  expect(code(() => v.click("#a", { button: 1 }))).toStartWith("ERR_INVALID_ARG_VALUE:");
+  expect(code(() => v.click("#a", { modifiers: "Shift" }))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "options.modifiers" argument must be an instance of Array. Received type string ('Shift')`,
+  );
+  expect(code(() => v.click("#a", { modifiers: { 0: "Shift", length: 1 } }))).toStartWith("ERR_INVALID_ARG_TYPE:");
+  expect(code(() => v.click("#a", { modifiers: ["Hyper"] }))).toBe(
+    `ERR_INVALID_ARG_VALUE: The property 'options.modifiers' must be "Shift", "Control", "Alt", or "Meta". Received 'Hyper'`,
+  );
+  expect(code(() => v.click())).toStartWith("ERR_INVALID_ARG_TYPE:");
+  expect(code(() => v.click(1))).toBe(
+    `ERR_INVALID_ARG_TYPE: The "y" argument must be of type number. Received undefined`,
+  );
+  expect(code(() => v.click(1, NaN))).toBe(`ERR_INVALID_ARG_VALUE: The argument 'x/y' must be finite. Received NaN`);
+  expect(code(() => v.click(1, 2, "opts"))).toStartWith("ERR_INVALID_ARG_TYPE:");
+
+  expect(code(() => v.scrollTo("#a", { block: 5 }))).toBe(
+    `ERR_INVALID_ARG_VALUE: The property 'options.block' must be "start", "center", "end", or "nearest". Received 5`,
+  );
+  expect(code(() => v.scrollTo("#a", { timeout: Infinity }))).toStartWith("ERR_OUT_OF_RANGE:");
+  expect(code(() => v.press("a", { modifiers: 5 }))).toStartWith("ERR_INVALID_ARG_TYPE:");
+  expect(code(() => v.press("a", "Shift"))).toStartWith("ERR_INVALID_ARG_TYPE:");
+
+  // The accepted shapes still work.
+  await view.navigate(html("<div id=a style='width:40px;height:40px'></div>"));
+  await view.click("#a", { button: "left", modifiers: ["Shift", "meta"], clickCount: 2, timeout: 1000.5 });
+  await view.click(1, 2);
+  await view.scrollTo("#a", { block: "nearest", timeout: 500 });
+  await view.resize(300, 200);
+});
+
 it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({
+    backend: { type: "chrome", path: chromePath, argv: chromeArgv },
+    width: 200,
+    height: 200,
+  });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -803,7 +947,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: [...${JSON.stringify(chromeArgv)}, "--user-agent=BunWebViewTest/1.0"] },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1134,7 +1278,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: {type:"chrome", url:false, argv: ${JSON.stringify(chromeArgv)}}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1194,7 +1338,7 @@ it("chrome: large evaluate result crosses the pipe", async () => {
 // resolved once per process, on the first spawn. The env var is consulted
 // right after backend.path, before $PATH and the install locations.
 const spawnWithEnv = `
-  const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+  const view = new Bun.WebView({ backend: { type: "chrome", url: false, argv: ${JSON.stringify(chromeArgv)} }, width: 200, height: 200 });
   await view.navigate("data:text/html,<body>env</body>");
   console.log(await view.evaluate("document.body.textContent"));
   view.close();

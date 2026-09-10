@@ -7,6 +7,7 @@
 #include "ZigGlobalObject.h"
 #include "ScriptExecutionContext.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -123,22 +124,33 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
 
+    // Every option: undefined means the default; any other value must have
+    // the documented type (ERR_INVALID_ARG_TYPE) and range (ERR_OUT_OF_RANGE,
+    // reported with the value as passed).
     JSValue options = callFrame->argument(0);
+    if (!options.isUndefined() && !options.isObject())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
     if (options.isObject()) {
         JSObject* opts = options.getObject();
         JSValue w = opts->get(globalObject, Identifier::fromString(vm, "width"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (w.isNumber()) width = static_cast<uint32_t>(w.toUInt32(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!w.isUndefined()) {
+            Bun::V::validateInteger(scope, globalObject, w, "width"_s, jsNumber(1), jsNumber(16384), &width);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         JSValue h = opts->get(globalObject, Identifier::fromString(vm, "height"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (h.isNumber()) height = static_cast<uint32_t>(h.toUInt32(globalObject));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!h.isUndefined()) {
+            Bun::V::validateInteger(scope, globalObject, h, "height"_s, jsNumber(1), jsNumber(16384), &height);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         JSValue headless = opts->get(globalObject, Identifier::fromString(vm, "headless"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (headless.isBoolean() && !headless.asBoolean()) {
+        if (!headless.isUndefined() && !headless.isBoolean())
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.headless"_s, "boolean"_s, headless);
+        if (headless.isFalse()) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
                 "headless: false is not yet implemented"_s);
         }
@@ -166,6 +178,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             WTF::String s = be.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (!parseBackendType(s)) return {};
+        } else if (!be.isUndefined() && !be.isObject()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "backend must be \"webkit\", \"chrome\", or an object with a type field"_s);
         } else if (be.isObject()) {
             JSObject* beObj = be.getObject();
             JSValue type = beObj->get(globalObject, Identifier::fromString(vm, "type"_s));
@@ -177,11 +192,17 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             if (!parseBackendType(type.toWTFString(globalObject))) return {};
             RETURN_IF_EXCEPTION(scope, {});
 
+            // path/argv select spawn mode even when empty, so they can be
+            // checked against url (connect mode) below.
+            bool spawnOptionGiven = false;
             JSValue path = beObj->get(globalObject, Identifier::fromString(vm, "path"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (path.isString()) {
+                spawnOptionGiven = true;
                 chromePath = path.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                if (chromePath.contains(char16_t(0)))
+                    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "backend.path"_s, path, "must be a string without null bytes"_s);
             } else if (!path.isUndefined()) {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.path must be a string"_s);
@@ -218,6 +239,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* arr = dynamicDowncast<JSArray>(argvVal)) {
+                spawnOptionGiven = true;
                 unsigned len = arr->length();
                 for (unsigned i = 0; i < len; ++i) {
                     JSValue item = arr->get(globalObject, i);
@@ -226,15 +248,18 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                         return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                             "backend.argv entries must be strings"_s);
                     }
-                    chromeArgv.append(item.toWTFString(globalObject));
+                    auto arg = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
+                    if (arg.contains(char16_t(0)))
+                        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "backend.argv"_s, item, "must be a string without null bytes"_s);
+                    chromeArgv.append(WTF::move(arg));
                 }
             } else if (!argvVal.isUndefined()) {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "backend.argv must be an array of strings"_s);
             }
 
-            if (!chromeWsUrl.isEmpty() && (!chromePath.isEmpty() || !chromeArgv.isEmpty()))
+            if (!chromeWsUrl.isEmpty() && spawnOptionGiven)
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "backend.url (connect mode) cannot be combined with backend.path or backend.argv (spawn mode)"_s);
 
@@ -312,6 +337,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             if (dir.isString()) {
                 persistDir = dir.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                if (persistDir.isEmpty() || persistDir.contains(char16_t(0)))
+                    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dataStore.directory"_s, dir, "must be a non-empty path without null bytes"_s);
             } else {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "dataStore.directory must be a string"_s);
@@ -323,13 +350,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "dataStore must be \"ephemeral\" or { directory: string }"_s);
             }
+        } else if (!dataStore.isUndefined()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "dataStore must be \"ephemeral\" or { directory: string }"_s);
         }
     }
-
-    if (width == 0 || width > 16384)
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width"_s, 1, 16384, jsNumber(width));
-    if (height == 0 || height > 16384)
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(height));
 
     Structure* structure = zigGlobalObject->m_JSWebViewClassStructure.get(zigGlobalObject);
     JSValue newTarget = callFrame->newTarget();

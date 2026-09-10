@@ -6,6 +6,7 @@
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -154,18 +155,23 @@ static bool checkSlot(JSGlobalObject* g, ThrowScope& scope, const WriteBarrier<J
     return true;
 }
 
+// options.modifiers: undefined, or an array of modifier names. Throws on
+// anything else so a typo is not a silently unmodified click.
 static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
 {
     using namespace WebViewProto;
-    if (!v.isObject()) return 0;
+    if (v.isUndefined()) return 0;
     auto* arr = dynamicDowncast<JSArray>(v);
-    if (!arr) return 0;
+    if (!arr) {
+        Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, g, "options.modifiers"_s, "Array"_s, v);
+        return 0;
+    }
     uint8_t mods = 0;
     unsigned len = arr->length();
     for (unsigned i = 0; i < len; ++i) {
         JSValue item = arr->get(g, i);
         RETURN_IF_EXCEPTION(scope, 0);
-        WTF::String s = item.toWTFString(g);
+        WTF::String s = item.isString() ? item.toWTFString(g) : WTF::String();
         RETURN_IF_EXCEPTION(scope, 0);
         if (s == "Shift"_s || s == "shift"_s)
             mods |= ModShift;
@@ -175,8 +181,23 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
             mods |= ModAlt;
         else if (s == "Meta"_s || s == "meta"_s || s == "Cmd"_s || s == "cmd"_s || s == "Command"_s || s == "command"_s)
             mods |= ModMeta;
+        else {
+            Bun::ERR::INVALID_ARG_VALUE(scope, g, "options.modifiers"_s, item, "must be \"Shift\", \"Control\", \"Alt\", or \"Meta\""_s);
+            return 0;
+        }
     }
     return mods;
+}
+
+// options.timeout: undefined (keep the default) or a finite number of
+// milliseconds >= 0.
+static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue v, uint32_t& timeout)
+{
+    if (v.isUndefined()) return true;
+    Bun::V::validateNumber(scope, g, v, "options.timeout"_s, jsNumber(0), jsNumber(std::numeric_limits<uint32_t>::max()));
+    RETURN_IF_EXCEPTION(scope, false);
+    timeout = static_cast<uint32_t>(v.asNumber());
+    return true;
 }
 
 // JS string name → wire tag. Order must match ipc_protocol.h's enum; the
@@ -417,17 +438,27 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     uint8_t button = 0, mods = 0, clickCount = 1;
     uint32_t timeout = 30000;
     auto parseOpts = [&](JSValue opts) -> bool {
-        if (!opts.isObject()) return true;
+        if (opts.isUndefined()) return true;
+        if (!opts.isObject()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
+            return false;
+        }
         JSObject* o = opts.getObject();
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "button"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (b.isString()) {
-            WTF::String bs = b.toWTFString(globalObject);
+        if (!b.isUndefined()) {
+            WTF::String bs = b.isString() ? b.toWTFString(globalObject) : WTF::String();
             RETURN_IF_EXCEPTION(scope, false);
-            if (bs == "right"_s)
+            if (bs == "left"_s)
+                button = 0;
+            else if (bs == "right"_s)
                 button = 1;
             else if (bs == "middle"_s)
                 button = 2;
+            else {
+                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.button"_s, b, "must be \"left\", \"right\", or \"middle\""_s);
+                return false;
+            }
         }
         JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
         RETURN_IF_EXCEPTION(scope, false);
@@ -435,13 +466,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, false);
         JSValue cc = o->get(globalObject, Identifier::fromString(vm, "clickCount"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(globalObject), 1, 3));
-        RETURN_IF_EXCEPTION(scope, false);
+        if (!cc.isUndefined()) {
+            uint32_t count = 1;
+            Bun::V::validateInteger(scope, globalObject, cc, "options.clickCount"_s, jsNumber(1), jsNumber(3), &count);
+            RETURN_IF_EXCEPTION(scope, false);
+            clickCount = static_cast<uint8_t>(count);
+        }
         JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
+        return parseTimeout(globalObject, scope, t, timeout);
     };
 
     // click(selector, opts?) — rAF-polled actionability check page-side
@@ -458,10 +491,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     }
 
     // click(x, y, opts?)
-    double x = arg0.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double y = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue arg1 = callFrame->argument(1);
+    if (!arg0.isNumber())
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+            "click() takes a selector string or x and y coordinates (numbers)"_s);
+    if (!arg1.isNumber())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "y"_s, "number"_s, arg1);
+    double x = arg0.asNumber();
+    double y = arg1.asNumber();
+    if (!std::isfinite(x) || !std::isfinite(y))
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "x/y"_s, jsNumber(std::isfinite(x) ? y : x), "must be finite"_s);
     if (!parseOpts(callFrame->argument(2))) return {};
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
@@ -501,6 +540,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
 
     uint8_t mods = 0;
     JSValue opts = callFrame->argument(1);
+    if (!opts.isUndefined() && !opts.isObject())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
     if (opts.isObject()) {
         JSValue m = opts.getObject()->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -562,16 +603,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
     uint32_t timeout = 30000;
     uint8_t block = 1; // center
     JSValue opts = callFrame->argument(1);
+    if (!opts.isUndefined() && !opts.isObject())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, opts);
     if (opts.isObject()) {
         JSObject* o = opts.getObject();
         JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!parseTimeout(globalObject, scope, t, timeout)) return {};
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "block"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (b.isString()) {
-            WTF::String bs = b.toWTFString(globalObject);
+        if (!b.isUndefined()) {
+            WTF::String bs = b.isString() ? b.toWTFString(globalObject) : WTF::String();
             RETURN_IF_EXCEPTION(scope, {});
             if (bs == "start"_s)
                 block = 0;
@@ -582,7 +624,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
             else if (bs == "nearest"_s)
                 block = 3;
             else
-                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "block"_s, b,
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.block"_s, b,
                     "must be \"start\", \"center\", \"end\", or \"nearest\""_s);
         }
     }
@@ -598,14 +640,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "resize"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    uint32_t w = callFrame->argument(0).toUInt32(globalObject);
+    uint32_t w = 0, h = 0;
+    Bun::V::validateInteger(scope, globalObject, callFrame->argument(0), "width"_s, jsNumber(1), jsNumber(16384), &w);
     RETURN_IF_EXCEPTION(scope, {});
-    uint32_t h = callFrame->argument(1).toUInt32(globalObject);
+    Bun::V::validateInteger(scope, globalObject, callFrame->argument(1), "height"_s, jsNumber(1), jsNumber(16384), &h);
     RETURN_IF_EXCEPTION(scope, {});
-    if (w == 0 || w > 16384)
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "width"_s, 1, 16384, jsNumber(w));
-    if (h == 0 || h > 16384)
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(h));
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));

@@ -31,15 +31,19 @@ bool functionSourcePosition(const JSC::JSCell* cell, WTF::String& url, JSC::Line
     if (executable->isBuiltinFunction()) {
         return false;
     }
-    JSC::SourceProvider* provider = executable->source().provider();
+    // A synthesized default constructor has no source of its own. V8 reports the `class` keyword.
+    const JSC::SourceCode source = executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor()
+        ? executable->classSource()
+        : executable->source();
+    JSC::SourceProvider* provider = source.provider();
     if (!provider) {
         return false;
     }
 
     url = provider->sourceURL();
     lineColumn = JSC::LineColumn {
-        static_cast<unsigned>(executable->firstLine()),
-        executable->startColumn(),
+        static_cast<unsigned>(source.firstLine().oneBasedInt()),
+        static_cast<unsigned>(source.startColumn().oneBasedInt()),
     };
 
 #if USE(BUN_JSC_ADDITIONS)

@@ -10,9 +10,22 @@ module.exports = debugMode => {
         return a + b;
       }
       const arrowFunction = (a, b) => a + b;
+      class DefaultConstructor {
+        method() {}
+      }
+      class ExplicitConstructor {
+        constructor() {}
+      }
+      class Derived extends DefaultConstructor {}
+      const AnonymousClass = class {};
       const cases = [
         ["named function", namedFunction],
         ["arrow function", arrowFunction],
+        ["class with default constructor", DefaultConstructor],
+        ["class with explicit constructor", ExplicitConstructor],
+        ["derived class with default constructor", Derived],
+        ["anonymous class expression", AnonymousClass],
+        ["class method", DefaultConstructor.prototype.method],
         ["builtin function", Array.prototype.map],
         ["bound function", namedFunction.bind(null)],
         ["native addon function", nativeModule.get_function_script_origin],
@@ -43,11 +56,14 @@ module.exports = debugMode => {
         ["null", null],
         ["undefined", undefined],
         ["object with valueOf", { valueOf: () => 77.5 }],
-        ["object with throwing valueOf", {
-          valueOf() {
-            throw new Error("valueOf threw");
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw new Error("valueOf threw");
+            },
           },
-        }],
+        ],
       ];
       for (const [description, value] of cases) {
         console.log(`====== ${description}`);

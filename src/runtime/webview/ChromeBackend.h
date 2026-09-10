@@ -352,6 +352,7 @@ struct Pending {
     PendingSlot slot;
     uint32_t viewId;
     uint32_t navGeneration = 0; // PageTitle: m_chromeNavGeneration at load; stale replies do not settle
+    uint32_t docGeneration = 0; // PageTitle: m_chromeDocumentGeneration at load; a newer commit drops the reply
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,

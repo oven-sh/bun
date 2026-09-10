@@ -774,7 +774,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
-        if (entry.method == Method::PageTitle && entry.navGeneration != view->m_chromeNavGeneration) return;
+        if (entry.method == Method::PageTitle && (entry.navGeneration != view->m_chromeNavGeneration || entry.docGeneration != view->m_chromeDocumentGeneration)) return;
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
         settleFailure(g, view, entry.slot, entry.method,
@@ -867,6 +867,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::PageTitle: {
         // document.title after a load: set m_title, settle Navigate, then onNavigated (slot already free).
+        if (entry.docGeneration != view->m_chromeDocumentGeneration) return; // another document committed since
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonString(jsonField(inner, { "value", 5 }));
         view->m_title = WTF::String::fromUTF8(value);
@@ -1129,6 +1130,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return;
+    ++view->m_chromeDocumentGeneration;
 
     // unreachableUrl: Chrome's error page for a failed load committed. Not a new view.url.
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
@@ -1158,7 +1160,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     if (type.size() == 23 && memcmp(type.data(), "BackForwardCacheRestore", 23) == 0)
         finishNavigation(view);
     else
-        view->m_chromeDocumentLoading = true;
+        view->m_loading = view->m_chromeDocumentLoading = true;
 }
 
 // Page.navigatedWithinDocument {frameId, url}: fragment/pushState/traversal; no load event follows.
@@ -1193,7 +1195,7 @@ void Transport::finishNavigation(JSWebView* view)
     view->m_loading = false;
     view->m_chromeDocumentLoading = false;
     uint32_t tid = nextId();
-    m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, view->m_chromeNavGeneration });
+    m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, view->m_chromeNavGeneration, view->m_chromeDocumentGeneration });
     send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
 }
 

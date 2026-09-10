@@ -112,6 +112,8 @@ public:
     bool m_chromeSameDocumentNavigated = false;
     // Counts Navigate-slot commands issued, so a stale title reply can tell its slot was reused.
     uint32_t m_chromeNavGeneration = 0;
+    // Counts main-frame commits, so a title reply for a replaced document is dropped.
+    uint32_t m_chromeDocumentGeneration = 0;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

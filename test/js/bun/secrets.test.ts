@@ -1,3 +1,4 @@
+import { dlopen, read } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
@@ -132,6 +133,50 @@ test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
 
   // Clean up
   await Bun.secrets.delete({ service: testService, name: testUser });
+});
+
+// A roaming (CRED_PERSIST_ENTERPRISE) entry follows a domain profile to other
+// machines, so two machines sharing one rotating secret invalidate each other.
+test.skipIf(!isWindows)("Bun.secrets.set() stores a machine-local Credential Manager entry", async () => {
+  const CRED_TYPE_GENERIC = 1;
+  const CRED_PERSIST_LOCAL_MACHINE = 2;
+  // CREDENTIALW field offsets on 64-bit Windows.
+  const offsetofType = 4;
+  const offsetofCredentialBlobSize = 32;
+  const offsetofPersist = 48;
+
+  const advapi32 = dlopen("advapi32.dll", {
+    CredReadW: { args: ["ptr", "u32", "u32", "ptr"], returns: "i32" },
+    CredFree: { args: ["ptr"], returns: "void" },
+  });
+
+  const service = "bun-test-persist-" + Date.now();
+  const name = "test-name-" + Math.random();
+  const value = "per-machine-value";
+  try {
+    await Bun.secrets.set({ service, name, value });
+
+    const targetName = Buffer.from(`${service}/${name}\0`, "utf16le");
+    const out = new BigUint64Array(1);
+    expect(advapi32.symbols.CredReadW(targetName, CRED_TYPE_GENERIC, 0, out)).not.toBe(0);
+    const cred = Number(out[0]);
+    try {
+      expect({
+        Type: read.u32(cred, offsetofType),
+        CredentialBlobSize: read.u32(cred, offsetofCredentialBlobSize),
+        Persist: read.u32(cred, offsetofPersist),
+      }).toEqual({
+        Type: CRED_TYPE_GENERIC,
+        CredentialBlobSize: Buffer.byteLength(value),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+      });
+    } finally {
+      advapi32.symbols.CredFree(cred);
+    }
+  } finally {
+    advapi32.close();
+    await Bun.secrets.delete({ service, name });
+  }
 });
 
 test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {

@@ -177,7 +177,9 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     cred.UserName = nameNameWide.data();
     cred.CredentialBlobSize = password.length();
     cred.CredentialBlob = (LPBYTE)password.data();
-    cred.Persist = CRED_PERSIST_ENTERPRISE;
+    // Machine-local on purpose: CRED_PERSIST_ENTERPRISE roams with a domain
+    // profile, and per-device secrets (e.g. rotating refresh tokens) must not.
+    cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
 
     if (!framework->CredWriteW(&cred, 0)) {
         updateError(err, GetLastError());

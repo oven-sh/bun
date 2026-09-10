@@ -143,10 +143,8 @@ static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, Ca
     return thisObject;
 }
 
-// Last guard before dispatch, run after all argument conversion: a getter,
-// valueOf(), toString() or toJSON() on an argument can call view.close() or
-// start another operation on this view after unwrapThis() passed. A command
-// sent for a closed view gets a reply that finds no view to settle.
+// Call after all argument conversion: user code it runs (valueOf, getters,
+// toJSON) can close the view or start another operation on it.
 static bool checkReady(JSGlobalObject* g, ThrowScope& scope, JSWebView* view, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
 {
     if (view->m_closed) {

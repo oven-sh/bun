@@ -4730,6 +4730,48 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Shared tail of the `Location`-header arms in
+    /// `handle_response_metadata`: parse the rebuilt absolute href, compare
+    /// origins against the current URL, then swap the href into
+    /// `self.redirect`. Returns whether the redirect target is same-origin.
+    fn apply_redirect_url(&mut self, new_href: Vec<u8>) -> crate::Result<bool> {
+        let new_url = URL::parse(&new_href);
+        if !new_url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedRedirectProtocol);
+        }
+        // SAFETY: self-borrow — `new_href` is moved into `self.redirect`
+        // below, which lives as long as `self` (≥ `'a`).
+        let new_url: URL<'a> = unsafe { new_url.erase_lifetime() };
+        let is_same_origin = strings::eql_case_insensitive_ascii(
+            strings::without_trailing_slash(new_url.origin),
+            strings::without_trailing_slash(self.url.origin),
+            true,
+        );
+        self.url = new_url;
+        // connected_url still borrows from the previous hop's buffer until
+        // doRedirect releases the socket, so park it in prev_redirect for
+        // doRedirect to free instead of leaking it.
+        debug_assert!(self.prev_redirect.is_empty());
+        self.prev_redirect = core::mem::replace(&mut self.redirect, new_href);
+        Ok(is_same_origin)
+    }
+
+    /// Normalize a fully-rebuilt redirect URL through the WHATWG parser and
+    /// apply it via [`Self::apply_redirect_url`].
+    fn normalize_and_apply_redirect_url(
+        &mut self,
+        mut string_builder: StringBuilder,
+    ) -> crate::Result<bool> {
+        debug_assert!(string_builder.cap == string_builder.len);
+        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+        let normalized_url = bun_url::href_from_string(&input);
+        if normalized_url.tag() == BunStringTag::Dead {
+            // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+            return Err(crate::Error::RedirectURLInvalid);
+        }
+        self.apply_redirect_url(normalized_url.to_owned_slice())
+    }
+
     pub(crate) fn handle_response_metadata(
         &mut self,
         response: &mut picohttp::Response,
@@ -5011,32 +5053,7 @@ impl<'a> HTTPClient<'a> {
 
                         let _ = string_builder.append(location);
 
-                        debug_assert!(string_builder.cap == string_builder.len);
-
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = bun_url::href_from_string(&input);
-                        if normalized_url.tag() == BunStringTag::Dead {
-                            // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
-                            return Err(crate::Error::RedirectURLInvalid);
-                        }
-                        let normalized_url_str = normalized_url.to_owned_slice();
-
-                        // SAFETY: self-borrow — `normalized_url_str` is moved into
-                        // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                        let new_url: URL<'a> =
-                            unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
-                        self.url = new_url;
-                        // connected_url still borrows from the previous hop's buffer
-                        // until doRedirect releases the socket, so park it in
-                        // prev_redirect for doRedirect to free instead of leaking it.
-                        debug_assert!(self.prev_redirect.is_empty());
-                        self.prev_redirect =
-                            core::mem::replace(&mut self.redirect, normalized_url_str);
+                        is_same_origin = self.normalize_and_apply_redirect_url(string_builder)?;
                     } else if location.starts_with(b"//") {
                         let mut string_builder = StringBuilder::default();
 
@@ -5067,32 +5084,9 @@ impl<'a> HTTPClient<'a> {
 
                         let _ = string_builder.append(location);
 
-                        debug_assert!(string_builder.cap == string_builder.len);
-
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = bun_url::href_from_string(&input);
-                        if normalized_url.tag() == BunStringTag::Dead {
-                            return Err(crate::Error::RedirectURLInvalid);
-                        }
-                        let normalized_url_str = normalized_url.to_owned_slice();
-
-                        // SAFETY: self-borrow — `normalized_url_str` is moved into
-                        // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                        let new_url: URL<'a> =
-                            unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
-                        self.url = new_url;
-                        debug_assert!(self.prev_redirect.is_empty());
-                        self.prev_redirect =
-                            core::mem::replace(&mut self.redirect, normalized_url_str);
+                        is_same_origin = self.normalize_and_apply_redirect_url(string_builder)?;
                     } else {
-                        let original_url = self.url.clone();
-
-                        let base = BunString::borrow_utf8(original_url.href);
+                        let base = BunString::borrow_utf8(self.url.href);
                         let rel = BunString::borrow_utf8(location);
                         let new_url_ = bun_url::join(&base, &rel);
 
@@ -5100,21 +5094,7 @@ impl<'a> HTTPClient<'a> {
                             return Err(crate::Error::InvalidRedirectURL);
                         }
 
-                        let new_url = new_url_.to_owned_slice();
-                        let parsed_url = URL::parse(&new_url);
-                        if !parsed_url.has_http_like_protocol() {
-                            return Err(crate::Error::UnsupportedRedirectProtocol);
-                        }
-                        // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
-                        // below, which lives as long as `self` (≥ `'a`).
-                        self.url = unsafe { parsed_url.erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(self.url.origin),
-                            strings::without_trailing_slash(original_url.origin),
-                            true,
-                        );
-                        debug_assert!(self.prev_redirect.is_empty());
-                        self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
+                        is_same_origin = self.apply_redirect_url(new_url_.to_owned_slice())?;
                     }
                 }
 

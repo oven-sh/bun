@@ -71,7 +71,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, httpHeaderNameString(name), "' has invalid value: '"_s, value, "'"_s) };
+        return exceptionWithMessage(TypeError, "Header '"_s, httpHeaderNameString(name), "' has invalid value: '"_s, value, "'"_s);
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -80,10 +80,10 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return exceptionWithMessage(TypeError, "Header '"_s, name, "' has invalid value: '"_s, value, "'"_s);
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -107,10 +107,12 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             if (index.isValid()) {
                 auto existing = headers.getIndex(index);
                 if (headerName == HTTPHeaderName::Cookie) {
-                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
+                    combinedTemp = tryMakeString(existing, "; "_s, normalizedValue);
                 } else {
-                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
+                    combinedTemp = tryMakeString(existing, ", "_s, normalizedValue);
                 }
+                if (combinedTemp.isNull()) [[unlikely]]
+                    return Exception { OutOfMemoryError };
                 valueToSet = &combinedTemp;
             }
         }
@@ -133,7 +135,9 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     }
     auto index = headers.indexOf(name);
     if (index.isValid()) {
-        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+        combinedTemp = tryMakeString(headers.getIndex(index), ", "_s, normalizedValue);
+        if (combinedTemp.isNull()) [[unlikely]]
+            return Exception { OutOfMemoryError };
         valueToSet = &combinedTemp;
     }
     auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
@@ -250,7 +254,7 @@ ExceptionOr<void> FetchHeaders::remove(const StringView name)
     }
 
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
 
     ++m_updateCounter;
     m_headers.removeUncommonHeader(name);
@@ -265,11 +269,24 @@ size_t FetchHeaders::memoryCost() const
 
 ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
-    auto result = m_headers.get(name);
-    if (result.isEmpty()) {
-        if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        // A Headers object can hold more Set-Cookie bytes than one String can
+        // hold, and the ", "-joined value is the only value to return here.
+        // Report that instead of aborting the process.
+        if (headerName == HTTPHeaderName::SetCookie) {
+            auto joined = m_headers.tryJoinSetCookieHeaders();
+            if (!joined) [[unlikely]]
+                return Exception { OutOfMemoryError };
+            return WTF::move(*joined);
+        }
+        return m_headers.get(headerName);
     }
+
+    // A known header name is always a valid token, so only this path can fail.
+    auto result = m_headers.getUncommonHeader(name);
+    if (result.isEmpty() && !isValidHTTPToken(name))
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
 
     return result;
 }
@@ -279,7 +296,7 @@ ExceptionOr<bool> FetchHeaders::has(const StringView name) const
     bool has = m_headers.contains(name);
     if (!has) {
         if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
+            return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, '"');
     }
     return has;
 }

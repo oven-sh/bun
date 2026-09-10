@@ -177,6 +177,11 @@ public:
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
+
+    // The ", "-joined Set-Cookie value, or nullopt when the join is longer than
+    // String::MaxLength.
+    WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
+
     void set(HTTPHeaderName, const String& value);
     void add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
@@ -232,10 +237,9 @@ public:
     void setUncommonHeader(const String& name, const String& value);
     void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
-
-private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+private:
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;

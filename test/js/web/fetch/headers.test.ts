@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -735,4 +737,101 @@ describe("Headers", () => {
       expect(lowercaseHeaderNameSIMD(s)).toBe("x-ab\u0100cd\u0101ef\uffffgz");
     });
   });
+});
+
+// A header value is one String, so it holds at most String::MaxLength
+// (2**31 - 1) characters. Each case runs in a child process because what it
+// covers aborted the process.
+describe("the string length limit", () => {
+  // The capacity for the Set-Cookie join used to be the first value's length
+  // times the count, as a 32-bit product. 2048 values whose first one is 1 MiB
+  // reach String::MaxLength that way, while the join itself is about 1 MiB.
+  test("joins Set-Cookie values that only the old capacity could not hold", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const headers = new Headers();
+          headers.append("set-cookie", "x".repeat(2 ** 20));
+          for (let i = 0; i < 2047; i++) headers.append("set-cookie", "a");
+          const joined = headers.get("set-cookie");
+          console.log(JSON.stringify({ length: joined.length, head: joined.slice(0, 3), tail: joined.slice(-4) }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "{}")).toEqual({
+      // 2048 values and 2047 ", " separators.
+      length: 2 ** 20 + 2047 + 2 * 2047,
+      head: "xxx",
+      tail: "a, a",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // This case is the only one that needs a value of its own past the limit.
+  // Each length is computed before any character is copied, so the child never
+  // allocates the over-long value: it needs room for the one 2**30-character
+  // string it reuses. The timeout covers the part that is not free, `append()`
+  // checking 1 GiB of value for invalid characters, which takes a few seconds
+  // per call in a debug build.
+  test.skipIf(totalmem() < 8 * 1024 ** 3)(
+    "a value past it is an error instead of an abort",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const big = "x".repeat(2 ** 30);
+            const results = {};
+            const record = (name, fn) => {
+              try {
+                results[name] = fn();
+              } catch (e) {
+                results[name] = e.name + ": " + e.message;
+              }
+            };
+
+            // Appending to a header that already has a value combines the two.
+            const combined = new Headers();
+            combined.append("accept", big);
+            record("append", () => {
+              combined.append("accept", big);
+              return combined.get("accept").length;
+            });
+            // The append that failed leaves the value that was there alone.
+            record("the value already there", () => combined.get("accept").length);
+
+            // Set-Cookie keeps each value of its own, and get() joins them.
+            const cookies = new Headers();
+            cookies.append("set-cookie", big);
+            cookies.append("set-cookie", big);
+            record("get set-cookie", () => cookies.get("set-cookie").length);
+            record("getSetCookie", () => cookies.getSetCookie().length);
+
+            console.log(JSON.stringify(results));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "{}")).toEqual({
+        "append": "RangeError: Out of memory",
+        "the value already there": 2 ** 30,
+        "get set-cookie": "RangeError: Out of memory",
+        "getSetCookie": 2,
+      });
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 });

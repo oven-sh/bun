@@ -81,7 +81,7 @@ When the stream is read through a reader (`getReader()`, `for await`, `pipeTo()`
 
 ### Handling backpressure
 
-`controller.write()` returns the number of bytes written, or a **pending `Promise<number>`** when the destination's internal buffer is full (for example, a slow HTTP client). The chunk is accepted either way. Once the destination has gone away (for example the HTTP client disconnected), `write()` returns `0`. The promise resolves once the destination has drained, so `await`ing the result is enough:
+`controller.write()` returns the number of bytes written, or a **pending `Promise<number>`** when the destination's internal buffer is full (for example, a slow HTTP client). The chunk is accepted either way. The promise resolves once the destination has drained, so `await`ing the result is enough to respect backpressure:
 
 ```ts
 const stream = new ReadableStream({
@@ -96,6 +96,21 @@ const stream = new ReadableStream({
 ```
 
 `await controller.flush(true)` is equivalent, and you can use it after a write returns a `Promise`.
+
+Once the destination has gone away, `write()` returns `0` (when an HTTP client disconnects, `Bun.serve` also calls the source's `cancel(reason)`). `await`ing a `0` does not pause anything, so a producer with no natural end must check for it and stop, or it spins without ever yielding to the event loop:
+
+```ts
+const stream = new ReadableStream({
+  type: "direct",
+  async pull(controller) {
+    while (true) {
+      const written = await controller.write(nextChunk());
+      if (written === 0) break; // the destination is gone
+    }
+    controller.close();
+  },
+});
+```
 
 When the stream is read from JavaScript (`getReader()`, `pipeTo()`, `for await`), the buffer is full once `highWaterMark` bytes (default 64 KiB) are waiting for the reader. Pass `{ highWaterMark }` as the second `ReadableStream` constructor argument to change it. `reader.cancel(reason)` calls the source's `cancel(reason)`.
 

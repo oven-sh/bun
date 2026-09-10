@@ -9435,13 +9435,15 @@ declare module "bun" {
        */
       backend?: Backend;
       /**
-       * Initial URL to navigate to. The navigation starts before the
-       * constructor returns; `await view.navigate(otherUrl)` or any other
-       * operation waits for it to complete first.
+       * Initial URL to navigate to. Starts the same navigation
+       * `view.navigate(url)` on the next line would, before the
+       * constructor returns: {@link WebView.loading} is `true` and calling
+       * {@link WebView.navigate} throws `ERR_INVALID_STATE` until it
+       * settles. Other operations do not wait for it.
        *
-       * Starts the same navigation `view.navigate(url)` would, but its
-       * promise stays internal: a failure never surfaces as a rejection.
-       * Set {@link WebView.onNavigationFailed} to observe it.
+       * Its promise stays internal, so a failure never surfaces as a
+       * rejection. Set {@link WebView.onNavigated} and
+       * {@link WebView.onNavigationFailed} to observe the outcome.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */

@@ -4,6 +4,23 @@ import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
 
+// Runs `script` in a child that is killed after 30s, so a super-linear
+// regression fails fast instead of hanging the test runner.
+async function expectRendersQuickly(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("DONE");
+  expect(exitCode).toBe(0);
+}
+
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks
 // ============================================================================
@@ -566,21 +583,6 @@ code
 // ============================================================================
 
 describe("pathological bracket inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("bracket floods render in linear time (html)", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -758,21 +760,6 @@ describe("pathological bracket inputs", () => {
 // ============================================================================
 
 describe("pathological inline HTML inputs", () => {
-  async function expectRendersQuickly(script: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("DONE");
-    expect(exitCode).toBe(0);
-  }
-
   test("unterminated inline HTML openers render in linear time", async () => {
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
@@ -853,6 +840,111 @@ describe("pathological inline HTML inputs", () => {
     expect(Markdown.html("[<!-- [<!-- [<!-- x](u)](u)](u)\n")).toBe(
       '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
+  });
+});
+
+// ============================================================================
+// Pathological inputs: deep nesting through `Bun.markdown.render()`. Two
+// separate O(depth²) costs, both found by fuzzing, while html() and react()
+// on the same inputs take milliseconds:
+// - The `depth` field of the list / listItem meta was computed by walking the
+//   whole open-block stack on every list and list-item leave (300 KB of `>- `
+//   markers took ~100s). It is now a counter.
+// - Every element collected its children in its own buffer and copied them
+//   into the parent's buffer on leave, even with no callback registered, so
+//   text nested D levels deep was copied D times (1.2 MB of nested `*a … b*`
+//   took 5s with an empty callback set). Elements without a callback now
+//   render straight into the nearest enclosing element that has one.
+// The child process is killed after 30s so a regression fails fast.
+// ============================================================================
+
+describe("pathological nesting through render()", () => {
+  test("deeply nested lists render in linear time with correct depth meta", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        {
+          // listItem meta at every one of 100k levels.
+          const depth = 100000;
+          let items = 0, maxDepth = -1, ordered = 0;
+          const out = Bun.markdown.render(fill(depth, "1. ") + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxDepth) maxDepth = meta.depth; if (meta.ordered) ordered++; return children; },
+          });
+          const got = JSON.stringify({ out, items, maxDepth, ordered });
+          const want = JSON.stringify({ out: "hi", items: depth, maxDepth: depth - 1, ordered: depth });
+          if (got !== want) throw new Error("unexpected listItem result: " + got.slice(0, 300));
+          console.log("OK listItem depth");
+        }
+        // No callbacks registered: every block passes its children through.
+        for (const [unit, depth] of [[">- ", 100000], ["+ ", 50000], ["1) ", 50000]]) {
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {});
+          if (out !== "hi") throw new Error("unexpected output for " + JSON.stringify(unit) + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + JSON.stringify(unit));
+        }
+        // The counter reports the same list / listItem depths the stack walk did.
+        for (const unit of ["1. ", ">- ", "- > "]) {
+          const depth = 4000;
+          let items = 0, lists = 0, maxItemDepth = -1, maxListDepth = -1;
+          const out = Bun.markdown.render(fill(depth, unit) + "hi", {
+            listItem: (children, meta) => { items++; if (meta.depth > maxItemDepth) maxItemDepth = meta.depth; return children; },
+            list: (children, meta) => { lists++; if (meta.depth > maxListDepth) maxListDepth = meta.depth; return children; },
+          });
+          const got = JSON.stringify({ out, items, lists, maxItemDepth, maxListDepth });
+          const want = JSON.stringify({ out: "hi", items: depth, lists: depth, maxItemDepth: depth - 1, maxListDepth: depth - 1 });
+          if (got !== want) throw new Error("unexpected depth meta for " + JSON.stringify(unit) + ": " + got.slice(0, 300));
+          console.log("OK depth meta " + JSON.stringify(unit));
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("deeply nested inline spans render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 600000;
+        const input = fill(n, "*a ") + fill(n, " b*");
+        const text = fill(n, "a ") + fill(n, " b");
+        {
+          const out = Bun.markdown.render(input, {});
+          if (out !== text) throw new Error("unexpected output (no callbacks): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK no callbacks");
+        }
+        {
+          // Only the outermost element captures; the nested spans inside it do not.
+          const out = Bun.markdown.render(input, { paragraph: children => "<p>" + children + "</p>\\n" });
+          if (out !== "<p>" + text + "</p>\\n") throw new Error("unexpected output (paragraph callback): " + out.length + " " + JSON.stringify(out.slice(0, 100)));
+          console.log("OK paragraph callback");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("capturing and pass-through elements interleave correctly", () => {
+    // An element with a callback collects exactly its own children, whether or
+    // not the elements between it and the text have callbacks of their own.
+    const nested = (n: number) => Buffer.alloc(n * 3, "*a ").toString() + Buffer.alloc(n * 3, " b*").toString() + "\n";
+    const callbacks = {
+      emphasis: (c: string) => "<em>" + c + "</em>",
+      paragraph: (c: string) => "<p>" + c + "</p>\n",
+    };
+    for (const n of [1, 2, 3, 50, 2000]) {
+      expect(Markdown.render(nested(n), callbacks)).toBe(Markdown.html(nested(n)));
+    }
+    const mixed = "**x *y **z *w* z** y* x**\n";
+    expect(Markdown.render(mixed, {})).toBe("x y z w z y x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]` })).toBe("[x y [z w z] y x]");
+    expect(Markdown.render(mixed, { emphasis: c => `(${c})` })).toBe("x (y z (w) z y) x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: c => `(${c})` })).toBe("[x (y [z (w) z] y) x]");
+    // A callback that returns null drops the element together with everything
+    // that rendered into it, including pass-through descendants.
+    expect(Markdown.render(mixed, { emphasis: () => null })).toBe("x  x");
+    expect(Markdown.render(mixed, { strong: c => `[${c}]`, emphasis: () => null })).toBe("[x  x]");
+    expect(
+      Markdown.render("> - one\n>   - two [l](u)\n\npara `code`\n", {
+        blockquote: c => `<bq>${c}</bq>`,
+        link: (c, m) => `<${m.href}|${c}>`,
+        paragraph: c => `<p>${c}</p>`,
+      }),
+    ).toBe("<bq>onetwo <u|l></bq><p>para code</p>");
   });
 });
 

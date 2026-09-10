@@ -1038,15 +1038,20 @@ impl<'a> ParseRenderer<'a> {
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.
-/// Uses a content-stack pattern: each enter pushes a new buffer, text
-/// appends to the top buffer, and each leave pops the buffer, calls
-/// the JS callback with the accumulated children, and appends the
-/// callback's return value to the parent buffer.
+/// Every enter pushes a stack entry. An element with a registered callback
+/// *captures*: output produced inside it collects in its own buffer, and on
+/// leave the callback is called with that buffer and its return value is
+/// appended to the enclosing capture. An element without a callback renders
+/// straight into the enclosing capture (ultimately the root), so leaving it
+/// copies nothing and nesting depth alone costs O(1) per element.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
+    /// Indices into `stack` of the capturing entries, innermost last. Output
+    /// is appended to the last one. Never empty: the root (index 0) captures.
+    capture_stack: Vec<usize>,
     /// Number of ul/ol entries currently on `stack`.
     list_depth: u32,
     callbacks: Callbacks,
@@ -1081,7 +1086,10 @@ struct Callbacks {
 // Note: `Default` for JSValue must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
+    /// Children output; only written while this entry is the innermost capture.
     buffer: Vec<u8>,
+    /// Set when a callback is registered for this element (and for the root).
+    captures: bool,
     block_type: md::BlockType,
     data: u32,
     flags: u32,
@@ -1098,6 +1106,7 @@ impl Default for CallbackStackEntry {
     fn default() -> Self {
         Self {
             buffer: Vec::new(),
+            captures: false,
             block_type: md::BlockType::Doc,
             data: 0,
             flags: 0,
@@ -1148,12 +1157,16 @@ impl<'a> JsCallbackRenderer<'a> {
             global_object,
             src_text,
             stack: Vec::new(),
+            capture_stack: Vec::new(),
             list_depth: 0,
             callbacks: Callbacks::default(),
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             stack_check: StackCheck::init(),
         };
-        self_.stack.push(CallbackStackEntry::default());
+        self_.push_entry(CallbackStackEntry {
+            captures: true,
+            ..Default::default()
+        });
         Ok(self_)
     }
 
@@ -1206,26 +1219,46 @@ impl<'a> JsCallbackRenderer<'a> {
     // Content stack operations
     // ========================================
 
-    fn append_to_top(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        if let Some(top) = self.stack.last_mut() {
-            top.buffer.extend_from_slice(data);
+    fn push_entry(&mut self, entry: CallbackStackEntry) {
+        if entry.captures {
+            self.capture_stack.push(self.stack.len());
+        }
+        self.stack.push(entry);
+    }
+
+    /// Pops the top entry. Never pops the root.
+    fn pop_entry(&mut self) -> Option<CallbackStackEntry> {
+        if self.stack.len() <= 1 {
+            return None;
+        }
+        let entry = self.stack.pop()?;
+        if entry.captures {
+            self.capture_stack.pop();
+        }
+        Some(entry)
+    }
+
+    fn top_captures(&self) -> bool {
+        self.stack.len() > 1 && self.stack.last().is_some_and(|e| e.captures)
+    }
+
+    /// Appends rendered output to the innermost capturing entry.
+    fn append_output(&mut self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        if let Some(&i) = self.capture_stack.last() {
+            self.stack[i].buffer.extend_from_slice(data);
         }
         Ok(())
     }
 
+    /// Pops the top (capturing) entry, calls `callback` with its collected
+    /// children, and appends the callback's result to the enclosing capture.
     fn pop_and_callback(&mut self, callback: JSValue, meta: Option<JSValue>) -> JsResult<()> {
-        if self.stack.len() <= 1 {
-            return Ok(()); // don't pop root
-        }
-        let Some(entry) = self.stack.pop() else {
+        let Some(entry) = self.pop_entry() else {
             return Ok(());
         };
-
-        let children = entry.buffer.as_slice();
-
         if callback.is_empty() {
-            // No callback registered - pass children through to parent
-            self.append_to_top(children)?;
+            // Only reachable if an enter/leave pair disagrees on the element type.
+            self.append_output(&entry.buffer)?;
             return Ok(());
         }
 
@@ -1234,7 +1267,8 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = bun_string_jsc::create_utf8_for_js(self.global_object, children)?;
+        let children_js =
+            bun_string_jsc::create_utf8_for_js(self.global_object, entry.buffer.as_slice())?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1247,7 +1281,7 @@ impl<'a> JsCallbackRenderer<'a> {
             return Ok(()); // callback returned null/undefined → omit element
         }
         let slice = result.to_utf8(self.global_object)?;
-        self.append_to_top(slice.slice())?;
+        self.append_output(slice.slice())?;
         Ok(())
     }
 
@@ -1290,7 +1324,9 @@ impl<'a> JsCallbackRenderer<'a> {
             parent.child_index += 1;
         }
 
-        self.stack.push(CallbackStackEntry {
+        let captures = !self.get_block_callback(block_type).is_empty();
+        self.push_entry(CallbackStackEntry {
+            captures,
             block_type,
             data,
             flags,
@@ -1314,21 +1350,20 @@ impl<'a> JsCallbackRenderer<'a> {
             self.list_depth = self.list_depth.saturating_sub(1);
         }
 
-        let callback = self.get_block_callback(block_type);
-        // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
-        let saved = if self.stack.len() > 1 {
-            CallbackStackEntry {
-                block_type: self.stack.last().unwrap().block_type,
-                data: self.stack.last().unwrap().data,
-                flags: self.stack.last().unwrap().flags,
-                child_index: self.stack.last().unwrap().child_index,
-                ..Default::default()
-            }
+        if self.top_captures() {
+            let callback = self.get_block_callback(block_type);
+            let top = self.stack.last().unwrap();
+            let (data, flags) = (top.data, top.flags);
+            // Built while the entry is still on the stack: li meta reads it and its parent.
+            let meta = self.create_block_meta(block_type, data, flags)?;
+            self.pop_and_callback(callback, meta)?;
         } else {
-            CallbackStackEntry::default()
-        };
-        let meta = self.create_block_meta(block_type, saved.data, saved.flags)?;
-        self.pop_and_callback(callback, meta)?;
+            // No callback: the children already went to the enclosing capture.
+            self.pop_entry();
+            if block_type == md::BlockType::H {
+                let _ = self.heading_tracker.leave_heading();
+            }
+        }
 
         if block_type == md::BlockType::H {
             self.heading_tracker.clear_after_heading();
@@ -1336,15 +1371,25 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn enter_span_impl(&mut self, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+    fn enter_span_impl(
+        &mut self,
+        span_type: md::SpanType,
+        detail: md::SpanDetail<'_>,
+    ) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        self.stack.push(CallbackStackEntry {
-            href: Box::from(detail.href),
-            title: Box::from(detail.title),
-            ..Default::default()
-        });
+        let entry = if self.get_span_callback(span_type).is_empty() {
+            CallbackStackEntry::default()
+        } else {
+            CallbackStackEntry {
+                captures: true,
+                href: Box::from(detail.href),
+                title: Box::from(detail.title),
+                ..Default::default()
+            }
+        };
+        self.push_entry(entry);
         Ok(())
     }
 
@@ -1353,14 +1398,15 @@ impl<'a> JsCallbackRenderer<'a> {
             return Err(self.global_object.throw_stack_overflow());
         }
 
+        if !self.top_captures() {
+            // No callback: the children already went to the enclosing capture.
+            self.pop_entry();
+            return Ok(());
+        }
+
         let callback = self.get_span_callback(span_type);
-        let (href, title): (&[u8], &[u8]) = if self.stack.len() > 1 {
-            let top = self.stack.last().unwrap();
-            (&top.href, &top.title)
-        } else {
-            (b"", b"")
-        };
-        let meta = self.create_span_meta(span_type, href, title)?;
+        let top = self.stack.last().unwrap();
+        let meta = self.create_span_meta(span_type, &top.href, &top.title)?;
         self.pop_and_callback(callback, meta)?;
         Ok(())
     }
@@ -1374,15 +1420,15 @@ impl<'a> JsCallbackRenderer<'a> {
         self.heading_tracker.track_text(text_type, content);
 
         match text_type {
-            md::TextType::NullChar => self.append_to_top(b"\xEF\xBF\xBD")?,
-            md::TextType::Br => self.append_to_top(b"\n")?,
-            md::TextType::Softbr => self.append_to_top(b"\n")?,
+            md::TextType::NullChar => self.append_output(b"\xEF\xBF\xBD")?,
+            md::TextType::Br => self.append_output(b"\n")?,
+            md::TextType::Softbr => self.append_output(b"\n")?,
             md::TextType::Entity => self.decode_and_append_entity(content)?,
             _ => {
                 if !self.callbacks.text.is_empty() {
                     self.call_text_callback(content)?;
                 } else {
-                    self.append_to_top(content)?;
+                    self.append_output(content)?;
                 }
             }
         }
@@ -1404,7 +1450,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
             let slice = result.to_utf8(self.global_object)?;
-            self.append_to_top(slice.slice())?;
+            self.append_output(slice.slice())?;
         }
         Ok(())
     }
@@ -1424,7 +1470,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.callbacks.text.is_empty() {
             self.call_text_callback(content)
         } else {
-            self.append_to_top(content)?;
+            self.append_output(content)?;
             Ok(())
         }
     }

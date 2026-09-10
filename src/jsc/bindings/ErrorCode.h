@@ -69,12 +69,22 @@ JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& mes
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 
+// Throws `RangeError: Out of memory` when `appendLength` more characters would take `builder`
+// past `WTF::String::MaxLength`. A default `WTF::StringBuilder` aborts the process at that
+// length (`StringBuilder::didOverflow` calls `CRASH()`), so a message that embeds a value the
+// user controls calls this before it appends the value, and before it appends anything after
+// the value. Node gets V8's "Invalid string length" RangeError at the same point, and "Out of
+// memory" is how JSC spells that error. Check the scope for an exception after the call.
+void throwIfMessageTooLong(JSC::JSGlobalObject* globalObject, const WTF::StringBuilder& builder, size_t appendLength);
+
 // Appends Node's `determineSpecificType()` rendering of a value ("type number (5)",
 // "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.
+// Throws instead when the rendering does not fit (throwIfMessageTooLong).
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue value);
 
 // Appends the value the way Node's `%s` error-message substitution renders it: primitives
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
+// Throws instead when the rendering does not fit (throwIfMessageTooLong).
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
 enum Bound {

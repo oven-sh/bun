@@ -135,8 +135,8 @@ test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-// A roaming (CRED_PERSIST_ENTERPRISE) entry follows a domain profile to other
-// machines, so two machines sharing one rotating secret invalidate each other.
+// Entries are per-user, per-machine (CRED_PERSIST_LOCAL_MACHINE), matching the
+// macOS keychain backend. CRED_PERSIST_ENTERPRISE would roam with a domain profile.
 test.skipIf(!isWindows)("Bun.secrets.set() stores a machine-local Credential Manager entry", async () => {
   const CRED_TYPE_GENERIC = 1;
   const CRED_PERSIST_LOCAL_MACHINE = 2;

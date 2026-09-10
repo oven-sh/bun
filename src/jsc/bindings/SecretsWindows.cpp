@@ -177,8 +177,8 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     cred.UserName = nameNameWide.data();
     cred.CredentialBlobSize = password.length();
     cred.CredentialBlob = (LPBYTE)password.data();
-    // Machine-local on purpose: CRED_PERSIST_ENTERPRISE roams with a domain
-    // profile, and per-device secrets (e.g. rotating refresh tokens) must not.
+    // Per-user, per-machine persistence, matching the macOS keychain backend.
+    // CRED_PERSIST_ENTERPRISE would roam the entry with a domain profile.
     cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
 
     if (!framework->CredWriteW(&cred, 0)) {

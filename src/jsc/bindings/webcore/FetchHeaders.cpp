@@ -89,6 +89,11 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
     return true;
 }
 
+static Exception headersTooLargeException()
+{
+    return Exception { RangeError, "Headers maximum size exceeded"_s };
+}
+
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     // The common path here is a brand-new header with no leading/trailing HTTP
@@ -123,10 +128,10 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            if (!headers.setIndex(index, *valueToSet))
-                headers.set(headerName, *valueToSet);
-        } else {
-            headers.add(headerName, normalizedValue);
+            if (!headers.setIndex(index, *valueToSet) && !headers.set(headerName, *valueToSet))
+                return headersTooLargeException();
+        } else if (!headers.add(headerName, normalizedValue)) {
+            return headersTooLargeException();
         }
 
         return {};
@@ -142,8 +147,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.setIndex(index, *valueToSet))
-        headers.set(name, *valueToSet);
+    if (!headers.setIndex(index, *valueToSet) && !headers.set(name, *valueToSet))
+        return headersTooLargeException();
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -160,10 +165,11 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    if (header.keyAsHTTPHeaderName)
-        headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-    else
-        headers.add(header.key, header.value);
+    bool stored = header.keyAsHTTPHeaderName
+        ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
+        : headers.add(header.key, header.value);
+    if (!stored)
+        return headersTooLargeException();
 
     return {};
 }
@@ -294,7 +300,8 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
         return {};
 
     ++m_updateCounter;
-    m_headers.set(name, normalizedValue);
+    if (!m_headers.set(name, normalizedValue))
+        return headersTooLargeException();
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
@@ -312,7 +319,8 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         return {};
 
     ++m_updateCounter;
-    m_headers.set(name, normalizedValue);
+    if (!m_headers.set(name, normalizedValue))
+        return headersTooLargeException();
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);

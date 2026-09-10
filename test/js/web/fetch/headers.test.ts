@@ -735,4 +735,33 @@ describe("Headers", () => {
       expect(lowercaseHeaderNameSIMD(s)).toBe("x-ab\u0100cd\u0101ef\uffffgz");
     });
   });
+
+  describe("growth limit", () => {
+    // Every set-cookie value is one entry in a Vector<String>. That vector holds at
+    // most min(INT32_MAX, the synthetic allocation limit) / 8 entries.
+    // setSyntheticAllocationLimitForTesting floors at 1 MiB, which puts the bound at
+    // 131072 values. Without it the bound is 262343954 values and about 2 GB.
+    const LIMIT_BYTES = 1024 * 1024;
+    const MAX_SET_COOKIE = LIMIT_BYTES / 8;
+
+    test("append('set-cookie') throws a RangeError past the vector's largest size", () => {
+      const setLimit = internalForTesting.setSyntheticAllocationLimitForTesting;
+      const previousLimit = setLimit(LIMIT_BYTES);
+      try {
+        const headers = new Headers();
+        for (let i = 0; i < MAX_SET_COOKIE; i++) headers.append("set-cookie", "a=1");
+        expect(headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
+
+        expect(() => headers.append("set-cookie", "a=1")).toThrow(RangeError);
+        expect(() => headers.append("set-cookie", "a=1")).toThrow("Headers maximum size exceeded");
+
+        // The refused value is not stored, and the object still works.
+        expect(headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
+        headers.set("content-type", "text/plain");
+        expect(headers.get("content-type")).toBe("text/plain");
+      } finally {
+        setLimit(previousLimit);
+      }
+    });
+  });
 });

@@ -147,7 +147,6 @@ const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
-const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -253,6 +252,23 @@ function closeAdoptedTLSRawNT(handle, self, isException) {
 function closeAdoptedTLSRawNowNT(handle, self, isException) {
   handle.close(onSocketHandleClosed);
   setImmediate(emitCloseNT, self, isException);
+}
+// A TLS socket takes the transport it was layered over down with it, like
+// node's TLSWrap does its parent wrap: on the tick after _destroy, so the TLS
+// socket's 'error' still sees the transport intact and the transport's 'close'
+// precedes the TLS socket's. The raw twin of an adopted fd is closed by the
+// TLS handle, so it is detached rather than closed a second time.
+function destroyUpgradedTransportNT(upgraded) {
+  if (upgraded.destroyed) return;
+  if (upgraded._handle?.[kAdoptedTLSRaw]) {
+    upgraded._handle = null;
+  }
+  upgraded.destroy();
+}
+// Handle-less TLS socket: its 'close' is queued behind the transport's.
+function destroyUpgradedTransportAndCloseNT(upgraded, self, hasError) {
+  destroyUpgradedTransportNT(upgraded);
+  process.nextTick(emitCloseNT, self, hasError);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -1886,14 +1902,6 @@ Socket.prototype[kAttach] = function (port, socket) {
   SocketHandlers.drain(socket);
 };
 
-Socket.prototype[kCloseRawConnection] = function () {
-  const connection = this[kupgraded];
-  connection.connecting = false;
-  connection._handle = null;
-  connection.unref();
-  connection.destroy();
-};
-
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
   {
@@ -2012,8 +2020,10 @@ Socket.prototype.connect = function connect(...args) {
           // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
           upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
         }
+        // Before the upgrade, which may wait for 'connect': from here on
+        // destroying this socket destroys the connection too.
+        this[kupgraded] = connection;
         if (upgradeDuplex) {
-          this[kupgraded] = connection;
           const [result, events] = upgradeDuplexToTLS(connection, {
             data: { self: this, req: { oncomplete: afterConnect } },
             tls,
@@ -2029,7 +2039,6 @@ Socket.prototype.connect = function connect(...args) {
           // connecting (e.g. tls.connect({ socket: net.connect(port) })) must be
           // upgraded once it emits 'connect'.
           if (socket && !connection.connecting) {
-            this[kupgraded] = connection;
             const result = upgradeTLSDeferred(socket, {
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
@@ -2041,7 +2050,6 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
-              this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
             } else {
@@ -2051,20 +2059,14 @@ Socket.prototype.connect = function connect(...args) {
           } else {
             // wait to be connected
             connection.once("connect", () => {
-              // The TLS socket may have been destroyed before the underlying
-              // socket connected (e.g. tls.connect({ socket }).destroy()); don't
-              // start a handshake on a dead socket.
-              if (this.destroyed) {
-                connection.destroy();
-                return;
-              }
+              // Destroyed while connecting: _destroy is taking the connection down.
+              if (this.destroyed) return;
               const socket = connection._handle;
               if (!upgradeDuplex && socket) {
                 // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
                 upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
               }
               if (upgradeDuplex) {
-                this[kupgraded] = connection;
                 const [result, events] = upgradeDuplexToTLS(connection, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -2076,7 +2078,6 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("close", events[3]);
                 this._handle = result;
               } else {
-                this[kupgraded] = connection;
                 const result = upgradeTLSDeferred(socket, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
@@ -2088,7 +2089,6 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
-                  this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
                 } else {
@@ -2164,14 +2164,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down a wrapped generic duplex with this socket: the native handle's
-  // close only flushes close_notify and lets the wrapper drain; without an
-  // explicit destroy here a late RST on the underlying transport can surface
-  // as an unhandled error after this socket is gone.
   const upgraded = this[kupgraded];
-  if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
-    upgraded.destroy?.();
-  }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2237,9 +2230,15 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    // Queued after the 'error' that callback(err) queues.
+    if (upgraded) process.nextTick(destroyUpgradedTransportNT, upgraded);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this, err ? true : false);
+    if (upgraded) {
+      process.nextTick(destroyUpgradedTransportAndCloseNT, upgraded, this, err ? true : false);
+    } else {
+      process.nextTick(emitCloseNT, this, err ? true : false);
+    }
   }
 
   const server = this._server;
@@ -2428,7 +2427,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
-    this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);

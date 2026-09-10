@@ -518,6 +518,53 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  // end() takes the digest in _flush. After that update() and copy() must
+  // throw (SHA-3 used to spin forever in BoringSSL's keccak absorb loop, other
+  // digests kept hashing from a zeroed state) while one explicit digest()
+  // still returns the cached value, as in Node. Runs in a child because the
+  // unfixed behaviour is a hang. sha3-*/sha256 are BoringSSL EVP digests,
+  // blake2b512/shake128 take the ExternZigHash path.
+  it("update() and copy() after the stream has ended throw instead of reusing finalized state", async () => {
+    const algorithms = ["sha3-256", "sha3-512", "sha256", "blake2b512", "shake128"];
+    const script = `
+      const crypto = require("node:crypto");
+      const code = fn => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+      const out = {};
+      for (const algo of ${JSON.stringify(algorithms)}) {
+        const expected = crypto.createHash(algo).update("abc").digest("hex");
+        const h = crypto.createHash(algo);
+        h.update("abc");
+        h.end();
+        out[algo] = {
+          streamed: h.read().toString("hex") === expected,
+          update: code(() => h.update("late")),
+          copy: code(() => h.copy()),
+          digest: h.digest("hex") === expected,
+          digestAgain: code(() => h.digest("hex")),
+        };
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: Object.fromEntries(
+        algorithms.map(algo => [
+          algo,
+          {
+            streamed: true,
+            update: "ERR_CRYPTO_HASH_UPDATE_FAILED",
+            copy: "ERR_CRYPTO_HASH_FINALIZED",
+            digest: true,
+            digestAgain: "ERR_CRYPTO_HASH_FINALIZED",
+          },
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("treats a view over a detached ArrayBuffer as empty input", () => {
     const detachedView = () => {
       const ab = new ArrayBuffer(8);

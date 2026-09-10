@@ -74,6 +74,28 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+test.concurrent("an event frame without a string method is ignored", async () => {
+  // The transport looks the method up on the view as AtomString::fromUTF8(method),
+  // which is the null atom when the frame has no string method. 20 listener types
+  // puts the view's EventListenerMap past the size where it finds a type through
+  // a hash index and not a scan; the index has to accept that key like the scan does.
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const seen = [];
+    for (let i = 0; i < 20; i++) view.addEventListener("Fake.event" + i, e => seen.push(["Fake.event" + i, e.data]));
+    const frames = [
+      { sessionId: "S1", params: {} },
+      { sessionId: "S1", method: 7, params: {} },
+      { sessionId: "S1", method: "Fake.event19", params: { ok: true } },
+    ];
+    await view.evaluate("[" + frames.map(frame => "__fake_send(" + JSON.stringify(frame) + ")").join(",") + "].length");
+    print(seen);
+    view.close();
+  `);
+  expect(result).toEqual([["Fake.event19", { ok: true }]]);
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

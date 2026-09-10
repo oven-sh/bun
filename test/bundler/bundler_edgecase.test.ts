@@ -913,7 +913,81 @@ describe("bundler", () => {
     },
     outdir: "/out",
     publicPath: "/www",
-    run: {},
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatch(/"\/www\/hello-[a-z0-9]+\.file"/);
+    },
+  });
+  // A publicPath without a trailing slash gets exactly one "/" before the
+  // output-relative path in every emitter: static and dynamic cross-chunk
+  // imports, HTML tags, CSS url(), file-loader strings, and sourceMappingURL.
+  itBundled("edgecase/PublicPathWithoutTrailingSlash", {
+    files: {
+      "/src/index.html": /* html */ `
+        <!doctype html>
+        <html>
+          <head>
+            <link rel="stylesheet" href="./styles.css" />
+            <script type="module" src="./app.ts"></script>
+          </head>
+          <body><img src="./logo.svg" /></body>
+        </html>
+      `,
+      "/src/styles.css": /* css */ `body { background: url(./icon.svg); }`,
+      "/src/app.ts": `console.log("app");`,
+      "/src/pages/a/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        import logo from "../../logo.svg";
+        import("../../lazy").then(m => console.log(m.lazy));
+        console.log(shared(), logo);
+      `,
+      "/src/lazy.ts": `export const lazy = "lazy";`,
+      "/src/pages/b/entry.ts": /* ts */ `
+        import { shared } from "../../shared";
+        console.log(shared());
+      `,
+      "/src/shared.ts": `export const shared = () => "shared";`,
+      // at least 128 KB, else the CSS printer inlines it as a data: URL
+      "/src/icon.svg": `<svg id="icon">${Buffer.alloc(128 * 1024, "x")}</svg>`,
+      "/src/logo.svg": `<svg id="logo" />`,
+    },
+    entryPoints: ["/src/index.html", "/src/pages/a/entry.ts", "/src/pages/b/entry.ts"],
+    outputPaths: ["/out/index.html", "/out/pages/a/entry.js", "/out/pages/b/entry.js"],
+    root: "/src",
+    outdir: "/out",
+    splitting: true,
+    sourceMap: "linked",
+    publicPath: "https://cdn.example/app",
+    chunkNaming: "chunk-[hash].[ext]",
+    loader: { ".svg": "file" },
+    onAfterBundle(api) {
+      const prefix = "https://cdn.example/app/";
+      const expectUnderPrefix = (urls: string[]) => {
+        expect(urls).not.toBeEmpty();
+        for (const url of urls) {
+          expect(url).toStartWith(prefix);
+          api.assertFileExists(join("/out", url.slice(prefix.length)));
+        }
+      };
+
+      const entry = api.readFile("/out/pages/a/entry.js");
+      expect(entry).toMatch(/from "https:\/\/cdn\.example\/app\/chunk-[a-z0-9]+\.js"/);
+      expect(entry).toMatch(/import\("https:\/\/cdn\.example\/app\/(pages\/a\/)?[a-z0-9-]+\.js"\)/);
+      expect(entry).toContain(`//# sourceMappingURL=${prefix}pages/a/entry.js.map\n`);
+
+      const jsUrls = readdirSync(api.outdir, { recursive: true })
+        .filter(file => file.endsWith(".js"))
+        .flatMap(file => cdnUrls(api.readFile(join("/out", file))));
+      expectUnderPrefix(jsUrls);
+      expect(jsUrls).toContainEqual(expect.stringMatching(/^https:\/\/cdn\.example\/app\/logo-[a-z0-9]+\.svg$/));
+
+      const htmlUrls = [...api.readFile("/out/index.html").matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]);
+      expectUnderPrefix(htmlUrls);
+      expect(htmlUrls.map(url => url.slice(prefix.length).split(".").pop()).sort()).toEqual(["css", "js", "svg"]);
+
+      const css = readdirSync(api.outdir).find(file => file.endsWith(".css"))!;
+      const cssUrls = [...api.readFile(join("/out", css)).matchAll(/url\("?([^")]+)"?\)/g)].map(m => m[1]);
+      expectUnderPrefix(cssUrls);
+    },
   });
   itBundled("edgecase/PublicPathNestedChunkReferences", {
     files: {

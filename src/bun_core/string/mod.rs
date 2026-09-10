@@ -2021,37 +2021,74 @@ pub use printer::quote_for_json;
 
 pub use crate::ffi::slice_to_nul;
 
-/// Pure path-string helper used by the bundler chunk writer and `css::printer`.
-/// Returns `[prefix', suffix']` such that concatenating them produces a
-/// reasonably-normalized path (collapses `./` leading and avoids `//`).
-/// The two-element-array return shape lets bundler call-sites index it
-/// directly.
-pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
+/// The pieces of `prefix + separator + path`; see [`cheap_prefix_normalizer`].
+#[derive(Clone, Copy)]
+pub struct PrefixedPath<'a> {
+    pub prefix: &'a [u8],
+    pub separator: &'static [u8],
+    pub path: &'a [u8],
+}
+
+impl<'a> PrefixedPath<'a> {
+    pub fn parts(&self) -> [&'a [u8]; 3] {
+        [self.prefix, self.separator, self.path]
+    }
+
+    pub fn len(&self) -> usize {
+        self.prefix.len() + self.separator.len() + self.path.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn to_boxed(&self) -> Box<[u8]> {
+        strings::concat(&self.parts())
+    }
+}
+
+/// Joins a public path (`prefix`) with an output-relative path (`suffix`) the
+/// way esbuild's `joinWithPublicPath` does: a leading `./` on `suffix` is
+/// dropped, and exactly one `/` separates a non-empty `prefix` from `suffix`.
+///
+/// ```text
+/// ["", "./out.js"]                      => "./out.js"
+/// ["", "../out.js"]                     => "../out.js"
+/// ["https://example.com/", "/out.js"]   => "https://example.com/out.js"
+/// ["https://example.com", "./out.js"]   => "https://example.com/out.js"
+/// ["/foo/", "bar.js"]                   => "/foo/bar.js"
+/// ```
+pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> PrefixedPath<'a> {
     if prefix.is_empty() {
-        let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
-        return [
-            if strings::has_prefix_comptime(suffix_no_slash, b"../") {
+        let path = strings::remove_leading_dot_slash(suffix);
+        return PrefixedPath {
+            prefix: if strings::has_prefix_comptime(path, b"../") {
                 b""
             } else {
                 b"./"
             },
-            suffix_no_slash,
-        ];
+            separator: b"",
+            path,
+        };
     }
 
-    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
-    // ["/foo/", "/bar.js"]                 => "/foo/bar.js"
     let win = crate::Environment::IS_WINDOWS;
-    if strings::ends_with_char(prefix, b'/') || (win && strings::ends_with_char(prefix, b'\\')) {
-        if strings::starts_with_char(suffix, b'/')
-            || (win && strings::starts_with_char(suffix, b'\\'))
-        {
-            return [prefix, &suffix[1..]];
-        }
-        // It gets really complicated if we try to deal with URLs more than this.
-    }
+    let is_sep = |c: u8| c == b'/' || (win && c == b'\\');
 
-    [prefix, strings::remove_leading_dot_slash(suffix)]
+    let suffix = strings::remove_leading_dot_slash(suffix);
+    let prefix_has_sep = prefix.last().is_some_and(|&c| is_sep(c));
+    let suffix_has_sep = suffix.first().is_some_and(|&c| is_sep(c));
+
+    let (separator, path): (&'static [u8], &'a [u8]) = match (prefix_has_sep, suffix_has_sep) {
+        (true, true) => (b"", &suffix[1..]),
+        (false, false) => (b"/", suffix),
+        _ => (b"", suffix),
+    };
+    PrefixedPath {
+        prefix,
+        separator,
+        path,
+    }
 }
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_core::parse_double`).

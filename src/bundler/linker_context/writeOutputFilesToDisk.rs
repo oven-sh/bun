@@ -18,7 +18,7 @@ use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
+use crate::{BundleV2, Chunk, PrefixedPath, cheap_prefix_normalizer};
 
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
@@ -302,25 +302,24 @@ pub(crate) fn write_output_files_to_disk(
                 let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
 
                 if tag == SourceMapOption::Linked {
-                    let [a, b] = if !public_path.is_empty() {
+                    let url = if !public_path.is_empty() {
                         cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
                     } else {
-                        [b"" as &[u8], paths::basename(&source_map_final_rel_path)]
+                        PrefixedPath {
+                            prefix: b"",
+                            separator: b"",
+                            path: paths::basename(&source_map_final_rel_path),
+                        }
                     };
 
-                    let source_map_start = b"//# sourceMappingURL=";
-                    let total_len = code_result.buffer.len()
-                        + source_map_start.len()
-                        + a.len()
-                        + b.len()
-                        + b"\n".len();
-                    let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                    buf.extend_from_slice(&code_result.buffer);
-                    buf.extend_from_slice(source_map_start);
-                    buf.extend_from_slice(a);
-                    buf.extend_from_slice(b);
-                    buf.push(b'\n');
-                    code_result.buffer = buf.into_boxed_slice();
+                    code_result.buffer = strings::concat(&[
+                        &code_result.buffer,
+                        b"//# sourceMappingURL=",
+                        url.prefix,
+                        url.separator,
+                        url.path,
+                        b"\n",
+                    ]);
                 }
 
                 match bun_sys::File::write_file(

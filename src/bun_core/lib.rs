@@ -58,8 +58,8 @@ pub use string::{
     StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
-    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
+    PrefixedPath, STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier,
+    lexer, lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 

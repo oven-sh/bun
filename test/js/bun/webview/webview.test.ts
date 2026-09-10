@@ -1140,6 +1140,10 @@ it("views orphaned by a host death are closed, even after a new view respawns th
       busy: "ERR_INVALID_STATE",
       idle: "ERR_INVALID_STATE",
       blank: "ERR_INVALID_STATE",
+      // The view kept the reason, so the call it refuses can name it.
+      idleMessage: expect.stringMatching(
+        /^Invalid state: WebView\.evaluate: WebView host process (died|killed by signal \d+|exited)$/,
+      ),
     },
     freshBody: "fresh",
     afterRespawn: {
@@ -1149,9 +1153,6 @@ it("views orphaned by a host death are closed, even after a new view respawns th
       click: "ERR_INVALID_STATE",
       idle: "ERR_INVALID_STATE",
       blank: "ERR_INVALID_STATE",
-      idleMessage: expect.stringMatching(
-        /^Invalid state: WebView\.evaluate: WebView host process (died|killed by signal \d+|exited)$/,
-      ),
     },
   });
   expect(exitCode, stderr).toBe(0);

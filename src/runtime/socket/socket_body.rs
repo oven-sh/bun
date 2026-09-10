@@ -81,6 +81,29 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// The code a transport that a failed `send()` killed is closed with. One RST
+/// gives a different send errno per platform: linux reports `ECONNRESET`,
+/// darwin `EPIPE`. The read side reports `ECONNRESET` everywhere (libuv
+/// collapses `ECONNABORTED` into it too, see `read_error_from_close_code`),
+/// and that is the code Node surfaces for a peer that vanished, so the
+/// peer-gone errnos that mean the same thing report as one. Every other errno
+/// (`ETIMEDOUT`, `EHOSTUNREACH`, ...) keeps its identity.
+#[cfg(not(windows))]
+fn dead_transport_close_code(errno: c_int) -> c_int {
+    if errno == sys::SystemErrno::EPIPE as c_int || errno == sys::SystemErrno::ECONNABORTED as c_int
+    {
+        return sys::SystemErrno::ECONNRESET as c_int;
+    }
+    errno
+}
+
+/// Windows reports a WSA code. `read_error_from_close_code` already collapses
+/// a reset, an abort, and any code its table cannot name into `ECONNRESET`.
+#[cfg(windows)]
+fn dead_transport_close_code(errno: c_int) -> c_int {
+    errno
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -924,7 +947,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // filters out; a Windows send failure it could not classify arrives
         // as 1. Those close plain, as before.
         if errno > 2 {
-            socket.close_with_error_code(errno);
+            socket.close_with_error_code(dead_transport_close_code(errno));
         } else {
             socket.close(uws::CloseCode::Normal);
         }

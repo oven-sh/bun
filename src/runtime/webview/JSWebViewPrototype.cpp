@@ -509,7 +509,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
     }
 
     VirtualKey vk = virtualKeyFromName(key);
-    if (vk == VirtualKey::Character && key.length() != 1) {
+    // One code point: a lone BMP unit, or one surrogate pair (an emoji).
+    bool singleCodePoint = key.length() == 1
+        || (key.length() == 2 && U16_IS_LEAD(key[0]) && U16_IS_TRAIL(key[1]));
+    if (vk == VirtualKey::Character && !singleCodePoint) {
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, keyArg,
             "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
     }

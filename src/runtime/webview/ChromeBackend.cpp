@@ -80,11 +80,12 @@ namespace CDP {
 using namespace JSC;
 
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
+// On failure *errorOut receives an Error describing why (not thrown), or stays empty.
 // path overrides auto-detection; extraArgv (count entries, each NUL-
-// terminated) appends after core flags. All pointers nullable.
+// terminated) appends after core flags. All pointers nullable except errorOut.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
-    bool stdoutInherit, bool stderrInherit);
+    bool stdoutInherit, bool stderrInherit, EncodedJSValue* errorOut);
 #if OS(WINDOWS)
 // Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
 extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
@@ -276,8 +277,9 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-    bool stdoutInherit, bool stderrInherit)
+    bool stdoutInherit, bool stderrInherit, JSValue& errorOut)
 {
+    errorOut = JSValue();
     if (m_mode != TransportMode::None && !m_dead) return true;
     if (m_dead) {
         m_dead = false;
@@ -300,13 +302,15 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
+    EncodedJSValue encodedError = JSValue::encode(JSValue());
     int32_t rc = Bun__Chrome__ensure(zig,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
-        stdoutInherit, stderrInherit);
+        stdoutInherit, stderrInherit, &encodedError);
     if (rc < 0) {
+        errorOut = JSValue::decode(encodedError);
         m_dead = true;
         return false;
     }
@@ -400,11 +404,22 @@ static void wsOnMessage(void* ctx, std::span<const char> utf8)
     }
 }
 
+// Own "message" data property of an Error we built ourselves; no getters run.
+static WTF::String errorMessageOf(JSGlobalObject* g, JSValue error)
+{
+    auto* object = error ? error.getObject() : nullptr;
+    if (!object) return "unknown error"_s;
+    JSValue message = object->getDirect(g->vm(), g->vm().propertyNames->message);
+    if (!message || !message.isString()) return "unknown error"_s;
+    return asString(message)->tryGetValue();
+}
+
 static void wsOnClose(void* ctx, unsigned short code)
 {
     auto& t = *static_cast<Transport*>(ctx);
     bool neverOpened = !t.m_wsOpen;
     bool wasAutoDetected = std::exchange(t.m_wasAutoDetected, false);
+    WTF::String url = t.m_ws ? t.m_ws->url().string() : WTF::String();
     t.m_wsOpen = false;
     t.m_ws = nullptr;
 
@@ -421,13 +436,15 @@ static void wsOnClose(void* ctx, unsigned short code)
     // first spawn's onOpen path (socket adoption) drains the same way.
     // But m_wsPending stores the NON-NUL-terminated body. The pipe needs
     // the NUL. We write each body + NUL manually after spawn.
+    WTF::String spawnFailure;
     if (wasAutoDetected && neverOpened) {
         t.m_mode = TransportMode::None;
         // m_wsPending survives — we replay it below after spawn. Don't
         // let ensureSpawned's m_dead-reset clear it.
         auto pending = std::exchange(t.m_wsPending, {});
+        JSValue spawnError;
         if (t.ensureSpawned(t.m_global, t.m_fallbackUserDataDir, {}, {},
-                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit)) {
+                t.m_fallbackStdoutInherit, t.m_fallbackStderrInherit, spawnError)) {
             // Replay over the pipe. Same cancellation check as wsOnOpen
             // — skip ids close() already removed. Append the NUL
             // terminator the pipe protocol needs.
@@ -444,12 +461,15 @@ static void wsOnClose(void* ctx, unsigned short code)
         // false; rejectAllAndMarkDead's guard would short-circuit and
         // the pending promises would hang. Clear it so reject runs.
         t.m_dead = false;
+        spawnFailure = makeString("; spawning a new Chrome failed too: "_s, errorMessageOf(t.m_global, spawnError));
     }
 
     // rejectAllAndMarkDead settles every pending promise with an error.
     // If onOpen never fired (connect failure), m_pending holds the first
     // navigate's Target.createTarget — it rejects with this message.
-    t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
+    t.rejectAllAndMarkDead(neverOpened
+            ? makeString("Failed to connect to Chrome at "_s, url, spawnFailure)
+            : makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
 bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,

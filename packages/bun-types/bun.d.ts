@@ -9716,8 +9716,9 @@ declare module "bun" {
      * keyDown/keyUp (no WebKit barrier exists for keyboard events — a
      * following `evaluate()` serializes).
      *
-     * A single character (e.g. `"a"`) combined with `modifiers` sends a
-     * chord like Cmd+A.
+     * Any other `key` must be a single character (one code point; `"é"`
+     * and `"😀"` count). Combined with `modifiers` it sends a chord like
+     * Cmd+A.
      */
     press(key: WebView.VirtualKey | (string & {}), options?: WebView.PressOptions): Promise<void>;
 

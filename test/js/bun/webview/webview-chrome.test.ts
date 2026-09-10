@@ -1071,6 +1071,25 @@ it("chrome: press() with modifiers", async () => {
   expect(await view.evaluate("__ev")).toEqual({ key: "ArrowLeft", shift: true, ctrl: true });
 });
 
+it("chrome: press() accepts a character outside the BMP", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(
+    html(`
+    <body><input id=i><script>
+      window.__keys = [];
+      addEventListener('keydown', e => __keys.push(e.key));
+    </script></body>
+  `),
+  );
+  await view.click("#i");
+  // One code point, two UTF-16 units.
+  await view.press("😀");
+  expect(await view.evaluate("[document.getElementById('i').value, __keys]")).toEqual(["😀", ["😀"]]);
+  // Two code points is still not a single character.
+  expect(() => view.press("ab")).toThrow(/single character/);
+  expect(() => view.press("👍🏽")).toThrow(/single character/);
+});
+
 it("chrome: goBack/goForward navigates history", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   await view.navigate(html("<body>A</body>"));
@@ -1205,15 +1224,57 @@ it("BUN_CHROME_PATH wins over auto-detection", async () => {
   // `it` gate), so the only way the constructor can fail here is by honoring
   // the env var.
   using dir = tempDir("bun-chrome-path", {});
+  const missing = join(String(dir), "not-a-browser");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", spawnWithEnv],
-    env: { ...bunEnv, BUN_CHROME_PATH: join(String(dir), "not-a-browser") },
+    env: { ...bunEnv, BUN_CHROME_PATH: missing },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("");
-  expect(stderr).toContain("Failed to spawn Chrome");
+  expect(stderr).toContain("ENOENT");
+  expect(stderr).toContain(missing);
   expect(exitCode).toBe(1);
+});
+
+// No browser needed: the constructor is handed something it cannot start. The
+// error is the spawn's own system error (errno, syscall, path), the same shape
+// Bun.spawn throws, instead of one fixed "Failed to spawn Chrome" for all.
+test.concurrent("a backend.path that cannot be spawned throws the system error for that path", async () => {
+  using dir = tempDir("bun-chrome-spawn-error", { "not-executable": "" });
+  const construct = (path: string) => `
+    try {
+      new Bun.WebView({ backend: { type: "chrome", path: ${JSON.stringify(path)} }, width: 200, height: 200 });
+      console.log("constructed");
+    } catch (e) {
+      console.log(JSON.stringify({ code: e.code, syscall: e.syscall, path: e.path, errno: typeof e.errno }));
+    }
+  `;
+  const run = async (path: string) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", construct(path)], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  };
+
+  const missing = join(String(dir), "does-not-exist");
+  expect(await run(missing)).toEqual({
+    code: "ENOENT",
+    syscall: expect.stringMatching(/spawn/),
+    path: missing,
+    errno: "number",
+  });
+
+  if (process.platform !== "win32") {
+    const notExecutable = join(String(dir), "not-executable");
+    expect(await run(notExecutable)).toEqual({
+      code: "EACCES",
+      syscall: expect.stringMatching(/spawn/),
+      path: notExecutable,
+      errno: "number",
+    });
+  }
 });
 
 it("BUN_CHROME_PATH is used as the executable", async () => {

@@ -186,6 +186,35 @@ test.concurrent("a dropped connection rejects the committed navigation of every 
   });
 });
 
+// An explicit backend.url never falls back to spawning (only an auto-detected
+// one does). The WebSocket connects in the background, so the constructor
+// cannot throw for it; the first awaited operation rejects, naming the URL.
+test.concurrent(
+  "an explicit backend.url that refuses the upgrade rejects the first operation with the URL",
+  async () => {
+    const result = await runScenario(`
+    // Answers every request with a plain 404, so the upgrade never completes.
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { status: 404 }) });
+    const url = "ws://127.0.0.1:" + server.port + "/devtools/browser/nope";
+    let constructed;
+    try {
+      var view = new Bun.WebView({ backend: { type: "chrome", url }, width: 100, height: 100 });
+      constructed = true;
+    } catch (e) {
+      constructed = "threw: " + e.message;
+    }
+    const navigate = await view.navigate("http://mock/1").then(() => "resolved", e => "rejected: " + e.message);
+    console.log(JSON.stringify({ constructed, navigate: navigate.replace(url, "<url>"), loading: view.loading }));
+    server.stop(true);
+  `);
+    expect(result).toEqual({
+      constructed: true,
+      navigate: "rejected: Failed to connect to Chrome at <url>",
+      loading: false,
+    });
+  },
+);
+
 // The connection stays up but the view's own page goes away. The promise
 // was already rejected on these paths; they also have to clear loading.
 test.concurrent.each([

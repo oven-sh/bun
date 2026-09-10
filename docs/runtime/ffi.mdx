@@ -606,4 +606,4 @@ bun --no-ffi-cc ./app.ts
 
 `--no-addons` disables `bun:ffi` in the same way. It also makes `process.dlopen` and `require()` of `.node` files throw, and disables the `node-addons` export condition. Neither flag affects SQLite extension loading (`loadExtension`, `Database.setCustomSQLite`).
 
-Workers inherit the setting from their parent. A Worker can also set it for itself with `execArgv: ["--no-ffi-cc"]`, but cannot re-enable what its parent disabled. The flags also work through `BUN_OPTIONS`, and standalone executables can bake them in with `bun build --compile --compile-exec-argv="--no-ffi-cc"`.
+Workers inherit the setting from their parent. A Worker can also set it for itself with `execArgv: ["--no-ffi-cc"]`, but cannot re-enable what its parent disabled. Macros that `Bun.build()` runs follow the flags of the process. The flags also work through `BUN_OPTIONS`, and standalone executables can bake them in with `bun build --compile --compile-exec-argv="--no-ffi-cc"`.

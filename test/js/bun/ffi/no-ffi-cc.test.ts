@@ -1,7 +1,7 @@
 // --no-ffi-cc and --no-addons disable bun:ffi and Bun.FFI. The module still
 // loads, but everything that would reach native code throws ERR_FFI_DISABLED.
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Runs in a child process. Calls every bun:ffi entry point with arguments that
 // are safe when FFI is enabled (nothing is dlopen'd, compiled C is never run)
@@ -84,17 +84,57 @@ const disabled = {
   suffix: "string",
 };
 
-async function run(args: string[], env: Record<string, string | undefined> = bunEnv) {
+async function run(args: string[], env: Record<string, string | undefined> = bunEnv, cwd?: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     env,
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  // The probe prints one JSON line last; debug builds may log lines before it.
+  const lastLine = stdout.trimEnd().split("\n").at(-1) ?? "";
+  const results = lastLine.startsWith("{") ? JSON.parse(lastLine) : stdout;
   return { results, stderr, exitCode };
 }
+
+// A macro runs at bundle time. Bun.build() runs it in a separate VM on a
+// bundler thread, which has no parent VM to inherit the flags from.
+// process.dlopen is only probed on request (PROBE_PROCESS_DLOPEN=1).
+const macroFiles = {
+  "macro.ts": /* ts */ `
+    import { ptr } from "bun:ffi";
+    const attempt = (fn: () => unknown) => {
+      try {
+        fn();
+        return "ok";
+      } catch (e: any) {
+        return (e && e.code) || "threw";
+      }
+    };
+    export function probe() {
+      return {
+        BunFFI: typeof Bun.FFI,
+        ptr: attempt(() => ptr(new Uint8Array(8))),
+        processDlopen:
+          process.env.PROBE_PROCESS_DLOPEN === "1"
+            ? attempt(() => (process as any).dlopen({ exports: {} }, "/does-not-exist-" + process.pid + ".node"))
+            : "skipped",
+      };
+    }
+  `,
+  "entry.ts": /* ts */ `
+    import { probe } from "./macro.ts" with { type: "macro" };
+    export const result = probe();
+  `,
+  "build.ts": /* ts */ `
+    const build = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", outdir: "./out" });
+    if (!build.success) throw new AggregateError(build.logs, "build failed");
+    const { result } = await import("./out/entry.js");
+    console.log(JSON.stringify(result));
+  `,
+};
 
 describe.concurrent("--no-ffi-cc / --no-addons", () => {
   it("bun:ffi works by default", async () => {
@@ -203,6 +243,37 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
     ]);
     expect({ results, stderr, exitCode }).toMatchObject({
       results: { hasFFIKey: true, FFI: "undefined" },
+      exitCode: 0,
+    });
+  });
+
+  it("a macro run by Bun.build() has bun:ffi by default", async () => {
+    using dir = tempDir("no-ffi-cc-macro", macroFiles);
+    const { results, stderr, exitCode } = await run(["build.ts"], bunEnv, String(dir));
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: { BunFFI: "object", ptr: "ok", processDlopen: "skipped" },
+      exitCode: 0,
+    });
+  });
+
+  it("--no-ffi-cc also applies to a macro run by Bun.build()", async () => {
+    using dir = tempDir("no-ffi-cc-macro", macroFiles);
+    const { results, stderr, exitCode } = await run(["--no-ffi-cc", "build.ts"], bunEnv, String(dir));
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: { BunFFI: "undefined", ptr: "ERR_FFI_DISABLED", processDlopen: "skipped" },
+      exitCode: 0,
+    });
+  });
+
+  it("--no-addons also applies to a macro run by Bun.build(), including process.dlopen", async () => {
+    using dir = tempDir("no-ffi-cc-macro", macroFiles);
+    const { results, stderr, exitCode } = await run(
+      ["--no-addons", "build.ts"],
+      { ...bunEnv, PROBE_PROCESS_DLOPEN: "1" },
+      String(dir),
+    );
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: { BunFFI: "undefined", ptr: "ERR_FFI_DISABLED", processDlopen: "ERR_DLOPEN_DISABLED" },
       exitCode: 0,
     });
   });

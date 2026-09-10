@@ -589,6 +589,13 @@ pub(crate) struct VMHolder;
 static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+/// `--no-addons` / `--no-ffi-cc` as passed to the main VM. A floor for every
+/// VM in the process; a Worker's `execArgv` can only restrict further.
+static ADDONS_DISABLED_PROCESS_WIDE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+static FFI_DISABLED_PROCESS_WIDE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 // `#[thread_local]` (bare `__thread` slot) instead of `thread_local!` macro:
 // `LocalKey::__getit` adds a lazy-init check + on some targets a
 // `pthread_getspecific` round-trip per access. `get_or_null()` (which reads `VM`) is the
@@ -2650,6 +2657,14 @@ impl VirtualMachine {
         VM.set(Some(vm));
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
+            // What the main VM disables stays disabled for VMs created later
+            // without a parent to inherit from (the macro VM of a `Bun.build()`).
+            if opts.transform_options.allow_addons == Some(false) {
+                ADDONS_DISABLED_PROCESS_WIDE.store(true, core::sync::atomic::Ordering::Relaxed);
+            }
+            if opts.transform_options.allow_ffi == Some(false) {
+                FFI_DISABLED_PROCESS_WIDE.store(true, core::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
@@ -3631,17 +3646,25 @@ impl VirtualMachine {
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
     pub(crate) extern "C" fn allow_addons(this: &VirtualMachine) -> bool {
-        this.transpiler
-            .options
-            .transform_options
-            .allow_addons
-            .unwrap_or(true)
+        !ADDONS_DISABLED_PROCESS_WIDE.load(core::sync::atomic::Ordering::Relaxed)
+            && this
+                .transpiler
+                .options
+                .transform_options
+                .allow_addons
+                .unwrap_or(true)
     }
 
     /// Whether `bun:ffi` / `Bun.FFI` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi(&self) -> bool {
-        let opts = &self.transpiler.options.transform_options;
-        opts.allow_ffi.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
+        Self::allow_addons(self)
+            && !FFI_DISABLED_PROCESS_WIDE.load(core::sync::atomic::Ordering::Relaxed)
+            && self
+                .transpiler
+                .options
+                .transform_options
+                .allow_ffi
+                .unwrap_or(true)
     }
 
     /// Whether to warn when a previously-unhandled rejection later gains a handler.

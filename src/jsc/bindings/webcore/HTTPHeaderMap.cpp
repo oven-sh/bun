@@ -43,9 +43,7 @@ extern "C" void highway_lower_ascii16(const uint16_t* src, size_t len, uint16_t*
 
 namespace WebCore {
 
-// Vector::append CRASH()es when the buffer has to grow past the largest capacity a
-// WTF::Vector can have. Script sets the length of the set-cookie and uncommon-header
-// vectors, so they grow through this instead.
+// Script controls how long these vectors get, and Vector::append CRASH()es past the largest capacity.
 template<typename VectorType, typename U>
 static bool tryAppendHeader(VectorType& vector, U&& value)
 {

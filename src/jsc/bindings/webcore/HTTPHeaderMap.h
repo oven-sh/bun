@@ -164,10 +164,8 @@ public:
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
 
     WEBCORE_EXPORT String get(const StringView name) const;
-    // These return false when the header does not fit, because the set-cookie or
-    // uncommon-header vector is at the largest capacity a WTF::Vector can have, or
-    // because the allocation failed. The map stays as it was. FetchHeaders turns a
-    // false into a RangeError.
+    // The mutators return false, and leave the map unchanged, when a vector is at
+    // Bun::maxVectorSize<T>() or its allocation fails.
     [[nodiscard]] WEBCORE_EXPORT bool set(const String& name, const String& value);
     [[nodiscard]] WEBCORE_EXPORT bool add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;

@@ -2527,18 +2527,17 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             // memory safety: the header names must be cloned if they're not statically known
             // the value must also be cloned
             // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
-            // The parser bounds one request's header count, so the map cannot reach
-            // the size where an append fails. Stop adding if it ever does.
+            bool added;
             if (WebCore::findHTTPHeaderName(nameView, name)) {
-                if (!map.add(name, value)) [[unlikely]]
-                    break;
+                added = map.add(name, value);
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
                 // we don't have that information here, so map.addUncommonHeaderCloneName exists
-                if (!map.addUncommonHeaderCloneName(nameView, value)) [[unlikely]]
-                    break;
+                added = map.addUncommonHeaderCloneName(nameView, value);
             }
+            // picohttpparser caps the header count at 256, far below the map's limit.
+            ASSERT_UNUSED(added, added);
         }
 
         headers->setInternalHeaders(WTF::move(map));
@@ -2562,14 +2561,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 
         HTTPHeaderName name;
 
-        // The request bounds the header count, so the map cannot reach the size
-        // where an append fails. Stop adding if it ever does.
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            if (!map.add(name, WTF::move(value))) [[unlikely]]
-                break;
-        } else if (!map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value))) [[unlikely]] {
-            break;
-        }
+        bool added = WebCore::findHTTPHeaderName(nameView, name)
+            ? map.add(name, WTF::move(value))
+            : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        // The parser caps the header count at UWS_HTTP_MAX_HEADERS_COUNT, far below the map's limit.
+        ASSERT_UNUSED(added, added);
     }
     headers->setInternalHeaders(WTF::move(map));
     return headers;
@@ -2589,13 +2585,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
             memcpy(data.data(), val.data(), val.length());
 
         HTTPHeaderName hn;
-        // The request bounds the header count, so the map cannot reach the size
-        // where an append fails. Skip the header if it ever does.
-        if (WebCore::findHTTPHeaderName(nameView, hn)) {
-            (void)map.add(hn, WTF::move(value));
-        } else {
-            (void)map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        }
+        bool added = WebCore::findHTTPHeaderName(nameView, hn)
+            ? map.add(hn, WTF::move(value))
+            : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        // One request's header block is size-limited, so its count stays far below the map's limit.
+        ASSERT_UNUSED(added, added);
     });
     headers->setInternalHeaders(WTF::move(map));
     return headers;

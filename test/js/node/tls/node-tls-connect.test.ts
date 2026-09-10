@@ -1942,3 +1942,55 @@ it.skipIf(!nodeExe())(
     }
   },
 );
+
+it("tls.connect Happy Eyeballs timeout does not empty the peer certificate", async () => {
+  const attemptTimeout = 10;
+  await using server = net.createServer(raw => {
+    raw.on("error", () => {});
+    // Accept TCP immediately so the family timer sees a live peer, but hold
+    // TLS past that timer. A fast loopback handshake would otherwise finish
+    // before 10ms and never hit the timeout path.
+    setTimeout(() => {
+      const secure = new TLSSocket(raw, { isServer: true, ...COMMON_CERT_ });
+      secure.on("error", () => {});
+      secure.on("secure", () => secure.end());
+    }, attemptTimeout + 10);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+  const addrs = [
+    { address: "2001:db8::1", family: 6 },
+    { address: "2001:db8::2", family: 6 },
+    { address: "127.0.0.1", family: 4 },
+  ];
+  const lookup = (_host, opts, cb) => {
+    if (typeof opts === "function") cb = opts;
+    if (opts?.all) cb(null, addrs);
+    else cb(null, addrs[0].address, addrs[0].family);
+  };
+  const connect = () =>
+    new Promise((resolve, reject) => {
+      const socket = tlsConnect(
+        {
+          host: "localhost",
+          port,
+          servername: "localhost",
+          rejectUnauthorized: false,
+          lookup,
+          autoSelectFamily: true,
+          autoSelectFamilyAttemptTimeout: attemptTimeout,
+        },
+        () => resolve(socket),
+      );
+      socket.on("error", reject);
+    });
+
+  const sockets = await Promise.all(Array.from({ length: 8 }, connect));
+  for (const socket of sockets) {
+    const cert = socket.getPeerCertificate(true);
+    expect(cert?.subject || cert?.subjectaltname).toBeTruthy();
+    expect(socket.remoteAddress).toBe("127.0.0.1");
+    socket.destroy();
+  }
+  await Promise.all(sockets.map(socket => once(socket, "close")));
+});

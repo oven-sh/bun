@@ -1351,6 +1351,44 @@ it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
   db.close();
 });
 
+it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
+  // A byte length of 2^31 or more does not fit sqlite3_bind_blob()'s int
+  // length, and a negative length makes SQLite treat the buffer as a
+  // NUL-terminated string. The 64-bit bind API reports SQLITE_TOOBIG instead.
+  // Run in a subprocess so the 2 GiB reservation does not stay in the test
+  // runner. The buffer is never written, so RSS stays small.
+  const script = `
+    const { Database } = require("bun:sqlite");
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log(JSON.stringify("SKIP"));
+      process.exit(0);
+    }
+    const db = new Database(":memory:");
+    let result;
+    try {
+      result = db.query("SELECT typeof(?1) AS type, length(?1) AS length").get(big);
+    } catch (e) {
+      result = e.message;
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(["SKIP", "string or blob too big"]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+  expect(exitCode).toBe(0);
+});
+
 it("multiple statements with a schema change", () => {
   const db = new Database(":memory:");
   db.run(

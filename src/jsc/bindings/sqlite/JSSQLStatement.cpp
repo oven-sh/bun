@@ -887,6 +887,11 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
     // for a later parameter can free the backing store first (detaching an
     // ArrayBuffer, or triggering a GC that collects an otherwise-unrooted
     // string).
+    //
+    // The *64 bind variants take the byte length as sqlite3_uint64 and fail
+    // with SQLITE_TOOBIG past the length limit. The int variants would see a
+    // >= 2^31 byte length as negative, which means "NUL-terminated" and
+    // silently binds a truncated value.
     if (value.isUndefinedOrNull()) {
         CHECK_BIND(sqlite3_bind_null(stmt, i));
     } else if (value.isBoolean()) {
@@ -916,12 +921,12 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
         if (roped->is8Bit() && roped->containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         } else if (!roped->is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped->span16().data(), roped->length() * 2, SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span16().data()), static_cast<sqlite3_uint64>(roped->length()) * sizeof(char16_t), SQLITE_TRANSIENT, SQLITE_UTF16));
         } else {
             auto utf8 = roped->utf8();
-            CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         }
 
     } else if (value.isHeapBigInt()) [[unlikely]] {
@@ -947,7 +952,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         // A detached view's span() is {nullptr, 0}, and a null data pointer
         // makes sqlite3_bind_blob64() bind NULL. Pass a non-null sentinel so a
         // detached view binds a zero-length BLOB like a live empty view does
-        // (same as node:sqlite's bindValue()).
+        // (same as node:sqlite's bindValue() in NodeSqlite.cpp).
         CHECK_BIND(sqlite3_bind_blob64(stmt, i, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));

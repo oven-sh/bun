@@ -104,6 +104,7 @@ public:
     bool m_chromeOnErrorPage = false;
     // The URL whose error page committed and whose failure is reported once that page loads.
     WTF::String m_chromeUnreportedFailure;
+    uint32_t m_chromeUnreportedFailureGeneration = 0;
     // A main-frame document has committed and not fired its load event yet.
     bool m_chromeDocumentLoading = false;
     // A same-document navigation happened while a navigation command was unanswered.

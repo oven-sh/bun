@@ -660,17 +660,20 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
 // example a redirect destroying the context) is not a navigation failure.
 // The slot settles before the callback runs, so a retry with navigate()
 // from inside the callback sees an empty slot instead of ERR_INVALID_STATE.
+static void fireOnNavigationFailed(JSGlobalObject* g, JSWebView* view, JSValue errValue)
+{
+    if (JSObject* cb = view->m_onNavigationFailed.get()) {
+        Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+            JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+    }
+}
+
 static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, Method method, JSValue errValue)
 {
     bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
     if (navigationFailed) view->m_loading = false;
     settle(g, view, slot, false, errValue);
-    if (navigationFailed) {
-        if (JSObject* cb = view->m_onNavigationFailed.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
-        }
-    }
+    if (navigationFailed) fireOnNavigationFailed(g, view, errValue);
 }
 
 static void fireOnNavigated(JSGlobalObject* g, JSWebView* view)
@@ -1125,7 +1128,10 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
         view->m_chromeDocumentLoading = false;
         // Reported at the error page's load event, unless navigate()'s errorText already did.
         auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
-        if (loaderId != view->m_chromeFailedLoaderId) view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
+        if (loaderId != view->m_chromeFailedLoaderId) {
+            view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
+            view->m_chromeUnreportedFailureGeneration = view->m_chromeNavGeneration;
+        }
         return;
     }
     view->m_chromeOnErrorPage = false;
@@ -1232,10 +1238,14 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     else if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         if (!view->m_chromeOnErrorPage)
             finishNavigation(view);
-        else if (auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String()); !failedUrl.isNull())
-            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s)));
-        else
-            view->m_loading = false;
+        else if (auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String()); !failedUrl.isNull()) {
+            JSValue err = createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s));
+            // A navigation issued since that commit owns the slot now; it only hears the callback.
+            if (view->m_chromeUnreportedFailureGeneration == view->m_chromeNavGeneration)
+                settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, err);
+            else
+                fireOnNavigationFailed(g, view, err);
+        }
     }
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.

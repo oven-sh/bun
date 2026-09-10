@@ -34,6 +34,16 @@ const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?
 // Page.navigate for a URL it cannot parse.
 const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
 
+// `--no-started-navigating`: never send Page.frameStartedNavigating, the way
+// a Chrome older than that event behaves. The runtime then has only the
+// Page.navigate reply to tell a same-document navigation from one that
+// replaces the document.
+const noStartedNavigating = process.argv.includes("--no-started-navigating");
+
+// `--subframe-navigation`: every document load commits a subframe navigation
+// too, the way a page holding an <iframe> does.
+const subframeNavigation = process.argv.includes("--subframe-navigation");
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
@@ -66,11 +76,44 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
+let entries = 0;
+
+// Session history, the way the browser keeps it: Page.navigate appends,
+// Page.getNavigationHistory reports it, Page.navigateToHistoryEntry moves
+// inside it. Two URLs that differ only after the '#' are the same document.
+const history: { id: number; url: string }[] = [];
+let historyIndex = -1;
+const documentOf = (url: string) => url.split("#")[0];
+const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
+
+  // Chrome names a navigation's kind before it starts.
+  const startNavigating = (url: string, navigationType: string) => {
+    if (!noStartedNavigating) event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
+  };
+
+  // The commit. A cross-document navigation commits with
+  // Page.frameNavigated, which splits the fragment into frame.urlFragment,
+  // and ends with the load event. A same-document one commits with
+  // Page.navigatedWithinDocument and never fires a load event.
+  const commit = (url: string, sameDocument: boolean) => {
+    if (sameDocument) {
+      event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
+      return;
+    }
+    const fragment = fragmentOf(url);
+    const frame = { id: "F", loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
+    event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame });
+    if (subframeNavigation) {
+      const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
+      event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" } });
+    }
+    event("Page.loadEventFired", { timestamp: loads });
+  };
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -84,10 +127,33 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      const loaderId = "L" + ++loads;
-      reply({ frameId: "F", loaderId });
-      event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
-      event("Page.loadEventFired", { timestamp: loads });
+      // A #fragment target of the current document keeps that document.
+      const current = history[historyIndex]?.url;
+      const sameDocument =
+        current !== undefined && documentOf(current) === documentOf(params.url) && fragmentOf(params.url) !== "";
+      startNavigating(params.url, sameDocument ? "sameDocument" : "differentDocument");
+      if (!sameDocument) loads++;
+      // The reply names a loaderId only for a navigation that loads a
+      // document.
+      reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
+      history.length = historyIndex + 1;
+      history.push({ id: ++entries, url: params.url });
+      historyIndex = history.length - 1;
+      commit(params.url, sameDocument);
+      return;
+    }
+    case "Page.getNavigationHistory":
+      return reply({ currentIndex: historyIndex, entries: history });
+    case "Page.navigateToHistoryEntry": {
+      const target = history.findIndex(entry => entry.id === params.entryId);
+      if (target === -1) return reply({});
+      const url = history[target].url;
+      const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
+      startNavigating(url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
+      if (!sameDocument) loads++;
+      historyIndex = target;
+      reply({});
+      commit(url, sameDocument);
       return;
     }
     case "Page.captureScreenshot":

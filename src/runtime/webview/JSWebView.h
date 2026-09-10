@@ -45,6 +45,19 @@ enum class ScreenshotEncoding : uint8_t {
            // bytes, return name. Not supported on Windows.
 };
 
+// Chrome: what the pending navigation ends with. A cross-document
+// navigation ends with Page.loadEventFired. A same-document one (a
+// #fragment target, a history.pushState URL) has no load event and ends
+// with Page.navigatedWithinDocument. Chrome names the kind in
+// Page.frameStartedNavigating before the navigation commits, and
+// Page.frameNavigated is a cross-document commit. Unknown settles on
+// either event, so a navigation Chrome did not classify cannot hang.
+enum class ChromeNavigationKind : uint8_t {
+    Unknown,
+    SameDocument,
+    CrossDocument,
+};
+
 inline const char* screenshotMimeType(ScreenshotFormat f)
 {
     switch (f) {
@@ -98,6 +111,11 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Chrome: the main frame, named by the first Page.navigate reply. Page
+    // events carry a frameId; a subframe's navigation is not the view's, so
+    // it must not touch m_url or settle the navigate() promise.
+    WTF::String m_mainFrameId;
+    ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::Unknown;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

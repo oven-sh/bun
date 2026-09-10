@@ -74,6 +74,72 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+// A same-document navigation (a #fragment target, or a history traversal
+// between two entries of one document) fires no load event, so the promise
+// has to settle on Page.navigatedWithinDocument instead. The slot is shared,
+// so a navigation that never settles wedges every later one.
+test.concurrent("a same-document navigation settles navigate(), goBack() and goForward()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    await view.navigate("http://fake/page#one");
+    const afterFragment = { url: view.url, loading: view.loading };
+    await view.goBack();
+    const afterBack = view.url;
+    await view.goForward();
+    print({ afterFragment, afterBack, afterForward: view.url, urls });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterFragment: { url: "http://fake/page#one", loading: false },
+    afterBack: "http://fake/page",
+    afterForward: "http://fake/page#one",
+    urls: ["http://fake/page#one", "http://fake/page", "http://fake/page#one"],
+  });
+});
+
+// Without Page.frameStartedNavigating the kind comes from the Page.navigate
+// reply, which names a loaderId only for a navigation that loads a document.
+test.concurrent("a same-document navigation settles without Page.frameStartedNavigating", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--no-started-navigating"] },
+      width: 100,
+      height: 100,
+    });
+    await view.navigate("http://fake/page");
+    await view.navigate("http://fake/page#one");
+    print({ url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({ url: "http://fake/page#one", loading: false });
+});
+
+// Page.frameNavigated reports the fragment in frame.urlFragment, not in
+// frame.url, and a subframe's commit arrives on the same session as the main
+// frame's. view.url is the main frame's document URL, fragment and all.
+test.concurrent("view.url follows the main frame and keeps its fragment", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--subframe-navigation"] },
+      width: 100,
+      height: 100,
+    });
+    const urls = [];
+    view.onNavigated = url => urls.push(url);
+    await view.navigate("http://fake/page#one");
+    print({ url: view.url, title: view.title, urls });
+    view.close();
+  `);
+  expect(result).toEqual({
+    url: "http://fake/page#one",
+    title: "fake chrome",
+    urls: ["http://fake/page#one"],
+  });
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

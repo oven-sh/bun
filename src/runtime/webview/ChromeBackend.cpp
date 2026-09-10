@@ -761,8 +761,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     if (!view) return; // user dropped both view and the awaited promise
 
     if (!error.empty()) {
-        // The bootstrap history fetch is bookkeeping: a failure costs goBack()
-        // its stop, not the navigation the user asked for.
+        // Bookkeeping only: a failure costs goBack() its stop, not the user's navigation.
         if (entry.method == Method::PageBootstrapHistory) return;
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
@@ -818,10 +817,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
-        // The tab was created on about:blank so that Page.enable could run
-        // before the first real navigation. Chrome keeps that as a history
-        // entry; ask for its id now, while it is the only one, so goBack()
-        // can stop above it.
+        // The tab's about:blank is still its only history entry; learn its id so goBack() stops above it.
         uint32_t hid = nextId();
         m_pending.add(hid, Pending { Method::PageBootstrapHistory, entry.slot, entry.viewId });
         send(hid, Command(hid, "Page.getNavigationHistory"_s, sidSpan));
@@ -873,8 +869,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
 
     case Method::PageBootstrapHistory: {
-        // {"currentIndex":N,"entries":[{"id":N,"url":"..."},...]} for a tab
-        // that has only ever loaded about:blank, so the current entry is it.
+        // {"currentIndex":N,"entries":[{"id":N,...}]}; the current entry is the tab's initial about:blank.
         auto root = JSON::Value::parseJSON(
             StringView::fromLatin1(std::span<const Latin1Character>(
                 reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
@@ -1303,12 +1298,8 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Every event, the ones handled above included, reaches the view's
-    // EventTarget if it has a listener for this method name. Check
-    // hasEventListeners first: Chrome is chatty (frameScheduledNavigation,
-    // lifecycleEvent, etc.) and most events won't have listeners; skipping
-    // the JSONParse saves an alloc per unwanted event. The listener was added
-    // via view.addEventListener("Network.responseReceived", e => e.data.response).
+    // Every event, the ones above included, reaches a listener for its method name. Checking first skips the
+    // JSONParse for Chrome's unlistened chatter (frameScheduledNavigation, lifecycleEvent, ...).
     if (!view->wrapped().hasEventListeners(methodAtom)) return;
 
     JSValue data = JSONParse(g, WTF::String::fromUTF8(params));

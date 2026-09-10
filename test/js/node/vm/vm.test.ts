@@ -2082,4 +2082,28 @@ describe("deferred work of a context that is collected while the work is pending
       `),
     );
   });
+
+  // A third ticket source, and a different completion: JSWebAssembly.cpp's task casts the ticket's
+  // target to a JSPromise and reads its realm, where the registry's task reads the registry.
+  test.concurrent("a WebAssembly.instantiate completion queued before the collection does not run", async () => {
+    await run(
+      fixture(`
+        // An empty module with one exported memory. Small enough that the compile finishes
+        // within the round, so the completion is queued before the collection.
+        const bytes = [0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 1, 7, 5, 1, 1, 109, 2, 0];
+        const completedRounds = new Set();
+        function setup() {
+          const thisRound = round;
+          const context = createContext({ bytes, ran: () => completedRounds.add(thisRound) });
+          vm.runInContext("WebAssembly.instantiate(new Uint8Array(bytes)).then(ran, ran)", context);
+        }
+        function afterCollection() {}
+        function afterRound(collected) {
+          if (collected && completedRounds.has(round)) {
+            throw new Error("the wasm completion ran in a collected context");
+          }
+        }
+      `),
+    );
+  });
 });

@@ -80,7 +80,11 @@ function send(message: unknown) {
 
 let targets = 0;
 let loads = 0;
+// The last page any session committed, in command arrival order: what
+// __fake_url() reports. Each session's own current page, which is what
+// Page.reload loads again, is in committedUrl.
 let lastUrl = "about:blank";
+const committedUrl = new Map<string, string>();
 // Chrome sends a domain's events only to sessions that enabled it, so a
 // session whose Page.enable failed gets no frameNavigated and no
 // loadEventFired.
@@ -92,6 +96,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
   const committed = (url: string) => {
     lastUrl = url;
+    committedUrl.set(sessionId!, url);
     const loaderId = "L" + ++loads;
     if (!pageEnabled.has(sessionId!)) return loaderId;
     event("Page.frameNavigated", { frame: { id: "F", loaderId, url, mimeType: "text/html" } });
@@ -125,7 +130,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     }
     case "Page.reload": {
       reply({});
-      committed(lastUrl);
+      committed(committedUrl.get(sessionId!) ?? "about:blank");
       return;
     }
     case "Page.enable": {

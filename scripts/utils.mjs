@@ -1609,11 +1609,42 @@ export function getHostname() {
 }
 
 /**
- * @returns {string}
+ * @typedef {object} UserInfo
+ * @property {string | undefined} username
+ * @property {string | undefined} homedir
+ */
+
+/** @type {UserInfo | undefined} */
+let cachedUserInfo;
+
+/**
+ * The user that runs this process, looked up once. `os.userInfo()` is a
+ * getpwuid_r() lookup that can fail at runtime: a macOS host that is shutting
+ * down answers ENOENT for its own uid once opendirectoryd is gone. The login
+ * session exported the same values, so a failed lookup falls back to them.
+ * @returns {UserInfo}
+ */
+export function getUserInfo() {
+  if (!cachedUserInfo) {
+    try {
+      const { username, homedir } = userInfo();
+      cachedUserInfo = { username, homedir };
+    } catch (error) {
+      cachedUserInfo = {
+        username: getEnv("USER", false) || getEnv("LOGNAME", false) || getEnv("USERNAME", false),
+        homedir: getEnv("HOME", false) || getEnv("USERPROFILE", false),
+      };
+      console.warn("os.userInfo() failed, using USER and HOME from the environment instead:", error);
+    }
+  }
+  return cachedUserInfo;
+}
+
+/**
+ * @returns {string | undefined}
  */
 export function getUsername() {
-  const { username } = userInfo();
-  return username;
+  return getUserInfo().username;
 }
 
 /**

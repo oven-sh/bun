@@ -230,8 +230,9 @@ impl IOReader {
             }
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
+                // Completes every registered reader with the error, as the
+                // POSIX arm does; nothing is left for this Yield to drive.
                 self.on_reader_error(&e);
-                return Yield::failed();
             }
             Yield::suspended()
         }

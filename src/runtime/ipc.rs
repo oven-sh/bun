@@ -2318,6 +2318,35 @@ fn decode_next_advanced(
     })
 }
 
+/// Dispatches every complete JSON-mode message buffered in
+/// `send_queue.incoming`. Shared by the POSIX `on_data` and Windows libuv
+/// `on_read` callbacks.
+fn drain_json_messages(send_queue: &SendQueue, global_this: &JSGlobalObject) {
+    loop {
+        match decode_next_json(&send_queue.incoming, global_this) {
+            DecodeStep::Message(result) => {
+                crate::dispatch::fold(handle_ipc_message(send_queue, result.message, global_this));
+            }
+            step => return finish_decode(send_queue, &step),
+        }
+    }
+}
+
+/// Dispatches every complete Advanced-mode message buffered in
+/// `send_queue.incoming`. Shared by the POSIX `on_data` and Windows libuv
+/// `on_read` callbacks.
+fn drain_advanced_messages(send_queue: &SendQueue, global_this: &JSGlobalObject) {
+    let mut slice_start: usize = 0;
+    loop {
+        match decode_next_advanced(&send_queue.incoming, global_this, &mut slice_start) {
+            DecodeStep::Message(result) => {
+                crate::dispatch::fold(handle_ipc_message(send_queue, result.message, global_this));
+            }
+            step => return finish_decode(send_queue, &step),
+        }
+    }
+}
+
 fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
     let mut data = all_data;
 
@@ -2335,19 +2364,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 };
                 json_buf.append(data);
             });
-
-            loop {
-                match decode_next_json(&send_queue.incoming, &global_this) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
+            drain_json_messages(send_queue, &global_this);
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
@@ -2396,19 +2413,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 };
                 handle_oom(adv_buf.write(data));
             });
-            let mut slice_start: usize = 0;
-            loop {
-                match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
+            drain_advanced_messages(send_queue, &global_this);
         }
     }
 }
@@ -2525,20 +2530,7 @@ pub mod IPCHandlers {
                         // forwarded.
                         json_buf.notify_written(nread);
                     });
-
-                    // Process complete messages using next() - avoids O(n²) re-scanning
-                    loop {
-                        match decode_next_json(&send_queue.incoming, &global_this) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
+                    drain_json_messages(send_queue, &global_this);
                 }
                 Mode::Advanced => {
                     send_queue.incoming.with_mut(|inc| {
@@ -2548,23 +2540,7 @@ pub mod IPCHandlers {
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
                         unsafe { adv_buf.uv_commit(nread) };
                     });
-                    let mut slice_start: usize = 0;
-                    loop {
-                        match decode_next_advanced(
-                            &send_queue.incoming,
-                            &global_this,
-                            &mut slice_start,
-                        ) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
+                    drain_advanced_messages(send_queue, &global_this);
                 }
             }
         }

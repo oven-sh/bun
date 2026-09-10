@@ -525,8 +525,11 @@ describe.concurrent("flags", () => {
     });
     mkfifo(join(dir, "out.fifo"));
 
-    const reader = file(join(dir, "out.fifo")).bytes();
-    const { out, err, exitCode } = await runPack(dir, ["--filename=out.fifo"]);
+    // Read and pack together: the FIFO read only settles once a writer opens the FIFO.
+    const [packed, { out, err, exitCode }] = await Promise.all([
+      file(join(dir, "out.fifo")).bytes(),
+      runPack(dir, ["--filename=out.fifo"]),
+    ]);
     expect(err).toBe("");
     expect(out.split("\n")).toEqual([
       "bun pack <version> (<revision>)",
@@ -544,7 +547,7 @@ describe.concurrent("flags", () => {
     ]);
     expect(exitCode).toBe(0);
 
-    await write(join(dir, "out.tgz"), await reader);
+    await write(join(dir, "out.tgz"), packed);
     expect(tarballEntries(join(dir, "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
     expect((await lstat(join(dir, "out.fifo"))).isFIFO()).toBeTrue();
   });

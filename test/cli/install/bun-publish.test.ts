@@ -1120,9 +1120,14 @@ test("a failed publish does not leave a tarball in the package directory", async
   const { err, exitCode } = await publish(env, packageDir);
 
   expect(err).toContain('script "postpack" exited with code 3');
-  expect({ exitCode, tarballExists: await exists(join(packageDir, "publish-postpack-failed-1.0.0.tgz")) }).toEqual({
+  expect({
+    exitCode,
+    tarballExists: await exists(join(packageDir, "publish-postpack-failed-1.0.0.tgz")),
+    published: await exists(join(registry.packagesPath, "publish-postpack-failed")),
+  }).toEqual({
     exitCode: 3,
     tarballExists: false,
+    published: false,
   });
 });
 

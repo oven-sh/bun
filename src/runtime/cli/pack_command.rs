@@ -3024,7 +3024,10 @@ fn pack_destination<'a>(
         &mut buf[..],
     );
     let len = abs_tarball_dest.as_bytes().len();
-    let _ = bun_sys::Dir::cwd().make_path(&buf[..dir_end]);
+    // `--filename` resolves relative to the cwd and reports no directory to create.
+    if dir_end != 0 {
+        let _ = bun_sys::Dir::cwd().make_path(&buf[..dir_end]);
+    }
     // SAFETY: buf[len] == 0 (written by tarball_destination)
     ZStr::from_buf(&buf[..], len)
 }
@@ -3060,7 +3063,9 @@ fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     }
 }
 
-/// Reports a `Fatal` result from the in-memory archive writer (an allocation failure) and exits.
+/// Reports a failed `write_header`, `write_data` or `write_close` on the in-memory archive writer
+/// and exits. With no disk involved, libarchive's error string names an allocation failure in
+/// the sink, or a compressor or format error from the writer itself.
 #[cold]
 fn archive_write_failed(archive: &Archive) -> ! {
     Output::err_generic(

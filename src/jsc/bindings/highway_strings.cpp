@@ -1865,6 +1865,42 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     return len;
 }
 
+// Copy `src` to `dst` with the high bit of every byte cleared: Node's 'ascii'
+// decode (`byte & 0x7F`). Every stored byte comes from one load and is masked,
+// so the output is 7-bit even when `src` is shared memory that another thread
+// writes during the call. A scan for non-ASCII followed by a memcpy does not
+// have that property.
+void CopyLatin1ToAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    if (len >= N) {
+        // `dst` is usually a new WTF string, whose characters follow the
+        // StringImpl header in one allocation and are never vector-aligned.
+        // Store the first vector unaligned, then continue from the next
+        // N-aligned `dst` address so the body stores do not split cache
+        // lines. The bytes in the overlap are stored twice.
+        hn::StoreU(hn::And(hn::LoadU(d, src), vec_0x7F), d, dst);
+        size_t i = N - (reinterpret_cast<uintptr_t>(dst) % N);
+        for (; i + N <= len; i += N) {
+            hn::Store(hn::And(hn::LoadU(d, src + i), vec_0x7F), d, dst + i);
+        }
+
+        if (i < len) {
+            const size_t start = len - N;
+            hn::StoreU(hn::And(hn::LoadU(d, src + start), vec_0x7F), d, dst + start);
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < len; ++i) {
+        dst[i] = src[i] & 0x7F;
+    }
+}
+
 // Vector with the 0x20 case bit set in every lane holding an ASCII uppercase
 // letter ('A'..'Z') and 0 everywhere else. The uppercase test is the usual
 // unsigned range fold: (c - 'A') < 26. `VecFromMask` turns the predicate into a
@@ -2294,6 +2330,7 @@ HWY_EXPORT(BSwap32Impl);
 HWY_EXPORT(BSwap64Impl);
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyAsciiPrefixImpl);
+HWY_EXPORT(CopyLatin1ToAsciiImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
 HWY_EXPORT(CountCharImpl);
 HWY_EXPORT(CountPrintableAscii16Impl);
@@ -2571,6 +2608,11 @@ size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
 size_t highway_copy_ascii_prefix(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     return BUN_HWY_DISPATCH(CopyAsciiPrefixImpl)(src, len, dst);
+}
+
+void highway_copy_latin1_to_ascii(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
+{
+    BUN_HWY_DISPATCH(CopyLatin1ToAsciiImpl)(src, len, dst);
 }
 
 size_t highway_index_of_first_ascii_upper(const uint8_t* HWY_RESTRICT input, size_t len)

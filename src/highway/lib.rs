@@ -102,6 +102,8 @@ unsafe extern "C" {
 
     fn highway_copy_ascii_prefix(src: *const u8, len: usize, dst: *mut u8) -> usize;
 
+    fn highway_copy_latin1_to_ascii(src: *const u8, len: usize, dst: *mut u8);
+
     fn highway_encode_hex_lower(input: *const u8, len: usize, output: *mut u8);
 
     fn highway_decode_hex8(input: *const u8, output: *mut u8, out_len: usize) -> usize;
@@ -620,6 +622,23 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
     debug_assert!(copied == len || src[copied] >= 0x80);
 
     copied
+}
+
+/// Copies `min(src.len(), dst.len())` bytes of `src` into `dst` with the high
+/// bit of every byte cleared (`byte & 0x7F`, Node's `'ascii'` decode).
+///
+/// One pass: every stored byte comes from one load and is masked, so the output
+/// is 7-bit even when `src` is shared memory that another thread writes.
+#[inline(always)]
+pub fn copy_latin1_to_ascii(src: &[u8], dst: &mut [u8]) {
+    let len = src.len().min(dst.len());
+    if len == 0 {
+        return;
+    }
+
+    // SAFETY: `src` is readable and `dst` writable for at least `len` bytes;
+    // the kernel reads and writes exactly `len` bytes of each.
+    unsafe { highway_copy_latin1_to_ascii(src.as_ptr(), len, dst.as_mut_ptr()) }
 }
 
 /// Lowercase hex encode: writes exactly `2 * src.len()` bytes to `dst`.

@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
-# (271 symbols)
+# (277 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR11MemRMemImplEPKhmS2_m                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
@@ -484,6 +484,7 @@ _ZN3bun10N_AVX3_SPR18IndexOfAnyCharImplEPKhmS2_m                               [
 _ZN3bun10N_AVX3_SPR19CopyAsciiPrefixImplEPKhmPh                                [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR19FirstNonAscii16ImplEPKtm                                  [AVX, AVX512BW, AVX512F]
 _ZN3bun10N_AVX3_SPR20FillWithSkipMaskImplEPKhmPhS2_mb                          [AVX, AVX512DQ, AVX512F]
+_ZN3bun10N_AVX3_SPR21CopyLatin1ToAsciiImplEPKhmPh                              [AVX, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR21VisibleUTF16WidthImplEPKtmPm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR22IndexOfEscapeChar8ImplEPKhm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun10N_AVX3_SPR22VisibleLatin1WidthImplEPKhm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -527,6 +528,7 @@ _ZN3bun11N_AVX3_ZEN418IndexOfAnyCharImplEPKhmS2_m                              [
 _ZN3bun11N_AVX3_ZEN419CopyAsciiPrefixImplEPKhmPh                               [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN419FirstNonAscii16ImplEPKtm                                 [AVX, AVX512BW, AVX512F]
 _ZN3bun11N_AVX3_ZEN420FillWithSkipMaskImplEPKhmPhS2_mb                         [AVX, AVX512DQ, AVX512F]
+_ZN3bun11N_AVX3_ZEN421CopyLatin1ToAsciiImplEPKhmPh                             [AVX, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN421VisibleUTF16WidthImplEPKtmPm                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun11N_AVX3_ZEN422IndexOfEscapeChar8ImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN422VisibleLatin1WidthImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -570,6 +572,7 @@ _ZN3bun6N_AVX218IndexOfAnyCharImplEPKhmS2_m                                    [
 _ZN3bun6N_AVX219CopyAsciiPrefixImplEPKhmPh                                     [AVX, AVX2]
 _ZN3bun6N_AVX219FirstNonAscii16ImplEPKtm                                       [AVX, AVX2, BMI2]
 _ZN3bun6N_AVX220FillWithSkipMaskImplEPKhmPhS2_mb                               [AVX]
+_ZN3bun6N_AVX221CopyLatin1ToAsciiImplEPKhmPh                                   [AVX]
 _ZN3bun6N_AVX221VisibleUTF16WidthImplEPKtmPm                                   [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX222IndexOfEscapeChar8ImplEPKhm                                    [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX222VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2]
@@ -613,6 +616,7 @@ _ZN3bun6N_AVX318IndexOfAnyCharImplEPKhmS2_m                                    [
 _ZN3bun6N_AVX319CopyAsciiPrefixImplEPKhmPh                                     [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX319FirstNonAscii16ImplEPKtm                                       [AVX, AVX512BW, AVX512F]
 _ZN3bun6N_AVX320FillWithSkipMaskImplEPKhmPhS2_mb                               [AVX, AVX512DQ, AVX512F]
+_ZN3bun6N_AVX321CopyLatin1ToAsciiImplEPKhmPh                                   [AVX, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun6N_AVX321VisibleUTF16WidthImplEPKtmPm                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX322IndexOfEscapeChar8ImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun6N_AVX322VisibleLatin1WidthImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -650,6 +654,7 @@ _ZN3bun9N_AVX10_218IndexOfAnyCharImplEPKhmS2_m                                 [
 _ZN3bun9N_AVX10_219CopyAsciiPrefixImplEPKhmPh                                  [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_219FirstNonAscii16ImplEPKtm                                    [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_220FillWithSkipMaskImplEPKhmPhS2_mb                            [AVX, AVX512DQ, AVX512F]
+_ZN3bun9N_AVX10_221CopyLatin1ToAsciiImplEPKhmPh                                [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_221VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_222IndexOfEscapeChar8ImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_222VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -693,6 +698,7 @@ _ZN3bun9N_AVX3_DL18IndexOfAnyCharImplEPKhmS2_m                                 [
 _ZN3bun9N_AVX3_DL19CopyAsciiPrefixImplEPKhmPh                                  [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL19FirstNonAscii16ImplEPKtm                                    [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL20FillWithSkipMaskImplEPKhmPhS2_mb                            [AVX, AVX512DQ, AVX512F]
+_ZN3bun9N_AVX3_DL21CopyLatin1ToAsciiImplEPKhmPh                                [AVX, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL21VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX3_DL22IndexOfEscapeChar8ImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX3_DL22VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]

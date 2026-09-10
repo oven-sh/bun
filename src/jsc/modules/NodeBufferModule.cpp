@@ -13,6 +13,8 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject*, std::span<const uint8_t>);
 JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject*);
 }
 
+extern "C" size_t highway_first_non_ascii16(const uint16_t* input, size_t len);
+
 using namespace JSC;
 
 namespace {
@@ -57,11 +59,11 @@ static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
         (void)simdutf::convert_latin1_to_utf16le(data, input.size(), units.begin());
         // ICU's ascii converter substitutes non-ASCII bytes with U+FFFD;
         // simdutf has no substituting decode, so fix up only when needed.
-        if (!simdutf::validate_ascii(data, input.size())) {
-            for (auto& unit : units) {
-                if (unit > 0x7F)
-                    unit = 0xFFFD;
-            }
+        // Scan `units`, not `input`: `input` can be shared memory that
+        // another thread changes between the two reads.
+        for (size_t i = highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(units.begin()), units.size()); i < units.size(); i++) {
+            if (units[i] > 0x7F)
+                units[i] = 0xFFFD;
         }
         break;
     }

@@ -479,51 +479,15 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     bun_highway::copy_u16_to_u8(&input[..count], &mut output[..count]);
 }
 
+/// Copies `src` into `dest` with the high bit of every byte cleared (Node's
+/// `'ascii'` decode).
+///
+/// One pass, and every stored byte is masked: the output is 7-bit even when
+/// `src` is a `SharedArrayBuffer` that another thread writes during the call.
+/// A scan for non-ASCII followed by a `memcpy` does not have that property.
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
-    let mut remain = src;
-    let mut to: &mut [u8] = dest;
-
-    let non_ascii_offset = first_non_ascii(remain)
-        .map(|v| v as usize)
-        .unwrap_or(remain.len());
-    if non_ascii_offset > 0 {
-        to[..non_ascii_offset].copy_from_slice(&remain[..non_ascii_offset]);
-        remain = &remain[non_ascii_offset..];
-        to = &mut to[non_ascii_offset..];
-
-        // ascii fast path
-        if remain.is_empty() {
-            return;
-        }
-    }
-
-    if to.len() >= 16 {
-        const VECTOR_SIZE: usize = 16;
-        let remain_in_u64_len = remain.len() - (remain.len() % VECTOR_SIZE);
-        let to_in_u64_len = to.len() - (to.len() % VECTOR_SIZE);
-        // Reshaped for borrowck — operate on byte indices instead of bytesAsSlice(u64).
-        let end_vector_len = (remain_in_u64_len / 8).min(to_in_u64_len / 8);
-        let mut idx = 0usize;
-        // using the pointer instead of the length is super important for the codegen
-        while idx < end_vector_len {
-            let buf = u64::from_ne_bytes(
-                remain[idx * 8..idx * 8 + 8]
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            // this gets auto-vectorized
-            const MASK: u64 = 0x7f7f7f7f7f7f7f7f;
-            to[idx * 8..idx * 8 + 8].copy_from_slice(&(buf & MASK).to_ne_bytes());
-            idx += 1;
-        }
-        remain = &remain[remain_in_u64_len..];
-        to = &mut to[to_in_u64_len..];
-    }
-
-    for to_byte in to.iter_mut() {
-        *to_byte = remain[0] & 0x7f;
-        remain = &remain[1..];
-    }
+    debug_assert_eq!(dest.len(), src.len());
+    bun_highway::copy_latin1_to_ascii(src, dest);
 }
 
 /// It is common on Windows to find files that are not encoded in UTF8. Most of these include

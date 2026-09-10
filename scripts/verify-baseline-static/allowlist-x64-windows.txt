@@ -437,10 +437,11 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (271 symbols)
+# (277 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX10_2::CopyLatin1ToAsciiImpl                                [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX10_2::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun::N_AVX10_2::CountPrintableAscii16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX10_2::DecodeHex16Impl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI]
@@ -478,6 +479,7 @@ bun::N_AVX10_2::VisibleLatin1WidthImpl                               [AVX, AVX2,
 bun::N_AVX10_2::VisibleUTF16WidthImpl                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX2]
 bun::N_AVX2::CopyAsciiPrefixImpl                                     [AVX, AVX2]
+bun::N_AVX2::CopyLatin1ToAsciiImpl                                   [AVX, AVX2]
 bun::N_AVX2::CopyU16ToU8Impl                                         [AVX, AVX2]
 bun::N_AVX2::CountPrintableAscii16Impl                               [AVX, AVX2]
 bun::N_AVX2::DecodeHex16Impl                                         [AVX, AVX2]
@@ -521,6 +523,7 @@ bun::N_AVX2::VisibleLatin1WidthImpl                                  [AVX, AVX2]
 bun::N_AVX2::VisibleUTF16WidthImpl                                   [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX3::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX512BW, AVX512F]
 bun::N_AVX3::CopyAsciiPrefixImpl                                     [AVX, AVX512BW, AVX512F]
+bun::N_AVX3::CopyLatin1ToAsciiImpl                                   [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3::CopyU16ToU8Impl                                         [AVX, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3::CountPrintableAscii16Impl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3::DecodeHex16Impl                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
@@ -564,6 +567,7 @@ bun::N_AVX3::VisibleLatin1WidthImpl                                  [AVX, AVX2,
 bun::N_AVX3::VisibleUTF16WidthImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_DL::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_DL::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_DL::CopyLatin1ToAsciiImpl                                [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun::N_AVX3_DL::CountPrintableAscii16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::DecodeHex16Impl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI]
@@ -607,6 +611,7 @@ bun::N_AVX3_DL::VisibleLatin1WidthImpl                               [AVX, AVX2,
 bun::N_AVX3_DL::VisibleUTF16WidthImpl                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_SPR::ContainsNewlineOrNonASCIIOrQuoteImpl                [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_SPR::CopyAsciiPrefixImpl                                 [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_SPR::CopyLatin1ToAsciiImpl                               [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::CopyU16ToU8Impl                                     [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun::N_AVX3_SPR::CountPrintableAscii16Impl                           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::DecodeHex16Impl                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI]
@@ -650,6 +655,7 @@ bun::N_AVX3_SPR::VisibleLatin1WidthImpl                              [AVX, AVX2,
 bun::N_AVX3_SPR::VisibleUTF16WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3_ZEN4::ContainsNewlineOrNonASCIIOrQuoteImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::CopyAsciiPrefixImpl                                [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_ZEN4::CopyLatin1ToAsciiImpl                              [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::CopyU16ToU8Impl                                    [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
 bun::N_AVX3_ZEN4::CountPrintableAscii16Impl                          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::DecodeHex16Impl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI]

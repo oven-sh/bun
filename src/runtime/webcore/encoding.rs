@@ -5,7 +5,6 @@ use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_simdutf_sys::simdutf as bun_simdutf;
 use core::mem::MaybeUninit;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
@@ -492,16 +491,7 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         }
         Encoding::Ascii => {
             let written = input.len().min(to.len());
-
-            let to = &mut to[..written];
-            let remain = &input[..written];
-
-            if bun_simdutf::validate::ascii(remain) {
-                to.copy_from_slice(remain);
-            } else {
-                strings::copy_latin1_into_ascii(to, remain);
-            }
-
+            strings::copy_latin1_into_ascii(&mut to[..written], &input[..written]);
             Ok(written)
         }
         Encoding::Utf8 => {

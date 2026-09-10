@@ -1059,11 +1059,13 @@ describe("Bun.wrapAnsi", () => {
       }
     });
 
-    // The real limit needs the child to build 2 GiB. os.totalmem() reports the
-    // host's RAM inside a container, process.constrainedMemory() the cgroup
-    // limit. Measured peak for this child: 4.5 GiB.
+    // The real limit needs the child to build 2 GiB of Latin-1 output: measured
+    // 2.5 s and a 3.2 GiB peak under ASAN (the builder stops growing once it
+    // records the overflow), 4.4 GiB for the abort it replaces. os.totalmem()
+    // reports the host's RAM inside a container, process.constrainedMemory()
+    // the cgroup limit.
     const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
-    test.skipIf(memory < 10 * 1024 ** 3)(
+    test.skipIf(memory < 8 * 1024 ** 3)(
       "throws at 2^31 output characters instead of aborting",
       async () => {
         await using proc = Bun.spawn({
@@ -1097,7 +1099,7 @@ describe("Bun.wrapAnsi", () => {
           signalCode: null,
         });
       },
-      120_000,
+      60_000,
     );
   });
 });

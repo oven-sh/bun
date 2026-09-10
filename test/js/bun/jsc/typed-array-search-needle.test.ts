@@ -71,6 +71,22 @@ describe("TypedArray indexOf / lastIndexOf / includes with an unrepresentable se
     expect(search(array, -0)).toEqual([1, 1, true]);
   });
 
+  test("Uint8ClampedArray: a negated int32 stays unmatched once the JIT hands it over as a double", () => {
+    // Cold, `-i` is an int32 and took the (correct) int32 path. Once the negate has produced -0, the
+    // optimizing tiers represent its result as a double, so the same call reaches the double path that
+    // wrapped: in release builds hot(6) started returning 3 (the 250) after about 13k iterations.
+    const array = new Uint8ClampedArray([0, 3, 6, 250, 255]);
+    const hot = (i: number) => array.indexOf(-i);
+    for (let k = 0; k < 10; k++) hot(0);
+    const wrong: number[] = [];
+    for (let i = 0; i < 30000; i++) {
+      const n = i % 300;
+      if (hot(n) !== -1 && n !== 0) wrong.push(n);
+    }
+    expect(wrong).toEqual([]);
+    expect([hot(6), hot(250), hot(1), hot(0), hot(-3), hot(-250)]).toEqual([-1, -1, -1, 0, 1, 3]);
+  });
+
   test("integer element types: a double outside the type's range matches nothing", () => {
     const cases: [AnyTypedArray, number[]][] = [
       [new Int8Array([7, 0, -1, -128, 127]), [255, 128, -129, 383]],

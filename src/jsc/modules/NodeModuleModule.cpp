@@ -632,12 +632,9 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
     return zigGlobalObject->JSSourceMapConstructor();
 }
 
-// A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope, so the
-// ThrowScope inside constructArray / constructEmptyArray is checked here at the top rather than
-// leaving its simulated throw for the next builder in JSObject::reifyAllStaticProperties
-// (Object.entries(require("node:module")), as jest-runtime does).
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    // JSC runs PropertyCallback builders with no caller scope that checks (reifyAllStaticProperties), so check here.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));

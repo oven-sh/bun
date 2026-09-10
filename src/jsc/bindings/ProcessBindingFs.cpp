@@ -111,10 +111,7 @@ PROCESS_BINDING_NOT_IMPLEMENTED(writeFileUtf8)
 
 PROCESS_BINDING_NOT_IMPLEMENTED(writeString)
 
-// A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope, so
-// the ThrowScope inside JSGenericTypedArrayView::create is checked here at the top rather than
-// leaving its simulated throw for the next builder in JSObject::reifyAllStaticProperties
-// ({ ...process.binding("fs") }).
+// JSC runs PropertyCallback builders with no caller scope that checks (reifyAllStaticProperties), so check create() here.
 template<typename ArrayType>
 static JSValue statValuesArray(VM& vm, JSObject* binding, size_t length)
 {

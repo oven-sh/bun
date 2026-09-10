@@ -103,10 +103,7 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    // A PropertyCallback builder is checked with vm.exceptionForInspection(), not a scope, so the
-    // ThrowScope that builds the env map on first use is checked here at the top rather than
-    // leaving its simulated throw for the next builder in JSObject::reifyAllStaticProperties
-    // ({ ...Bun }, Object.entries(Bun)).
+    // JSC runs PropertyCallback builders with no caller scope that checks (reifyAllStaticProperties), so check here.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue env = uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
     RETURN_IF_EXCEPTION(scope, {});
@@ -386,13 +383,7 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     return bunShell;
 }
 
-// Bun.$, Bun.sql, Bun.postgres and Bun.SQL evaluate builtin JS the first time they are read, so
-// they are self-replacing custom values rather than PropertyCallback entries. JSC runs a
-// PropertyCallback builder with no exception scope around it, also when it reifies the whole
-// table in one loop ({ ...Bun }, Object.entries(Bun)), so a builder that enters JS has no caller
-// that checks what it threw. A custom value getter runs under the reading code's scope like any
-// other getter. The first read stores the result as the plain data property that reifying the
-// PropertyCallback used to produce; reifying the table alone builds nothing.
+// $, sql, postgres and SQL run builtin JS, so they are CustomValue getters (checked by the caller's scope) that store a plain data property on first read.
 static EncodedJSValue lazyBunObjectValue(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName, JSValue (*create)(VM&, Zig::GlobalObject*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

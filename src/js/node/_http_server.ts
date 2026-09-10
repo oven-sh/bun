@@ -2510,6 +2510,15 @@ function advanceResponsePipeline(server, socket) {
   if (!queue || queue.length === 0) {
     return;
   }
+  // The current response has ended but is still draining; its 'finish' advances the pipeline.
+  const current = socket[kHandle]?.response;
+  if (
+    current &&
+    (current.flags & (NodeHTTPResponseFlags.ended | NodeHTTPResponseFlags.closed_or_completed)) ===
+      NodeHTTPResponseFlags.ended
+  ) {
+    return;
+  }
   const res = queue.shift();
   const queued = res[kPipelinedQueuedState];
   res[kPipelinedQueuedState] = undefined;
@@ -2888,6 +2897,10 @@ ServerResponse.prototype._hasBody = true;
 
 ServerResponse.prototype._ended = false;
 
+// The end() callback (or null) while the body end() buffered is still draining.
+const kPendingFinish = Symbol("kPendingFinish");
+ServerResponse.prototype[kPendingFinish] = undefined;
+
 ServerResponse.prototype[kRejectNonStandardBodyWrites] = undefined;
 
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
@@ -3125,13 +3138,16 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return true;
   }
   const sentState = NodeHTTPHeaderState.sent;
+  // Native end() returns -(length + 1) while part of the body is still draining; 'finish' waits for it.
+  let draining = false;
   if (headerState !== sentState) {
     {
       const renderedHeaders = renderNativeHeaders(this);
+      let contentLength;
       try {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
         // corks natively around both phases).
-        this._contentLength = handle.writeHeadAndEnd(
+        contentLength = handle.writeHeadAndEnd(
           this[kSnapshotStatusCode] ?? this.statusCode,
           this[kSnapshotStatusMessage] ?? this.statusMessage,
           renderedHeaders,
@@ -3161,6 +3177,11 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       }
       releaseRenderedHeaders(renderedHeaders);
       this[headerStateSymbol] = sentState;
+      if (contentLength < 0) {
+        draining = true;
+        contentLength = -contentLength - 1;
+      }
+      this._contentLength = contentLength;
     }
   } else {
     // If there's no data but you already called end, then you're done.
@@ -3168,7 +3189,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      handle.end(chunk, encoding, undefined, strictContentLength(this));
+      draining = handle.end(chunk, encoding, undefined, strictContentLength(this)) < 0;
     }
   }
   this._header = " ";
@@ -3185,35 +3206,37 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.emit("prefinish");
   this._callPendingCallbacks();
 
-  // Deferring the 'finish' emit to nextTick is load-bearing: the dispatcher
-  // sets kDispatcherDetached only after a sync-finished handler returns, so
-  // an emit before that would detach and advance the pipeline twice.
-  if (callback) {
-    process.nextTick(
-      function (callback, self) {
-        // In Node.js, the "finish" event triggers the "close" event.
-        // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
-        self.emit("finish");
-        try {
-          callback();
-        } catch (err) {
-          self.emit("error", err);
-        }
-
-        process.nextTick(emitCloseNT, self);
-      },
-      callback,
-      this,
-    );
+  if (draining) {
+    // Native calls back once the body is out; a dying connection emits from emit("close").
+    this[kPendingFinish] = callback ?? null;
+    handle.onwritable = flushPendingFinish.bind(this);
   } else {
-    process.nextTick(function (self) {
-      self.emit("finish");
-      process.nextTick(emitCloseNT, self);
-    }, this);
+    // Next tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+    process.nextTick(emitResponseFinished, this, callback);
   }
 
   return this;
 };
+
+// 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
+function emitResponseFinished(res, callback) {
+  process.nextTick(emitCloseNT, res);
+  res.emit("finish");
+  if (callback) {
+    try {
+      callback();
+    } catch (err) {
+      res.emit("error", err);
+    }
+  }
+}
+
+function flushPendingFinish(this: ServerResponse) {
+  const callback = this[kPendingFinish];
+  if (callback === undefined) return;
+  this[kPendingFinish] = undefined;
+  emitResponseFinished(this, callback);
+}
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
   // Node.js's OutgoingMessage assigns `this.writable = true` in the
@@ -3591,6 +3614,8 @@ ServerResponse.prototype.destroy = function (err?: Error) {
 
 ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
+    // The connection died mid-drain: Node.js still emits 'finish' before 'close'.
+    if (this[kPendingFinish] !== undefined) flushPendingFinish.$call(this);
     callCloseCallback(this);
   }
   return Stream.prototype.emit.$apply(this, arguments);

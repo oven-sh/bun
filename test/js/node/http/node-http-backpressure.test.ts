@@ -5,6 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -306,6 +307,196 @@ describe("backpressure", () => {
         sock.destroy();
         await closed.promise;
       });
+    });
+  });
+
+  // Node emits a response's 'finish' (then the end() callback, then 'close')
+  // once every byte of it has been handed to the kernel, not when end() merely
+  // accepted them: bytes a slow reader leaves in the server's userspace buffer
+  // are still the response's. Until then writableFinished is false,
+  // writableLength counts them, the response keeps its socket (the next
+  // pipelined response queues behind it) and the body counts as work that keeps
+  // the process alive. The usual graceful-shutdown recipe (close the server once
+  // the last response has closed) relies on this: server.close() destroys
+  // connections whose response has ended, which is only safe once the bytes are
+  // in the kernel.
+  describe("a response finishes once its body has been written out, not when end() buffered it", () => {
+    const BODY = 32 * 1024 * 1024;
+    const FIRST = 1024 * 1024;
+
+    // The body goes out as write(1 MB) + end(31 MB) to a client that is not
+    // reading yet. Most kernels take only a few MB of that from a socket
+    // nobody reads, so the rest waits in the server process until the client
+    // reads, and res.writableLength says so right after end(). Some do take it
+    // all (Windows can buffer any amount, libuv's WSASend always lets it):
+    // nothing waits then, so each test checks the "not finished yet" state
+    // only when writableLength showed a backlog, and checks the delivered
+    // bytes and the event order either way.
+    function writeBody(res: http.ServerResponse, endCallback?: () => void) {
+      res.setHeader("Content-Length", BODY);
+      res.write(Buffer.alloc(FIRST, "a"));
+      res.end(Buffer.alloc(BODY - FIRST, "a"), endCallback);
+      return res.writableLength > 0;
+    }
+
+    // A raw client that sends `request` but reads nothing until resume().
+    function pausedClient(port: number, request: string) {
+      const socket = net.connect(port, "127.0.0.1");
+      const done = Promise.withResolvers<{ bytes: Buffer; ended: boolean }>();
+      const chunks: Buffer[] = [];
+      let reading = false;
+      let ended = false;
+      socket.pause();
+      socket.on("connect", () => {
+        socket.write(request);
+        if (!reading) socket.pause();
+      });
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("end", () => (ended = true));
+      socket.on("error", () => {});
+      // A connection that dies early resolves too, so it fails the test instead of hanging it.
+      socket.on("close", () => done.resolve({ bytes: Buffer.concat(chunks), ended }));
+      return {
+        send: (data: string) => socket.write(data),
+        resume() {
+          reading = true;
+          socket.resume();
+        },
+        done: done.promise,
+      };
+    }
+
+    it("the events wait for the reader, so server.close() from 'close' delivers the whole body", async () => {
+      const events: string[] = [];
+      let backlog = false;
+      let stateAfterEnd: unknown, stateAtFinish: unknown;
+      const handled = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        res.on("finish", () => {
+          stateAtFinish = { writableFinished: res.writableFinished, writableLength: res.writableLength };
+          events.push("finish");
+        });
+        res.on("close", () => {
+          events.push("close");
+          // The graceful-shutdown recipe: nothing is in flight any more, so this
+          // must not cut the body short.
+          server.close();
+        });
+        backlog = writeBody(res, () => events.push("end callback"));
+        stateAfterEnd = { writableEnded: res.writableEnded, writableFinished: res.writableFinished };
+        handled.resolve();
+      });
+      try {
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const client = pausedClient(
+          (server.address() as AddressInfo).port,
+          "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        );
+        await Promise.race([handled.promise, client.done]);
+        if (backlog) {
+          // The client has not read anything yet.
+          expect(events).toEqual([]);
+          expect(stateAfterEnd).toEqual({ writableEnded: true, writableFinished: false });
+        }
+        client.resume();
+        const { bytes, ended } = await client.done;
+        expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+        expect(ended).toBe(true);
+        expect(events).toEqual(["finish", "end callback", "close"]);
+        expect(stateAtFinish).toEqual({ writableFinished: true, writableLength: 0 });
+      } finally {
+        // A second close() is harmless (Node reports ERR_SERVER_NOT_RUNNING to the callback).
+        server.close(() => {});
+      }
+    });
+
+    it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
+      const events: string[] = [];
+      let backlog = false;
+      const handled = { first: Promise.withResolvers<void>(), second: Promise.withResolvers<void>() };
+      await using server = http.createServer((req, res) => {
+        const name = req.url!.slice(1) as "first" | "second";
+        events.push(`request ${name}`);
+        res.on("finish", () => events.push(`finish ${name}`));
+        res.on("close", () => events.push(`close ${name}`));
+        if (name === "first") {
+          backlog = writeBody(res);
+        } else {
+          res.end("second");
+        }
+        handled[name].resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = pausedClient(
+        (server.address() as AddressInfo).port,
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+      await Promise.race([handled.first.promise, client.done]);
+      client.send("GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      await Promise.race([handled.second.promise, client.done]);
+      if (backlog) {
+        // The client has not read anything yet: the first response still owns
+        // the connection and the second is queued behind it.
+        expect(events).toEqual(["request first", "request second"]);
+      }
+      client.resume();
+      const { bytes, ended } = await client.done;
+
+      const firstBody = bytes.indexOf("\r\n\r\n") + 4;
+      expect(firstBody).toBeGreaterThan(4);
+      const secondHead = bytes.indexOf("HTTP/1.1 200", firstBody);
+      expect(secondHead).toBe(firstBody + BODY);
+      expect(bytes.subarray(firstBody, secondHead).equals(Buffer.alloc(BODY, "a"))).toBe(true);
+      expect(bytes.subarray(bytes.indexOf("\r\n\r\n", secondHead) + 4).toString()).toBe("second");
+      expect(ended).toBe(true);
+      expect(events.filter(e => !e.startsWith("request"))).toEqual([
+        "finish first",
+        "close first",
+        "finish second",
+        "close second",
+      ]);
+      if (backlog) {
+        expect(events.indexOf("request second")).toBeLessThan(events.indexOf("finish first"));
+      }
+    });
+
+    it("the unwritten part of the body keeps the process alive", async () => {
+      // The child has nothing but the in-flight body left to do once its
+      // handler has run and unref'd the server.
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          `const server = require("node:http").createServer((req, res) => {
+            res.setHeader("Content-Length", ${BODY});
+            res.write(Buffer.alloc(${FIRST}, "a"));
+            res.end(Buffer.alloc(${BODY - FIRST}, "a"));
+            server.unref();
+          });
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        const exited = once(child, "exit");
+        const [portLine] = await Promise.race([
+          once(child.stdout!, "data"),
+          exited.then(([code, signal]) => {
+            throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
+          }),
+        ]);
+        const client = pausedClient(
+          Number(portLine.toString()),
+          "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        );
+        client.resume();
+        const { bytes, ended } = await client.done;
+        expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+        expect(ended).toBe(true);
+        expect(await exited).toEqual([0, null]);
+      } finally {
+        child.kill();
+      }
     });
   });
 

@@ -663,7 +663,9 @@ impl NodeHTTPResponse {
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            // Pending until the request body is read and the response body has drained.
+            return self.body_read_state.get() == BodyReadState::Pending
+                || !flags.contains(Flags::REQUEST_HAS_COMPLETED);
         }
 
         true
@@ -1809,12 +1811,23 @@ impl NodeHTTPResponse {
         scoped_log!(NodeHTTPResponse, "onDrain({})", offset);
 
         let flags = self.flags.get();
-        if flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::UPGRADED)
-        {
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             // return false means we don't have anything to drain
             return false;
+        }
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED) {
+            // A registration this response left behind: disarm it so the socket can flush and close.
+            response.clear_on_writable();
+            return true;
+        }
+
+        if flags.contains(Flags::ENDED) {
+            // Armed by end(): the bytes it left buffered are out, so the response has finished.
+            let _guard = self.ref_guard();
+            response.clear_on_writable();
+            self.on_request_complete();
+            self.on_drain_corked(offset);
+            return true;
         }
 
         // Partial pinned progress: return false so onWritable's close gate
@@ -2038,6 +2051,17 @@ impl NodeHTTPResponse {
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
             }
+
+            // Still-buffered bytes keep the request in flight until on_drain; `-(len + 1)` says so.
+            if let Some(raw_response) = self.raw_response.get() {
+                if !self.flags.get().contains(Flags::SOCKET_CLOSED)
+                    && !raw_response.is_closed()
+                    && raw_response.get_buffered_amount() > 0
+                {
+                    raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+                    return Ok(JSValue::js_number(-(bytes.len() as f64) - 1.0));
+                }
+            }
             self.on_request_complete();
 
             Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
@@ -2147,7 +2171,11 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) {
-        if self.is_done() || value.is_undefined_or_null() {
+        // Settable until the response has finished, including while end()'s bytes drain.
+        let flags = self.flags.get();
+        if flags.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::SOCKET_CLOSED)
+            || value.is_undefined_or_null()
+        {
             js::on_writable_set_cached(this_value, global_object, JSValue::ZERO);
         } else {
             js::on_writable_set_cached(

@@ -345,6 +345,9 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
 const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// Outbound-progress snapshots for idle timers (node's chunksSentSinceLastWrite).
+const kTimeoutBytesSnapshot = Symbol("timeoutBytesSnapshot");
+const kTimeoutWrittenSnapshot = Symbol("timeoutWrittenSnapshot");
 // Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
 // undefined (the root context), so "no teardown in progress" needs its own value.
 const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
@@ -2001,6 +2004,7 @@ function validateWindowSize(windowSize) {
 hideFromStack(validateWindowSize);
 
 function pushToStream(stream, data) {
+  stream._unrefTimer();
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
       // closed, but not ended, so resume and push null to end the stream
@@ -2206,6 +2210,10 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+    // node closeStream(): every close path disarms the stream's idle timer.
+    clearTimeout(stream[kTimeout]);
+    stream[kTimeout] = null;
+    stream.removeAllListeners("timeout");
     publishStreamCloseChannel(stream);
 
     markWritableDone(stream);
@@ -2297,6 +2305,9 @@ class Http2Stream extends Duplex {
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
+  timeout: number | undefined = undefined;
+  [kTimeout]: ReturnType<typeof setTimeout> | null = null;
+  [kTimeoutWrittenSnapshot]: number = 0;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -2395,6 +2406,8 @@ class Http2Stream extends Duplex {
       throw $ERR_HTTP2_TRAILERS_NOT_READY();
     }
 
+    this._unrefTimer();
+
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers) || $isArray(headers)) {
@@ -2438,10 +2451,52 @@ class Http2Stream extends Duplex {
     }
   }
 
-  setTimeout(timeout, callback) {
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs;
+
+    msecs = getTimerDuration(msecs, "msecs");
+
+    clearTimeout(this[kTimeout]);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+    } else {
+      const socket = this[bunHTTP2Session]?.[bunHTTP2Socket];
+      this[kTimeoutWrittenSnapshot] = socket?._handle?.bytesWritten ?? socket?.bytesWritten ?? 0;
+      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
+    return this;
+  }
+
+  _onTimeout() {
+    if (this.destroyed) return;
+    // node callTimeout: this stream's pending write still making wire progress is not idle.
     const session = this[bunHTTP2Session];
-    if (!session) return;
-    session.setTimeout(timeout, callback);
+    if (session && this.writableLength > 0) {
+      const socket = session[bunHTTP2Socket];
+      const bytesWritten = socket?._handle?.bytesWritten ?? socket?.bytesWritten ?? 0;
+      if (bytesWritten !== this[kTimeoutWrittenSnapshot]) {
+        this[kTimeoutWrittenSnapshot] = bytesWritten;
+        this[kTimeout]?.refresh();
+        return;
+      }
+    }
+    this.emit("timeout");
+  }
+
+  _unrefTimer() {
+    const timer = this[kTimeout];
+    if (timer) timer.refresh();
   }
 
   get closed() {
@@ -2831,6 +2886,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    this._unrefTimer();
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -2893,6 +2949,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
+    this._unrefTimer();
     const writePerf = this[kPerfState];
     if (writePerf !== undefined) {
       if (writePerf.firstByteSent === 0) writePerf.firstByteSent = performance.now() - writePerf.start;
@@ -3088,6 +3145,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
         cb();
         return;
       }
+      stream._unrefTimer();
       const status = native.writeStream(stream.id, chunk, undefined, false, cb, true);
       if (status & kWriteFlushedWithoutCallback) process.nextTick(cb);
     },
@@ -3239,6 +3297,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (!parser) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
+    this._unrefTimer();
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
     // Thrown synchronously like node, before a promised stream id is reserved.
@@ -3453,6 +3512,8 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_HEADERS_AFTER_RESPOND();
     }
 
+    this._unrefTimer();
+
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers) || $isArray(headers)) {
@@ -3521,6 +3582,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
+
+    this._unrefTimer();
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -4125,6 +4188,7 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      stream._unrefTimer();
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;
@@ -4355,10 +4419,7 @@ class ServerHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // node: session idle timeouts emit on the session only, never on streams.
     this.emit("timeout");
   }
   #onDrain() {
@@ -4802,13 +4863,6 @@ class ServerHttp2Session extends Http2Session {
     process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 }
-function emitTimeout(session: ClientHttp2Session) {
-  session.emit("timeout");
-}
-// Outbound-progress snapshot taken the last time the session's idle timer expired while writes
-// were still pending (see sessionTimerExpired / node's chunksSentSinceLastWrite).
-const kTimeoutBytesSnapshot = Symbol("timeoutBytesSnapshot");
-const kTimeoutWrittenSnapshot = Symbol("timeoutWrittenSnapshot");
 let sessionHasPendingWrite = false;
 function checkStreamWritePending(stream: Http2Stream) {
   if (stream.writableLength > 0) sessionHasPendingWrite = true;
@@ -4892,8 +4946,8 @@ function sessionTimerExpired(session: Http2Session) {
         return;
       }
     }
-    parser.forEachStream(emitTimeout);
   }
+  // node: session idle timeouts emit on the session only, never on streams.
   session.emit("timeout");
 }
 function destroySelfOnEnd(this: Http2Stream) {
@@ -5119,6 +5173,7 @@ class ClientHttp2Session extends Http2Session {
         flags: number,
       ) => {
         if (!self || typeof stream !== "object" || stream.rstCode) return;
+        stream._unrefTimer();
         let rawheaders = headersTuple[0];
         let headers = headersTuple[1];
         if (self.#strictFieldWhitespaceValidation) {
@@ -5440,10 +5495,7 @@ class ClientHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // node: session idle timeouts emit on the session only, never on streams.
     this.emit("timeout");
   }
   #onDrain() {

@@ -1091,12 +1091,13 @@ it("chrome: a failed navigate() reports one failure and no navigation, and leave
   const events: string[] = [];
   view.onNavigated = (url: string) => events.push("navigated:" + url);
   view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
+  // Chrome then commits its internal error page (chrome-error://chromewebdata/)
+  // and fires its load event; wait for that so every event it produces has been
+  // handled. Neither may surface as a navigation or as a second failure.
+  const errorPageLoaded = new Promise(resolve => view.addEventListener("Page.loadEventFired", resolve, { once: true }));
   // Port 9 is on Chrome's unsafe-port list: fails before any connection.
   await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
-  // Chrome then commits its internal error page (chrome-error://chromewebdata/)
-  // and fires its load event. Round-trip an evaluate so those events have
-  // arrived: neither may surface as a navigation or as a second failure.
-  await view.evaluate("1");
+  await errorPageLoaded;
   expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT"]);
   expect(view.url).toBe(srv.base + "/before");
   expect(view.title).toBe("T/before");

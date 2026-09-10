@@ -771,6 +771,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
+        if (entry.method == Method::PageTitle && entry.navGeneration != view->m_chromeNavGeneration) return;
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
         settleFailure(g, view, entry.slot, entry.method,
@@ -866,7 +867,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto inner = jsonField(result, { "result", 6 });
         auto value = jsonString(jsonField(inner, { "value", 5 }));
         view->m_title = WTF::String::fromUTF8(value);
-        settle(g, view, entry.slot, true, jsUndefined());
+        if (entry.navGeneration == view->m_chromeNavGeneration) settle(g, view, entry.slot, true, jsUndefined());
         fireOnNavigated(g, view);
         return;
     }
@@ -1177,7 +1178,7 @@ void Transport::finishNavigation(JSWebView* view)
     view->m_loading = false;
     view->m_chromeDocumentLoading = false;
     uint32_t tid = nextId();
-    m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
+    m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, view->m_chromeNavGeneration });
     send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
 }
 
@@ -1479,7 +1480,10 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
-    if (ps == PendingSlot::Navigate) v->m_chromeSameDocumentNavigated = false;
+    if (ps == PendingSlot::Navigate) {
+        v->m_chromeSameDocumentNavigated = false;
+        ++v->m_chromeNavGeneration;
+    }
     t.m_pending.add(id, Pending { m, ps, v->m_viewId });
     t.send(id, WTF::move(cmd));
     t.updateKeepAlive();

@@ -351,6 +351,9 @@ struct Pending {
     Method method;
     PendingSlot slot;
     uint32_t viewId;
+    // PageTitle: the view's m_chromeNavGeneration when the load finished. A
+    // navigation issued after that owns the slot, and this reply leaves it alone.
+    uint32_t navGeneration = 0;
 };
 
 // Transport mode. Pipe = we spawned Chrome with --remote-debugging-pipe,

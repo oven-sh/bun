@@ -86,4 +86,9 @@ void setupJSMIMEParamsClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::JSValue createJSMIMEBinding(Zig::GlobalObject* globalObject);
 bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView input);
 
+// Throws for a MIME string that could not be built. `intendedLength` is the
+// length the result would have had, which is what separates a result past
+// WTF::String::MaxLength from a failed allocation.
+JSC::EncodedJSValue throwMIMEStringBuildFailure(JSC::JSGlobalObject*, JSC::ThrowScope&, uint64_t intendedLength);
+
 } // namespace WebCore

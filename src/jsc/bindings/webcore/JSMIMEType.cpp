@@ -426,7 +426,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
         return {};
     }
 
-    String essence = makeString(thisObject->type(), '/', thisObject->subtype());
+    // makeString aborts the process when the result does not fit in a string,
+    // and the type and the subtype come from the caller.
+    const String& type = thisObject->type();
+    const String& subtype = thisObject->subtype();
+    String essence = tryMakeString(type, '/', subtype);
+    if (essence.isNull()) [[unlikely]] {
+        return throwMIMEStringBuildFailure(globalObject, scope, static_cast<uint64_t>(type.length()) + 1 + subtype.length());
+    }
+
     return JSValue::encode(jsString(vm, essence));
 }
 
@@ -465,13 +473,22 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     String paramsStr = paramsStrValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    StringBuilder builder;
+    // The type, the subtype and the serialized parameters all come from the
+    // caller. A crash-on-overflow builder aborts the process once the result
+    // passes String::MaxLength, so record the overflow and throw below instead.
+    StringBuilder builder(WTF::OverflowPolicy::RecordOverflow);
     builder.append(thisObject->type());
     builder.append('/');
     builder.append(thisObject->subtype());
+    uint64_t intendedLength = static_cast<uint64_t>(thisObject->type().length()) + 1 + thisObject->subtype().length();
     if (!paramsStr.isEmpty()) {
         builder.append(';');
         builder.append(paramsStr);
+        intendedLength += static_cast<uint64_t>(paramsStr.length()) + 1;
+    }
+
+    if (builder.hasOverflowed()) [[unlikely]] {
+        return throwMIMEStringBuildFailure(globalObject, scope, intendedLength);
     }
 
     return JSValue::encode(jsString(vm, builder.toString()));

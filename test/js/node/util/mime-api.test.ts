@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe, expectRssDeltaBelow } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isDebug } from "harness";
+import { totalmem } from "node:os";
 import { MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
@@ -456,4 +457,119 @@ test("MIMEType releases its type and subtype strings when garbage-collected", as
 
   // Unfixed: ~42 MiB (160 x 256 KiB). Fixed: 1 to 4 MiB of allocator slack.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 20, debug: 25 });
+});
+
+// The two toString implementations build their result with a WTF
+// StringBuilder, and the essence getter with makeString. Both primitives call
+// CRASH() when the result passes String::MaxLength (2 ** 31 - 1 characters)
+// and when the allocation fails, so a large type or parameter made each of
+// them abort the process with no output. Each case below runs in a child,
+// because a child that aborts prints nothing and still lets the parent assert.
+describe("a MIME string that does not fit in a string", () => {
+  const tooLong = "Error ERR_STRING_TOO_LONG: Cannot create a string longer than 2147483647 characters\n";
+  const allocationFailed = "RangeError ERR_MEMORY_ALLOCATION_FAILED: Failed to allocate memory\n";
+
+  async function buildInChild(body: string, env: Record<string, string | undefined> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MIMEType, MIMEParams } = require("node:util");
+         try {
+           console.log("string of length " + ((() => { ${body} })()).length);
+         } catch (e) {
+           console.log(e.name + " " + e.code + ": " + e.message);
+         }`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The child holds 2 GiB of strings. `repeat` builds each one in a single
+  // allocation, which `Buffer.alloc(...).toString()` does not.
+  describe.skipIf(totalmem() < 10 * 1024 ** 3)("a result past String::MaxLength", () => {
+    test(
+      "MIMEType.prototype.toString",
+      async () => {
+        expect(
+          await buildInChild(`
+            const mime = new MIMEType("text/plain");
+            MIMEParams.prototype.toString = () => "a".repeat(2 ** 31 - 1);
+            return String(mime);
+          `),
+        ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
+
+    // A debug build validates a parameter name and a type at about 25 ns per
+    // character, so this case and the next take a minute each there. The case
+    // above covers both builds, and the capped block below covers these two.
+    test.skipIf(isDebug)(
+      "MIMEParams.prototype.toString",
+      async () => {
+        expect(
+          await buildInChild(`
+            const params = new MIMEParams();
+            params.set("a".repeat(2 ** 31 - 1), "x");
+            return String(params);
+          `),
+        ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
+
+    test.skipIf(isDebug)(
+      "MIMEType#essence",
+      async () => {
+        expect(
+          await buildInChild(`
+            const mime = new MIMEType("text/plain");
+            const half = "a".repeat(2 ** 30);
+            mime.type = half;
+            mime.subtype = half;
+            return mime.essence;
+          `),
+        ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
+  });
+
+  // BUN_JSC_maxSingleAllocationSize (debug WTF only) fails every allocation
+  // above the cap. That is the other way each primitive aborts, and it needs
+  // 9 MiB instead of 2 GiB. Node reports a failed string allocation as
+  // ERR_MEMORY_ALLOCATION_FAILED, which is what #41066 settled on.
+  describe.skipIf(!isDebug)("a failed allocation", () => {
+    const capped = { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 * 1024) };
+
+    test("MIMEParams.prototype.toString", async () => {
+      expect(
+        await buildInChild(
+          `const params = new MIMEParams();
+           const value = Buffer.alloc(3 * 1024 * 1024, 97).toString("latin1");
+           for (const name of ["a", "b", "c"]) params.set(name, value);
+           return String(params);`,
+          capped,
+        ),
+      ).toEqual({ stdout: allocationFailed, stderr: "", exitCode: 0 });
+    });
+
+    test("MIMEType#essence", async () => {
+      expect(
+        await buildInChild(
+          `const mime = new MIMEType("text/plain");
+           const half = Buffer.alloc(3 * 1024 * 1024, 97).toString("latin1");
+           mime.type = half;
+           mime.subtype = half;
+           return mime.essence;`,
+          capped,
+        ),
+      ).toEqual({ stdout: allocationFailed, stderr: "", exitCode: 0 });
+    });
+  });
 });

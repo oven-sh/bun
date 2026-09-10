@@ -325,23 +325,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_slash(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.scan_reg_exp()?;
-        // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
-        // Reset after both success and
-        // the `next()?` error path: capture, advance, then unconditionally reset before
-        // propagating any error from `next()`.
         let value = E::Str::new(p.lexer.raw());
-        let next_result = p.lexer.next();
-        let flags_offset = p.lexer.regex_flags_start;
-        p.lexer.regex_flags_start = None;
-        next_result?;
+        p.lexer.next()?;
 
-        Ok(p.new_expr(
-            E::RegExp {
-                value,
-                flags_offset,
-            },
-            loc,
-        ))
+        Ok(p.new_expr(E::RegExp { value }, loc))
     }
 
     fn pfx_t_void(p: &mut Self) -> PResult<Expr> {

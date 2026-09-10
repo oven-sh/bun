@@ -2356,46 +2356,30 @@ impl Template {
 }
 
 pub struct RegExp {
+    /// The literal as written, `/pattern/flags`.
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
-
-    /// This exists for JavaScript bindings
-    /// The RegExp constructor expects flags as a second argument.
-    /// We want to avoid re-lexing the flags, so we store them here.
-    /// This is the index of the first character in a flag, not the "/"
-    /// /foo/gim
-    ///      ^
-    pub flags_offset: Option<u16>,
 }
 impl RegExp {
+    /// `/foo/gim` → `foo`
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i_) = self.flags_offset {
-            let mut i = i_;
-            while i > 0 && self.value[i as usize] != b'/' {
-                i -= 1;
-            }
-
-            return bun_core::trim(&self.value[..i as usize], b"/");
-        }
-
-        bun_core::trim(&self.value, b"/")
+        self.pattern_and_flags().0
     }
 
+    /// `/foo/gim` → `gim`
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i) = self.flags_offset {
-            return &self.value[i as usize..];
-        }
+        self.pattern_and_flags().1
+    }
 
-        b""
+    /// Flags are identifier characters, so the last `/` closes the pattern
+    /// even when the pattern itself contains `\/` or `[/]`.
+    fn pattern_and_flags(&self) -> (&[u8], &[u8]) {
+        let value: &[u8] = &self.value;
+        match strings::last_index_of_char(value, b'/') {
+            Some(end) if end > 0 => (&value[1..end], &value[end + 1..]),
+            _ => (value.strip_prefix(b"/").unwrap_or(value), b""),
+        }
     }
 }
 

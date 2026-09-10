@@ -21,7 +21,7 @@
  * `Bun__*`/`Zig*` references pull every reachable member, and the release
  * link's `--gc-sections` still DCEs per-function. `rustLinkFlags()` wraps
  * the archive in `--whole-archive` so members that are *only* referenced via
- * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
+ * the export list / NAPI surface (no inbound static ref) are retained too.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -843,7 +843,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
 /**
  * Linker flags to wrap the Rust staticlib so every `#[no_mangle]` member
- * reaches the final image (the dynamic-list / NAPI surface has no inbound
+ * reaches the final image (the export list / NAPI surface has no inbound
  * static ref, so plain archive extraction would drop those `.o` members).
  * Functionally equivalent to feeding a single merged `.o`.
  *

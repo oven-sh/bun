@@ -644,8 +644,6 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
     case PendingSlot::Cdp:
         return view->m_pendingCdp;
     case PendingSlot::Attach:
-        // The attach chain settles no slot: its failures go through
-        // failDeferred, and its successes chain to the next command.
         break;
     }
     ASSERT_NOT_REACHED();
@@ -701,18 +699,15 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
 }
 
 // --- Attach chain + parked commands ----------------------------------------
-// Every Page.*, Runtime.*, Input.* and Emulation.* command has to carry a
-// sessionId: those domains exist per target, not on the browser endpoint.
-// A view gets its session from Target.createTarget → Target.attachToTarget
-// → Page.enable, so the first operation on a view starts that chain and
-// waits for it.
+// Page.*, Runtime.*, Input.* and Emulation.* exist per target, not on the
+// browser endpoint, so every one of their commands needs the view's
+// sessionId. The first operation on a view starts the chain that produces
+// it and waits, and so does anything issued while the chain runs.
 
 void Transport::sendToView(JSWebView* view, uint32_t cdpId, Command&& cmd)
 {
-    // The gate is the whole chain, not the session id alone.
     // Target.attachToTarget fills in m_sessionId one reply before
-    // Page.enable drains the queue, and a command written in that
-    // window would reach Chrome ahead of the ones already parked.
+    // Page.enable drains the queue, so the gate is the whole chain.
     if (!view->m_chromeAttaching && !view->m_sessionId.isEmpty()) {
         send(cdpId, WTF::move(cmd), sidSpan(view->m_sessionId));
         return;
@@ -757,11 +752,10 @@ void Transport::failDeferred(JSWebView* view, JSValue error)
 {
     auto* g = m_global;
     uint32_t vid = view->m_viewId;
-    // Take the queue out before settling anything. settleFailure calls
-    // into JS (onNavigationFailed), and a navigate() retry from that
-    // callback parks a command and starts a fresh chain. Iterating the
-    // live queue would reject that retry with this error too, and a
-    // callback that always retries would never finish the loop.
+    // settleFailure runs onNavigationFailed, which may retry navigate().
+    // The retry parks a command and starts a new chain, so take the queue
+    // out and clear the flag first: a live loop would reject the retry
+    // with this error too, forever if the callback always retries.
     WTF::Vector<DeferredCmd> parked;
     for (size_t i = 0; i < m_deferred.size();) {
         if (m_deferred[i].viewId != vid) {
@@ -771,13 +765,10 @@ void Transport::failDeferred(JSWebView* view, JSValue error)
         parked.append(WTF::move(m_deferred[i]));
         m_deferred.removeAt(i);
     }
-    // Cleared before the callbacks run, so a retry starts a new chain
-    // instead of parking behind the one that just failed.
     view->m_chromeAttaching = false;
     for (auto& entry : parked) {
-        // id 0 is the untracked half of a pair (click's mousePressed). It
-        // owns no slot, and 0 is the HashMap's empty key, so looking it
-        // up asserts. The tracked half carries the rejection.
+        // The untracked half of a pair owns no slot, and 0 is the
+        // HashMap's empty key, so a lookup would assert.
         if (!entry.id) continue;
         auto it = m_pending.find(entry.id);
         if (it == m_pending.end()) continue; // cancelled by close()
@@ -874,11 +865,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     switch (entry.method) {
     // --- Attach chain --------------------------------------------------
-    // The first operation on a view sends Target.createTarget; each
-    // response chains into the next command. None of them settles a user
-    // promise: the operations that started the chain, and any issued
-    // while it ran, are parked in m_deferred and written by the last
-    // step. A failure at any stage rejects all of them (failDeferred).
+    // Each response chains into the next command and settles no user
+    // promise. The last step writes what m_deferred holds; a failure at
+    // any step rejects all of it.
     case Method::TargetCreateTarget: {
         // {"targetId":"<hex>"}
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
@@ -906,9 +895,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
     case Method::PageEnable: {
-        // Runtime.enable (for consoleAPICalled later) — fire-and-forget,
-        // untracked. Chrome processes commands in order per session, so
-        // it takes effect before anything drained below.
+        // Runtime.enable (for consoleAPICalled later) — untracked. One
+        // session processes its commands in order, so it takes effect
+        // before anything the drain writes.
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s), sidSpan(view->m_sessionId));
 
@@ -1605,9 +1594,7 @@ JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t b
     int32_t mods = cdpModifiers(modifiers);
 
     // Pressed — untracked. Chrome replies but we don't need the ack; the
-    // Released event's reply confirms both were processed. Parked with
-    // id 0 when the view is still attaching: the pair stays in order and
-    // neither half can be cancelled on its own.
+    // Released event's reply confirms both were processed.
     uint32_t idDown = t.nextId();
     t.sendToView(view, 0, Command(idDown, "Input.dispatchMouseEvent"_s).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
     // Released — tracked, resolves the promise.
@@ -1819,14 +1806,12 @@ void close(JSWebView* view)
 {
     auto& t = transport();
     if (auto* g = t.m_global) rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
-    // Prune m_pending entries for this view — the attach chain
-    // (TargetCreateTarget → TargetAttachToTarget → PageEnable) chains to
-    // the next command on each reply. If close() lands mid-chain, the
-    // next reply would continue on a closed view: m_sessions.add
-    // re-registers it, and the commands parked behind the chain reach
-    // the tab after dispose. removeIf breaks the chain at the next
-    // reply — handleResponse's find(id)==end() early-return drops it —
-    // and dropDeferred forgets what was parked.
+    // Prune m_pending entries for this view — each attach-chain reply
+    // sends the next command, so a close() mid-chain would otherwise
+    // re-register the session and let the parked commands reach the tab
+    // after dispose. removeIf breaks the chain at the next reply
+    // (handleResponse's find(id)==end() drops it); dropDeferred forgets
+    // what was parked.
     t.m_pending.removeIf([vid = view->m_viewId](auto& pair) {
         return pair.value.viewId == vid;
     });

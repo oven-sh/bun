@@ -413,10 +413,8 @@ public:
     // An empty sessionId makes it a browser-level command (Target.*).
     void send(uint32_t cdpId, Command&& cmd, std::span<const char> sessionId = {});
 
-    // Write a command that belongs to one view's CDP session. Before the
-    // session exists (no operation has run yet) the frame cannot be
-    // built: park it and start the attach chain. drainDeferred stamps the
-    // session id on every parked command once the chain completes.
+    // Write a command that belongs to one view's CDP session, or park it
+    // and start the attach chain when the view has no session yet.
     void sendToView(JSWebView*, uint32_t cdpId, Command&& cmd);
 
     // Both transports' receive path: parses complete NUL-delimited messages
@@ -450,15 +448,12 @@ public:
         WTF::String body;
     };
     WTF::Vector<WsPendingCmd> m_wsPending;
-    // Commands parked while a view's attach chain runs. Every operation
-    // needs the view's session id, which only Target.attachToTarget can
-    // provide, so the ones issued before it answers wait here in the
-    // order the user made them. At most one per slot per attaching view.
+    // Commands parked while a view's attach chain runs, in the order the
+    // user issued them. At most one per slot per attaching view.
     //
-    // id is the CDP id the command carries, or 0 for the untracked half
-    // of a pair (click's mousePressed). Nonzero ids that Ops::close()
-    // already erased from m_pending are dropped instead of sent, the
-    // same cancellation check wsOnOpen's drain does.
+    // id is the command's CDP id, or 0 for the untracked half of a pair
+    // (click's mousePressed). A nonzero id that Ops::close() erased from
+    // m_pending is dropped instead of sent, like wsOnOpen's drain.
     struct DeferredCmd {
         uint32_t viewId;
         uint32_t id;
@@ -504,15 +499,14 @@ public:
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);
 
-    // Target.createTarget → Target.attachToTarget → Page.enable. Started
-    // by the first operation on a view, once.
+    // Target.createTarget → Target.attachToTarget → Page.enable, once
+    // per view.
     void beginAttach(JSWebView*);
-    // Write every command parked for this view, in issue order, now that
-    // it has a session id.
+    // Write what the view parked, in issue order, now that it has a
+    // session id.
     void drainDeferred(JSWebView*);
-    // The attach chain failed: reject each parked operation's slot with
-    // the CDP error, so the user sees the failure instead of a promise
-    // that never settles.
+    // The chain failed: reject each parked operation's slot with the CDP
+    // error instead of leaving its promise unsettled.
     void failDeferred(JSWebView*, JSC::JSValue error);
     // Forget a view's parked commands (close, detach, transport death).
     void dropDeferred(uint32_t viewId);

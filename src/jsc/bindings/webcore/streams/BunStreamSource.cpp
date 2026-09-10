@@ -428,10 +428,8 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     ASSERT(!startArgs.hasOverflowed());
     JSValue startResult = invokeMethod(vm, globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        // The source cannot start (open() → ENOENT/EISDIR, dup() failure, ...). As with a rejected
-        // pull, the stream errors with that reason and the consumer that materialized it observes it
-        // through the stream rather than as a throw. The handle never produced and never will, so the
-        // errored stream stops advertising it (Readable.fromWeb would otherwise adopt a dead source).
+        // The source failed to start (open() → ENOENT, EISDIR, ...): error the stream, as a rejected
+        // pull does, and drop the dead handle so nothing adopts it later.
         TRY_CLEAR_EXCEPTION(scope, );
         stream->m_nativePtr.clear();
         auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));

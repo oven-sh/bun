@@ -1849,7 +1849,13 @@ impl FileSink {
             readable_stream::NativeWireResult::NotNative => {
                 let result = self
                     .assign_to_js_stream(stream, controller, global_this)
-                    .inspect_err(|_| self.stream_bytes.set(None))?;
+                    .inspect_err(|_| {
+                        self.stream_bytes.set(None);
+                        // The caller reports the throw; a close(error) inside pull() may already have rejected the done-promise nobody gets.
+                        if let Some(done) = promise.as_any_promise() {
+                            done.set_handled(global_this.vm());
+                        }
+                    })?;
                 // A pump that already failed reports through the done-promise.
                 if let Some(pump) = result.as_any_promise() {
                     if pump.status() == bun_jsc::js_promise::Status::Rejected {

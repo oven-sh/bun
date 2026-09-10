@@ -93,6 +93,19 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
+            let _ = c::us_socket_close(self, code as c_int, ptr::null_mut());
+        }
+    }
+
+    /// Close with the platform error code behind the failure instead of one of
+    /// the three self-initiated [`CloseCode`]s: an errno on POSIX, a WSA code
+    /// on Windows, the same numbering the loop closes a failed `recv()` with.
+    /// The close callback reports any code above the enum's range as the
+    /// error that ended the connection.
+    pub fn close_with_error_code(&mut self, code: c_int) {
+        bun_core::scoped_log!(uws, "us_socket_close({:p}, errno {})", self, code);
+        unsafe {
+            // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
     }
@@ -559,9 +572,11 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        /// `code` is a [`CloseCode`] for a close we initiate, or the platform
+        /// error code that ended the connection (see `close_with_error_code`).
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
-            code: CloseCode,
+            code: c_int,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);

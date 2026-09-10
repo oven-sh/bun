@@ -495,10 +495,9 @@ test.each(["sync", "async"])(
       await Bun.sleep(1);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
-    // Unfixed, every stream survives. One survivor is tolerated on every build:
-    // the newest stream's address can linger in a native frame still live under
-    // this continuation (JSC::runInternalMicrotask), where the conservative
-    // stack scan finds it. Every run on x64 ASAN, rarely on release builds.
+    // Unfixed, every stream survives. At most one may survive here: the newest
+    // stream's address can be left in a native frame that is still live under
+    // this continuation and act as a conservative root (proof in #42190).
     expect(alive).toBeLessThanOrEqual(1);
   },
 );

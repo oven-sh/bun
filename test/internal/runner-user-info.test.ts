@@ -6,7 +6,7 @@
  * looks the user up once (getUserInfo() in scripts/utils.mjs) and falls back
  * to the environment when the lookup fails.
  *
- * This runs a copy of the runner under node, as CI does, over one test file.
+ * This runs a copy of the runner under node, as CI does, over two test files.
  * A --import preload replaces os.userInfo with one that throws and counts.
  */
 import { expect, test } from "bun:test";
@@ -28,6 +28,14 @@ const runnerFiles = [
 ];
 const node = nodeExe();
 
+/** A test file that prints the USER and HOME the runner gave its process. */
+const fixture = (file: string) => `
+  import { test } from "bun:test";
+  test("prints USER and HOME", () => {
+    console.error(JSON.stringify({ file: ${JSON.stringify(file)}, USER: process.env.USER, HOME: process.env.HOME }));
+  });
+`;
+
 test.skipIf(!node)("a failed passwd lookup does not end the run: USER and HOME come from the environment", async () => {
   using repo = tempDir("runner-user-info", {
     ...Object.fromEntries(runnerFiles.map(file => [file, readFileSync(join(repoRoot, file), "utf8")])),
@@ -44,16 +52,15 @@ test.skipIf(!node)("a failed passwd lookup does not end the run: USER and HOME c
       syncBuiltinESMExports();
       process.on("exit", () => console.error("os.userInfo() calls: " + calls));
     `,
-    "test/user-info.test.ts": `
-      import { test } from "bun:test";
-      test("prints the USER and HOME the runner set", () => {
-        console.error(JSON.stringify({ USER: process.env.USER, HOME: process.env.HOME }));
-      });
-    `,
+    // Two files, so that spawnBun runs twice and the call count below tells a
+    // cached lookup (1) from a per-file one (2).
+    "test/first.test.ts": fixture("first"),
+    "test/second.test.ts": fixture("second"),
     "home": {},
   });
   const root = String(repo);
   const home = join(root, "home");
+  const expected = (file: string) => JSON.stringify({ file, USER: "user-from-env", HOME: home });
 
   // The copy takes the runner's local code paths: no buildkite-agent, no
   // annotations, no retries. --quiet skips the `bun install` steps.
@@ -76,7 +83,8 @@ test.skipIf(!node)("a failed passwd lookup does not end the run: USER and HOME c
   const output = Bun.stripANSI(stdout + stderr);
 
   expect(output).toContain("os.userInfo() failed, using USER and HOME from the environment instead");
-  expect(output).toContain(JSON.stringify({ USER: "user-from-env", HOME: home }));
+  expect(output).toContain(expected("first"));
+  expect(output).toContain(expected("second"));
   expect(output).toContain("os.userInfo() calls: 1\n");
   expect(exitCode).toBe(0);
 });

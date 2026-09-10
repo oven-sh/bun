@@ -83,17 +83,16 @@ impl<'a> PathLike<'a> {
 
 impl PathLike<'static> {
     /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
-    /// string becomes a private copy never handed to JS; a buffer stays
-    /// pinned and is GC-protected for good.
+    /// string becomes a private copy never handed to JS, and a buffer's bytes
+    /// are copied here, on the JS thread. The store then owns its path, so
+    /// reading it cannot see a detached buffer's freed storage, and releasing
+    /// it touches no JS cell from a heap sweep or another thread.
     pub fn thread_isolated_copy(self) -> Self {
         match self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
                 Self::ThreadIsolatedString(s.thread_isolated_copy())
             }
-            Self::Buffer(b) => {
-                b.value.protect();
-                Self::Buffer(b)
-            }
+            Self::Buffer(b) => Self::Utf8(Utf8Bytes::Owned(b.slice().to_vec())),
             Self::Utf8(s) => Self::Utf8(s),
         }
     }

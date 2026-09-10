@@ -394,12 +394,14 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable && !out_buf.shared {
+        // The pool thread writes the output after this call returns; storage a
+        // pin does not keep mapped until then cannot take it.
+        if out_buf.pin_cannot_hold() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
+                        "The \"out\" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory"
                     ),
                 )
                 .throw());
@@ -418,6 +420,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             };
             Some(buf)
         };
+        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
+            if let Some(buf) = &in_buf {
+                buf.unpin();
+            }
+            return Err(global_this.throw_out_of_memory());
+        };
         let mut in_: Option<&[u8]> = in_buf
             .as_ref()
             .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
@@ -429,16 +437,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         {
             let Some(copied) = Self::copy_input(this, chunk) else {
                 buf.unpin();
+                out_buf.unpin();
                 return Err(global_this.throw_out_of_memory());
             };
             in_ = Some(copied);
         }
-        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
-            if let Some(buf) = &in_buf {
-                buf.unpin();
-            }
-            return Err(global_this.throw_out_of_memory());
-        };
         this.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );

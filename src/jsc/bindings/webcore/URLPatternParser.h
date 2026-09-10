@@ -99,10 +99,9 @@ private:
 
 // FIXME: Consider moving functions to somewhere generic, perhaps refactor Part to its own class.
 String generateSegmentWildcardRegexp(const URLPatternStringOptions&);
-String escapeRegexString(StringView);
 ASCIILiteral convertModifierToString(Modifier);
-std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions&);
-// OutOfMemoryError when the result would pass String::MaxLength (escaping can double the input).
+// These three report OutOfMemoryError when the string they build would pass String::MaxLength.
+ExceptionOr<std::pair<String, Vector<String>>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions&);
 ExceptionOr<String> generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
 ExceptionOr<String> escapePatternString(StringView input);
 bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst);

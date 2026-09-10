@@ -223,7 +223,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             if (slashIndex != notFound) {
                 auto joined = tryMakeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
 
-                if (joined.isNull()) [[unlikely]]
+                if (joined.isNull() || exceedsStringLimit(joined.length())) [[unlikely]]
                     return Exception { ExceptionCode::OutOfMemoryError };
 
                 result.pathname = WTF::move(joined);

@@ -1,5 +1,6 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { totalmem } from "node:os";
@@ -210,10 +211,70 @@ describe("URLPattern", () => {
   });
 });
 
-// The constructor builds each component pattern from the baseURL. Escaping adds
-// a character per escaped character, and a relative pathname is joined onto the
-// base path, so an input below the 2147483647 character string limit produces a
-// result above it. Both cases must throw a catchable error, not abort.
+// URLPattern builds a pattern string, a regular expression and a canonical URL
+// from input the caller sizes. Escaping adds a character per escaped character,
+// and the base path is joined onto a relative pathname, so an input below the
+// 2147483647 character string limit produces a result above it. Every one of
+// those must throw a catchable error, not abort.
+//
+// setSyntheticAllocationLimitForTesting lowers the limit the code checks, which
+// reaches each site with kilobytes instead of gigabytes.
+describe("string above the synthetic string length limit", () => {
+  const limit = 1024 * 1024;
+  const long = "x".repeat(limit);
+
+  function withLimit(fn: () => void) {
+    const previousLimit = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      expect(fn).toThrow(new RangeError("Out of memory"));
+    } finally {
+      setSyntheticAllocationLimitForTesting(previousLimit);
+    }
+  }
+
+  test("a base path that escapes past the limit", () => {
+    const escapes = "(".repeat(limit / 2 + 16);
+    withLimit(() => new URLPattern({ baseURL: "https://e.com/" + escapes }));
+  });
+
+  test("a base path joined with a relative pathname past the limit", () => {
+    withLimit(() => new URLPattern({ pathname: long, baseURL: "https://e.com/" + long + "/" }));
+  });
+
+  test("a generated regular expression past the limit", () => {
+    // The group's value is repeated in the regexp, so half the limit is enough.
+    withLimit(() => new URLPattern({ pathname: "{a(" + "x".repeat(limit / 2 + 16) + ")b}*" }));
+  });
+
+  // match() turns a URLPatternInit it cannot process into no match, per the
+  // spec, so these report the failure as false and null instead of throwing.
+  function noMatch(fn: () => unknown, expected: unknown) {
+    const previousLimit = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      expect(fn()).toEqual(expected);
+    } finally {
+      setSyntheticAllocationLimitForTesting(previousLimit);
+    }
+  }
+
+  test("a protocol that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ protocol: "*" });
+    noMatch(() => pattern.test({ protocol: long }), false);
+    noMatch(() => pattern.exec({ protocol: long }), null);
+  });
+
+  test("a pathname that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ pathname: "*" });
+    noMatch(() => pattern.test({ pathname: long }), false);
+  });
+
+  test("an opaque pathname that canonicalizes past the limit", () => {
+    const pattern = new URLPattern({ pathname: "*" });
+    noMatch(() => pattern.test({ protocol: "data", pathname: long }), false);
+  });
+});
+
+// The same two sites at the real limit, which no synthetic limit can stand in for.
 describe("pattern string above the string length limit", () => {
   async function run(script: string) {
     await using proc = Bun.spawn({

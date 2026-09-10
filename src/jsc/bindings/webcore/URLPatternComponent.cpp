@@ -53,7 +53,10 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
         return maybePartList.releaseException();
     Vector<Part> partList = maybePartList.releaseReturnValue();
 
-    auto [regularExpressionString, nameList] = generateRegexAndNameList(partList, options);
+    auto maybeRegexAndNameList = generateRegexAndNameList(partList, options);
+    if (maybeRegexAndNameList.hasException())
+        return maybeRegexAndNameList.releaseException();
+    auto [regularExpressionString, nameList] = maybeRegexAndNameList.releaseReturnValue();
 
     OptionSet<JSC::Yarr::Flags> flags = { JSC::Yarr::Flags::UnicodeSets };
     if (options.ignoreCase)

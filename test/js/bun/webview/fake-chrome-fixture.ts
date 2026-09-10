@@ -44,12 +44,12 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 //   click-huge-value       ... answers a position too large for a double (1e999)
 //   detach-no-session-id   Target.detachedFromTarget arrives with params {}
 //   event-bad-utf8         a page event arrives with an invalid UTF-8 sessionId
+//   navigate-bad-utf8      Page.navigate answers an errorText that is not valid UTF-8
 const malformed = process.argv.find(a => a.startsWith("--malformed="))?.slice("--malformed=".length);
 
-// Stands in for a session id until sendInvalidSessionId() overwrites its
-// first byte. JSON.stringify cannot emit invalid UTF-8, so the byte goes in
-// after the encode.
-const BAD_SESSION_ID = "not-utf8";
+// Placeholder that sendWithInvalidUtf8() corrupts after the encode, since
+// JSON.stringify cannot emit invalid UTF-8 itself.
+const BAD_UTF8 = "not-utf8";
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
@@ -90,11 +90,11 @@ function send(message: unknown) {
   sendBytes(Buffer.from(JSON.stringify(message) + "\0"));
 }
 
-// The message with BAD_SESSION_ID wherever it appears turned into bytes that
-// are not valid UTF-8: 0xff is never a legal UTF-8 byte.
-function sendInvalidSessionId(message: unknown) {
+// The message with the first byte of BAD_UTF8 overwritten by 0xff, which is
+// never a legal UTF-8 byte.
+function sendWithInvalidUtf8(message: unknown) {
   const bytes = Buffer.from(JSON.stringify(message) + "\0");
-  bytes[bytes.indexOf(BAD_SESSION_ID)] = 0xff;
+  bytes[bytes.indexOf(BAD_UTF8)] = 0xff;
   sendBytes(bytes);
 }
 
@@ -116,11 +116,14 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
       if (malformed === "attach-no-session-id") return reply({});
-      if (malformed === "attach-bad-utf8") return sendInvalidSessionId({ id, result: { sessionId: BAD_SESSION_ID } });
+      if (malformed === "attach-bad-utf8") return sendWithInvalidUtf8({ id, result: { sessionId: BAD_UTF8 } });
       if (malformed === "attach-non-ascii") return reply({ sessionId: "S\u0100" });
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
+      if (malformed === "navigate-bad-utf8") {
+        return sendWithInvalidUtf8({ id, result: { frameId: "F", errorText: BAD_UTF8 }, sessionId });
+      }
       const loaderId = "L" + ++loads;
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
@@ -128,7 +131,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       // One stray event per load, addressed to a session nothing can name.
       if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
       if (malformed === "event-bad-utf8") {
-        sendInvalidSessionId({ method: "Page.loadEventFired", params: {}, sessionId: BAD_SESSION_ID });
+        sendWithInvalidUtf8({ method: "Page.loadEventFired", params: {}, sessionId: BAD_UTF8 });
       }
       return;
     }

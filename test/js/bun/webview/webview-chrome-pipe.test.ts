@@ -255,6 +255,30 @@ test.concurrent("a navigation that Chrome fails with errorText rejects and fires
   });
 });
 
+// An errorText that does not decode still fails the navigation, with a
+// generic message in place of the text. It used to reach createError() as an
+// empty string, which debug builds assert against.
+test.concurrent("a navigation errorText that is not valid UTF-8 rejects with a generic message", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--malformed=navigate-bad-utf8"] },
+      width: 100,
+      height: 100,
+    });
+    let failedMessage;
+    view.onNavigationFailed = e => { failedMessage = e.message; };
+    const held = await outcome(view.navigate("http://fake/"));
+    const loadingAfterFail = view.loading;
+    view.close();
+    print({ held, failedMessage, loadingAfterFail });
+  `);
+  expect(result).toEqual({
+    held: { rejected: "navigation failed" },
+    failedMessage: "navigation failed",
+    loadingAfterFail: false,
+  });
+});
+
 // A CDP protocol error ({"error":{"code":-32000}}) can fail a navigation at
 // any stage: the attach chain, or Page.navigate itself (real Chrome answers
 // "Cannot navigate to invalid URL" this way). The constructor url has no

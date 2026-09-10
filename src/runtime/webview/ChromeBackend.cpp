@@ -857,8 +857,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // sessionId — actually the event handler uses m_sessions, not
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty())
-            settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
+        if (!err.empty()) {
+            auto errStr = WTF::String::fromUTF8(err); // null if not valid UTF-8
+            settleFailure(g, view, entry.slot, entry.method,
+                createError(g, errStr.isEmpty() ? "navigation failed"_s : errStr));
+        }
         // Else: don't settle — Page.loadEventFired does.
         return;
     }

@@ -67,6 +67,21 @@ pub(crate) struct UpgradedDuplex {
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
     pub transport_eof: Cell<bool>,
+    /// The handle-backed socket this engine runs over, when there is one: its
+    /// `NativeCallbacks::TlsTransport` delivers data/end/drain/close, ciphertext
+    /// goes straight into it, flow control reaches it, and teardown hands it
+    /// back. (`end()` still goes through the JS stream, which owns that state.)
+    pub transport: JsCell<Transport>,
+    /// `Some` while output is held behind the transport's queued plaintext
+    /// (node's `has_active_write_issued_by_prev_listener_`); see `release_output`.
+    pub held_output: JsCell<Option<Vec<u8>>>,
+}
+
+/// See [`UpgradedDuplex::transport`].
+pub enum Transport {
+    None,
+    Tcp(bun_ptr::RefPtr<super::TCPSocket>),
+    Tls(bun_ptr::RefPtr<super::TLSSocket>),
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -231,17 +246,8 @@ impl UpgradedDuplex {
         // duplex whose write side already ended (TLS-inception teardown) only
         // surface a spurious EPIPE - drop them. Ordinary data writes skip the
         // probe so write-after-end still errors like node.
-        let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
+        let teardown = data.is_none() || self.is_shutdown();
         if teardown {
-            // A teardown payload (close_notify) after the transport's readable
-            // side ended has no reader behind it: node writes nothing there,
-            // and a transport that forwards into an auto-ended net.Socket
-            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
-            // and still goes through the writableEnded probe below, so a
-            // half-open transport sees our FIN.
-            if data.is_some() && self.transport_eof.get() {
-                return;
-            }
             match duplex.get(&global, "writableEnded") {
                 Ok(Some(ended)) if ended.to_boolean() => return,
                 Ok(_) => {}
@@ -283,13 +289,16 @@ impl UpgradedDuplex {
 
     fn write_encrypted(&self, encoded_data: &[u8]) {
         self.reset_timeout();
-
-        // Possible scenarios:
-        // Scenario 1: will not write if vm is shutting down (we cannot do anything about it)
-        // Scenario 2: will not write if a exception is thrown (will be handled by onError)
-        // Scenario 3: will be queued in memory and will be flushed later
-        // Scenario 4: no write/end function exists (will be handled by onError)
-        self.call_write_or_end(Some(encoded_data), true);
+        let held = self.held_output.with_mut(|h| match h.as_mut() {
+            Some(h) => {
+                h.extend_from_slice(encoded_data);
+                true
+            }
+            None => false,
+        });
+        if !held {
+            self.write_to_transport(encoded_data);
+        }
     }
 
     #[uws_callback(export = "UpgradedDuplex__flush")]
@@ -299,7 +308,9 @@ impl UpgradedDuplex {
         }
     }
 
-    fn on_internal_receive_data(&self, data: &[u8]) {
+    /// Ciphertext from the transport (a JS `data` chunk, or a handle-backed
+    /// socket's native read via `NativeCallbacks::TlsTransport`).
+    pub(crate) fn on_transport_data(&self, data: &[u8]) {
         if let Some(w) = self.wrapper_ref() {
             self.reset_timeout();
             w.receive_data(data);
@@ -409,7 +420,80 @@ impl UpgradedDuplex {
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
             transport_eof: Cell::new(false),
+            transport: JsCell::new(Transport::None),
+            held_output: JsCell::new(None),
         }
+    }
+
+    /// The transport's queued plaintext is out: send what was held, stop holding.
+    #[uws_callback(export = "UpgradedDuplex__release_output")]
+    pub(crate) fn release_output(&self) {
+        if let Some(held) = self.held_output.replace(None) {
+            if !held.is_empty() {
+                self.write_to_transport(&held);
+            }
+        }
+    }
+
+    fn write_to_transport(&self, data: &[u8]) {
+        // A close_notify after the transport's readable side ended has no
+        // reader: node writes nothing there, and a transport forwarding into an
+        // auto-ended net.Socket would throw writeAfterFIN. The trailing end()
+        // still goes out, so a half-open transport sees our FIN.
+        if self.transport_eof.get() && self.is_shutdown() {
+            return;
+        }
+        match self.transport.get() {
+            Transport::Tcp(t) => t.write_from_engine(data),
+            Transport::Tls(t) => t.write_from_engine(data),
+            Transport::None => self.call_write_or_end(Some(data), true),
+        }
+    }
+
+    #[uws_callback(export = "UpgradedDuplex__pause")]
+    pub(crate) fn pause(&self) -> bool {
+        match self.transport.get() {
+            Transport::Tcp(t) => t.pause_reads(),
+            Transport::Tls(t) => t.pause_reads(),
+            Transport::None => return false,
+        }
+        true
+    }
+
+    #[uws_callback(export = "UpgradedDuplex__resume")]
+    pub(crate) fn resume(&self) -> bool {
+        match self.transport.get() {
+            Transport::Tcp(t) => t.resume_reads(),
+            Transport::Tls(t) => t.resume_reads(),
+            Transport::None => return false,
+        }
+        true
+    }
+
+    fn release_transport(&self) {
+        match self.transport.replace(Transport::None) {
+            Transport::Tcp(t) => t.clear_native_callback(),
+            Transport::Tls(t) => t.clear_native_callback(),
+            Transport::None => {}
+        }
+    }
+
+    /// The transport's EOF (its JS `end` event, or natively).
+    pub(crate) fn on_transport_end(&self) {
+        self.transport_eof.set(true);
+        if self.wrapper_ref().is_some() {
+            (self.handlers.on_end)(self.handlers.ctx);
+        } else {
+            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
+            // in order, after any bytes staged in the same window.
+            self.pending_end.set(true);
+        }
+    }
+
+    /// The transport can take more (natively, or a Duplex's `drain`).
+    pub(crate) fn on_transport_writable(&self) {
+        self.flush();
+        (self.handlers.on_writable)(self.handlers.ctx);
     }
 
     pub(crate) fn get_js_handlers(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -680,6 +764,7 @@ impl UpgradedDuplex {
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
         self.transport_eof.set(false);
+        self.release_transport();
     }
 }
 
@@ -711,7 +796,7 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 if let Some(array_buffer) = data_arg.as_array_buffer(global) {
                     // yay we can read the data
                     let payload = array_buffer.slice();
-                    this.on_internal_receive_data(payload);
+                    this.on_transport_data(payload);
                 } else {
                     // node.js errors in this case with the same error, lets keep it consistent
                     let error_value = global
@@ -736,16 +821,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
-        let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
-
-        this.transport_eof.set(true);
-        if this.wrapper_ref().is_some() {
-            (this.handlers.on_end)(this.handlers.ctx);
-        } else {
-            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
-            // in order, after any bytes staged in the same window.
-            this.pending_end.set(true);
-        }
+        unsafe { &*self_ptr.cast::<UpgradedDuplex>() }.on_transport_end();
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -758,11 +834,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
-        let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
-        // flush pending data
-        this.flush();
-        // call onWritable (will flush on demand)
-        (this.handlers.on_writable)(this.handlers.ctx);
+        unsafe { &*self_ptr.cast::<UpgradedDuplex>() }.on_transport_writable();
     }
 
     Ok(JSValue::UNDEFINED)

@@ -195,8 +195,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     // at construction.
     let tls: bun_ptr::ThisPtr<TLSSocket> =
         s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
-    if let Some(raw) = tls.twin.get().as_ref() {
-        let raw: *mut TLSSocket = raw.as_ptr();
+    if let Some(raw) = tls
+        .twin
+        .get()
+        .as_ref()
+        .filter(|r| r.flags.get().contains(super::SocketFlags::BYPASS_TLS))
+    {
+        let raw: *mut super::TCPSocket = raw.as_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -209,9 +214,9 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // is live for `ThisPtr::new`; dispatch is single-threaded so no
         // aliasing `&mut` exists.
         crate::dispatch::fold(unsafe {
-            TLSSocket::on_data(
+            super::TCPSocket::on_data(
                 bun_ptr::ThisPtr::new(raw),
-                NewSocketHandler::<true>::from(s),
+                NewSocketHandler::<false>::from(s),
                 slice,
             )
         });

@@ -380,6 +380,11 @@ struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int leng
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
+/* node's has_active_write_issued_by_prev_listener_: from hold until release,
+ * whatever SSL emits (the handshake flight) is kept back so the previous
+ * owner's queued plaintext reaches the wire first; input is processed. */
+void us_socket_hold_tls_output(us_socket_r s) nonnull_fn_decl;
+void us_socket_release_tls_output(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX

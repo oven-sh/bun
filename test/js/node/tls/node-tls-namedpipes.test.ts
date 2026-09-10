@@ -176,3 +176,91 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+// A named-pipe net.Socket is upgraded by running the TLS engine over the
+// stream; its pipe handle stays in place and keeps delivering bytes. Those
+// bytes belong to the TLS layer from then on and must not reach the pipe
+// socket's own `data` listeners (the TCP counterparts of these tests live in
+// node-tls-upgrade.test.ts).
+// https://github.com/oven-sh/bun/issues/32242
+it.if(isWindows)("tls.connect({ socket }) takes a named-pipe client socket over", async () => {
+  const { promise: failure, reject } = Promise.withResolvers<never>();
+  const { promise: echoed, resolve: gotEcho } = Promise.withResolvers<string>();
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  const server = createServer(tls, socket => {
+    socket.on("error", reject);
+    socket.on("data", data => socket.write(data));
+  });
+  server.on("error", reject);
+  server.listen(pipeName);
+  await once(server, "listening");
+
+  const pipeSocket = net.connect(pipeName);
+  try {
+    pipeSocket.on("error", reject);
+    // Plaintext-phase listener that stays attached across the upgrade.
+    let surfaced = 0;
+    pipeSocket.on("data", chunk => (surfaced += chunk.length));
+
+    const client = connect({ socket: pipeSocket, ca: tls.cert, servername: "localhost" });
+    client.on("error", reject);
+    client.on("data", data => gotEcho(data.toString()));
+    await Promise.race([once(client, "secureConnect"), failure]);
+    client.write("Hello World!");
+    const reply = await Promise.race([echoed, failure]);
+    expect({ reply, surfaced, buffered: pipeSocket.readableLength }).toEqual({
+      reply: "Hello World!",
+      surfaced: 0,
+      buffered: 0,
+    });
+  } finally {
+    pipeSocket.destroy();
+    server.close();
+  }
+});
+
+it.if(isWindows)("tls.connect({ socket }) takes an accepted named-pipe socket over", async () => {
+  // Same as above for the socket a named-pipe server accepted, driven the way
+  // the issue drives it: the plaintext handler upgrades on the first chunk
+  // after the greeting. The mock peer answers everything with TLS-looking
+  // bytes, so some of them arrive after the upgrade: they must reach the TLS
+  // layer (which reacts to them) and must not re-enter the handler, which
+  // pre-fix made it upgrade a second time.
+  const { promise: failure, reject } = Promise.withResolvers<never>();
+  const { promise: outcome, resolve } = Promise.withResolvers<{ upgrades: number; tlsReacted: boolean }>();
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  let accepted: net.Socket | undefined;
+  const server = net.createServer(socket => {
+    accepted = socket;
+    let upgrades = 0;
+    socket.on("error", reject);
+    socket.on("close", () => resolve({ upgrades, tlsReacted: false }));
+    socket.on("data", chunk => {
+      if (upgrades === 0 && chunk.toString("latin1") === "PEER_GREETING") {
+        socket.write("STARTTLS");
+        return;
+      }
+      upgrades++;
+      const secure = connect({ socket, rejectUnauthorized: false });
+      secure.on("error", () => resolve({ upgrades, tlsReacted: true }));
+      secure.on("secureConnect", () => resolve({ upgrades, tlsReacted: true }));
+    });
+  });
+  server.on("error", reject);
+  server.listen(pipeName);
+  await once(server, "listening");
+
+  const peer = net.connect(pipeName);
+  try {
+    peer.on("error", reject);
+    peer.on("connect", () => peer.write("PEER_GREETING"));
+    // First in reply to STARTTLS (this is what the handler upgrades on), then
+    // in reply to the ClientHello the upgrade sends.
+    peer.on("data", () => peer.write(Buffer.alloc(50, 0x16)));
+    expect(await Promise.race([outcome, failure])).toEqual({ upgrades: 1, tlsReacted: true });
+  } finally {
+    peer.destroy();
+    accepted?.destroy();
+    server.close();
+  }
+});

@@ -85,10 +85,8 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tl
 pub use handlers::{Handlers, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
-pub(crate) use socket_body::DuplexUpgradeContext;
-pub use socket_body::{
-    Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
-};
+pub(crate) use socket_body::{DuplexUpgradeContext, NativeCallbacks};
+pub use socket_body::{Flags as SocketFlags, NewSocket, SocketMode, TCPSocket, TLSSocket};
 
 #[cfg(windows)]
 pub use windows_named_pipe_context::WindowsNamedPipeContext;
@@ -119,7 +117,7 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
+        js_node_net_upgrade_tls, js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
     };
 }
 

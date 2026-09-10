@@ -1,5 +1,6 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import def, * as ns from "util/types";
 const req = require("util/types");
 const types = def;
@@ -364,6 +365,53 @@ export default /BADD~!!!!;
   expect(buildError.constructor.name).toBe("BuildMessage");
 });
 
+// Reflect.construct is not the only door into JSC::construct(). Array.of, Array.from
+// and every Symbol.species path construct the callee too, so one of these predicates
+// used as a species constructor reached asObject() with a boolean: a release build
+// segfaults at a small address, an asserts build reports ASSERTION FAILED: isCell().
+// Spawned because the failure takes the whole process down.
+test("util/types functions are rejected as a species constructor", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const f = require("util").types.isDate;
+        const lines = [];
+        const run = (label, fn) => {
+          try {
+            lines.push(label + " => " + JSON.stringify(fn()));
+          } catch (e) {
+            lines.push(label + " => " + e.constructor.name);
+          }
+        };
+        // Array.of and Array.from construct |this| only when it is a constructor,
+        // so with the fix they fall back to a plain array, like Node does.
+        run("of", () => Array.of.call(f, 1, 2, 3));
+        run("from", () => Array.from.call(f, [1]));
+        class A extends Array { static get [Symbol.species]() { return f } }
+        const a = new A(1, 2, 3);
+        // ArraySpeciesCreate requires a constructor, so these throw instead.
+        run("slice", () => a.slice(0));
+        run("map", () => a.map(x => x));
+        run("concat", () => a.concat([4]));
+        console.log(lines.join("\\n"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "of => [1,2,3]\nfrom => [1]\nslice => TypeError\nmap => TypeError\nconcat => TypeError\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// This one runs in process, so it must come after the spawned test above: on an
+// unfixed build it aborts the whole test runner instead of failing.
 test("util/types functions are not constructors", () => {
   for (const name of Object.keys(types)) {
     const fn = types[name];

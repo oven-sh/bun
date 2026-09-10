@@ -280,8 +280,11 @@ String HTTPHeaderMap::getIndex(HTTPHeaderMap::HeaderIndex index) const
 bool HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
-        m_setCookieHeaders.clear();
-        return tryAppendHeader(m_setCookieHeaders, value);
+        Vector<String, 0> replacement;
+        if (!tryAppendHeader(replacement, value)) [[unlikely]]
+            return false;
+        m_setCookieHeaders = WTF::move(replacement);
+        return true;
     }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {

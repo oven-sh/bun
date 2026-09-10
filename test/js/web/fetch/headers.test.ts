@@ -759,6 +759,14 @@ describe("Headers", () => {
         expect(headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
         headers.set("content-type", "text/plain");
         expect(headers.get("content-type")).toBe("text/plain");
+
+        // A Headers at the bound can still be copied: the copy holds exactly the bound.
+        const response = new Response(null, { headers });
+        expect(response.clone().headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
+
+        // set() replaces every set-cookie value with one, so it succeeds at the bound.
+        headers.set("set-cookie", "b=2");
+        expect(headers.getSetCookie()).toEqual(["b=2"]);
       } finally {
         setLimit(previousLimit);
       }

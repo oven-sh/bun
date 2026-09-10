@@ -220,9 +220,11 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
         HTTPHeaderMap headers;
-        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
-        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
-        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        auto& other = otherHeaders.m_headers;
+        if (!headers.commonHeaders().tryAppend(other.commonHeaders().span())
+            || !headers.uncommonHeaders().tryAppend(other.uncommonHeaders().span())
+            || !headers.getSetCookieHeaders().tryAppend(other.getSetCookieHeaders().span()))
+            return headersTooLargeException();
         setInternalHeaders(WTF::move(headers));
         m_updateCounter++;
         return {};

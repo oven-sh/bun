@@ -729,10 +729,18 @@ fn spawn(
         endpoints.close_child_ends();
 
         let process = spawned.to_process_handle(event_loop);
+        let pid = process.process_mut().pid;
         if let Some(dir) = scopeguard::ScopeGuard::into_inner(temp_dir) {
-            register_temp_profile(process.process_mut().pid, dir);
+            register_temp_profile(pid, dir);
         }
-        endpoints.attach(process)
+        let attached = endpoints.attach(process);
+        if attached.is_err() {
+            // No exit handler will report this browser, and once its handle is
+            // dropped the pid may be reused: forget it now instead of killing
+            // whatever owns the pid at exit.
+            delete_temp_profile_of(pid);
+        }
+        attached
     }
 }
 

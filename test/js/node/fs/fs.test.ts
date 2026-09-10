@@ -6826,6 +6826,48 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
   expect(exitCode).toBe(0);
 });
 
+// `Bun.file(view)` keeps the path bytes and re-reads them on every later call. A pin does not keep a
+// bounds-checked `WebAssembly.Memory`'s block mapped: `grow()` allocates a new block, copies into it
+// and frees the old one, and JSC detaches the old buffer whatever its pin count.
+it("Bun.file keeps a path over a WebAssembly.Memory that grows after the call", async () => {
+  using dir = tempDir("bun-file-wasm-path", { "hello.txt": "hello" });
+  // The unfixed build segfaults on the main thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
+        const fast = Array.from({ length: 12 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
+        const mem = new WebAssembly.Memory({ initial: 1, maximum: 16 });
+        const encoded = new TextEncoder().encode(process.cwd() + "/hello.txt");
+        new Uint8Array(mem.buffer).set(encoded);
+
+        const file = Bun.file(new Uint8Array(mem.buffer, 0, encoded.length));
+        mem.grow(1);
+        // Claim the freed block, so that reading it cannot see the path bytes.
+        const claim = Array.from({ length: 2 }, () => {
+          const memory = new WebAssembly.Memory({ initial: 1, maximum: 16 });
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        });
+
+        console.log(JSON.stringify({ text: await file.text(), exists: await file.exists() }));
+      `,
+    ],
+    // `Malloc=1` makes WebKit use system malloc, so the freed block is unmapped instead of kept in
+    // bmalloc's cache: the unfixed build faults instead of reading stale bytes.
+    env: { ...bunEnv, Malloc: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ text: "hello", exists: true }));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time
 // when a getter shrinks the buffer.
 it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {

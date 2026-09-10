@@ -396,6 +396,98 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `WebAssembly.Memory` hands out an ArrayBuffer over its own block. Once the
+  // process holds more fast memories than the platform reserves slots for, the
+  // next one is bounds-checked, and `grow()` on a bounds-checked memory
+  // allocates a new block, copies into it, and frees the old one. JSC detaches
+  // the old buffer whatever its pin count, so a pinned tail over one of those
+  // points at freed pages.
+  //
+  // 32 MB: the loopback send + receive buffers absorb several MB, so a smaller
+  // body can leave no tail to spill.
+  const WASM_PAGES = 512;
+  const wasmMemoryChild = /* js */ `
+    const http = require("node:http");
+    const net = require("node:net");
+    const { once } = require("node:events");
+    const PAGES = ${WASM_PAGES}; // 32 MB
+    const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+    // Use up the fast-memory slots so that \`mem\` is bounds-checked.
+    const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
+    const mem = newMemory();
+    const payload = new Uint8Array(mem.buffer).fill(7);
+    const CHUNK_SIZE = payload.byteLength;
+
+    let detachedAfterGrow;
+    const wrote = Promise.withResolvers();
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": String(CHUNK_SIZE),
+      });
+      res.write(payload);
+      mem.grow(2);
+      detachedAfterGrow = payload.byteLength === 0;
+      // Claim the freed block, so that reading it cannot see the caller's bytes.
+      globalThis.claim = Array.from({ length: 2 }, () => {
+        const memory = newMemory();
+        new Uint8Array(memory.buffer).fill(0xee);
+        return memory;
+      });
+      wrote.resolve();
+      res.end(); // spills the pending tail
+    });
+    await once(server.listen(0), "listening");
+
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    await wrote.promise;
+
+    const chunks = [];
+    socket.on("data", c => chunks.push(c));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+
+    const received = Buffer.concat(chunks);
+    const body = received.subarray(received.indexOf("\\r\\n\\r\\n") + 4);
+    const expected = Buffer.alloc(CHUNK_SIZE, 7);
+    console.log(JSON.stringify({
+      detachedAfterGrow,
+      bodyLength: body.length,
+      bodyMatches: Buffer.compare(body, expected) === 0,
+    }));
+    server.close();
+  `;
+
+  test.skipIf(isWindows)(
+    "a WebAssembly.Memory that grows after write() is copied, not held by reference",
+    async () => {
+      // Run in a child so a fault on the spill is observed as exit != 0.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", wasmMemoryChild],
+        // `Malloc=1` makes WebKit use system malloc, so the freed block is
+        // unmapped instead of kept in bmalloc's cache: the unfixed build
+        // faults instead of reading stale bytes.
+        env: { ...bunEnv, Malloc: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+    // A 32 MB body through a debug build: the default 5 s is not enough.
+    30_000,
+  );
+
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;
     const total = CHUNK_SIZE + 1024;

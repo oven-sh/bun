@@ -27,8 +27,7 @@ fn estring_to_store_str(s: &E::EString) -> StoreStr {
 fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag, CompilerError> {
     let loc = convert_loc(tag.loc);
     match tag.data {
-        // Bun's parser already lowers host tags (`a..=z` first byte) to `EString`, so any
-        // identifier that reaches here is a component reference (`<Foo />`, `<_Foo />`, `<$Foo />`).
+        // The parser already lowered host tags (`a..=z` first byte) to `EString`.
         ExprData::EIdentifier(id) => {
             let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
             Ok(JsxTag::Place(temp))

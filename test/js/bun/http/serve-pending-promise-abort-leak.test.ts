@@ -495,10 +495,10 @@ test.each(["sync", "async"])(
       await Bun.sleep(1);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
-    // Unfixed, every stream survives. One survivor is tolerated: the newest
-    // stream's address can linger in a native frame that is still live under
-    // this continuation (JSC::runInternalMicrotask, seen on x64 ASAN builds),
-    // where the conservative stack scan finds it.
+    // Unfixed, every stream survives. One survivor is tolerated on every build:
+    // the newest stream's address can linger in a native frame still live under
+    // this continuation (JSC::runInternalMicrotask), where the conservative
+    // stack scan finds it. Every run on x64 ASAN, rarely on release builds.
     expect(alive).toBeLessThanOrEqual(1);
   },
 );

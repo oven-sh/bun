@@ -1942,3 +1942,109 @@ it.skipIf(!nodeExe())(
     }
   },
 );
+
+describe("end() and destroySoon() before the handshake completes", () => {
+  // The peer accepts the TCP connection and then never answers the ClientHello:
+  // a dead TLS backend, a plaintext service on a TLS port, a middlebox. A
+  // caller that gives up politely must still finish its writable side and send
+  // the FIN. Node's TLSWrap.DoShutdown shuts the transport down whether or not
+  // SSL is still in init, so the connection winds down instead of leaking.
+  async function stalledPeer() {
+    const sawFin = Promise.withResolvers<void>();
+    let accepted: net.Socket | undefined;
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted = socket;
+      socket.on("data", () => {});
+      socket.on("error", () => {});
+      socket.on("end", () => sawFin.resolve());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return {
+      port: (server.address() as AddressInfo).port,
+      sawFin: sawFin.promise,
+      async [Symbol.asyncDispose]() {
+        accepted?.destroy();
+        server.close();
+        await once(server, "close");
+      },
+    };
+  }
+
+  // 'connect' is the TCP connection, so the handshake has not completed yet -
+  // and with this peer it never will.
+  function connectAndLog(port: number, log: string[]) {
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    for (const event of ["secureConnect", "finish", "end", "error", "close"]) {
+      client.on(event, (arg?: any) => log.push(arg?.code ? `${event}:${arg.code}` : event));
+    }
+    return client;
+  }
+
+  it("end() finishes the writable side and sends the FIN", async () => {
+    await using peer = await stalledPeer();
+    const log: string[] = [];
+    const client = connectAndLog(peer.port, log);
+    client.on("connect", () => {
+      log.push(`connect secureConnecting=${client.secureConnecting}`);
+      client.end();
+    });
+
+    await Promise.all([once(client, "finish"), peer.sawFin]);
+
+    expect(log).toEqual(["connect secureConnecting=true", "finish"]);
+    expect(client.writableFinished).toBe(true);
+    expect(client.readyState).toBe("readOnly");
+    client.destroy();
+  });
+
+  it("destroySoon() closes the socket", async () => {
+    await using peer = await stalledPeer();
+    const log: string[] = [];
+    const client = connectAndLog(peer.port, log);
+    client.on("connect", () => client.destroySoon());
+
+    await Promise.all([once(client, "close"), peer.sawFin]);
+
+    expect(log.filter(event => event === "finish" || event === "close")).toEqual(["finish", "close"]);
+    expect(log).not.toContain("secureConnect");
+    expect(client.destroyed).toBe(true);
+  });
+
+  it("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
+    const clientSawFin = Promise.withResolvers<void>();
+    const log: string[] = [];
+    let serverTlsSocket: TLSSocket | undefined;
+    await using server = net.createServer(raw => {
+      const socket = (serverTlsSocket = new TLSSocket(raw, {
+        isServer: true,
+        key: COMMON_CERT_.key,
+        cert: COMMON_CERT_.cert,
+      }));
+      socket.on("error", () => {});
+      socket.on("finish", () => log.push("finish"));
+      // The wrap adopts the connection's handle on the next tick, so end() from
+      // a later turn is the reported shape: the TLS engine runs and waits for a
+      // peer flight that never arrives.
+      setImmediate(() => {
+        log.push(`end secureConnecting=${socket.secureConnecting}`);
+        socket.end();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const client = net.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      allowHalfOpen: true,
+    });
+    client.on("data", () => {});
+    client.on("error", () => {});
+    client.on("end", () => clientSawFin.resolve());
+
+    await clientSawFin.promise;
+
+    expect(log).toEqual(["end secureConnecting=true", "finish"]);
+    client.destroy();
+    serverTlsSocket?.destroy();
+  });
+});

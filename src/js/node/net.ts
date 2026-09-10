@@ -42,7 +42,7 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -300,6 +300,12 @@ function writeAfterFIN(chunk, encoding, cb) {
 // Shared client handshake tail (_finishInit + onConnectSecure) for the two
 // client handler tables. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1711
 function onClientHandshakeComplete(self, socket, verifyError) {
+  // A socket that is already destroyed has no handshake to report. Tearing a
+  // TLS socket down while SSL is still in init drives the engine one last
+  // time, and that drive reports the unfinished handshake as a failed one.
+  // Node closes the TLSWrap in destroy(), so no verdict arrives after it and
+  // 'secureConnect' never fires for a connection that was never secured.
+  if (self.destroyed) return;
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
@@ -533,6 +539,15 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
     if (!success && verifyError?.code === "ECONNRESET") {
       // will be handled in onConnectEnd
+      return;
+    }
+    if (!success && verifyError == null && self.writableFinished) {
+      // The abandoned handshake of a socket whose write side we already shut
+      // down (end() before 'secureConnect'): the engine reports it as failed
+      // with no verdict. Node reports neither 'secureConnect' nor an error for
+      // this, so only record that the socket is no longer connecting -
+      // onConnectEnd reads that to decide whether a later EOF failed a connect.
+      self.secureConnecting = false;
       return;
     }
     // The second argument is "authorized" (handshake + verification +
@@ -1371,6 +1386,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     if (!success && verifyError?.code === "ECONNRESET") {
       // will be handled in onConnectEnd
+      return;
+    }
+    if (!success && verifyError == null && self.writableFinished) {
+      // The abandoned handshake of a socket whose write side we already shut
+      // down (end() before 'secureConnect'): the engine reports it as failed
+      // with no verdict. Node reports neither 'secureConnect' nor an error for
+      // this, so only record that the socket is no longer connecting -
+      // onConnectEnd reads that to decide whether a later EOF failed a connect.
+      self.secureConnecting = false;
       return;
     }
     // The second argument is "authorized" (handshake + verification +
@@ -2786,6 +2810,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  // TLSSocket._final reads this: bytes handed to the engine before the
+  // handshake completed go out with the handshake flight, so the FIN waits.
+  if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was
     // called directly): fail the write the way a write(2) on a closed fd does

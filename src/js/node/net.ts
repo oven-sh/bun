@@ -1565,17 +1565,13 @@ function Socket(options?) {
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
   }
 
-  // Like node's `options = { ...options }`: `fd`, `readable` and `writable` are
-  // read from own properties only, the same view the Duplex gets below.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
+  // Own properties only, as after node's `options = { ...options }`: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
   const fd = opts.fd;
   if (fd !== undefined) {
     validateInt32(fd, "options.fd", 0);
   }
 
-  // `readable` / `writable` pass through to the Duplex like node's do: a
-  // `readable: false` socket starts with its readable side finished (no 'end',
-  // so no allowHalfOpen teardown of the writable side).
+  // `opts` carries the caller's readable / writable like node: a `readable: false` side starts ended and never emits 'end'.
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
@@ -1657,9 +1653,7 @@ function Socket(options?) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
-        // `readable: false` finished the readable side in the Duplex already.
-        // Reads on this path need a native pipe handle, so an unspecified
-        // `readable` still ends it here.
+        // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
         if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
           this.read(0);
@@ -2343,8 +2337,7 @@ Socket.prototype.resume = function resume() {
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
-  // Nothing restarts the handle once the readable side has ended (EOF emitted,
-  // or built with `readable: false`): node only reaches readStart from _read.
+  // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
   if (this.readableEnded) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();

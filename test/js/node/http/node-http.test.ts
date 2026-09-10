@@ -28,7 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
-import { connect as tlsConnect } from "node:tls";
+import { createServer as createTlsServer, connect as tlsConnect, TLSSocket } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -4240,6 +4240,104 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
   }
+});
+
+// One front port hands its accepted sockets to an https.Server that never listens itself (the
+// httpolyglot / SNI-router shape). Node's https.Server is a tls.Server: 'connection' runs the
+// server-side TLS handshake over the fed duplex and 'secureConnection' attaches the HTTP parser.
+describe("https.Server adopts connections fed through emit()", () => {
+  async function serveThroughFront(feed: "connection" | "secureConnection") {
+    const events = { connection: 0, secureConnection: 0, request: 0 };
+    const sockets: any[] = [];
+    const server = createHttpsServer(tlsCert, (req, res) => {
+      events.request++;
+      sockets.push(req.socket);
+      let body = 0;
+      req.on("data", d => (body += d.length));
+      req.on("end", () => res.end(`${req.method} ${req.url} ${body}`));
+    });
+    server.on("connection", () => events.connection++);
+    server.on("secureConnection", () => events.secureConnection++);
+    const front =
+      feed === "connection"
+        ? createNetServer(socket => server.emit("connection", socket))
+        : createTlsServer(tlsCert, socket => server.emit("secureConnection", socket));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const agent = new https.Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const send = (method: string, path: string, body?: Buffer) =>
+        new Promise<string>((resolve, reject) => {
+          const req = https.request(
+            {
+              host: "127.0.0.1",
+              port: (front.address() as AddressInfo).port,
+              method,
+              path,
+              agent,
+              rejectUnauthorized: false,
+            },
+            res => {
+              let text = "";
+              res.setEncoding("utf8");
+              res.on("data", d => (text += d));
+              res.on("end", () => resolve(`${res.statusCode} ${text}`));
+            },
+          );
+          req.on("error", reject);
+          req.end(body);
+        });
+      expect(await send("GET", "/a")).toBe("200 GET /a 0");
+      expect(await send("POST", "/b", Buffer.alloc(70_000, "x"))).toBe("200 POST /b 70000");
+    } finally {
+      agent.destroy();
+      front.close();
+    }
+    return { server, events, sockets };
+  }
+
+  it("emit('connection', socket) runs the TLS handshake, then parses HTTP", async () => {
+    const { server, events, sockets } = await serveThroughFront("connection");
+    expect(events).toEqual({ connection: 1, secureConnection: 1, request: 2 });
+    expect(sockets[1]).toBe(sockets[0]);
+    expect(sockets[0]).toBeInstanceOf(TLSSocket);
+    expect(sockets[0].encrypted).toBe(true);
+    expect(sockets[0].server).toBe(server);
+  });
+
+  it("emit('secureConnection', tlsSocket) parses HTTP over that socket", async () => {
+    const { events } = await serveThroughFront("secureConnection");
+    expect(events).toEqual({ connection: 0, secureConnection: 1, request: 2 });
+  });
+
+  it("a fed socket that does not speak TLS reaches 'clientError' and gets no plaintext reply", async () => {
+    const events: string[] = [];
+    const server = createHttpsServer(tlsCert, (req, res) => {
+      events.push("request");
+      res.end();
+    });
+    server.on("tlsClientError", (err: any) => events.push("tlsClientError " + err.code));
+    server.on("clientError", (err: any, socket) => {
+      events.push("clientError " + err.code);
+      socket.destroy();
+    });
+    const front = createNetServer(socket => server.emit("connection", socket));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = connect((front.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      let received = "";
+      client.on("data", d => (received += d.toString("latin1")));
+      client.on("error", () => {});
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+      await once(client, "close");
+      expect(received).toBe("");
+      // https.Server turns 'tlsClientError' into 'clientError' from a listener it registers first.
+      expect(events).toEqual(["clientError ERR_SSL_HTTP_REQUEST", "tlsClientError ERR_SSL_HTTP_REQUEST"]);
+    } finally {
+      client.destroy();
+      front.close();
+    }
+  });
 });
 
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still

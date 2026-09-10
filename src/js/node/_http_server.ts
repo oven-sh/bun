@@ -15,6 +15,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateNumber,
   validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
@@ -67,7 +68,10 @@ const {
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
+const { kArmHandshakeTimeout } = require("internal/net/symbols");
 let http1Fallback;
+let nodeTls;
+let armHandshakeTimeout;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
@@ -250,14 +254,62 @@ function normalizeServerTls(tls) {
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
+// An https.Server is a tls.Server there: 'connection' puts the server-side TLS layer over the
+// fed duplex (tlsConnectionListener) and the parser attaches on the 'secureConnection' that
+// its handshake emits. https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L93-L99
 function connectionListener(this: Server, socket) {
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
-  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
+  if (this[tlsSymbol]) {
+    tlsConnectionListener(this, socket);
+    return;
+  }
+  httpConnectionListener(this, socket);
+}
+
+function secureConnectionListener(this: Server, socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
+  httpConnectionListener(this, socket);
+}
+
+function httpConnectionListener(server: Server, socket) {
+  (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(server, socket, {
     http1Options: {
-      IncomingMessage: this[kIncomingMessage],
-      ServerResponse: this[kServerResponse],
+      IncomingMessage: server[kIncomingMessage],
+      ServerResponse: server[kServerResponse],
     },
   });
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1259-L1286, over the same
+// server-side TLSSocket wrap that tls.Server's 'connection' listener uses (tls.ts).
+function tlsConnectionListener(server: Server, socket) {
+  if (!socket) return;
+  const { TLSSocket, createSecureContext } = (nodeTls ??= require("node:tls"));
+  let secureContext = server._sharedCreds;
+  if (!secureContext) {
+    try {
+      secureContext = server._sharedCreds = createSecureContext(server[optionsSymbol]);
+    } catch (err) {
+      socket.destroy();
+      server.emit("error", err);
+      return;
+    }
+  }
+  const { requestCert, rejectUnauthorized } = server[tlsSymbol];
+  const wrapped = new TLSSocket(socket, {
+    secureContext,
+    isServer: true,
+    requestCert,
+    rejectUnauthorized,
+    ALPNProtocols: server.ALPNProtocols,
+  });
+  wrapped.server = server;
+  (armHandshakeTimeout ??= require("node:net").Server.prototype[kArmHandshakeTimeout]).$call(server, wrapped);
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L107-L110
+function onTlsClientError(this: Server, err, conn) {
+  if (!this.emit("clientError", err, conn)) conn.destroy(err);
 }
 
 function Server(options, callback): void {
@@ -366,6 +418,12 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1386-L1391
+      const handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(handshakeTimeout, "options.handshakeTimeout");
+      this._handshakeTimeout = handshakeTimeout;
+      this.on("secureConnection", secureConnectionListener);
+      this.on("tlsClientError", onTlsClientError);
     } else {
       this[tlsSymbol] = null;
     }

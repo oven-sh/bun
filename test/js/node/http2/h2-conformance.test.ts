@@ -850,11 +850,19 @@ describe.concurrent("promised stream ids (RFC 9113 §5.1.1)", () => {
       raw.sendFrame(FrameType.RST_STREAM, 0, pushed.id!, cancel);
       await closed;
     }
+    /** The client failed the session: a GOAWAY went out and the session was destroyed with
+     *  nghttp2's NGHTTP2_ERR_PROTO. The GOAWAY's error code is not pinned: bun writes
+     *  PROTOCOL_ERROR, node writes INTERNAL_ERROR because its `session.destroy(err)` runs first. */
     async function expectSessionProtocolError() {
-      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
-      expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+      await raw.waitFor(f => f.type === FrameType.GOAWAY);
       await sessionClosed;
-      expect(errors.map(err => (err as NodeJS.ErrnoException).code)).toEqual(["ERR_HTTP2_ERROR"]);
+      expect(
+        errors.map(err => ({
+          code: (err as NodeJS.ErrnoException).code,
+          errno: (err as NodeJS.ErrnoException).errno,
+          message: err.message,
+        })),
+      ).toEqual([{ code: "ERR_HTTP2_ERROR", errno: -505, message: "Protocol error" }]);
       expect(client.destroyed).toBe(true);
     }
     let pings = 0;
@@ -885,7 +893,7 @@ describe.concurrent("promised stream ids (RFC 9113 §5.1.1)", () => {
     };
   }
 
-  test("a PUSH_PROMISE whose promised id does not exceed the previous one is a connection PROTOCOL_ERROR", async () => {
+  test("a PUSH_PROMISE whose promised id does not exceed the previous one fails the session", async () => {
     const peer = await clientWithRawServer();
     try {
       await peer.pushPromise(4);
@@ -897,7 +905,7 @@ describe.concurrent("promised stream ids (RFC 9113 §5.1.1)", () => {
     }
   });
 
-  test("a PUSH_PROMISE reusing the id of a pushed stream the server already reset is a connection PROTOCOL_ERROR", async () => {
+  test("a PUSH_PROMISE reusing the id of a pushed stream the server already reset fails the session", async () => {
     const peer = await clientWithRawServer();
     try {
       await peer.resetPushed(await peer.pushPromise(2));

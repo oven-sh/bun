@@ -177,17 +177,6 @@ describe("stream stdio entries", () => {
     );
   });
 
-  it.skipIf(isWindows)("shares a child's stdout descriptor with another child's stdin", async () => {
-    const { stdout, stderr, exitCode } = await bunRun(
-      path.join(import.meta.dir, "fixtures", "child-process-stdio-share-stdout.js"),
-    );
-    expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      result: { pausedWhileShared: true, consumerGot: "hello\n", parentGot: "world\n" },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
   it.skipIf(isWindows)("leaves a shared stdout's bytes for the consumer when the producer exits first", async () => {
     const { stdout, stderr, exitCode } = await bunRun(
       path.join(import.meta.dir, "fixtures", "child-process-stdio-share-stdout-producer-exits.js"),

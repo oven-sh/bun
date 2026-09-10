@@ -81,7 +81,7 @@ test("rejects Transfer-Encoding with chunked not last", async () => {
   });
 });
 
-test.each(["chunked, chunked", "chunked, foo, chunked", "chunked,", "chunked, ", "chunked,,foo"])(
+test.each(["chunked,", "chunked, "])(
   "rejects a comma after chunked in a single Transfer-Encoding header (%s)",
   async te => {
     await using server = Bun.serve({

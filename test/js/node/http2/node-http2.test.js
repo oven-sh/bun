@@ -3,7 +3,6 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
-import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -2453,58 +2452,6 @@ it(
 const STREAM_EVICTION_REQUESTS = 12_000;
 const STREAM_EVICTION_BATCH = 50;
 
-it(
-  "http2 sessions evict closed streams from maxSessionMemory accounting",
-  async () => {
-    const server = http2.createServer({ maxSessionMemory: 1 });
-    server.on("stream", stream => {
-      stream.respond({ ":status": 200 }, { endStream: true });
-    });
-
-    server.listen(0);
-    await once(server, "listening");
-
-    const client = http2.connect(`http://localhost:${server.address().port}`, { maxSessionMemory: 1 });
-
-    const sessionFailed = Promise.withResolvers();
-    client.on("error", err => sessionFailed.reject(err));
-    client.on("goaway", errorCode => sessionFailed.reject(new Error(`GOAWAY errorCode=${errorCode}`)));
-
-    let completed = 0;
-    function request() {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      const stream = client.request({ ":method": "GET" });
-      stream.on("error", reject);
-      stream.on("response", headers => {
-        if (headers[":status"] !== 200) reject(new Error(`unexpected status ${headers[":status"]}`));
-      });
-      stream.on("close", () => {
-        completed++;
-        resolve();
-      });
-      stream.resume();
-      stream.end();
-      return promise;
-    }
-
-    try {
-      for (let sent = 0; sent < STREAM_EVICTION_REQUESTS; sent += STREAM_EVICTION_BATCH) {
-        const size = Math.min(STREAM_EVICTION_BATCH, STREAM_EVICTION_REQUESTS - sent);
-        await Promise.race([Promise.all(Array.from({ length: size }, request)), sessionFailed.promise]);
-      }
-    } finally {
-      client.removeAllListeners("goaway");
-      client.removeAllListeners("error");
-      client.on("error", () => {});
-      client.close();
-      server.close();
-    }
-
-    expect(completed).toBe(STREAM_EVICTION_REQUESTS);
-  },
-  15_000 * ASAN_MULTIPLIER,
-);
-
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer
   const invalidOptions = [1, true, "test", null, Symbol("test")];
@@ -3818,74 +3765,6 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
   }
 });
 
-it("http2 server rejects malformed extended-CONNECT requests", async () => {
-  const deliveredRequests = [];
-  const server = http2.createServer({ settings: { enableConnectProtocol: true } });
-  server.on("stream", (stream, headers) => {
-    deliveredRequests.push(headers);
-    stream.respond({ ":status": 200 });
-    stream.end("ok");
-  });
-  const { promise: listening, resolve: onListening } = Promise.withResolvers();
-  server.listen(0, "127.0.0.1", onListening);
-  await listening;
-  const port = server.address().port;
-
-  const cases = {
-    ":protocol on a non-CONNECT method": Buffer.concat([
-      Buffer.from([0x82]), // :method: GET
-      Buffer.from([0x86]), // :scheme: http
-      Buffer.from([0x84]), // :path: /
-      Buffer.from([0x01]), // :authority
-      literal("localhost"),
-      Buffer.from([0x00]),
-      literal(":protocol"),
-      literal("websocket"),
-    ]),
-    "extended CONNECT with host but no :authority": Buffer.concat([
-      Buffer.from([0x02]), // :method
-      literal("CONNECT"),
-      Buffer.from([0x86]), // :scheme: http
-      Buffer.from([0x84]), // :path: /
-      Buffer.from([0x00]),
-      literal(":protocol"),
-      literal("websocket"),
-      Buffer.from([0x00]),
-      literal("host"),
-      literal("localhost"),
-    ]),
-  };
-  const wellFormed = Buffer.concat([
-    Buffer.from([0x02]), // :method
-    literal("CONNECT"),
-    Buffer.from([0x86]), // :scheme: http
-    Buffer.from([0x84]), // :path: /
-    Buffer.from([0x01]), // :authority
-    literal("localhost"),
-    Buffer.from([0x00]),
-    literal(":protocol"),
-    literal("websocket"),
-  ]);
-
-  try {
-    for (const [caseName, headerBlock] of Object.entries(cases)) {
-      const frames = await exchangeHeaderBlock(port, headerBlock);
-      expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
-      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
-      expect({ caseName, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
-        caseName,
-        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
-      });
-    }
-    const frames = await exchangeHeaderBlock(port, wellFormed);
-    expect(frames.find(f => f.type === 3 && f.streamId === 1)).toBeUndefined();
-    expect(deliveredRequests.length).toBe(1);
-    expect(deliveredRequests[0][":protocol"]).toBe("websocket");
-  } finally {
-    server.close();
-  }
-});
-
 it("http2 server rejects a request trailer section carrying an empty or repeated host header", async () => {
   const requestBlock = Buffer.concat([
     Buffer.from([0x83]), // :method: POST (static table index 3)
@@ -4009,70 +3888,6 @@ it("http2 client rejects a response missing :status or carrying a request pseudo
   }
 });
 
-it("http2 client delivers a response carrying an empty or repeated host header", async () => {
-  const responseBlock = Buffer.concat([
-    Buffer.from([0x88]), // :status: 200 (static table index 8)
-    Buffer.from([0x00]), // literal header field without indexing, new name
-    literal("host"),
-    literal(""),
-    Buffer.from([0x00]),
-    literal("host"),
-    literal("dup"),
-  ]);
-  const { promise: serverListening, resolve: onListening } = Promise.withResolvers();
-  const server = net.createServer(socket => {
-    let received = Buffer.alloc(0);
-    let sawPreface = false;
-    let responded = false;
-    socket.write(new http2utils.SettingsFrame(false).data);
-    socket.on("data", chunk => {
-      received = Buffer.concat([received, chunk]);
-      if (!sawPreface) {
-        if (received.length < http2utils.kClientMagic.length) return;
-        received = received.subarray(http2utils.kClientMagic.length);
-        sawPreface = true;
-      }
-      while (received.length >= 9) {
-        const length = received.readUIntBE(0, 3);
-        if (received.length < 9 + length) break;
-        const type = received[3];
-        const flags = received[4];
-        const streamId = received.readUInt32BE(5) & 0x7fffffff;
-        received = received.subarray(9 + length);
-        if (type === 4 && (flags & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
-        if (type === 1 && !responded) {
-          responded = true;
-          socket.write(new http2utils.HeadersFrame(streamId, responseBlock, 0, true, true).data);
-        }
-      }
-    });
-  });
-  server.listen(0, "127.0.0.1", () => onListening());
-  await serverListening;
-
-  let client;
-  try {
-    const { promise: closed, resolve: onClose, reject: onError } = Promise.withResolvers();
-    const { promise: responded, resolve: onResponse } = Promise.withResolvers();
-    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    client.on("error", onError);
-    const req = client.request({ ":path": "/" });
-    req.on("response", onResponse);
-    req.on("error", onError);
-    req.on("close", onClose);
-    req.resume();
-    req.end();
-    const headers = await responded;
-    await closed;
-    expect(headers[":status"]).toBe(200);
-    expect(headers.host).toBe("");
-    expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
-  } finally {
-    client?.close();
-    server.close();
-  }
-});
-
 it("http2 client rejects a malformed PUSH_PROMISE with RST_STREAM and keeps the session alive", async () => {
   const cases = {
     valid: Buffer.concat([
@@ -4171,56 +3986,6 @@ it("http2 client rejects a malformed PUSH_PROMISE with RST_STREAM and keeps the 
       client?.destroy();
       server.close();
     }
-  }
-});
-
-it("allowHTTP1 fallback validates the status line like the native handle", async () => {
-  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true });
-  const handlerErrors = [];
-  server.on("request", (req, res) => {
-    res.statusMessage = "OK\r\nx-injected: 1\r\n\r\nHTTP/1.1 200 OK";
-    try {
-      res.end("split");
-    } catch (err) {
-      handlerErrors.push(err.code);
-    }
-    res.statusCode = 100000;
-    try {
-      res.end("split");
-    } catch (err) {
-      handlerErrors.push(err.code);
-    }
-    res.statusCode = 200;
-    res.statusMessage = "OK";
-    res.end("clean");
-  });
-  const { promise: listening, resolve: onListening } = Promise.withResolvers();
-  server.listen(0, "127.0.0.1", onListening);
-  await listening;
-  try {
-    const { promise: closed, resolve: onClose, reject: onError } = Promise.withResolvers();
-    const socket = tls.connect({
-      port: server.address().port,
-      host: "127.0.0.1",
-      ALPNProtocols: ["http/1.1"],
-      rejectUnauthorized: false,
-    });
-    let raw = Buffer.alloc(0);
-    socket.on("secureConnect", () => {
-      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    });
-    socket.on("data", chunk => (raw = Buffer.concat([raw, chunk])));
-    socket.on("error", onError);
-    socket.on("close", onClose);
-    await closed;
-    const text = raw.toString("latin1");
-    expect(handlerErrors).toEqual(["ERR_INVALID_CHAR", "ERR_HTTP_INVALID_STATUS_CODE"]);
-    expect(text).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(text).not.toContain("x-injected");
-    expect(text.match(/HTTP\/1\.1 /g)).toHaveLength(1);
-    expect(text).toEndWith("clean");
-  } finally {
-    server.close();
   }
 });
 

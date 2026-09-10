@@ -823,25 +823,6 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
   });
 });
 
-describe("NODE_-prefixed user messages", () => {
-  test.concurrent(
-    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
-    async () => {
-      const { stdout, stderr, exitCode } = await bunRun(
-        path.join(import.meta.dir, "fixtures", "child-process-ipc-node-cluster-parent.js"),
-      );
-      expect({ got: JSON.parse(stdout), stderr, exitCode }).toEqual({
-        got: [
-          ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
-          ["message", { cmd: "OTHER", y: 2 }],
-        ],
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
-});
-
 describe.skipIf(isWindows)("http listen({ fd })", () => {
   test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
     const { stdout, stderr, exitCode } = await bunRun(

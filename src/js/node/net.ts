@@ -2299,6 +2299,7 @@ function hasUnflushedWrites(connection) {
 
 // `events` are the stream-level TLS engine's data/end/drain/close thunks.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L976-L977
 function attachUpgradedDuplex(self, connection, events) {
   // Ahead of events[3], so the engine's close finds the socket already
   // destroyed and reports neither the aborted handshake nor a second 'close'.
@@ -2308,6 +2309,13 @@ function attachUpgradedDuplex(self, connection, events) {
     // stream's own end finishes the socket then; a destroy would drop the data.
     if (!self[kended] && !self[kOnreadPendingEnd]) self.destroy();
   });
+  // _emitTLSError keeps the error on '_tlsError' while a server still owns
+  // the socket and emits 'error' once control is released (every client).
+  // Not on a net.Socket: its close paths report a peer reset only when
+  // listenerCount("error") > 0, so this listener would turn a teardown reset
+  // that is silent today into an 'error' on the TLS socket (TLS over TLS,
+  // test-tls-inception.js).
+  if (!(connection instanceof Socket)) connection.on("error", err => self._emitTLSError(err));
   connection.on("data", events[0]);
   connection.on("end", events[1]);
   connection.on("drain", events[2]);

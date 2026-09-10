@@ -1190,6 +1190,100 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   });
 });
 
+describe("a TLS socket over a Duplex transport hears that transport's error", () => {
+  // Node's JSStreamSocket re-emits the wrapped stream's 'error', and the TLS
+  // socket routes it through _emitTLSError:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L976-L977
+  // A client socket reports it as 'error'. A server wrap still owns its socket,
+  // so the error stays on the internal '_tlsError' (a tls.Server turns that
+  // into 'tlsClientError'). Without the listener the transport's error had no
+  // handler at all and became an uncaughtException, so every case runs in its
+  // own process and prints each event it saw when that process exits. The
+  // expected lists are what node v26.3.0 prints for the same script.
+  const prelude = `
+    const { Duplex } = require("node:stream");
+    const tls = require("node:tls");
+    const events = [];
+    process.on("uncaughtException", e => events.push("uncaught:" + (e.code || e.message)));
+    process.on("exit", () => console.log(JSON.stringify(events)));
+    const boom = () => Object.assign(new Error("boom"), { code: "EBOOM" });
+    // "same-tick": fails before the TLS engine exists. "mid-handshake": fails
+    // right after the first handshake record it is asked to write. "started":
+    // fails one turn later, when the engine is up and waits for its peer.
+    function failingTransport(when) {
+      let armed = when === "mid-handshake";
+      const transport = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+          if (!armed) return;
+          armed = false;
+          queueMicrotask(() => transport.destroy(boom()));
+        },
+      });
+      if (when === "same-tick") queueMicrotask(() => transport.destroy(boom()));
+      if (when === "started") setImmediate(() => transport.destroy(boom()));
+      return transport;
+    }
+    const serverOptions = { isServer: true, key: ${JSON.stringify(COMMON_CERT_.key)}, cert: ${JSON.stringify(COMMON_CERT_.cert)} };
+  `;
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { events: stdout.trim(), stderr, exitCode };
+  }
+  const expected = (events: string[]) => ({ events: JSON.stringify(events), stderr: "", exitCode: 0 });
+
+  it.concurrent.each(["same-tick", "mid-handshake"])(
+    "tls.connect({ socket }) reports it as 'error' (%s)",
+    async when => {
+      const result = await run(`
+        const transport = failingTransport(${JSON.stringify(when)});
+        const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+        events.push("listeners:" + transport.listenerCount("error"));
+        socket.on("error", e => events.push("error:" + e.code));
+        socket.on("close", hadError => events.push("close:" + hadError));
+      `);
+      expect(result).toEqual(expected(["listeners:1", "error:EBOOM", "close:false"]));
+    },
+  );
+
+  it.concurrent.each(["same-tick", "started"])("a server wrap keeps it on '_tlsError' (%s)", async when => {
+    const result = await run(`
+      const transport = failingTransport(${JSON.stringify(when)});
+      const socket = new tls.TLSSocket(transport, serverOptions);
+      events.push("listeners:" + transport.listenerCount("error"));
+      socket.on("_tlsError", e => events.push("_tlsError:" + e.code));
+      socket.on("error", e => events.push("error:" + e.code));
+      socket.on("close", hadError => events.push("close:" + hadError));
+    `);
+    expect(result).toEqual(expected(["listeners:1", "_tlsError:EBOOM", "close:false"]));
+  });
+
+  it.concurrent("https.request() over it settles with the transport's error", async () => {
+    // The http layer only listens on the TLS socket, so the request used to
+    // stay pending for good: no 'error', no 'close', destroyed === false.
+    const result = await run(`
+      const https = require("node:https");
+      const req = https.request({
+        host: "localhost",
+        path: "/",
+        createConnection: () => tls.connect({ socket: failingTransport("mid-handshake"), rejectUnauthorized: false }),
+      });
+      req.on("error", e => events.push("req.error:" + e.code));
+      req.on("close", () => events.push("req.close:" + req.destroyed));
+      req.end();
+    `);
+    expect(result).toEqual(expected(["req.error:EBOOM", "req.close:true"]));
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

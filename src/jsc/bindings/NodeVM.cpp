@@ -129,10 +129,8 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 
 Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
 {
-    // Every UnlinkedFunctionExecutable that decodeCodeBlock() produces keeps the Decoder and
-    // an offset into the payload, and decodes its code block the first time the function runs
-    // (the UnlinkedFunctionExecutable(Decoder&) constructor in CachedTypes.cpp). It does that
-    // for a borrowed payload too, so the bytes must outlive the decode, not this call.
+    // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
+    // payload offset, and decodes the body on the function's first call, borrowed payload or not.
     auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
     WTF::memcpySpan(payload.mutableSpan(), bytes);
     return JSC::CachedBytecode::create(WTF::move(payload), {});

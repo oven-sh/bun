@@ -26,8 +26,7 @@ namespace NodeVM {
 
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::SourceCodeType, const JSC::SourceCode& source);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
-// Copies `bytes` into a payload that the returned CachedBytecode owns, because a decoded
-// code block keeps reading the payload after decodeCodeBlock() returns.
+// Copies `bytes`: a decoded code block reads the payload long after decodeCodeBlock() returns.
 Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);

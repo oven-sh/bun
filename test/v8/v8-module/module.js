@@ -3,6 +3,20 @@ module.exports = debugMode => {
   return {
     ...nativeModule,
 
+    // Bun only: 48k collected instances with 128 internal fields each. Their
+    // field storage is about 2 KB per instance, 100 MiB if none of it is freed.
+    test_v8_internal_field_object_leak() {
+      nativeModule.create_objects_with_internal_fields(256, 128);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 24; i++) {
+        nativeModule.create_objects_with_internal_fields(2000, 128);
+        Bun.gc(true);
+      }
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    },
+
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
 

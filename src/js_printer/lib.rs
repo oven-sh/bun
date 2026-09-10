@@ -99,7 +99,8 @@ pub mod analyze_transpiled_module {
         ImportInfoNamespaceDefer,
     }
     impl RecordKind {
-        pub(crate) fn len(self) -> usize {
+        /// `StringID` slots the record occupies in `ModuleInfo::buffer` (part of the serialized format).
+        pub fn len(self) -> usize {
             match self {
                 Self::ImportInfoSingle => 4,
                 Self::ImportInfoSingleTypeScript => 4,
@@ -7267,9 +7268,6 @@ pub trait WriterContext {
     fn advance_by(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
-    fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
     fn done(&mut self) -> crate::Result<()> {
         Ok(())
     }
@@ -7409,9 +7407,6 @@ impl<C: WriterContext> Writer<C> {
         }
     }
 
-    pub fn flush(&mut self) -> crate::Result<()> {
-        self.ctx.flush()
-    }
     pub(crate) fn done(&mut self) -> crate::Result<()> {
         self.ctx.done()
     }
@@ -7641,10 +7636,6 @@ impl BufferWriter {
         self.written_len = self.buffer.list.len();
         Ok(())
     }
-
-    pub(crate) fn flush(&mut self) -> crate::Result<()> {
-        Ok(())
-    }
 }
 
 impl WriterContext for BufferWriter {
@@ -7679,10 +7670,6 @@ impl WriterContext for BufferWriter {
     #[inline]
     fn take_buffer(&mut self) -> MutableString {
         self.take_buffer()
-    }
-    #[inline]
-    fn flush(&mut self) -> crate::Result<()> {
-        self.flush()
     }
     #[inline]
     fn done(&mut self) -> crate::Result<()> {

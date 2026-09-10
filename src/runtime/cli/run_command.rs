@@ -1168,6 +1168,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if graph.runtime_options.jit_policy > 1.0 {
+            vm.jsc_vm()
+                .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
+        }
 
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);

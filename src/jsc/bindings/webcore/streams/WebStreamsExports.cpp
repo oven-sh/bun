@@ -182,13 +182,21 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
-extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+// Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
+extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    return stream && stream->m_state == ReadableStreamState::Closed && !stream->m_disturbed && !isReadableStreamLocked(stream);
+}
+
+// A Body consumer took this stream's contents; its spec reader is never released.
+extern "C" void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
-    stream->m_nativePtr.set(globalObject->vm(), stream, jsNumber(-1));
     stream->m_disturbed = true;
+    stream->m_consumedAsBody = true;
 }
 
 // A native sink (fetch body / S3 / FileSink) has attached directly without a reader.

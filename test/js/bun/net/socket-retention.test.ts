@@ -296,3 +296,110 @@ test("node:net reconnect after connectError does not accumulate wrappers", async
   expect(exitCode).toBe(0);
   void stderr;
 }, 30_000);
+
+test("node:net handle whose socket never starts connecting is collectable", async () => {
+  // node:net creates the native handle inside connect(), before the name
+  // lookup and before the tick that starts the connect. Only a connect
+  // attempt's teardown downgrades the wrapper, so a handle created strong
+  // stayed pinned (with the net.Socket it points back to) whenever the socket
+  // was torn down first, or connect() threw after creating the handle.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const net = require("node:net");
+        const tls = require("node:tls");
+        const dns = require("node:dns");
+        const { heapStats } = require("bun:jsc");
+
+        const server = net.createServer(s => s.destroy());
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const { port } = server.address();
+
+        const closed = [];
+        const untilClosed = s => closed.push(new Promise(resolve => s.on("close", resolve)));
+        const N = 25;
+
+        // destroy() before the deferred connect to a literal IP runs.
+        for (let i = 0; i < N; i++) {
+          const s = net.connect(port, "127.0.0.1");
+          untilClosed(s);
+          s.destroy();
+        }
+        // Same, over TLS.
+        for (let i = 0; i < N; i++) {
+          const s = tls.connect({ port, host: "127.0.0.1" });
+          s.on("error", () => {});
+          untilClosed(s);
+          s.destroy();
+        }
+        // destroy() while the name lookup is in flight.
+        let lookups = 0;
+        const { promise: lookupsDone, resolve: resolveLookups } = Promise.withResolvers();
+        const lookup = (host, opts, cb) => {
+          lookups++;
+          dns.lookup(host, opts, (...args) => {
+            cb(...args);
+            if (--lookups === 0) resolveLookups();
+          });
+        };
+        for (let i = 0; i < N; i++) {
+          const s = net.connect({ port, host: "localhost", lookup });
+          untilClosed(s);
+          s.destroy();
+        }
+        // An AbortSignal that fires before the connect starts.
+        for (let i = 0; i < N; i++) {
+          const ac = new AbortController();
+          const s = net.connect({ port, host: "127.0.0.1", signal: ac.signal });
+          s.on("error", () => {});
+          untilClosed(s);
+          ac.abort();
+        }
+        // connect() that throws after the handle exists; nothing ever closes it.
+        let thrown = 0;
+        for (let i = 0; i < N; i++) {
+          try {
+            net.connect({ port: 65536, host: "127.0.0.1" });
+          } catch {
+            thrown++;
+          }
+        }
+
+        await Promise.all(closed);
+        await lookupsDone;
+        server.close();
+
+        // Each class's prototype object is counted under the same name.
+        let counts, pinned;
+        for (let i = 0; i < 30; i++) {
+          Bun.gc(true);
+          ({ objectTypeCounts: counts, protectedObjectTypeCounts: pinned } = heapStats());
+          if ((counts.TCPSocket ?? 0) <= 1 && (counts.TLSSocket ?? 0) <= 1) break;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(JSON.stringify({
+          closed: closed.length,
+          thrown,
+          TCPSocket: counts.TCPSocket ?? 0,
+          TLSSocket: counts.TLSSocket ?? 0,
+          pinned: { TCPSocket: pinned.TCPSocket ?? 0, TLSSocket: pinned.TLSSocket ?? 0 },
+        }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { closed, thrown, TCPSocket, TLSSocket, pinned } = JSON.parse(stdout.trim().split("\n").pop()!);
+  expect({ closed, thrown }).toEqual({ closed: 100, thrown: 25 });
+  // Strong-held cells: a handle created strong shows up here, 100 and 25.
+  expect(pinned).toEqual({ TCPSocket: 0, TLSSocket: 0 });
+  // Pinned handles leave 100 TCPSocket and 25 TLSSocket, one per handle.
+  expect(TCPSocket).toBeLessThanOrEqual(3);
+  expect(TLSSocket).toBeLessThanOrEqual(3);
+  expect(exitCode).toBe(0);
+}, 30_000);

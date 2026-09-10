@@ -490,12 +490,16 @@ test.each(["sync", "async"])(
     await stopAndAssertDrained(server);
 
     let alive = iterations;
-    for (let i = 0; i < 20 && alive > 0; i++) {
+    for (let i = 0; i < 20 && alive > 1; i++) {
       Bun.gc(true);
       await Bun.sleep(1);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
-    expect(alive).toBe(0);
+    // Unfixed, every stream survives. One survivor is tolerated: the newest
+    // stream's address can linger in a native frame that is still live under
+    // this continuation (JSC::runInternalMicrotask, seen on x64 ASAN builds),
+    // where the conservative stack scan finds it.
+    expect(alive).toBeLessThanOrEqual(1);
   },
 );
 

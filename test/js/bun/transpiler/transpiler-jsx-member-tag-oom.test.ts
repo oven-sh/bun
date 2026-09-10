@@ -24,13 +24,15 @@ test("long JSX member-expression tags parse in linear memory", async () => {
   // print, so the member chain can be deep without hitting the printer's
   // recursion limit in debug builds.
   const fixture = /* js */ `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const depth = 8000;
     const tags = 16;
-    const src = Array.from({ length: tags }, (_, i) => "x" + i + " = <a" + ".b".repeat(depth) + " />;").join("\\n");
+    const members = Buffer.alloc(depth * 2, ".b").toString();
+    const src = Array.from({ length: tags }, (_, i) => "x" + i + " = <a" + members + " />;").join("\\n");
     const tx = new Bun.Transpiler({ loader: "tsx" });
-    const before = process.memoryUsage.rss();
+    const before = rss();
     const imports = tx.scanImports(src);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     if (!imports.some(i => i.path === "react/jsx-dev-runtime")) throw new Error("unexpected imports: " + JSON.stringify(imports));
     console.log(JSON.stringify({ delta_mb: (after - before) / 1024 / 1024 }));
   `;
@@ -52,4 +54,4 @@ test("long JSX member-expression tags parse in linear memory", async () => {
   // Before the fix: 16 tags x 8000 members copied ~1 GB into the arena (1.2 GB
   // RSS growth under ASAN). After: under 10 MB.
   expect(delta_mb).toBeLessThan(150);
-}, 60_000);
+});

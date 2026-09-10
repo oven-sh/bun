@@ -28,7 +28,277 @@ declare module "bun" {
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
-  type Encoding = "utf-8" | "windows-1252" | "utf-16";
+  /**
+   * An encoding label from the WHATWG Encoding Standard, as accepted by the
+   * `TextDecoder` constructor.
+   *
+   * The labels of the `replacement` encoding are excluded: the `TextDecoder`
+   * constructor rejects them with a `RangeError`.
+   *
+   * @see https://encoding.spec.whatwg.org/#names-and-labels
+   */
+  type Encoding =
+    // utf-8
+    | "unicode-1-1-utf-8"
+    | "unicode11utf8"
+    | "unicode20utf8"
+    | "utf-8"
+    | "utf8"
+    | "x-unicode20utf8"
+    // ibm866
+    | "866"
+    | "cp866"
+    | "csibm866"
+    | "ibm866"
+    // iso-8859-2
+    | "csisolatin2"
+    | "iso-8859-2"
+    | "iso-ir-101"
+    | "iso8859-2"
+    | "iso88592"
+    | "iso_8859-2"
+    | "iso_8859-2:1987"
+    | "l2"
+    | "latin2"
+    // iso-8859-3
+    | "csisolatin3"
+    | "iso-8859-3"
+    | "iso-ir-109"
+    | "iso8859-3"
+    | "iso88593"
+    | "iso_8859-3"
+    | "iso_8859-3:1988"
+    | "l3"
+    | "latin3"
+    // iso-8859-4
+    | "csisolatin4"
+    | "iso-8859-4"
+    | "iso-ir-110"
+    | "iso8859-4"
+    | "iso88594"
+    | "iso_8859-4"
+    | "iso_8859-4:1988"
+    | "l4"
+    | "latin4"
+    // iso-8859-5
+    | "csisolatincyrillic"
+    | "cyrillic"
+    | "iso-8859-5"
+    | "iso-ir-144"
+    | "iso8859-5"
+    | "iso88595"
+    | "iso_8859-5"
+    | "iso_8859-5:1988"
+    // iso-8859-6
+    | "arabic"
+    | "asmo-708"
+    | "csiso88596e"
+    | "csiso88596i"
+    | "csisolatinarabic"
+    | "ecma-114"
+    | "iso-8859-6"
+    | "iso-8859-6-e"
+    | "iso-8859-6-i"
+    | "iso-ir-127"
+    | "iso8859-6"
+    | "iso88596"
+    | "iso_8859-6"
+    | "iso_8859-6:1987"
+    // iso-8859-7
+    | "csisolatingreek"
+    | "ecma-118"
+    | "elot_928"
+    | "greek"
+    | "greek8"
+    | "iso-8859-7"
+    | "iso-ir-126"
+    | "iso8859-7"
+    | "iso88597"
+    | "iso_8859-7"
+    | "iso_8859-7:1987"
+    | "sun_eu_greek"
+    // iso-8859-8
+    | "csiso88598e"
+    | "csisolatinhebrew"
+    | "hebrew"
+    | "iso-8859-8"
+    | "iso-8859-8-e"
+    | "iso-ir-138"
+    | "iso8859-8"
+    | "iso88598"
+    | "iso_8859-8"
+    | "iso_8859-8:1988"
+    | "visual"
+    // iso-8859-8-i
+    | "csiso88598i"
+    | "iso-8859-8-i"
+    | "logical"
+    // iso-8859-10
+    | "csisolatin6"
+    | "iso-8859-10"
+    | "iso-ir-157"
+    | "iso8859-10"
+    | "iso885910"
+    | "l6"
+    | "latin6"
+    // iso-8859-13
+    | "iso-8859-13"
+    | "iso8859-13"
+    | "iso885913"
+    // iso-8859-14
+    | "iso-8859-14"
+    | "iso8859-14"
+    | "iso885914"
+    // iso-8859-15
+    | "csisolatin9"
+    | "iso-8859-15"
+    | "iso8859-15"
+    | "iso885915"
+    | "iso_8859-15"
+    | "l9"
+    // iso-8859-16
+    | "iso-8859-16"
+    // koi8-r
+    | "cskoi8r"
+    | "koi"
+    | "koi8"
+    | "koi8-r"
+    | "koi8_r"
+    // koi8-u
+    | "koi8-ru"
+    | "koi8-u"
+    // macintosh
+    | "csmacintosh"
+    | "mac"
+    | "macintosh"
+    | "x-mac-roman"
+    // windows-874
+    | "dos-874"
+    | "iso-8859-11"
+    | "iso8859-11"
+    | "iso885911"
+    | "tis-620"
+    | "windows-874"
+    // windows-1250
+    | "cp1250"
+    | "windows-1250"
+    | "x-cp1250"
+    // windows-1251
+    | "cp1251"
+    | "windows-1251"
+    | "x-cp1251"
+    // windows-1252
+    | "ansi_x3.4-1968"
+    | "ascii"
+    | "cp1252"
+    | "cp819"
+    | "csisolatin1"
+    | "ibm819"
+    | "iso-8859-1"
+    | "iso-ir-100"
+    | "iso8859-1"
+    | "iso88591"
+    | "iso_8859-1"
+    | "iso_8859-1:1987"
+    | "l1"
+    | "latin1"
+    | "us-ascii"
+    | "windows-1252"
+    | "x-cp1252"
+    // windows-1253
+    | "cp1253"
+    | "windows-1253"
+    | "x-cp1253"
+    // windows-1254
+    | "cp1254"
+    | "csisolatin5"
+    | "iso-8859-9"
+    | "iso-ir-148"
+    | "iso8859-9"
+    | "iso88599"
+    | "iso_8859-9"
+    | "iso_8859-9:1989"
+    | "l5"
+    | "latin5"
+    | "windows-1254"
+    | "x-cp1254"
+    // windows-1255
+    | "cp1255"
+    | "windows-1255"
+    | "x-cp1255"
+    // windows-1256
+    | "cp1256"
+    | "windows-1256"
+    | "x-cp1256"
+    // windows-1257
+    | "cp1257"
+    | "windows-1257"
+    | "x-cp1257"
+    // windows-1258
+    | "cp1258"
+    | "windows-1258"
+    | "x-cp1258"
+    // x-mac-cyrillic
+    | "x-mac-cyrillic"
+    | "x-mac-ukrainian"
+    // gbk
+    | "chinese"
+    | "csgb2312"
+    | "csiso58gb231280"
+    | "gb2312"
+    | "gb_2312"
+    | "gb_2312-80"
+    | "gbk"
+    | "iso-ir-58"
+    | "x-gbk"
+    // gb18030
+    | "gb18030"
+    // big5
+    | "big5"
+    | "big5-hkscs"
+    | "cn-big5"
+    | "csbig5"
+    | "x-x-big5"
+    // euc-jp
+    | "cseucpkdfmtjapanese"
+    | "euc-jp"
+    | "x-euc-jp"
+    // iso-2022-jp
+    | "csiso2022jp"
+    | "iso-2022-jp"
+    // shift_jis
+    | "csshiftjis"
+    | "ms932"
+    | "ms_kanji"
+    | "shift-jis"
+    | "shift_jis"
+    | "sjis"
+    | "windows-31j"
+    | "x-sjis"
+    // euc-kr
+    | "cseuckr"
+    | "csksc56011987"
+    | "euc-kr"
+    | "iso-ir-149"
+    | "korean"
+    | "ks_c_5601-1987"
+    | "ks_c_5601-1989"
+    | "ksc5601"
+    | "ksc_5601"
+    | "windows-949"
+    // utf-16be
+    | "unicodefffe"
+    | "utf-16be"
+    // utf-16le
+    | "csunicode"
+    | "iso-10646-ucs-2"
+    | "ucs-2"
+    | "unicode"
+    | "unicodefeff"
+    | "utf-16"
+    | "utf-16le"
+    // x-user-defined
+    | "x-user-defined";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
   type BeforeExitListener = (code: number) => void;
@@ -309,6 +579,19 @@ declare module "bun" {
 
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
+    /**
+     * Write the stream's data with `controller.write()` (await it for
+     * backpressure) and finish with `controller.close()`.
+     *
+     * A destination that takes the whole body (`Bun.serve`, `Bun.write`,
+     * `.text()`, ...) calls `pull()` once. If it returns a promise, the stream
+     * stays open while it is pending, ends when it resolves, and errors if it
+     * rejects. If it returns synchronously without closing, the stream stays
+     * open until `controller.close()` is called.
+     *
+     * A reader (`getReader()`, `for await`, `pipeTo()`) calls `pull()` again
+     * for a later read, once the previous call has settled.
+     */
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
     type: "direct";
   }
@@ -555,6 +838,18 @@ declare module "bun" {
      * @default true
      */
     ambiguousIsNarrow?: boolean;
+
+    /**
+     * If `true`, measure every Unicode code point individually (East Asian
+     * Width plus emoji presentation, the algorithm Node.js uses for
+     * `console.table` and `util.inspect` alignment), so each member of an
+     * emoji ZWJ sequence is counted: `"👨‍👩‍👧‍👦"` measures 8. If `false`,
+     * emoji sequences and other grapheme clusters count once: `"👨‍👩‍👧‍👦"`
+     * measures 2.
+     *
+     * @default false
+     */
+    perCodePoint?: boolean;
   }
 
   /**
@@ -780,9 +1075,12 @@ declare module "bun" {
     /**
      * Parse a TOML (v1.1.0) document into a JavaScript object.
      *
-     * Date/time values parse as strings of their source text. Integers
-     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
-     * represented losslessly as JavaScript numbers.
+     * Date/time values parse as Temporal objects: offset date-times as
+     * `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`,
+     * local dates as `Temporal.PlainDate`, and local times as
+     * `Temporal.PlainTime`. Integers outside `Number.MAX_SAFE_INTEGER`
+     * throw, since they cannot be represented losslessly as JavaScript
+     * numbers.
      *
      * @category Utilities
      *
@@ -798,8 +1096,15 @@ declare module "bun" {
      * Serialize a JavaScript object to a TOML document.
      *
      * The top-level value must be an object (a TOML document is a table).
-     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
-     * circular structures throw, since TOML cannot represent them;
+     * `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`,
+     * and `Temporal.PlainTime` values become the corresponding TOML
+     * date/time literals, `Temporal.ZonedDateTime` becomes an offset
+     * date-time, and `Date` becomes an offset date-time in UTC; time-zone
+     * and calendar annotations are dropped, since TOML has no syntax for
+     * them. `null`, `BigInt`, circular structures, invalid `Date`s, date
+     * values outside years 0000–9999, and Temporal types with no TOML form
+     * (`Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
+     * `Temporal.Duration`) throw, since TOML cannot represent them;
      * `undefined`, function, and symbol properties are skipped (inside
      * arrays they throw, since TOML arrays cannot have holes).
      *
@@ -822,6 +1127,242 @@ declare module "bun" {
   }
 
   /**
+   * XML related APIs
+   */
+  namespace XML {
+    // ── compact shape ──────────────────────────────────────────────────────
+
+    /**
+     * An element in the compact shape {@link parse} returns by default: its
+     * character data (a string) when it has no attributes and no child
+     * elements, otherwise an {@link Element}.
+     */
+    type Value = string | Element;
+
+    /**
+     * An element that has attributes or child elements, in the compact shape.
+     *
+     * - `"@name"` — one per attribute, holding its value.
+     * - `"#text"` — the element's own character data, exactly, when it has any:
+     *   its text runs concatenated, leaving out only whitespace-only runs that
+     *   sit between child elements (layout).
+     * - any other key — a child element name, holding that child's
+     *   {@link Value}, or an array of them when the name occurs more than once
+     *   in this element.
+     *
+     * Keys are in document order: attributes first, then child names and
+     * `"#text"` in order of first appearance. `@` and `#` cannot begin an XML
+     * name, so these keys never collide with element names.
+     */
+    interface Element {
+      [key: string]: Value | Value[];
+    }
+
+    /**
+     * A parsed document in the compact shape: exactly one key, the root
+     * element's name. This is also what importing an `.xml` file evaluates to.
+     */
+    interface Document {
+      [rootName: string]: Value;
+    }
+
+    // ── tree shape ─────────────────────────────────────────────────────────
+
+    /** An element in the tree {@link parse} returns with `{ compact: false }`. */
+    interface Node {
+      /** The element name as written, including any namespace prefix (`"soap:Envelope"`). */
+      name: string;
+      /**
+       * Attribute values by name as written, in document order, after
+       * attribute-value normalization and with defaults declared in the
+       * internal DTD subset applied. Namespace declarations (`xmlns`,
+       * `xmlns:*`) are ordinary attributes.
+       */
+      attributes: Record<string, string>;
+      /**
+       * The element's content in document order: character data as strings
+       * (exact — CDATA sections, character references and internal entities
+       * expanded, whitespace untouched, adjacent text merged into one string),
+       * child elements, comments and processing instructions. An object here is
+       * an element if it has `name`, a comment if it has `comment`, and a
+       * processing instruction if it has `target`.
+       */
+      children: Array<string | Node | Comment | ProcessingInstruction>;
+    }
+
+    /** `<!--comment-->` among a {@link Node}'s children. */
+    interface Comment {
+      comment: string;
+    }
+
+    /** `<?target data?>` among a {@link Node}'s children. */
+    interface ProcessingInstruction {
+      target: string;
+      /** The text after the whitespace that follows the target; `""` when there is none. */
+      data: string;
+    }
+
+    // ── parse ──────────────────────────────────────────────────────────────
+
+    interface ParseOptions {
+      /**
+       * Selects the shape of the result.
+       *
+       * - `true` (default): the compact {@link Document} — elements keyed by
+       *   name, leaves as strings. The shape for data. It does not keep the
+       *   relative order of differently named siblings, where text sat relative
+       *   to child elements, comments, or processing instructions.
+       * - `false`: the root element as a {@link Node} tree, which keeps all of
+       *   those, in document order. The shape for documents.
+       *
+       * Neither shape represents the XML declaration, the document type
+       * declaration, or anything outside the root element.
+       *
+       * @default true
+       */
+      compact?: boolean;
+    }
+
+    /**
+     * Parse an XML 1.0 document.
+     *
+     * `Bun.XML` is a conforming, non-validating XML processor. The document —
+     * including any internal DTD subset — must be well-formed or a
+     * `SyntaxError` is thrown; there is no lenient mode. Internal entities are
+     * expanded (within an expansion limit), attribute values are normalized,
+     * and attribute defaults declared in the internal subset are applied.
+     * External DTDs and external entities are never read. Nothing is coerced:
+     * every value is a string.
+     *
+     * `compact` selects a structure; it never alters character data. The text
+     * of an element is the same in both shapes — as written, whitespace
+     * included. The compact shape only does what having a single `"#text"`
+     * forces: an element's text runs are concatenated, and a whitespace-only
+     * run between child elements (the document's layout) is left out.
+     *
+     * A reference to an entity that only an unread external DTD could declare
+     * is not an error (XML 1.0 §4.1) and is kept in the text as written
+     * (`"&name;"` — indistinguishable afterwards from an escaped `&amp;name;`).
+     *
+     * A string is parsed as already-decoded text. Bytes (`Buffer`,
+     * `TypedArray`, `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML
+     * rules: a byte-order mark or the `encoding` declared in `<?xml ...?>`
+     * selects UTF-8, UTF-16, or ISO-8859-1; other encodings throw.
+     *
+     * @category Utilities
+     *
+     * @param input The XML document
+     * @throws {SyntaxError} If the document is not well-formed, uses an
+     * unsupported encoding, or exceeds the entity-expansion limits
+     * @throws {RangeError} If elements are nested too deeply
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.parse(`<order id="A1"><item sku="x">Tea</item><item sku="y">Mug</item><paid/></order>`);
+     * // {
+     * //   order: {
+     * //     "@id": "A1",
+     * //     item: [ { "@sku": "x", "#text": "Tea" }, { "@sku": "y", "#text": "Mug" } ],
+     * //     paid: "",
+     * //   },
+     * // }
+     *
+     * XML.parse(`<p>Hello <b>world</b>!<!-- bye --></p>`, { compact: false });
+     * // {
+     * //   name: "p",
+     * //   attributes: {},
+     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!", { comment: " bye " } ],
+     * // }
+     * ```
+     */
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions & { compact?: true },
+    ): Document;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options: ParseOptions & { compact: false },
+    ): Node;
+    function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+      options?: ParseOptions,
+    ): Document | Node;
+
+    // ── stringify ──────────────────────────────────────────────────────────
+
+    /** A value {@link stringify} writes as text: `String(v)`, or the ISO string of a `Date`. */
+    type Scalar = string | number | boolean | bigint | Date;
+
+    /**
+     * A {@link Node} as {@link stringify} accepts it: `attributes` and
+     * `children` may be omitted, scalars may stand where text goes, and
+     * `null`/`undefined` entries are skipped.
+     */
+    interface NodeInput {
+      name: string;
+      attributes?: { [name: string]: Scalar | null | undefined } | null;
+      children?: Array<Scalar | NodeInput | Comment | ProcessingInstruction | null | undefined> | null;
+    }
+
+    /**
+     * Serialize one element to XML: a {@link NodeInput} tree (any object with a
+     * string `name` and a `children` or `attributes` property), or a compact
+     * object with exactly one key naming the root element whose value follows
+     * the {@link Element} conventions.
+     *
+     * The result is that element's markup only — no XML declaration and no
+     * document type declaration; prepend them as text when writing a file
+     * (`'<?xml version="1.0" encoding="UTF-8"?>\n' + XML.stringify(doc)`).
+     * Because of that, results can be concatenated inside an enclosing element.
+     *
+     * The output is well-formed or `stringify` throws. `& < >` are escaped
+     * everywhere; `"`, tabs and newlines in attribute values, and carriage
+     * returns anywhere, are written as character references so they survive
+     * being parsed again. It throws for element, attribute or processing
+     * instruction names that are not XML names; for characters XML cannot
+     * contain (U+0000, other C0 controls except tab/newline/carriage return,
+     * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
+     * inside processing-instruction data; for an array at the root or inside
+     * another array; and for circular structures.
+     *
+     * Strings, numbers, booleans and bigints become text via `String()`, a
+     * `Date` its ISO string; `null` becomes an empty element (or leaves an
+     * attribute out); `undefined`, functions and symbols are skipped, as are
+     * symbol-keyed, non-enumerable and inherited properties. In the compact
+     * shape an array is one element per item and any other object is a child
+     * element.
+     *
+     * `XML.parse(XML.stringify(value))` deep-equals `value` for anything
+     * `XML.parse` returned, in either shape.
+     *
+     * @category Utilities
+     *
+     * @param value The element to serialize
+     * @param replacer Reserved; must be `undefined` or `null`
+     * @param space Indentation for element-only content, as in `JSON.stringify`:
+     * a number of spaces (at most 10) or a string (its first 10 characters).
+     * An element with any text child is written on one line so character data
+     * is unchanged.
+     * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
+     *
+     * @example
+     * ```ts
+     * import { XML } from "bun";
+     *
+     * XML.stringify({ order: { "@id": "A1", item: ["Tea", "Mug"], paid: null } });
+     * // '<order id="A1"><item>Tea</item><item>Mug</item><paid/></order>'
+     *
+     * XML.stringify({ name: "p", attributes: { class: "x" }, children: ["Hi ", { name: "b", children: ["!"] }] }, null, 2);
+     * // '<p class="x">Hi <b>!</b></p>'
+     * ```
+     */
+    function stringify(value: NodeInput | Document, replacer?: undefined | null, space?: string | number): string;
+    function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+  }
+
+  /**
    * JSONC related APIs
    */
   namespace JSONC {
@@ -835,6 +1376,7 @@ declare module "bun" {
      *
      * @param input The JSONC string to parse
      * @returns A JavaScript value
+     * @throws {SyntaxError} If the input is not valid JSONC
      *
      * @example
      * ```js
@@ -949,12 +1491,13 @@ declare module "bun" {
    */
   namespace YAML {
     /**
-     * Parse a YAML string into a JavaScript value
+     * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
+     * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
      *
      * @category Utilities
      *
      * @param input The YAML string to parse
-     * @returns A JavaScript value
+     * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
      * ```ts
@@ -1604,7 +2147,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -1622,19 +2165,20 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
    * `destination`, `destination` is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -1648,17 +2192,18 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destinationPath The file path to write to. If the file doesn't
    * exist, it is created; if it does, it is overwritten. If `input` is
    * smaller than the existing file, the file is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destinationPath: PathLike,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2210,7 +2755,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 
@@ -2643,6 +3188,45 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];
@@ -2676,13 +3260,21 @@ declare module "bun" {
        * **Experimental**
        */
       | "iife";
+    /**
+     * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
+     * `[target]`, and `[hash]` (8 characters of the content hash, more when
+     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
+     * wider minimum.
+     *
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
+     */
     naming?:
       | string
       | {
           chunk?: string;
           entry?: string;
           asset?: string;
-        }; // | string;
+        };
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
@@ -2786,6 +3378,19 @@ declare module "bun" {
     emitDCEAnnotations?: boolean;
 
     /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.
@@ -2819,6 +3424,29 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
+    /**
+     * How many levels of nested functions to compile to bytecode ahead of time.
+     * `0` compiles only each module's top-level code; nested functions past the
+     * limit are compiled from source when first called. Lower values make the
+     * bytecode smaller at the cost of some startup work.
+     *
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
+     */
+    bytecodeDepth?: number;
+
+    /**
+     * Build-time optimizations for `bytecode` builds.
+     */
+    optimize?: {
+      /**
+       * Run JavaScriptCore's build-time optimization passes over the generated
+       * bytecode. Only used when `bytecode: true`.
+       * @default true
+       */
+      bytecode?: boolean;
+    };
 
     /**
      * Add a banner to the bundled code such as "use client";
@@ -3078,6 +3706,14 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
+     * Files or directories to embed into the executable under their original
+     * relative paths. At runtime they are reachable via `node:fs` and
+     * `Bun.file()` relative to `import.meta.dir`.
+     *
+     * Equivalent CLI flag: `--asset` (repeatable)
+     */
+    assets?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
@@ -3109,6 +3745,17 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
+     * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
+     * thresholds so code that only runs during startup stays in the interpreter
+     * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     *
+     * Equivalent CLI flag: `--compile-jit-policy <n>`
+     *
+     * @default 1
+     */
+    jitPolicy?: number;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -4473,6 +5120,26 @@ declare module "bun" {
     terminate(): void;
 
     /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
+
+    /**
      * Registers an event handler of a specific event type on the WebSocket.
      * @param type A case-sensitive string representing the event type to listen for
      * @param listener The function to be called when the event occurs
@@ -4767,6 +5434,21 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
+     *
+     * `1` is the normal JIT policy. A value `> 1` makes the JIT that many times more
+     * reluctant to compile, e.g. during a burst of run-once startup code; it stays in
+     * effect until the next call. `bun build --compile` executables can start with a
+     * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
+     * `setJITPolicy(1)` once interactive.
+     *
+     * @param scale a finite number `>= 1`
+     * @throws {TypeError} if `scale` is not a number
+     * @throws {RangeError} if `scale` is not finite or `< 1`
+     */
+    function setJITPolicy(scale: number): void;
 
     /**
      * Accurate per-process memory footprint in bytes.
@@ -5401,6 +6083,7 @@ declare module "bun" {
     | "jsonc"
     | "toml"
     | "yaml"
+    | "xml"
     | "file"
     | "napi"
     | "wasm"
@@ -6801,6 +7484,33 @@ declare module "bun" {
       gid?: number;
 
       /**
+       * Start the child process inside this control group.
+       *
+       * Pass the path of an existing cgroup directory (e.g.
+       * `"/sys/fs/cgroup/my-jobs"`), or an open file descriptor for one. The
+       * child joins it before it begins executing, so resource limits
+       * configured on the cgroup (`memory.max`, `pids.max`, …) apply from its
+       * first instruction and to everything it spawns in turn. Works with both
+       * cgroup v1 and v2 hierarchies.
+       *
+       * Bun does not create or configure the cgroup; do that with `node:fs`
+       * beforehand.
+       *
+       * Linux only; ignored on other platforms. On Linux, the spawn fails if
+       * the cgroup cannot be joined (e.g. the directory does not exist).
+       *
+       * @example
+       * ```ts
+       * import { mkdirSync, writeFileSync } from "node:fs";
+       * const dir = "/sys/fs/cgroup/build-jobs";
+       * mkdirSync(dir, { recursive: true });
+       * writeFileSync(dir + "/memory.max", String(2 * 1024 ** 3));
+       * Bun.spawn({ cmd: ["make"], cgroup: dir });
+       * ```
+       */
+      cgroup?: string | number;
+
+      /**
        * The environment variables of the process
        *
        * Defaults to `process.env` as it was when the current Bun process launched.
@@ -7004,8 +7714,12 @@ declare module "bun" {
        * Use this to abort the subprocess when another part of the program is
        * aborted, such as a `fetch`.
        *
-       * If the signal is aborted, the process is killed with the signal
-       * specified by `killSignal` (defaults to SIGTERM).
+       * If the signal is already aborted when `spawn` is called, no process is
+       * created and an `AbortError` (with `cause` set to `signal.reason`) is
+       * thrown synchronously.
+       *
+       * If the signal is aborted after the process starts, the process is
+       * killed with the signal specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -7607,6 +8321,17 @@ declare module "bun" {
   }
 
   /**
+   * Options for the in-process {@link Bun.cron} callback overload and {@link Bun.cron.parse}.
+   */
+  interface CronOptions {
+    /**
+     * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
+     * `"America/New_York"`). Defaults to the system's local time zone.
+     */
+    tz?: string;
+  }
+
+  /**
    * Schedule cron jobs.
    *
    * Call with a callback to run an in-process job, or with a module path and
@@ -7647,8 +8372,7 @@ declare module "bun" {
      *
      * ### Cron expression syntax
      *
-     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
-     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     * Five fields: `minute hour day-of-month month day-of-week`.
      *
      * | Field | Values | Special chars |
      * |-------|--------|---------------|
@@ -7702,7 +8426,7 @@ declare module "bun" {
      * @see {@link CronJob} for the returned handle.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown, options?: CronOptions): CronJob;
     /**
      * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
      *
@@ -7802,7 +8526,10 @@ declare module "bun" {
      */
     remove(title: string): Promise<void>;
     /**
-     * Parse a cron expression and return the next matching `Date` in UTC.
+     * Parse a cron expression and return the next matching `Date` in the
+     * system's local time zone — the same way crontab, launchd, and Windows
+     * Task Scheduler interpret schedules. Pass `{ tz: "UTC" }` (or any IANA
+     * time-zone name) to override.
      *
      * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
      * days/months, and predefined nicknames like `@daily`.
@@ -7811,15 +8538,23 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
+     * DST: spring-forward times shift forward by the gap; in the fall-back
+     * duplicated hour, fixed-time schedules fire once (first occurrence) while
+     * schedules with `*` minute or hour fire through both occurrences.
+     *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
-     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
-     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     * @param options - `{ tz?: string }` — IANA time-zone name to interpret the schedule in (defaults to the system's local zone).
+     * @returns The next `Date` matching the expression, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid, `relativeDate` is `NaN`/`Infinity`, or `options.tz` is not a valid IANA name
      *
      * @example
      * ```ts
-     * // Next weekday at 09:30 UTC
+     * // Next weekday at 09:30 local time
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // 09:00 in New York, regardless of the server's TZ
+     * const ny = Bun.cron.parse("0 9 * * *", Date.now(), { tz: "America/New_York" });
      *
      * // Chain calls to get a sequence
      * const from = new Date();
@@ -7827,7 +8562,7 @@ declare module "bun" {
      * const second = first ? Bun.cron.parse("@hourly", first) : null;
      * ```
      */
-    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number, options?: CronOptions): Date | null;
   };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
@@ -8704,8 +9439,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9026,6 +9762,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

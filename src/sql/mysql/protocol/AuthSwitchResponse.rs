@@ -19,8 +19,4 @@ impl AuthSwitchResponse {
         writer.write(self.auth_response.slice())?;
         Ok(())
     }
-
-    pub fn write<C: super::new_writer::WriterContext>(&self, context: C) -> crate::Result<()> {
-        self.write_internal(NewWriter { wrapped: context })
-    }
 }

@@ -40,9 +40,9 @@ extern "C" void StringBuilder__appendUsize(WTF::StringBuilder* builder, size_t n
     builder->append(num);
 }
 
-extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, BunString str)
+extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const BunString* str)
 {
-    str.appendToBuilder(*builder);
+    str->appendToBuilder(*builder);
 }
 
 extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Character c)
@@ -55,9 +55,9 @@ extern "C" void StringBuilder__appendUChar(WTF::StringBuilder* builder, UChar c)
     builder->append(c);
 }
 
-extern "C" void StringBuilder__appendQuotedJsonString(WTF::StringBuilder* builder, BunString str)
+extern "C" void StringBuilder__appendQuotedJsonString(WTF::StringBuilder* builder, const BunString* str)
 {
-    auto string = str.toWTFString(BunString::ZeroCopy);
+    auto string = str->toWTFString(BunString::ZeroCopy);
     builder->appendQuotedJSONString(string);
 }
 

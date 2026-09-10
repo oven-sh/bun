@@ -45,11 +45,4 @@ impl<'a> Parse<'a> {
         }
         Ok(())
     }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
-        self.write_internal(writer)
-    }
 }

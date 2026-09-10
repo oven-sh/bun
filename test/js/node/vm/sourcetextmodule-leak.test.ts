@@ -1,6 +1,6 @@
 const vm = require("vm");
 const { describe, it, expect } = require("bun:test");
-const { isASAN, isDebug } = require("harness");
+const { isASAN, isDebug, rss } = require("harness");
 
 // 50k×50KB ≈ 2.5 GB of source text — if module records leak their source we
 // blow past the threshold. Debug builds parse/link ~50× slower, so scale down.
@@ -12,7 +12,7 @@ describe("vm.SourceTextModule", () => {
   it(
     "shouldn't leak memory",
     async () => {
-      const initialUsage = process.memoryUsage.rss();
+      const initialUsage = rss();
 
       {
         const source = `/*\n${Buffer.alloc(50_000, " * aaaaa\n").toString("utf8")}\n*/ Buffer.alloc(10, 'hello');`;
@@ -32,7 +32,7 @@ describe("vm.SourceTextModule", () => {
 
       Bun.gc(true);
 
-      const finalUsage = process.memoryUsage.rss();
+      const finalUsage = rss();
       const megabytes = Math.round(((finalUsage - initialUsage) / 1024 / 1024) * 100) / 100;
       expect(megabytes).toBeLessThan(THRESHOLD_MB);
     },

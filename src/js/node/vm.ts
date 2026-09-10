@@ -1,5 +1,4 @@
 // Hardcoded module "node:vm"
-const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
 const {
   validateObject,
   validateString,
@@ -11,7 +10,6 @@ const {
   validateArray,
   validateOneOf,
 } = require("internal/validators");
-const util = require("node:util");
 
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
@@ -89,10 +87,15 @@ function createContext(contextObject?, options?) {
   return context;
 }
 
+// Node's runInContext()/runInNewContext() (lib/vm.js) spread `options` into a
+// fresh object before handing it to Script, so unlike the Script methods they
+// accept any non-string options value.
 function runInContext(code, context, options) {
   validateContext(context);
   if (typeof options === "string") {
     options = { filename: options };
+  } else {
+    options = { ...options };
   }
   return new Script(code, options).runInContext(context, options);
 }
@@ -110,6 +113,8 @@ function runInNewContext(code, context, options) {
   }
   if (typeof options === "string") {
     options = { filename: options };
+  } else {
+    options = { ...options };
   }
   context = createContext(context, options);
   return createScript(code, options).runInNewContext(context, options);
@@ -330,7 +335,7 @@ class Module {
     }
   }
 
-  [util.inspect.custom](depth, options) {
+  [Symbol.for("nodejs.util.inspect.custom")](depth, options) {
     validateModule(this);
     if (typeof depth === "number" && depth < 0) return this;
 
@@ -347,7 +352,7 @@ class Module {
       configurable: true,
     });
 
-    return util.inspect(o, { ...options, customInspect: false });
+    return require("node:util").inspect(o, { ...options, customInspect: false });
   }
 }
 
@@ -458,7 +463,7 @@ class SourceTextModule extends Module {
     }
 
     try {
-      const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
+      const moduleNatives = await require("internal/primordials").SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, moduleNatives, 0);
     } catch (e) {
       this.#error = e;

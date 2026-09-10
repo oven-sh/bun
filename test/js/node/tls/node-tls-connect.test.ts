@@ -1031,30 +1031,103 @@ describe("application data written over a Duplex transport before the handshake 
   });
 });
 
-it("tls.connect({ socket: duplex }) closes when the transport is destroyed before the handshake starts", async () => {
-  // The engine over a Duplex transport is created on a later event-loop turn,
-  // so this destroy lands before it exists. Node wraps the stream at once and
-  // destroys the TLS socket from the wrap's 'close'
-  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741),
-  // which reports 'close' with hadError === false wherever the destroy lands.
-  const transport = new Duplex({
-    read() {},
-    write(_chunk, _encoding, callback) {
-      callback();
-    },
+describe("a TLS socket over a Duplex transport follows that transport's teardown", () => {
+  // Node wraps a stream that has no fd in a JSStreamSocket and destroys the
+  // TLS socket when that wrap closes:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+  // So a destroyed transport always reaches the TLS socket as 'close' with
+  // hadError === false. Bun runs a TLS engine over the stream instead, and
+  // that engine is created on a later event-loop turn, so the cases below
+  // cover both sides of that turn.
+  const makeTransport = () =>
+    new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  // Resolves with the 'error' and 'close' events the socket emitted, in order.
+  const recordTeardown = (socket: TLSSocket) => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<string[]>();
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+    socket.on("close", hadError => {
+      events.push(`close:${hadError}`);
+      closed.resolve(events);
+    });
+    return closed.promise;
+  };
+
+  it("a server wrap closes when the transport is destroyed in the same tick", async () => {
+    // The engine does not exist yet, so the close has to be held and reported
+    // when it starts. Without that the socket never closes at all.
+    const transport = makeTransport();
+    const wrapped = new TLSSocket(transport, serverContext());
+    const teardown = recordTeardown(wrapped);
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(wrapped.destroyed).toBe(true);
   });
-  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
-  const events: string[] = [];
-  const closed = Promise.withResolvers<void>();
-  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
-  client.on("close", hadError => {
-    events.push(`close:${hadError}`);
-    closed.resolve();
+
+  it("tls.connect({ socket }) closes when the transport is destroyed in the same tick", async () => {
+    const transport = makeTransport();
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(client.destroyed).toBe(true);
   });
-  transport.destroy();
-  await closed.promise;
-  expect(events).toEqual(["close:false"]);
-  expect(client.destroyed).toBe(true);
+
+  it("a server wrap closes when the transport is destroyed after the engine started", async () => {
+    // The engine is up and its handshake is still pending. The aborted
+    // handshake must not surface as an ECONNRESET instead of the close.
+    const transport = makeTransport();
+    const wrapped = new TLSSocket(transport, serverContext());
+    const teardown = recordTeardown(wrapped);
+    // 'secure' never fires without a peer, but the upgrade task that creates
+    // the engine is queued ahead of this one.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    transport.destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect(wrapped.destroyed).toBe(true);
+  });
+
+  it("a server wrap closes when the transport of an established connection is destroyed", async () => {
+    // Each side's _write pushes into the other, so this handshakes for real
+    // over two in-memory duplexes (what Playwright's client-certificate proxy
+    // does with its browser-facing transport).
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    const wrapped = new TLSSocket(serverSide, serverContext());
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    try {
+      const secured = Promise.withResolvers<void>();
+      client.on("error", secured.reject);
+      wrapped.on("error", secured.reject);
+      wrapped.on("secure", () => secured.resolve());
+      await secured.promise;
+      const teardown = recordTeardown(wrapped);
+      serverSide.destroy();
+      expect(await teardown).toEqual(["close:false"]);
+      expect(wrapped.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      wrapped.destroy();
+    }
+  });
 });
 
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {

@@ -6653,6 +6653,17 @@ impl VirtualMachine {
 
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
+            // The block printed before this one can stop on a pending
+            // exception (the depth guard, or a JSC property walk that runs out
+            // of native stack). Printing the next one calls back into JSC, so
+            // handle it the same way the property loop above does.
+            if global_ref.has_exception() {
+                if !allow_side_effects {
+                    break;
+                }
+                global_ref.clear_exception();
+            }
+
             // Circular-ref guard for cause chains.
             if formatter.map_node.is_none() {
                 let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())

@@ -3864,6 +3864,13 @@ pub mod formatter {
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            // `print_errorlike_object` returns `()`. It stops when a JS
+            // exception is pending, but it cannot report that. Observe the
+            // exception here, like `print_as_prelude` does, so the walk above
+            // unwinds instead of calling back into JSC with it pending.
+            if self.global_this.has_exception() {
+                return Err(jsc::JsError::Thrown);
+            }
             Ok(())
         }
 

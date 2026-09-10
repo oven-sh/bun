@@ -456,3 +456,70 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// Printing an error stops when a JS exception is pending. JSC's own property
+// walk throws `Maximum call stack size exceeded` once the native stack runs
+// low, and the depth guard throws the same error. The printer used to print
+// the next block anyway, and that call into JSC ran with the exception still
+// pending.
+describe.concurrent("an error the printer cannot finish", () => {
+  // Each level holds the next one in an array, so every level goes through the
+  // formatter's array path. 5000 levels is deeper than any stack can print.
+  const chain = `
+    let e = new Error("leaf");
+    for (let i = 0; i < 5000; i++) {
+      const next = new Error("level " + i);
+      next.errors = [e];
+      e = next;
+    }`;
+
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  // The depth guard throws `RangeError: Maximum call stack size exceeded` in
+  // the process that prints, so the test catches it. A build with a larger
+  // stack prints the whole chain instead. Neither may end in a signal.
+  test("console.error of an array property that holds the chain", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await run(`${chain}
+      try { console.error(e); } catch {}
+      console.log("after");`);
+    expect(stderr).toContain("error: level 4999");
+    expect(stdout).toBe("after\n");
+    expect(signalCode).toBe(null);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.inspect of an array property that holds the chain", async () => {
+    const { stdout, exitCode, signalCode } = await run(`${chain}
+      let text = "";
+      try { text = Bun.inspect(e); } catch {}
+      console.log(text.includes("error: level 4999") || text === "");
+      console.log("after");`);
+    expect(stdout).toBe("true\nafter\n");
+    expect(signalCode).toBe(null);
+    expect(exitCode).toBe(0);
+  });
+
+  // Both properties are errors, so both are printed as their own block. The
+  // first block stops, and the printer must not start the second one.
+  test("console.error of a second error property after the chain", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await run(`${chain}
+      const top = new Error("top");
+      top.first = e;
+      top.second = new Error("sibling");
+      try { console.error(top); } catch {}
+      console.log("after");`);
+    expect(stderr).toContain("error: top");
+    expect(stdout).toBe("after\n");
+    expect(signalCode).toBe(null);
+    expect(exitCode).toBe(0);
+  });
+});

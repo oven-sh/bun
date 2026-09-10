@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tls as harnessCert, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
@@ -161,12 +161,13 @@ it("Request cert from TLS1.2 client that doesn't have one.", async () => {
 
 it("Request cert from TLS1.3 client that doesn't have one.", async () => {
   // TLS 1.3 finishes the client's handshake before the server checks the
-  // certificate, so the alert arrives after 'secureConnect'. The code is the
-  // BoringSSL name. With OpenSSL it is ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED.
+  // certificate, so the alert arrives after 'secureConnect'.
+  // The agent10 fixtures above have a 1024-bit CA, which OpenSSL rejects as too
+  // weak, so this case uses the 2048-bit harness certificate instead.
   const server = tls.createServer({
-    key: serverTls.key,
-    cert: serverTls.cert,
-    ca: clientTls.ca,
+    key: harnessCert.key,
+    cert: harnessCert.cert,
+    ca: [harnessCert.cert],
     requestCert: true,
   });
   const serverError = once(server, "tlsClientError");
@@ -179,8 +180,7 @@ it("Request cert from TLS1.3 client that doesn't have one.", async () => {
       host: "127.0.0.1",
       port: (server.address() as AddressInfo).port,
       minVersion: "TLSv1.3",
-      ca: serverTls.ca,
-      checkServerIdentity,
+      ca: harnessCert.cert,
     });
     client.on("secureConnect", () => events.push("secureConnect"));
     client.on("data", () => events.push("data"));
@@ -192,7 +192,11 @@ it("Request cert from TLS1.3 client that doesn't have one.", async () => {
     });
     await closed;
 
-    expect(events).toEqual(["secureConnect", "error ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED", "end", "close false"]);
+    // BoringSSL and OpenSSL name the same alert differently.
+    const alert = process.features.openssl_is_boringssl
+      ? "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED"
+      : "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED";
+    expect(events).toEqual(["secureConnect", `error ${alert}`, "end", "close false"]);
     const [err] = await serverError;
     expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
   } finally {

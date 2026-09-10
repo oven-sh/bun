@@ -2695,8 +2695,9 @@ describe("fatal TLS error after the handshake", () => {
     return Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, payload.length]), payload]);
   }
 
-  // Records the accepted socket's events until 'close'. Node emits the error
-  // without a destroy, so 'end' and close(false) follow it.
+  // Each client below sends its bad record and the FIN together, the way a peer
+  // that gives up does. Node keeps an errored socket open until that FIN, so
+  // both runtimes reach 'end' and close(false) after the error.
   function recordEvents(socket: TLSSocket, events: string[], closed: PromiseWithResolvers<void>) {
     socket.on("data", chunk => events.push(`data ${chunk}`));
     socket.on("error", (err: Error & { code?: string }) => events.push(`error ${err.code}`));
@@ -2708,13 +2709,18 @@ describe("fatal TLS error after the handshake", () => {
   }
 
   // A TCP relay from the client to the server. `tamper` gets each chunk that
-  // the client sends, with its index, and returns the bytes to forward.
-  async function startRelay(serverPort: number, tamper: (chunk: Buffer, index: number) => Buffer) {
+  // the client sends, with its index, and returns the bytes to forward and
+  // whether to send the FIN with them.
+  async function startRelay(serverPort: number, tamper: (chunk: Buffer, index: number) => [Buffer, boolean]) {
     const relay = net.createServer(downstream => {
       const upstream = net.connect(serverPort, "127.0.0.1");
       upstream.pipe(downstream);
       let index = 0;
-      downstream.on("data", chunk => upstream.write(tamper(chunk, index++)));
+      downstream.on("data", chunk => {
+        const [bytes, fin] = tamper(chunk, index++);
+        if (fin) upstream.end(bytes);
+        else upstream.write(bytes);
+      });
       downstream.on("close", () => upstream.destroy());
       downstream.on("error", () => {});
       upstream.on("error", () => {});
@@ -2739,11 +2745,13 @@ describe("fatal TLS error after the handshake", () => {
     raw.on("error", () => {});
     const client = connect({ socket: raw, rejectUnauthorized: false });
     client.on("error", () => {});
-    client.once("data", () => raw.write(badRecord()));
+    client.once("data", () => raw.end(badRecord()));
     try {
       await closed.promise;
       expect(events).toEqual(["error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", "end", "close false"]);
-      expect({ library: error?.library, reason: error?.reason }).toEqual({
+      // BoringSSL names the reason DECRYPTION_FAILED_OR_BAD_RECORD_MAC, OpenSSL
+      // spells the same reason in words.
+      expect({ library: error?.library, reason: error?.reason?.toUpperCase().replaceAll(" ", "_") }).toEqual({
         library: "SSL routines",
         reason: "DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
       });
@@ -2766,9 +2774,9 @@ describe("fatal TLS error after the handshake", () => {
     // server reads both in one read.
     let appendBadRecord = false;
     const relay = await startRelay((server.address() as AddressInfo).port, chunk => {
-      if (!appendBadRecord) return chunk;
+      if (!appendBadRecord) return [chunk, false];
       appendBadRecord = false;
-      return Buffer.concat([chunk, badRecord()]);
+      return [Buffer.concat([chunk, badRecord()]), true];
     });
     const client = connect({
       port: (relay.address() as AddressInfo).port,
@@ -2805,7 +2813,7 @@ describe("fatal TLS error after the handshake", () => {
     // relay appends the bad record to it, so the server's handshake completes
     // in the same read that fails.
     const relay = await startRelay((server.address() as AddressInfo).port, (chunk, index) =>
-      index === 1 ? Buffer.concat([chunk, badRecord()]) : chunk,
+      index === 1 ? [Buffer.concat([chunk, badRecord()]), true] : [chunk, false],
     );
     const client = connect({
       port: (relay.address() as AddressInfo).port,

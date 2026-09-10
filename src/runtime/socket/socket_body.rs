@@ -4399,13 +4399,11 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
-                // The transport closed while this task was queued.
-                // `UpgradedDuplex::close` had no engine to shut down then, so
-                // it staged the close instead. A closed transport can carry no
-                // handshake: report the close through the normal teardown
-                // rather than starting an engine that nothing can drive (which
-                // would also leave this context, its SSL and its strong refs
-                // alive until the VM stops).
+                // The transport closed while this task was queued. A closed
+                // transport can carry no handshake, so report the close
+                // instead of starting an engine nothing can drive - and
+                // nothing would then free, since only the wrapper's close
+                // callback reaches `deinit`.
                 if this.upgrade.pending_close.replace(false) {
                     Self::on_close(this);
                     return;

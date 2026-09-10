@@ -64,12 +64,10 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// The transport closed before the TLS engine existed. Same window as
-    /// [`Self::pending_data`]: [`Self::close`] has no SSL to shut down, so no
-    /// close callback fires and nothing else reports the close.
-    /// `DuplexUpgradeContext::run_event` consumes this when the `StartTLS`
-    /// task runs and tears the socket down instead of starting an engine for
-    /// a transport that is already gone.
+    /// The transport closed before the TLS engine existed, so [`Self::close`]
+    /// had no SSL to shut down and fired no close callback. Same window as
+    /// [`Self::pending_data`]. `DuplexUpgradeContext::run_event` consumes it
+    /// when the `StartTLS` task runs.
     pub pending_close: Cell<bool>,
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
@@ -551,10 +549,9 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
         let Some(w) = self.wrapper_ref() else {
-            // `start_tls` is still queued, so there is no SSL to shut down and
-            // the wrapper's close callback - the whole teardown chain - was
-            // never registered. Stage the close for `run_event`; see
-            // [`Self::pending_close`].
+            // `start_tls` is still queued: no SSL to shut down, and the
+            // wrapper's close callback (the teardown chain) is not registered
+            // yet. See [`Self::pending_close`].
             self.pending_close.set(true);
             return;
         };

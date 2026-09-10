@@ -1123,8 +1123,7 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     if (!unreachable.empty()) {
         view->m_chromeOnErrorPage = true;
         view->m_chromeDocumentLoading = false;
-        // Reported once the error page has loaded (the page answers commands again by then),
-        // unless navigate() already failed with errorText for this loaderId.
+        // Reported at the error page's load event, unless navigate()'s errorText already did.
         auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
         if (loaderId != view->m_chromeFailedLoaderId) view->m_chromeUnreportedFailure = WTF::String::fromUTF8(unreachable);
         return;

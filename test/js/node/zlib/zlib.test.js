@@ -900,8 +900,8 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         bunExe(),
         "-e",
         /* js */ `
-        const { zstdCompress, zstdDecompressSync, constants } = require("node:zlib");
-        const { randomFillSync } = require("node:crypto");
+        import { zstdCompress, zstdDecompressSync, constants } from "node:zlib";
+        import { randomFillSync } from "node:crypto";
         const PAGES = 128; // 8 MB
         const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
@@ -951,8 +951,8 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         bunExe(),
         "-e",
         /* js */ `
-        const { createZstdCompress, zstdDecompressSync, constants } = require("node:zlib");
-        const { randomFillSync } = require("node:crypto");
+        import { createZstdCompress, zstdDecompressSync, constants } from "node:zlib";
+        import { randomFillSync } from "node:crypto";
         const PAGES = 128; // 8 MB
         const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 

@@ -1948,23 +1948,24 @@ it.skipIf(!nodeExe())(
 // still finish its writable side and send the FIN, as node does:
 // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
 // The fixture runs on both runtimes so the expected reports are pinned to node.
+async function runShutdownFixture(exe: string, ...mode: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [exe, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), ...mode],
+    env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const report = JSON.parse(stdout);
+  expect(exitCode).toBe(0);
+  return report;
+}
 describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
-])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
-  async function run(mode: string) {
-    await using proc = Bun.spawn({
-      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
-      env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const report = JSON.parse(stdout);
-    expect(exitCode).toBe(0);
-    return report;
-  }
+])("end() and destroySoon() before the handshake completes (%s)", (runtime, exe) => {
+  const run = (...mode: string[]) => runShutdownFixture(exe!, ...mode);
 
   it.skipIf(!exe)("end() finishes the writable side and sends the FIN", async () => {
     expect(await run("end")).toEqual({
@@ -1990,6 +1991,106 @@ describe.each([
     expect(await run("server-end")).toEqual({
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
+    });
+  });
+
+  // tls.connect({ socket: duplex }) and new TLSSocket(duplex): the engine has no
+  // fd to shut down, so the FIN is the transport's own end(), which runs its
+  // final(). Node: TLSWrap::DoShutdown -> JSStreamSocket.doShutdown -> stream.end().
+  describe("over a Duplex transport", () => {
+    const clientEnded = {
+      log: ["end secureConnecting=true", "finish"],
+      transportFinalCalled: true,
+      peerSawFin: true,
+      peerSawHandshakeRecord: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
+    };
+    const clientDestroyed = {
+      ...clientEnded,
+      log: ["destroySoon secureConnecting=true", "finish", "close"],
+      readyState: "closed",
+      destroyed: true,
+    };
+
+    it.skipIf(!exe)(
+      "end() in the turn that created the socket sends the ClientHello, then ends the transport",
+      async () => {
+        expect(await run("duplex-end", "same-turn")).toEqual(clientEnded);
+      },
+    );
+
+    it.skipIf(!exe)("end() while the engine waits for the server's flight ends the transport", async () => {
+      expect(await run("duplex-end", "after-first-flight")).toEqual(clientEnded);
+    });
+
+    it.skipIf(!exe)("destroySoon() ends the transport, then closes the socket", async () => {
+      expect(await run("duplex-destroySoon", "after-first-flight")).toEqual(clientDestroyed);
+    });
+
+    // Known gap in bun: 'finish' does not wait for the transport's end(). In
+    // the turn that created the socket it fires before the engine exists, so
+    // destroySoon()'s destroy() runs first and destroys the transport: no
+    // ClientHello and no final(), the peer only sees the connection close.
+    (!exe ? it.skip : runtime === "bun" ? it.failing : it)(
+      "destroySoon() in the turn that created the socket ends the transport, then closes the socket",
+      async () => {
+        expect(await run("duplex-destroySoon", "same-turn")).toEqual(clientDestroyed);
+      },
+    );
+
+    // A healthy server. Without the FIN its handshake completes and the
+    // session stays open with nothing left to close it.
+    it.skipIf(!exe)("end() makes a healthy server give up on the handshake", async () => {
+      expect(await run("duplex-end-live-server")).toEqual({
+        log: ["end secureConnecting=true", "finish"],
+        transportFinalCalled: true,
+        server: "tlsClientError:ECONNRESET",
+        destroyed: true,
+      });
+    });
+
+    it.skipIf(!exe)("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
+      expect(await run("duplex-server-end", "same-turn")).toEqual({
+        log: ["end secureConnecting=true", "finish"],
+        transportFinalCalled: true,
+        transportWroteHandshakeRecord: false,
+        clientSawFin: true,
+        clientSawHandshakeRecord: false,
+      });
+    });
+  });
+});
+
+// The ClientHello is already in the stream's readable buffer when the server
+// wraps it and ends in the same turn. The engine answers what arrived first, so
+// the client gets the server's flight and then the FIN. Bun only: node v26.3.0
+// aborts here (ERR_INTERNAL_ASSERTION in JSStreamSocket.doWrite).
+it("a server-side TLSSocket over a Duplex answers a buffered ClientHello before its end()", async () => {
+  expect(await runShutdownFixture(bunExe(), "duplex-server-end", "buffered-client-hello")).toEqual({
+    log: ["end secureConnecting=true", "finish"],
+    transportFinalCalled: true,
+    transportWroteHandshakeRecord: true,
+    clientSawFin: true,
+    clientSawHandshakeRecord: true,
+  });
+});
+
+// The half-close is the close_notify and then the end of the transport, whatever
+// the peer does next: this server reads the close_notify and does not answer it.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("end() after the handshake over a Duplex transport (%s)", (_runtime, exe) => {
+  it.skipIf(!exe)("ends the transport without waiting for the peer's close_notify", async () => {
+    expect(await runShutdownFixture(exe!, "duplex-end-established")).toEqual({
+      log: ["secureConnect", "finish"],
+      transportFinalCalled: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
     });
   });
 });

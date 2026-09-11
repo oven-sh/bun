@@ -1912,6 +1912,20 @@ struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
 }
 
+/* The packed error that names a fatal SSL_read failure the way node reports
+ * it: the first SSL-library entry on the thread's queue (for a bad record
+ * BoringSSL queues the cipher's BAD_DECRYPT ahead of the TLS reason), else the
+ * oldest entry, else 0. Shared with the SSLWrapper engine (src/uws/lib.rs). */
+uint32_t us_ssl_take_fatal_error(void) {
+  uint32_t oldest = ERR_peek_error();
+  for (uint32_t queued; (queued = ERR_get_error()) != 0;) {
+    if (ERR_GET_LIB(queued) == ERR_LIB_SSL) {
+      return queued;
+    }
+  }
+  return oldest;
+}
+
 struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) {
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
@@ -2623,16 +2637,8 @@ restart:
            * server that rejects the client certificate sends certificate_required
            * after the client's handshake is done) or a record that does not
            * decrypt. No handshake dispatch reports it, so hand the reason to
-           * the socket before the close, like node's ClearOut calls onerror.
-           * Report the first SSL-library entry: for a bad record BoringSSL
-           * queues the cipher's BAD_DECRYPT ahead of the TLS reason. */
-          uint32_t ssl_err = ERR_peek_error();
-          for (uint32_t queued; (queued = ERR_get_error()) != 0;) {
-            if (ERR_GET_LIB(queued) == ERR_LIB_SSL) {
-              ssl_err = queued;
-              break;
-            }
-          }
+           * the socket before the close, like node's ClearOut calls onerror. */
+          uint32_t ssl_err = us_ssl_take_fatal_error();
           /* Everything that came before the failing record goes first, in wire
            * order, while the socket is not yet fatal: a fatal socket gives the
            * handshake dispatch no verify result, and data handlers assert that

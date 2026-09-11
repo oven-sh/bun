@@ -100,6 +100,8 @@ pub struct Handlers {
     pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut (), &[u8]),
     pub on_close: fn(*mut ()),
+    /// See `ssl_wrapper::Handlers::on_ssl_error`.
+    pub(crate) on_ssl_error: fn(*mut (), u32),
     pub(crate) on_end: fn(*mut ()),
     pub(crate) on_writable: fn(*mut ()),
     pub(crate) on_error: fn(*mut (), JSValue),
@@ -195,6 +197,13 @@ impl UpgradedDuplex {
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }
+    }
+
+    fn on_ssl_error(this: *mut Self, err: u32) {
+        bun_output::scoped_log!(UpgradedDuplex, "onSslError");
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.on_ssl_error)(this.handlers.ctx, err);
     }
 
     fn on_close(this: *mut Self) {
@@ -477,6 +486,7 @@ impl UpgradedDuplex {
             on_handshake: Self::on_handshake,
             on_data: Self::on_data,
             on_close: Self::on_close,
+            on_ssl_error: Some(Self::on_ssl_error),
             write: Self::internal_write,
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),

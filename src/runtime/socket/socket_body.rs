@@ -4396,6 +4396,12 @@ impl DuplexUpgradeContext {
         }
     }
 
+    fn on_ssl_error(this: bun_ptr::ThisPtr<Self>, err: u32) {
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_ssl_error(tls, err));
+        }
+    }
+
     fn on_close(this: bun_ptr::ThisPtr<Self>) {
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls.replace(None) {
@@ -4791,6 +4797,10 @@ pub fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| {
                     DuplexUpgradeContext::on_close(bun_ptr::ThisPtr::new(c.cast()))
+                },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                on_ssl_error: |c: *mut (), err| {
+                    DuplexUpgradeContext::on_ssl_error(bun_ptr::ThisPtr::new(c.cast()), err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_end: |c: *mut ()| DuplexUpgradeContext::on_end(bun_ptr::ThisPtr::new(c.cast())),

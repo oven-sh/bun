@@ -276,6 +276,16 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
+// An fd upgrade leaves two native handles on one fd. When the fd closes under them (a peer reset),
+// the native dispatch runs the connection's close callback, drains the tick queue (this 'close'),
+// and only then runs this socket's own close callback, the one that reports the read error.
+function onAdoptedClose(self, connection) {
+  if (connection[kclosed] && !self[kclosed]) setImmediate(onUpgradedClose, self, connection);
+  else onUpgradedClose(self, connection);
+}
+function destroyWhenAdoptedCloses(self, connection) {
+  connection.once("close", (self[kOnUpgradedClose] = onAdoptedClose.bind(null, self, connection)));
+}
 let addAbortListener;
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
@@ -2060,7 +2070,7 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
-              destroyWhenUpgradedCloses(this, connection);
+              destroyWhenAdoptedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
@@ -2109,7 +2119,7 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
-                  destroyWhenUpgradedCloses(this, connection);
+                  destroyWhenAdoptedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
@@ -2454,7 +2464,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
-    destroyWhenUpgradedCloses(this, connection);
+    destroyWhenAdoptedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;

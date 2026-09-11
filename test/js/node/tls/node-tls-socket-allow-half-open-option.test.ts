@@ -409,4 +409,71 @@ describe("TLSSocket allowHalfOpen", () => {
       }
     });
   });
+
+  describe.concurrent("a peer reset under a server-side wrap", () => {
+    // The reset closes the wrapped socket too, and the wrapped socket's 'close'
+    // destroys the TLS socket. That must not run ahead of the TLS socket's own
+    // close, which is what reports the reset. In both tests the server also
+    // listens for errors on the raw socket it wrapped (the usual STARTTLS shape).
+
+    test("new TLSSocket(socket, { isServer }): the reset is an 'error' on the TLS socket", async () => {
+      const events: string[] = [];
+      const teardown = Promise.withResolvers<string[]>();
+      const gotData = Promise.withResolvers<void>();
+      let wrapped: TLSSocket | undefined;
+      const rawServer = net.createServer(socket => {
+        socket.on("error", () => {});
+        wrapped = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
+        wrapped.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+        wrapped.on("close", hadError => {
+          events.push(`close:${hadError}`);
+          teardown.resolve(events);
+        });
+        wrapped.once("data", () => gotData.resolve());
+      });
+      let raw: net.Socket | undefined;
+      let client: TLSSocket | undefined;
+      try {
+        const port = await listen(rawServer);
+        raw = net.connect({ port, host: "127.0.0.1" });
+        raw.on("error", () => {});
+        client = tls.connect({ socket: raw, rejectUnauthorized: false }, () => client!.write("hi"));
+        client.on("error", () => {});
+        await gotData.promise;
+        raw.resetAndDestroy();
+        expect(await teardown.promise).toEqual(["error:ECONNRESET", "close:true"]);
+      } finally {
+        client?.destroy();
+        raw?.destroy();
+        wrapped?.destroy();
+        rawServer.close();
+      }
+    });
+
+    test("a socket injected into a tls.Server: a reset during the handshake is a 'tlsClientError'", async () => {
+      const tlsServer = tls.createServer(COMMON_CERT);
+      const clientError = Promise.withResolvers<NodeJS.ErrnoException>();
+      tlsServer.on("tlsClientError", clientError.resolve);
+      tlsServer.on("secureConnection", () => clientError.reject(new Error("the handshake completed")));
+      const injected = Promise.withResolvers<void>();
+      const rawServer = net.createServer(socket => {
+        socket.on("error", () => {});
+        tlsServer.emit("connection", socket);
+        injected.resolve();
+      });
+      let raw: net.Socket | undefined;
+      try {
+        const port = await listen(rawServer);
+        raw = net.connect({ port, host: "127.0.0.1" });
+        raw.on("error", () => {});
+        await injected.promise;
+        raw.resetAndDestroy();
+        expect((await clientError.promise).code).toBe("ECONNRESET");
+      } finally {
+        raw?.destroy();
+        rawServer.close();
+        tlsServer.close();
+      }
+    });
+  });
 });

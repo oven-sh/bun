@@ -138,6 +138,48 @@ function typeTest(name: string, config: TypeTestConfig) {
   });
 }
 
+let tscCheckCounter = 0;
+
+/**
+ * Type-checks `files` against the packed bun-types with the `bun init` tsconfig (plus
+ * `compilerOptions`) by spawning tsc. Unlike {@link typeTest} this runs on debug builds too:
+ * tsc over a file or two is cheap, unlike the in-process LanguageService runs over the whole
+ * fixture directory.
+ */
+function tscTest(name: string, files: Record<string, string>, compilerOptions: Record<string, unknown> = {}) {
+  test.concurrent(name, async () => {
+    const checkDir = join(TEMP_DIR, `tsc-check-${tscCheckCounter++}`);
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = Object.keys(files);
+    tsconfig.compilerOptions = {
+      ...tsconfig.compilerOptions,
+      typeRoots: [join(BASE_FIXTURE_DIR, "node_modules", "@types")],
+      ...compilerOptions,
+    };
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, { ...files, "tsconfig.json": JSON.stringify(tsconfig, null, 2) });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  });
+}
+
+/** The named files from `fixture/`, for re-checking them with {@link tscTest} under another tsconfig. */
+function fixtureFiles(...names: string[]): Record<string, string> {
+  return Object.fromEntries(names.map(name => [name, readFileSync(join(FIXTURE_SOURCE_DIR, name), "utf8")]));
+}
+
 async function diagnose(
   fixtureDir: string,
   config: {
@@ -394,36 +436,24 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+    tscTest("MMapOptions accepts offset and size", {
+      "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
-      });
+    });
+  });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  // The typeTest runs over the fixture directory already cover message-event.ts on release builds;
+  // this covers it on debug builds too. Loading lib.dom.d.ts is the case that used to break:
+  // Bun.MessageEvent resolved to lib.dom's MessageEvent constructor type instead of the instance.
+  describe("MessageEvent", () => {
+    const files = fixtureFiles("message-event.ts", "utilities.ts");
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+    tscTest("Bun.MessageEvent is the instance type without lib.dom.d.ts", files);
+    tscTest("Bun.MessageEvent is the instance type with lib.dom.d.ts", files, {
+      lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     });
   });
 

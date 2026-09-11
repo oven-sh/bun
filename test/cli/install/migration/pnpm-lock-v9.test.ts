@@ -1664,6 +1664,205 @@ ${variants}`;
       ).toBeTrue();
     });
 
+    describe("a peer pnpm left unmet is bound by the install that migrates", () => {
+      // pnpm records a met peer as a suffix on the dependent's snapshot key; an unmet one (autoInstallPeers
+      // off) has no suffix, so the migration has nothing to bind peer-deps-too's `no-deps` edge to. Loading
+      // the migrated bun.lock binds it to the no-deps hoisted to the root, and the isolated store keys
+      // peer-deps-too by that binding, so the migrating install has to bind it the same way or the next
+      // install re-keys the entry (bun.lock itself is identical either way).
+      const unmetPeerProject = (importer: string, packageJson: Record<string, unknown>) => ({
+        "package.json": JSON.stringify({ name: "unmet-peer", ...packageJson }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+${importer}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  peer-deps-too@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_TOO_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: '*'
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps-too@1.0.0: {}
+`,
+      });
+
+      const storeEntries = (dir: string) =>
+        readdirSync(join(dir, "node_modules", ".bun"))
+          .filter(name => name !== "node_modules")
+          .sort();
+
+      // Hoisting places a package's dependencies breadth-first in dependency-group order. With both in
+      // `dependencies`, one-dep's no-deps reaches the root before peer-deps-too's peer is looked at; as a
+      // devDependency peer-deps-too is processed first, and the peer is bound when no-deps arrives later.
+      test.concurrent.each([
+        {
+          group: "dependencies",
+          packageJson: { dependencies: { "one-dep": "1.0.0", "peer-deps-too": "1.0.0" } },
+          importer: `    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      peer-deps-too:
+        specifier: 1.0.0
+        version: 1.0.0`,
+        },
+        {
+          group: "devDependencies",
+          packageJson: { dependencies: { "one-dep": "1.0.0" }, devDependencies: { "peer-deps-too": "1.0.0" } },
+          importer: `    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+    devDependencies:
+      peer-deps-too:
+        specifier: 1.0.0
+        version: 1.0.0`,
+        },
+      ])(
+        "peer-deps-too in $group keys its isolated store entry like a reinstall and like a fresh install",
+        async ({ packageJson, importer }) => {
+          const files = unmetPeerProject(importer, packageJson);
+          const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "isolated" }, files });
+
+          const install = await run(packageDir, "install");
+
+          expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+          expect(install.exitCode).toBe(0);
+          const migrated = await bunLockOf(packageDir);
+          expect(migrated).toContain(`{ "peerDependencies": { "no-deps": "*" } }`);
+          const store = storeEntries(packageDir);
+          expect(store).toEqual([
+            "no-deps@1.0.1",
+            "one-dep@1.0.0",
+            expect.stringMatching(/^peer-deps-too@1\.0\.0\+[0-9a-f]{16}$/),
+          ]);
+
+          const reinstall = await run(packageDir, "install");
+
+          expect(reinstall.stdout).toContain("(no changes)");
+          expect(reinstall.exitCode).toBe(0);
+          expect(await bunLockOf(packageDir)).toBe(migrated);
+          expect(storeEntries(packageDir)).toEqual(store);
+
+          const { packageDir: fresh } = await verdaccio.createTestDir({
+            bunfigOpts: { linker: "isolated" },
+            files: { "package.json": files["package.json"] },
+          });
+
+          const freshInstall = await run(fresh, "install");
+
+          expect(freshInstall.stderr).toContain("Saved lockfile");
+          expect(freshInstall.exitCode).toBe(0);
+          expect(storeEntries(fresh)).toEqual(store);
+        },
+      );
+
+      // The root's and a workspace's own peers come from package.json and are unbound the same way; the
+      // isolated linker links a bound peer into the importer's node_modules.
+      test.concurrent("the root's and a workspace's own peers are linked by the migrating install", async () => {
+        const manifests = {
+          "package.json": JSON.stringify({
+            name: "importer-peers",
+            workspaces: ["apps/*"],
+            dependencies: { "one-dep": "1.0.0" },
+            peerDependencies: { "no-deps": "*" },
+          }),
+          "apps/a/package.json": JSON.stringify({ name: "a", peerDependencies: { "no-deps": "*" } }),
+        };
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: {
+            ...manifests,
+            "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+
+  apps/a: {}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+          },
+        });
+        const linked = (dir: string) => ({
+          root: readdirSync(join(dir, "node_modules"))
+            .filter(name => name !== ".bun")
+            .sort(),
+          a: existsSync(join(dir, "apps/a/node_modules")) ? readdirSync(join(dir, "apps/a/node_modules")).sort() : [],
+        });
+
+        const install = await run(packageDir, "install");
+
+        expect(install.stderr).toContain('skipped peer "no-deps" of the root package');
+        expect(install.stderr).toContain('skipped peer "no-deps" of workspace "apps/a"');
+        expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(install.exitCode).toBe(0);
+        const migrated = await bunLockOf(packageDir);
+        expect(linked(packageDir)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+
+        const reinstall = await run(packageDir, "install");
+
+        expect(reinstall.stdout).toContain("(no changes)");
+        expect(reinstall.exitCode).toBe(0);
+        expect(await bunLockOf(packageDir)).toBe(migrated);
+        expect(linked(packageDir)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+
+        const { packageDir: fresh } = await verdaccio.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: manifests,
+        });
+
+        const freshInstall = await run(fresh, "install");
+
+        expect(freshInstall.stderr).toContain("Saved lockfile");
+        expect(freshInstall.exitCode).toBe(0);
+        expect(linked(fresh)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+      });
+    });
+
     const linkedPeerFiles = {
       "package.json": JSON.stringify({
         name: "v9-linked-peer",

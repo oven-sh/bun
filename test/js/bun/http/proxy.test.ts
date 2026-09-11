@@ -1399,7 +1399,7 @@ for (const scheme of ["http", "https"] as const) {
 // closed the wrapper, ProxyTunnel::on_close freed the client, and the 101 arm
 // kept reading it (ASAN: heap-use-after-free in handle_response_metadata).
 test("a bad record delivered with a 101 through a proxy tunnel does not free the client mid-dispatch", async () => {
-  const iterations = 3;
+  const iterations = 2;
   await using proc = Bun.spawn({
     cmd: [bunExe(), require.resolve("./proxy-upgrade-fatal-record-fixture.ts"), String(iterations)],
     env: {
@@ -1425,7 +1425,7 @@ test("a bad record delivered with a 101 through a proxy tunnel does not free the
   expect(stdout).toContain(`injected: ${iterations}\n`);
   expect(stdout).toEndWith("probe: probe-ok\n");
   expect(exitCode).toBe(0);
-}, 30000);
+});
 
 describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {

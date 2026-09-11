@@ -20,6 +20,8 @@ const iterations = Number(process.argv[2] ?? "3");
 // How many connections actually got the bad record. A run where the upgrade
 // fails earlier proves nothing, so the test asserts this count.
 let injected = 0;
+// Resolves when the current iteration's body generator has been pulled.
+let bodyPulled = Promise.withResolvers<void>();
 
 // The origin answers the first request with a bare 101 and nothing else.
 using origin = Bun.listen({
@@ -61,14 +63,23 @@ const proxy = net.createServer(client => {
     }
     if (offset !== held.length || !sawResponse) return;
     poisoned = true;
-    // Wait for the body generator's first chunk to be queued, so the 101 arm
-    // has something for flush_stream to write.
-    setTimeout(() => {
-      if (client.destroyed) return;
+    // The 101 arm only writes when the body generator's first chunk is already
+    // queued in the client. JS can see the pull, not the hand-off to the HTTP
+    // thread that follows it, so a short grace covers that hop.
+    let released = false;
+    const release = () => {
+      if (released || client.destroyed) return;
+      released = true;
       client.write(Buffer.concat([held, BAD_RECORD]));
       held = Buffer.alloc(0);
       injected++;
-    }, 500);
+    };
+    // A body that is never pulled must not hang the fixture.
+    const deadline = setTimeout(release, 2000);
+    bodyPulled.promise.then(() => {
+      clearTimeout(deadline);
+      setTimeout(release, 100);
+    });
   }
 
   client.on("error", () => {});
@@ -107,6 +118,9 @@ await new Promise<void>(resolve => proxy.once("listening", () => resolve()));
 const proxyPort = (proxy.address() as net.AddressInfo).port;
 
 for (let i = 0; i < iterations; i++) {
+  bodyPulled = Promise.withResolvers<void>();
+  // Keeps the request stream open until the fetch has settled.
+  const settled = Promise.withResolvers<void>();
   let outcome: string;
   try {
     const res = await fetch(`https://localhost:${origin.port}/`, {
@@ -116,8 +130,9 @@ for (let i = 0; i < iterations; i++) {
       // A generator body keeps the request stream open past the response, so
       // the 101 arm has something to flush.
       async *body() {
+        bodyPulled.resolve();
         yield Buffer.alloc(1024, 0x61);
-        await Bun.sleep(5000);
+        await settled.promise;
       },
     });
     try {
@@ -127,6 +142,8 @@ for (let i = 0; i < iterations; i++) {
     }
   } catch (e: any) {
     outcome = `rejected:${e?.code ?? e?.name ?? String(e)}`;
+  } finally {
+    settled.resolve();
   }
   console.log(outcome);
 }

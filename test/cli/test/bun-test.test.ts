@@ -404,28 +404,30 @@ describe("bun test", () => {
       expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
     // https://github.com/oven-sh/bun/issues/42361
-    test.concurrent.each([
+    describe.each([
       ["beforeAll", "(fail) beforeAll", "a beforeAll hook timed out after 10ms."],
       ["afterAll", "(fail) afterAll", "an afterAll hook timed out after 10ms."],
       ["beforeEach", "(fail) runs", "a beforeEach hook for this test timed out after 10ms."],
       ["afterEach", "(fail) runs", "an afterEach hook for this test timed out after 10ms."],
-    ])("a timed out %s hook names the hook kind", (hook, label, message) => {
-      const stderr = runTest({
-        input: `
-          import { ${hook}, test } from "bun:test";
-          ${hook}(async () => {
-            await Bun.sleep(1000);
-          }, 10);
-          test("runs", () => {});
-        `,
-        expectExitCode: 1,
+    ])("%s", (hook, label, message) => {
+      test("a timed out hook names the hook kind", () => {
+        const stderr = runTest({
+          input: `
+            import { ${hook}, test } from "bun:test";
+            ${hook}(async () => {
+              await Bun.sleep(1000);
+            }, 10);
+            test("runs", () => {});
+          `,
+          expectExitCode: 1,
+        });
+        expect(stderr).toContain(label);
+        expect(stderr).toContain(`^ ${message}`);
+        expect(stderr).not.toContain("beforeEach/afterEach");
+        expect(stderr).not.toContain("(unnamed)");
       });
-      expect(stderr).toContain(label);
-      expect(stderr).toContain(`^ ${message}`);
-      expect(stderr).not.toContain("beforeEach/afterEach");
-      expect(stderr).not.toContain("(unnamed)");
     });
-    test.concurrent("a timed out hook with a done callback names the hook kind", () => {
+    test("a timed out hook with a done callback names the hook kind", () => {
       const stderr = runTest({
         input: `
           import { afterAll, test } from "bun:test";

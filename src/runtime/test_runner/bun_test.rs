@@ -1814,9 +1814,7 @@ pub enum HookTag {
     AfterAll,
 }
 
-/// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
-/// (adds `OnTestFinished`). Also recorded on every hook `ExecutionEntry` so
-/// the reporter can name the hook kind.
+/// `HookTag` plus `OnTestFinished`: every hook kind a JS hook function can register.
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum GenericHookTag {
     #[strum(serialize = "beforeAll")]

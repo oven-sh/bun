@@ -1007,24 +1007,9 @@ impl CommandLineReporter {
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
         let display_label: &[u8] = test_entry.display_label();
-        // For a hook timeout: "a beforeEach hook for this test" / "a beforeAll hook", plus
-        // the hook's own timeout. `*All` hooks belong to no test.
         let timed_out_hook = || -> (String, u32) {
             match sequence.timed_out_hook {
-                Some(hook) => {
-                    let name: &'static str = hook.tag.map_or("hook", Into::into);
-                    let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                        "an"
-                    } else {
-                        "a"
-                    };
-                    let label = if hook.tag.is_some_and(|tag| tag.is_per_test()) {
-                        format!("{article} {name} hook for this test")
-                    } else {
-                        format!("{article} {name} hook")
-                    };
-                    (label, hook.timeout)
-                }
+                Some(hook) => (hook.label(), hook.timeout),
                 None => ("a hook".to_owned(), test_entry.timeout),
             }
         };

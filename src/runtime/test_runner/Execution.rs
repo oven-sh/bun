@@ -160,6 +160,23 @@ pub struct TimedOutHook {
     pub(crate) timeout: u32,
 }
 
+impl TimedOutHook {
+    /// "a beforeAll hook" or "an afterEach hook for this test".
+    pub(crate) fn label(&self) -> String {
+        let name: &'static str = self.tag.map_or("hook", Into::into);
+        let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
+            "an"
+        } else {
+            "a"
+        };
+        if self.tag.is_some_and(|tag| tag.is_per_test()) {
+            format!("{article} {name} hook for this test")
+        } else {
+            format!("{article} {name} hook")
+        }
+    }
+}
+
 pub struct ExecutionSequence {
     pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running

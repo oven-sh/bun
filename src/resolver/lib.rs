@@ -2088,6 +2088,19 @@ pub mod cache {
         }
     }
 
+    /// What [`Fs::read_file_with_allocator`] does with a path that is not a
+    /// regular file.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum NonRegularFile {
+        /// Open and read it like a file. A FIFO blocks until it has a writer.
+        Read,
+        /// Fail (`EISDIR` for a directory, `ENODEV` otherwise) without
+        /// blocking on it or reading a byte from it. For a read that happens
+        /// after the fact, such as the error printer's re-read of a module
+        /// that has already run.
+        Reject,
+    }
+
     /// File-read cache: shared read buffers plus flags controlling buffer
     /// reuse and streaming reads.
     pub struct Fs {
@@ -2329,10 +2342,20 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
+            non_regular_file: NonRegularFile,
         ) -> crate::CrateResult<Entry> {
             let rfs = &_fs.fs;
 
             let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+
+            let open_at = |dir: Fd, path: &[u8], flags: i32| match non_regular_file {
+                NonRegularFile::Read => bun_sys::File::openat(dir, path, flags, 0),
+                NonRegularFile::Reject => {
+                    bun_sys::File::open_regular_at(dir, path).map(|(file, _size)| file)
+                }
+            };
+            let open_path =
+                |path: &[u8]| open_at(Fd::cwd(), path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC);
 
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
@@ -2340,16 +2363,10 @@ pub mod cache {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
                 bun_sys::File::from_fd(f)
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-                match bun_sys::openat_a(
-                    dirname_fd,
-                    bun_paths::basename(path),
-                    bun_sys::O::RDONLY,
-                    0,
-                ) {
-                    Ok(fd) => bun_sys::File::from_fd(fd),
+                match open_at(dirname_fd, bun_paths::basename(path), bun_sys::O::RDONLY) {
+                    Ok(file) => file,
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                        let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                            .map_err(crate::Error::from)?;
+                        let handle = open_path(path).map_err(crate::Error::from)?;
                         bun_core::pretty_errorln!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
@@ -2360,8 +2377,7 @@ pub mod cache {
                     Err(err) => return Err(err.into()),
                 }
             } else {
-                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(crate::Error::from)?
+                open_path(path).map_err(crate::Error::from)?
             };
 
             let mut owned: Option<bun_sys::File> = None;
@@ -2373,6 +2389,13 @@ pub mod cache {
                 raw
             };
             let file_handle = bun_sys::File::borrow(&fd);
+
+            // A caller's handle did not go through `open_regular_at`.
+            if _file_handle.is_some() && non_regular_file == NonRegularFile::Reject {
+                file_handle
+                    .ensure_regular(path)
+                    .map_err(crate::Error::from)?;
+            }
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
             bun_core::scoped_log!(

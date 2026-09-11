@@ -398,7 +398,7 @@ impl Lookup {
             let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
                 bun_paths::platform::Loose,
             >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            match bun_sys::File::read_regular_from(bun_sys::Fd::cwd(), normalized) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }

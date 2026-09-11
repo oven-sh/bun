@@ -1433,7 +1433,6 @@ mod vm_loader_ctx {
     use super::*;
     use crate::webcore::Blob;
     use bun_bundler::options::OpaqueBlob;
-    use bun_resolver::package_json::PackageJSON;
 
     /// Recover an [`OpaqueBlob`] as a shared `&Blob` (live until `blob_deinit`).
     ///
@@ -1447,12 +1446,9 @@ mod vm_loader_ctx {
 
     // `this: *mut VirtualMachine`. Bodies use raw place projections —
     // `(*this).field` — so no `&VirtualMachine` retag is materialized for the
-    // simple field reads. This matters because `read_dir_info_package_json`
-    // holds a live `&mut transpiler.resolver` across a re-entrant `read_dir_info`
-    // that can call back into these hooks; a `&VirtualMachine` formed here would
-    // alias that `&mut` (SB/TB UB). The two accessors that call `&self` methods
+    // simple field reads. The two accessors that call `&self` methods
     // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
-    // single call, which never spans the re-entrant path.
+    // single call.
     bun_bundler::link_impl_VmLoaderCtx! {
         Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
@@ -1464,19 +1460,6 @@ mod vm_loader_ctx {
                 .as_deref()
                 .map(core::ptr::from_ref::<bun_ast::Source>),
             main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
-            read_dir_info_package_json(dir) => {
-                // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
-                // the call — narrows the borrow re-entrant JS could alias.
-                match (*this).transpiler.resolver.read_dir_info(dir) {
-                    Ok(Some(dir_info)) => {
-                        dir_info
-                            .package_json()
-                            .or(dir_info.enclosing_package_json)
-                            .map(core::ptr::from_ref::<PackageJSON>)
-                    }
-                    _ => None,
-                }
-            },
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
             resolve_blob(spec) => {
                 crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
@@ -2621,6 +2604,13 @@ fn transpile_source_code_inner(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: None,
+                    // The error printer must not block on, or read from, what is
+                    // no longer the regular file the loader read.
+                    non_regular_file: if args.flags == FetchFlags::PrintSource {
+                        bun_resolver::cache::NonRegularFile::Reject
+                    } else {
+                        bun_resolver::cache::NonRegularFile::Read
+                    },
                     // SAFETY: `input_file_fd_ptr` points at this frame's
                     // `input_file_fd`; reborrow through the raw pointer so the
                     // `_fd_guard` scopeguard's tag is not invalidated by a
@@ -2702,11 +2692,11 @@ fn transpile_source_code_inner(
                             hash,
                             package_json,
                         );
+                        // Node compile cache: record the failed module so exit-time
+                        // persist logs the "was not initialized" skip (Node parity).
+                        note_compile_cache_parse_failure(path, loader, module_type);
                     }
                     arena_guard.2 = false; // give_back_arena = false
-                    // Node compile cache: record the failed module so exit-time
-                    // persist logs the "was not initialized" skip (Node parity).
-                    note_compile_cache_parse_failure(path, loader, module_type);
                     return Err(crate::Error::ParseError);
                 };
 

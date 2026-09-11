@@ -527,9 +527,9 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
-                // freed on scope exit by `Vec`'s Drop.
-                let data = match bun_sys::File::read_from(bun_core::Fd::cwd(), load_path) {
+                // Reached from `error.stack` and the error printer: a FIFO
+                // here must not block them.
+                let data = match bun_sys::File::read_regular_from(bun_core::Fd::cwd(), load_path) {
                     Ok(data) => data,
                     Err(_) => break 'try_external,
                 };

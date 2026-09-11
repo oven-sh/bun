@@ -4060,9 +4060,11 @@ pub mod args {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
                         } else {
-                            return Err(
-                                ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
-                            );
+                            return Err(ctx.throw_invalid_argument_type_value(
+                                b"options.flush",
+                                b"boolean",
+                                flush_,
+                            ));
                         }
                     }
                 }

@@ -503,16 +503,32 @@ describe("a MIME string that does not fit in a string", () => {
     }, 120_000);
 
     // A debug build validates a parameter name and a type at about 25 ns per
-    // character, so this case and the next take a minute each there. The case
-    // above covers both builds, and the capped block below covers these two.
+    // character and escapes a value at about 200 ns per character, so the three
+    // cases below take one to four minutes each there. The case above covers
+    // both builds, and the capped block below covers these three.
     test.skipIf(isDebug)(
-      "MIMEParams.prototype.toString",
+      "MIMEParams.prototype.toString with a long parameter name",
       async () => {
         expect(
           await buildInChild(`
             const params = new MIMEParams();
             params.set("a".repeat(2 ** 31 - 1), "x");
             return String(params);
+          `),
+        ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
+
+    // Each quote gets a backslash, so 2 ** 30 of them serialize to 2 ** 31 characters.
+    test.skipIf(isDebug)(
+      "MIMEParams.prototype.toString with a value that escaping doubles",
+      async () => {
+        expect(
+          await buildInChild(`
+            const mime = new MIMEType("text/plain");
+            mime.params.set("a", '"'.repeat(2 ** 30));
+            return String(mime);
           `),
         ).toEqual({ stdout: tooLong, stderr: "", exitCode: 0 });
       },
@@ -549,6 +565,18 @@ describe("a MIME string that does not fit in a string", () => {
           `const params = new MIMEParams();
            const value = Buffer.alloc(3 * 1024 * 1024, 97).toString("latin1");
            for (const name of ["a", "b", "c"]) params.set(name, value);
+           return String(params);`,
+          capped,
+        ),
+      ).toEqual({ stdout: allocationFailed, stderr: "", exitCode: 0 });
+    });
+
+    // 3 MiB of quotes escape to 6 MiB, so the builder fails to grow inside the escape loop.
+    test("MIMEParams.prototype.toString with a value that escaping doubles", async () => {
+      expect(
+        await buildInChild(
+          `const params = new MIMEParams();
+           params.set("a", Buffer.alloc(3 * 1024 * 1024, '"').toString("latin1"));
            return String(params);`,
           capped,
         ),

@@ -97,8 +97,7 @@ impl Pipeline {
     /// `Pipeline::next` for the next one once the current child suspends.
     fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
         if interp.failed() {
-            // A member of a nested pipeline failed while this one was still
-            // starting its members (`drain_pipelines` resumes us).
+            // A nested pipeline's member failed while this one was still starting.
             if interp.as_pipeline(this).cmds.is_none() {
                 return Self::finish(interp, this, 1);
             }
@@ -389,9 +388,7 @@ impl Pipeline {
         }
     }
 
-    /// The script failed (`Interpreter::fail`): the members that did not
-    /// start never will. Free them now so the pipe ends they hold close and
-    /// the members that run see EOF or EPIPE instead of blocking forever.
+    /// The script failed: free the members that never started so their pipe ends close.
     fn release_unstarted(interp: &Interpreter, this: NodeId) {
         let PipelineState::StartingCmds { idx } = interp.as_pipeline(this).state else {
             return;

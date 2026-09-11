@@ -932,9 +932,8 @@ impl Interpreter {
         }
     }
 
-    /// For sequencing states' `child_done`: an interrupted pipeline member, or
-    /// any node once the script failed (`fail`), stops where it is instead of
-    /// running its next command.
+    /// A sequencing state stops instead of running its next command: Ctrl+C
+    /// cut the member short, or the script failed (`fail`).
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
         self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
     }
@@ -1275,8 +1274,7 @@ impl Interpreter {
             let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
                 if self.failed() {
-                    // `fail` rejected the promise. Every member has exited, so the
-                    // interpreter can let go of the event loop and be collected.
+                    // `fail` already rejected the promise.
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                 } else if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
@@ -1345,19 +1343,15 @@ impl Interpreter {
         Yield::done()
     }
 
-    /// The script failed with a JS error (`Yield::Failed`). The sequencing
-    /// states stop where they are (see `interrupted`), a pipeline frees the
-    /// members it did not start, and `finish` settles nothing.
+    /// A node threw a JS error (`fail`): the script winds down and `finish` settles nothing.
     #[inline]
     pub(crate) fn failed(&self) -> bool {
         self.flags.get().failed()
     }
 
-    /// `Yield::Failed(id)`: node `id` threw a JS exception and holds nothing
-    /// in flight. Reject the promise, stop every subprocess, and report `id`
-    /// to its parent as finished. The tree then winds down through the
-    /// normal `child_done` path, so every member that still runs reaches
-    /// `finish` before the interpreter lets go of the event loop.
+    /// Node `id` threw a JS exception and holds nothing in flight: reject the
+    /// promise, kill the subprocesses, and report `id` as finished so the tree
+    /// winds down through `child_done` into `finish`.
     pub(crate) fn fail(&self, id: NodeId) -> Yield {
         self.reject_with_pending_exception();
         if self.failed() {

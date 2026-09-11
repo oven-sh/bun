@@ -241,8 +241,7 @@ impl Cmd {
                     CmdState::WaitingWriteErr | CmdState::Done
                 )
             {
-                // The script failed while an expansion of this command was in
-                // flight: do not expand the rest or spawn the command.
+                // The script failed: expand nothing more and do not spawn.
                 let me = interp.as_cmd_mut(this);
                 me.exit_code = Some(1);
                 me.state = CmdState::Done;
@@ -892,9 +891,7 @@ impl Cmd {
         Self::deinit(interp, this);
     }
 
-    /// The script failed (`Interpreter::fail`): stop a subprocess that still
-    /// runs. Its exit then reaches `on_exit` and finishes the Cmd through
-    /// the normal path, so its pipe ends close once nothing can call back.
+    /// The script failed: stop the subprocess. Its exit finishes the Cmd through `on_exit`.
     pub(crate) fn kill_subprocess(interp: &Interpreter, this: NodeId) {
         let Exec::Subproc(sub) = &interp.as_cmd(this).exec else {
             return;

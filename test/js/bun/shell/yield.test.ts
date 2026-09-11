@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -117,6 +117,7 @@ describe("yield", async () => {
         `
         import { $ } from "bun";
         import { heapStats } from "bun:jsc";
+        import { readdirSync } from "node:fs";
         const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.constructor.name + ": " + e.message);
         const bun = process.execPath;
         ${body}
@@ -284,6 +285,29 @@ describe("yield", async () => {
           `$\`ls ${"${" + JSON.stringify(import.meta.dir) + "}"} | ${bad}\`.quiet().nothrow()`,
           external,
         );
+      });
+
+      test.concurrent("nothing more of the script runs", async () => {
+        using dir = tempDir("shell-failed-pipeline", {});
+        await using proc = Bun.spawn({
+          cmd: child(`
+            const out = [await settle($\`(${sleeper}; touch a) | ${bad}; touch b\`.quiet().nothrow())];
+            out.push(JSON.stringify(readdirSync(".")));
+            console.log(JSON.stringify(out));
+          `),
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+          result: JSON.stringify([external, "[]"]),
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

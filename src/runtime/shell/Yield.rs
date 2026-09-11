@@ -37,8 +37,7 @@ pub enum Yield {
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// The node threw a JS exception (`Interpreter::fail`). The script is over:
-    /// the promise is rejected and the tree winds down through `child_done`.
+    /// The node threw a JS exception; `Interpreter::fail` winds the script down.
     Failed(NodeId),
     Done,
 }

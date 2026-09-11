@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isFreeBSD, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1577,17 +1577,20 @@ describe("a worker that does not return to its event loop", () => {
         expect(statistics.used_heap_size).toBeGreaterThan(0);
         expect(statistics.total_physical_size).toBeGreaterThan(0);
 
-        // The operating system may account CPU time in ticks as long as several milliseconds.
-        let usage = await worker.cpuUsage();
-        while (usage.user + usage.system === 0) usage = await worker.cpuUsage();
-        const since = await worker.cpuUsage(usage);
-        expect(since.user).toBeGreaterThanOrEqual(0);
-        expect(since.system).toBeGreaterThanOrEqual(0);
+        // FreeBSD has no way to read another thread's CPU times, so cpuUsage() still asks the worker there.
+        if (!isFreeBSD) {
+          // The operating system may account CPU time in ticks as long as several milliseconds.
+          let usage = await worker.cpuUsage();
+          while (usage.user + usage.system === 0) usage = await worker.cpuUsage();
+          const since = await worker.cpuUsage(usage);
+          expect(since.user).toBeGreaterThanOrEqual(0);
+          expect(since.system).toBeGreaterThanOrEqual(0);
+        }
 
         // Each answer lets the parent's event loop turn, so a loop that polls does not starve it.
         let turned = false;
         setImmediate(() => (turned = true));
-        while (!turned) await worker.cpuUsage();
+        while (!turned) await worker.getHeapStatistics();
 
         expect(Atomics.load(flag, 0)).toBe(0);
       } finally {
@@ -1598,25 +1601,27 @@ describe("a worker that does not return to its event loop", () => {
   );
 
   test.concurrent("getHeapStatistics() follows the heap as the worker collects", async () => {
-    const flag = new Int32Array(new SharedArrayBuffer(4));
+    // [0] ends the worker's loop. [1] lets it retain what it allocates, up to 64 MB, set once `before` is read.
+    const flags = new Int32Array(new SharedArrayBuffer(8));
     const worker = new Worker(
       `const { parentPort, workerData } = require("node:worker_threads");
       parentPort.postMessage("spinning");
       const retained = [];
       while (Atomics.load(workerData, 0) === 0) {
         const chunk = new Array(1024).fill(retained.length);
-        if (retained.length < 4096) retained.push(chunk);
+        if (Atomics.load(workerData, 1) === 1 && retained.length < 8192) retained.push(chunk);
       }`,
-      { eval: true, workerData: flag },
+      { eval: true, workerData: flags },
     );
     try {
       await once(worker, "message");
       const { used_heap_size: before } = await worker.getHeapStatistics();
+      Atomics.store(flags, 1, 1);
       let after = before;
       while (after < before + 16 * 1024 * 1024) after = (await worker.getHeapStatistics()).used_heap_size;
-      expect(Atomics.load(flag, 0)).toBe(0);
+      expect(Atomics.load(flags, 0)).toBe(0);
     } finally {
-      Atomics.store(flag, 0, 1);
+      Atomics.store(flags, 0, 1);
       await worker.terminate();
     }
   });

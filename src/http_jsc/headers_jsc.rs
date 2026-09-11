@@ -11,6 +11,7 @@ use bun_jsc::{
     CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult,
 };
 
+/// `Headers` addresses its buffer with `u32` `StringPointer`s, so it cannot hold a larger total.
 fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
     global.throw_value(global.create_range_error_instance(format_args!(
         "Headers exceed the maximum total size of {} bytes",
@@ -24,8 +25,6 @@ fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
 /// `body_content_type` is `Some(ct)` only when the body has a *user-set*
 /// content-type (callers gate on `has_content_type_from_user()` before passing
 /// `content_type()`); `None` means no body or no user-set content-type.
-///
-/// Throws a `RangeError` when the total passes `u32::MAX` bytes, the range of a `StringPointer`.
 pub fn from_fetch_headers(
     global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,

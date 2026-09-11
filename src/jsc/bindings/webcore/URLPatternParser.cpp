@@ -306,9 +306,7 @@ ExceptionOr<Vector<Part>> URLPatternParser::parse(StringView patternStringInput,
     return tokenParser.takePartList();
 }
 
-// Shared by the regexp and pattern escapers. With an OverflowPolicy::RecordOverflow builder
-// the loop stops at the character that passes String::MaxLength and the caller checks
-// hasOverflowed(), so `characters` can have any length the caller was handed.
+// Shared by the regexp and pattern escapers. The loop stops at the character that overflows.
 template<typename CharacterType, std::size_t setSize>
 static void appendWithBackslashEscapes(StringBuilder& result, std::span<const CharacterType> characters, const std::array<CharacterType, setSize>& escapeSet)
 {
@@ -567,7 +565,7 @@ ExceptionOr<String> escapePatternString(StringView input)
     StringBuilder result { OverflowPolicy::RecordOverflow };
     appendEscapedPatternString(result, input);
 
-    if (result.hasOverflowed() || exceedsStringLimit(result.length())) [[unlikely]]
+    if (result.hasOverflowed()) [[unlikely]]
         return Exception { ExceptionCode::OutOfMemoryError };
 
     return String { result.toString() };

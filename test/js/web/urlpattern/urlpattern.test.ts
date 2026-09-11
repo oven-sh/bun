@@ -1,7 +1,7 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { totalmem } from "node:os";
 import testData from "./urlpatterntestdata.json";
@@ -212,65 +212,64 @@ describe("URLPattern", () => {
 });
 
 // URLPattern builds a pattern string, a regular expression and a canonical URL
-// from input the caller sizes. Escaping adds a character per escaped character,
-// and the base path is joined onto a relative pathname, so an input below the
-// 2147483647 character string limit produces a result above it. Every one of
-// those must throw a catchable error, not abort.
+// from input the caller sizes, so an input below the 2147483647 character string
+// limit produces a result above it. Each of those must report an error, not abort.
 //
-// setSyntheticAllocationLimitForTesting lowers the limit the code checks, which
-// reaches each site with kilobytes instead of gigabytes.
+// setSyntheticAllocationLimitForTesting lowers the limit these five sites check,
+// which reaches them with 1 MiB. The base path escaper and the pathname join are
+// not here: everything they produce flows into the regexp generator, so under a
+// lowered limit no input can tell their check from its check. The real-limit
+// tests below cover those two.
 describe("string above the synthetic string length limit", () => {
   const limit = 1024 * 1024;
-  const long = "x".repeat(limit);
+  // Built here, before beforeEach lowers the limit.
+  const long = Buffer.alloc(limit, "x").toString();
+  const overHalf = Buffer.alloc(limit / 2 + 16, "x").toString();
+  const outOfMemory = new RangeError("Out of memory");
+  let previousLimit = 0;
 
-  function withLimit(fn: () => void) {
-    const previousLimit = setSyntheticAllocationLimitForTesting(limit);
-    try {
-      expect(fn).toThrow(new RangeError("Out of memory"));
-    } finally {
-      setSyntheticAllocationLimitForTesting(previousLimit);
-    }
-  }
-
-  test("a base path that escapes past the limit", () => {
-    const escapes = "(".repeat(limit / 2 + 16);
-    withLimit(() => new URLPattern({ baseURL: "https://e.com/" + escapes }));
+  beforeEach(() => {
+    previousLimit = setSyntheticAllocationLimitForTesting(limit);
   });
 
-  test("a base path joined with a relative pathname past the limit", () => {
-    withLimit(() => new URLPattern({ pathname: long, baseURL: "https://e.com/" + long + "/" }));
+  afterEach(() => {
+    setSyntheticAllocationLimitForTesting(previousLimit);
   });
 
+  // The callbacks return nothing. If one returned a pattern that wrongly got built,
+  // toThrow would format it, which itself passes the lowered limit and throws
+  // "Out of memory", and the test would pass for the wrong reason.
   test("a generated regular expression past the limit", () => {
-    // The group's value is repeated in the regexp, so half the limit is enough.
-    withLimit(() => new URLPattern({ pathname: "{a(" + "x".repeat(limit / 2 + 16) + ")b}*" }));
+    // The group's value is written twice into the regexp, so half the limit is enough.
+    expect(() => {
+      new URLPattern({ pathname: "{a(" + overHalf + ")b}*" });
+    }).toThrow(outOfMemory);
+  });
+
+  test("a generated pattern string past the limit", () => {
+    // A group's name is in the pattern string and not in the regexp, so only the
+    // pattern string passes the limit.
+    expect(() => {
+      new URLPattern({ pathname: ":" + long });
+    }).toThrow(outOfMemory);
   });
 
   // match() turns a URLPatternInit it cannot process into no match, per the
   // spec, so these report the failure as false and null instead of throwing.
-  function noMatch(fn: () => unknown, expected: unknown) {
-    const previousLimit = setSyntheticAllocationLimitForTesting(limit);
-    try {
-      expect(fn()).toEqual(expected);
-    } finally {
-      setSyntheticAllocationLimitForTesting(previousLimit);
-    }
-  }
-
   test("a protocol that canonicalizes past the limit", () => {
     const pattern = new URLPattern({ protocol: "*" });
-    noMatch(() => pattern.test({ protocol: long }), false);
-    noMatch(() => pattern.exec({ protocol: long }), null);
+    expect(pattern.test({ protocol: long })).toBe(false);
+    expect(pattern.exec({ protocol: long })).toBe(null);
   });
 
   test("a pathname that canonicalizes past the limit", () => {
     const pattern = new URLPattern({ pathname: "*" });
-    noMatch(() => pattern.test({ pathname: long }), false);
+    expect(pattern.test({ pathname: long })).toBe(false);
   });
 
   test("an opaque pathname that canonicalizes past the limit", () => {
     const pattern = new URLPattern({ pathname: "*" });
-    noMatch(() => pattern.test({ protocol: "data", pathname: long }), false);
+    expect(pattern.test({ protocol: "data", pathname: long })).toBe(false);
   });
 });
 

@@ -44,9 +44,7 @@ enum class EncodingCallbackType : uint8_t { Protocol,
     Search,
     Hash };
 
-// True when a string of this length cannot be built. The limit is String::MaxLength, or the
-// lower one setSyntheticAllocationLimitForTesting sets, which is how the tests reach these
-// paths without a 2 GB allocation.
+// String::MaxLength, or the lower limit setSyntheticAllocationLimitForTesting sets.
 bool exceedsStringLimit(size_t length);
 
 bool isAbsolutePathname(StringView input, BaseURLStringType inputType);

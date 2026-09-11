@@ -924,6 +924,86 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  test.each(["no args", "--access-early"])("children that are not loaded as CommonJS, %s", async arg => {
+    using dir = tempDir("module-children", {
+      "a.js": "module.exports = 1;",
+      "b.mjs": "export default 2;",
+      "c.ts": "export const x: number = 3;",
+      "virt.js": "module.exports = 'real';",
+      "d.js": "module.exports = 'd';",
+      "main.cjs": `
+        const path = require("path");
+        const Module = require("module");
+        const p = f => path.join(__dirname, f);
+        const names = children => children.map(c => path.basename(c.id));
+        if (process.argv.includes("--access-early")) module.children;
+
+        // require() of an ES module, two times each
+        for (const f of ["a.js", "b.mjs", "c.ts", "b.mjs", "c.ts"]) require(p(f));
+
+        // require() served from an entry that user code put in require.cache
+        const stub = { id: p("virt.js"), filename: p("virt.js"), loaded: true, exports: "stub", children: [] };
+        require.cache[p("virt.js")] = stub;
+        const stubExports = [require(p("virt.js")), require(p("virt.js"))];
+
+        // the Module constructor
+        const made = new Module(p("made.js"), module);
+        const orphan = new Module(p("orphan.js"));
+        const fakeParent = { id: "fake", filename: p("fake.js"), children: [] };
+        const madeForFake = new Module(p("made2.js"), fakeParent);
+        Module.prototype.require.call(fakeParent, p("a.js"));
+        const weird = new Module(p("weird.js"), module);
+        weird.children = 5;
+        new Module(p("weird-child.js"), weird);
+
+        const before = names(module.children);
+        // what the require-from-string package does
+        const fromString = new Module(p("from-string.js"), module);
+        fromString._compile("module.exports = 42", p("from-string.js"));
+        module.children.splice(module.children.indexOf(fromString), 1);
+
+        const result = {
+          before,
+          afterRequireFromString: names(module.children),
+          stubIsChild: module.children.includes(stub),
+          stubExports,
+          madeIsChild: module.children.includes(made),
+          orphanChildren: orphan.children,
+          fakeChildren: names(fakeParent.children),
+          madeForFakeIsChild: fakeParent.children.includes(madeForFake),
+          weirdChildren: weird.children,
+        };
+
+        // a "children" that is not an array is left alone
+        module.children = 5;
+        result.loadedWithoutChildrenArray = [require(p("d.js")), require(p("b.mjs")).default];
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", arg],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const children = ["a.js", "b.mjs", "c.ts", "virt.js", "made.js", "weird.js"];
+    expect(JSON.parse(stdout)).toEqual({
+      before: children,
+      afterRequireFromString: children,
+      loadedWithoutChildrenArray: ["d", 2],
+      stubIsChild: true,
+      stubExports: ["stub", "stub"],
+      madeIsChild: true,
+      orphanChildren: [],
+      fakeChildren: ["made2.js", "a.js"],
+      madeForFakeIsChild: true,
+      weirdChildren: 5,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("new Module().exports survives object spread", async () => {
     // exports was built with inline capacity 0, so spreading it hit JSC's
     // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a

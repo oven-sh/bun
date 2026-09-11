@@ -137,7 +137,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return (mod.exports = moduleExports ?? namespace);
+    const exports = (mod.exports = moduleExports ?? namespace);
+    // There is no CommonJS source to evaluate. This adds `mod` to `this.children`.
+    const c = $evaluateCommonJSModule(mod, this);
+    if (c && c.indexOf(mod) === -1) {
+      c.push(mod);
+    }
+    return exports;
   }
 
   const c = $evaluateCommonJSModule(mod, this);

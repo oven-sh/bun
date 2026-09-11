@@ -58,7 +58,7 @@ public:
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
-    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
+    // Objects. Almost always JSCommonJSModule, but any object in `require.cache` becomes a child too.
     WTF::Vector<WriteBarrier<Unknown>> m_children;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
@@ -125,6 +125,9 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+
+    // Node's updateChildren(parent, child). Returns `parent.children` when the caller has to push onto that JSArray, else empty.
+    static JSValue updateChildren(JSC::JSGlobalObject* globalObject, JSValue parent, JSValue child);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

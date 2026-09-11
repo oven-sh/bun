@@ -183,6 +183,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s),
         JSC::constructEmptyObject(globalObject), 0);
 
+    JSValue children = Bun::JSCommonJSModule::updateChildren(globalObject, parentValue, out);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (children) {
+        // A new object cannot be in the array yet, so there is nothing to scan for.
+        uncheckedDowncast<JSArray>(children)->push(globalObject, out);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     return JSValue::encode(out);
 }
 

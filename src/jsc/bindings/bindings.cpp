@@ -694,8 +694,7 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
-// Mirrors the storage reads of JSObject::getOwnPropertySlotByIndex: every own index property of `object` is
-// below `vectorEnd` or in `sparseIndices` (appended unsorted). False means an unknown layout: probe every index.
+// Own index properties live below `vectorEnd` or in `sparseIndices` (unsorted), per JSObject::getOwnPropertySlotByIndex. False: unknown layout.
 static bool indexedStorageOfArray(JSObject* object, uint64_t& vectorEnd, WTF::Vector<uint32_t, 16>& sparseIndices)
 {
     switch (object->indexingType()) {

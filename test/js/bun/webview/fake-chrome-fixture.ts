@@ -66,6 +66,13 @@ Object.assign(globalThis, {
     if (historyIndex >= 0) history[historyIndex].url = url;
     event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
   },
+  // The page follows a #fragment link of its own, or assigns location.hash:
+  // a new history entry, and a commit that reports "fragment" the way a
+  // traversal's does.
+  __fake_hash_change(url: string) {
+    pushEntry(url);
+    commitSameDocument(url);
+  },
   // The page navigates itself to a new document (a link, `location.href = ...`):
   // it commits, and only __fake_load_event() finishes it.
   __fake_page_commit(url: string) {

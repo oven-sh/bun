@@ -49,7 +49,7 @@ enum class ScreenshotEncoding : uint8_t {
 enum class ChromeNavigationKind : uint8_t {
     NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
     Requested, // command written, no reply yet: every commit so far is the page's own
-    Unknown, // a history traversal, which Chrome answers with {}: the next commit of either shape ends it
+    Unknown, // a history traversal, which Chrome answers with {}: a document commit, or a same-document one onto its entry, ends it
     SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
     CrossDocument, // Page.loadEventFired ends it, or the commit itself for a back-forward cache restore
 };
@@ -114,6 +114,8 @@ public:
     bool m_chromeNavigationCommitted = false;
     // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
     uint32_t m_chromeNavigationSeq = 0;
+    // Chrome: the URL of the history entry that goBack()/goForward() asked for. A same-document commit elsewhere is the page's own.
+    WTF::String m_chromeTraversalUrl;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

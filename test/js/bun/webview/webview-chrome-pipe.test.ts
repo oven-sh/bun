@@ -247,6 +247,42 @@ test.concurrent("goBack() is not settled by the page's own replaceState() behind
   expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b?scroll=1" });
 });
 
+// A #fragment change of the page being left (a scroll spy, a link the user
+// follows) reports "fragment" like a traversal's own commit does. The
+// traversal's commit lands on the entry it asked for, and this one does not.
+test.concurrent("goBack() is not settled by a #fragment change of the page being left", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/stall-on-return");
+    await view.navigate("http://fake/b");
+    const started = view.goBack();
+    // See the test above: the fake has answered the traversal by the second evaluate.
+    await view.evaluate("1");
+    await view.evaluate("__fake_hash_change('http://fake/b#section')");
+    const first = await Promise.race([
+      started.then(() => "goBack() settled", () => "goBack() rejected"),
+      view.evaluate("'goBack() still pending'"),
+    ]);
+    print({ first, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b#section" });
+});
+
+// The entry's URL comes from the history reply and the commit's from the
+// event. Chrome escapes a quote in both, so they have to be compared decoded.
+test.concurrent("goBack() settles over a same-document entry whose URL needs a JSON escape", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    await view.navigate('http://fake/page#"quoted"');
+    await view.navigate("http://fake/page#two");
+    print(await outcome(view.goBack()));
+    view.close();
+  `);
+  expect(result).toEqual({});
+});
+
 // The same window exists behind the reply of a #fragment navigate().
 test.concurrent("navigate() to a #fragment is not settled by the page's own replaceState()", async () => {
   const result = await runScenario(`
@@ -328,6 +364,22 @@ test.concurrent("goBack() onto a page restored from the back-forward cache settl
     afterForward: "http://fake/b",
     urls: ["http://fake/bfcached#top", "http://fake/b"],
   });
+});
+
+// Page.navigatedWithinDocument was never intercepted, so a listener for it has
+// always heard it. The view's own bookkeeping on it must not end that.
+test.concurrent("Page.navigatedWithinDocument still reaches addEventListener()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const heard = [];
+    view.addEventListener("Page.navigatedWithinDocument", event => heard.push(event.data.url));
+    await view.navigate("http://fake/page#one");
+    await view.evaluate("__fake_replace_state('http://fake/page#spa')");
+    print(heard);
+    view.close();
+  `);
+  expect(result).toEqual(["http://fake/page#one", "http://fake/page#spa"]);
 });
 
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {

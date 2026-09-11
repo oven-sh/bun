@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
@@ -945,7 +947,225 @@ describe("pathological nesting through render()", () => {
         paragraph: c => `<p>${c}</p>`,
       }),
     ).toBe("<bq>onetwo <u|l></bq><p>para code</p>");
+    // Text that does not come from a plain text event (entity, soft break, hard
+    // break, NUL) lands in the same place as the text around it.
+    const pieces = "**a *b &amp; c\nd  \ne\0f* g**\n";
+    expect(Markdown.render(pieces, {})).toBe("a b & c\nd\ne\uFFFDf g");
+    expect(Markdown.render(pieces, { strong: c => `[${c}]` })).toBe("[a b & c\nd\ne\uFFFDf g]");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})` })).toBe("a (b & c\nd\ne\uFFFDf) g");
+    expect(Markdown.render(pieces, { emphasis: c => `(${c})`, text: t => t.toUpperCase() })).toBe(
+      "A (B & C\nD\nE\uFFFDF) G",
+    );
   });
+
+  test("list and listItem meta do not depend on which of the two has a callback", () => {
+    const input = "3. a\n4. b\n   - [x] c\n   - [ ] d\n\n- e\n- f\n\n> 1) g\n> 2) h\n";
+    const itemMeta = [
+      { children: "a", index: 0, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "c", index: 0, depth: 1, ordered: false, start: undefined, checked: true },
+      { children: "d", index: 1, depth: 1, ordered: false, start: undefined, checked: false },
+      { children: "bcd", index: 1, depth: 0, ordered: true, start: 3, checked: undefined },
+      { children: "e", index: 0, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "f", index: 1, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { children: "g", index: 0, depth: 0, ordered: true, start: 1, checked: undefined },
+      { children: "h", index: 1, depth: 0, ordered: true, start: 1, checked: undefined },
+    ];
+    const listMeta = [
+      { children: "cd", ordered: false, start: undefined, depth: 1 },
+      { children: "abcd", ordered: true, start: 3, depth: 0 },
+      { children: "ef", ordered: false, start: undefined, depth: 0 },
+      { children: "gh", ordered: true, start: 1, depth: 0 },
+    ];
+    const record = (log: object[]) => (children: string, meta: object) => (log.push({ children, ...meta }), children);
+
+    // listItem only: every ul/ol passes through, but each li still finds its parent list.
+    let items: object[] = [];
+    expect(Markdown.render(input, { listItem: record(items) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+
+    // list only: every li passes through.
+    let lists: object[] = [];
+    expect(Markdown.render(input, { list: record(lists) })).toBe("abcdefgh");
+    expect(lists).toEqual(listMeta);
+
+    // Both.
+    items = [];
+    lists = [];
+    expect(Markdown.render(input, { listItem: record(items), list: record(lists) })).toBe("abcdefgh");
+    expect(items).toEqual(itemMeta);
+    expect(lists).toEqual(listMeta);
+  });
+});
+
+// ============================================================================
+// render() oracle. `Bun.markdown.react()` builds its element tree with a
+// separate renderer, so folding that tree with the same callbacks states
+// independently what render() must return: every callback gets exactly the
+// output of its children, an element without a callback splices its children
+// into the nearest ancestor that has one, and the list / listItem meta
+// (`depth`, `index`, `ordered`, `start`) follows from the tree shape alone.
+// Checked over the spec corpus with every callback, with none, and with two
+// complementary halves, so each element type is seen both collecting its
+// children and passing them through.
+// ============================================================================
+
+describe("render() agrees with a fold over the react() tree", () => {
+  const names = [
+    "heading",
+    "paragraph",
+    "blockquote",
+    "code",
+    "list",
+    "listItem",
+    "hr",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "th",
+    "td",
+    "html",
+    "strong",
+    "emphasis",
+    "link",
+    "image",
+    "codespan",
+    "strikethrough",
+    "text",
+  ];
+  const callbackForTag: Record<string, string> = {
+    p: "paragraph",
+    blockquote: "blockquote",
+    pre: "code",
+    ul: "list",
+    ol: "list",
+    li: "listItem",
+    hr: "hr",
+    table: "table",
+    thead: "thead",
+    tbody: "tbody",
+    tr: "tr",
+    th: "th",
+    td: "td",
+    html: "html",
+    strong: "strong",
+    em: "emphasis",
+    a: "link",
+    img: "image",
+    code: "codespan",
+    del: "strikethrough",
+  };
+  type Callbacks = Record<string, (children: string, meta?: unknown) => string>;
+  type ParentList = { ordered: boolean; start?: number; index: number };
+
+  // Every callback wraps its children in unambiguous markers together with its
+  // meta. `text` must commute with concatenation and keep "\n" (soft and hard
+  // breaks bypass it), which upper-casing does.
+  const callbacks = (subset: string[]): Callbacks =>
+    Object.fromEntries(
+      subset.map(name => [
+        name,
+        name === "text"
+          ? (children: string) => children.toUpperCase()
+          : (children: string, meta?: unknown) =>
+              "\x01" + name + (meta === undefined ? "" : JSON.stringify(meta)) + "\x02" + children + "\x03",
+      ]),
+    );
+
+  function fold(node: any, cbs: Callbacks, enclosingLists: number, parent?: ParentList): string {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string") return cbs.text ? cbs.text(node) : node;
+    if (Array.isArray(node)) {
+      let out = "";
+      let items = 0;
+      for (const child of node) {
+        out += fold(child, cbs, enclosingLists, parent && { ...parent, index: child?.type === "li" ? items++ : 0 });
+      }
+      return out;
+    }
+    const tag: string = typeof node.type === "symbol" ? "fragment" : node.type;
+    const props = node.props ?? {};
+    if (tag === "br") return "\n";
+    const isList = tag === "ul" || tag === "ol";
+    const children =
+      tag === "img"
+        ? fold(props.alt, cbs, enclosingLists)
+        : fold(
+            props.children,
+            cbs,
+            enclosingLists + (isList ? 1 : 0),
+            isList ? { ordered: tag === "ol", start: props.start, index: 0 } : undefined,
+          );
+    const level = /^h([1-6])$/.exec(tag);
+    const cb = cbs[level ? "heading" : callbackForTag[tag]];
+    if (!cb) return children;
+    let meta: unknown;
+    if (level) meta = { level: +level[1], id: props.id };
+    else if (isList) meta = { ordered: tag === "ol", start: props.start, depth: enclosingLists };
+    else if (tag === "li")
+      meta = {
+        index: parent?.index ?? 0,
+        depth: Math.max(enclosingLists - 1, 0),
+        ordered: parent?.ordered ?? false,
+        start: parent?.ordered ? parent.start : undefined,
+        checked: props.checked,
+      };
+    else if (tag === "pre") meta = props.language === undefined ? undefined : { language: props.language };
+    else if (tag === "th" || tag === "td") meta = { align: props.align };
+    else if (tag === "a") meta = { href: props.href, title: props.title };
+    else if (tag === "img") meta = { src: props.src, title: props.title };
+    return meta === undefined ? cb(children) : cb(children, meta);
+  }
+
+  function specExamples(file: string): string[] {
+    const content = readFileSync(join(import.meta.dir, file), "utf8").replace(/\r\n?/g, "\n");
+    const examples: string[] = [];
+    for (const match of content.matchAll(/^`{32} example\n([\s\S]*?)^\.$/gm)) {
+      examples.push(match[1].replaceAll("\u2192", "\t") + "\n");
+    }
+    return examples;
+  }
+
+  const callbackSets = [
+    names,
+    [],
+    names.filter((_, i) => i % 2 === 0), // list without listItem, heading, link, text, ...
+    names.filter((_, i) => i % 2 === 1), // listItem without list, paragraph, emphasis, image, ...
+  ].map(callbacks);
+
+  // One test per 100 examples keeps each test near a second on a debug build.
+  const chunkSize = 100;
+  for (const [file, options] of [
+    ["spec.txt", { headings: { ids: true } }],
+    ["spec-gfm.txt", {}],
+    ["spec-tables.txt", {}],
+    ["spec-strikethrough.txt", {}],
+    ["spec-tasklists.txt", {}],
+    ["spec-permissive-autolinks.txt", { autolinks: true }],
+    ["regressions.txt", {}],
+  ] as const) {
+    const examples = specExamples(file);
+    test(`${file} has examples`, () => {
+      expect(examples.length).toBeGreaterThan(0);
+    });
+    for (let start = 0; start < examples.length; start += chunkSize) {
+      const chunk = examples.slice(start, start + chunkSize);
+      test(`${file} examples ${start + 1}-${start + chunk.length}`, () => {
+        const mismatches: unknown[] = [];
+        for (const markdown of chunk) {
+          const tree = Markdown.react(markdown, undefined, { ...options, reactVersion: 18 });
+          for (const cbs of callbackSets) {
+            const rendered = Markdown.render(markdown, cbs, options);
+            const folded = fold(tree, cbs, 0);
+            if (rendered !== folded && mismatches.length < 5) {
+              mismatches.push({ markdown, callbacks: Object.keys(cbs), rendered, folded });
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+    }
+  }
 });
 
 // ============================================================================

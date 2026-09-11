@@ -1257,7 +1257,9 @@ impl<'a> JsCallbackRenderer<'a> {
             return Ok(());
         };
         if callback.is_empty() {
-            // Only reachable if an enter/leave pair disagrees on the element type.
+            // The parser left a span open (#39496: `*a *b *c *d *e *f *g*******`
+            // with an `emphasis` callback), so a later leave of another element
+            // type pops that span's entry. Keep what it collected.
             self.append_output(&entry.buffer)?;
             return Ok(());
         }

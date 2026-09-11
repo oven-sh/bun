@@ -294,8 +294,8 @@ To improve startup time, enable bytecode compilation:
 
 Using bytecode compilation, `tsc` starts 2x faster:
 
-<Frame>
-  ![Bytecode performance comparison](https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763)
+<Frame caption="Startup time improvement with --bytecode — tsc starts ~2× faster">
+  ![Bar chart comparing tsc startup time with and without bytecode compilation — bytecode enabled is about twice as fast](https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763)
 </Frame>
 
 Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. Bytecode compilation doesn't obscure source code.

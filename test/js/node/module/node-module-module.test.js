@@ -926,6 +926,139 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  test("module.loaded is true after require() loads a file", async () => {
+    // Reads its own require.cache entry while its body runs.
+    const esm = `
+      import { createRequire } from "node:module";
+      const require = createRequire(import.meta.url);
+      export const loadedWhileEvaluating = require.cache[require.resolve(import.meta.filename)].loaded;
+    `;
+    using dir = tempDir("require-loaded", {
+      "cjs.cjs": "module.exports = 1;",
+      "esm.mjs": esm,
+      "esm.ts": "export const x: number = 3;",
+      // No module syntax. Bun loads this file the same way as an ES module.
+      "empty.js": "",
+      "throws.mjs": "throw new Error('boom');",
+      // Module._extensions[".js"] loads these. Their package.json makes them ES modules.
+      "pkg/package.json": JSON.stringify({ type: "module" }),
+      "pkg/esm.js": esm,
+      "pkg/direct.js": "export const z = 5;",
+      "assigned.js": "module.exports = 'from the file body';",
+      "imports-assigned.mjs": "export { default } from './assigned.js';",
+      "compiles.xyz": "",
+      "throws.abc": "",
+      "main.cjs": `
+        const Module = require("node:module");
+        const entry = file => require.cache[require.resolve("./" + file)];
+
+        require("./cjs.cjs");
+        const { loadedWhileEvaluating } = require("./esm.mjs");
+        require("./esm.ts");
+        require("./empty.js");
+        const plain = {
+          "cjs.cjs": entry("cjs.cjs").loaded,
+          "esm.mjs": entry("esm.mjs").loaded,
+          "esm.ts": entry("esm.ts").loaded,
+          "empty.js": entry("empty.js").loaded,
+          loadedWhileEvaluating,
+        };
+
+        let threw = false;
+        try {
+          require("./throws.mjs");
+        } catch {
+          threw = true;
+        }
+        const throwing = { threw, cached: entry("throws.mjs") !== undefined };
+
+        // A wrapper of the default handler. require() sets loaded after the wrapper returns.
+        const original = Module._extensions[".js"];
+        const inWrapper = [];
+        Module._extensions[".js"] = function (module, filename) {
+          const before = module.loaded;
+          original(module, filename);
+          inWrapper.push({ before, afterOriginal: module.loaded });
+        };
+        const wrapped = {
+          loadedWhileEvaluating: require("./pkg/esm.js").loadedWhileEvaluating,
+          inWrapper,
+          "pkg/esm.js": entry("pkg/esm.js").loaded,
+        };
+        Module._extensions[".js"] = original;
+
+        // The default handler alone does not set loaded.
+        const directModule = new Module(require.resolve("./pkg/direct.js"));
+        directModule.filename = directModule.id;
+        original(directModule, directModule.filename);
+        const direct = { loaded: directModule.loaded, exports: Object.keys(directModule.exports) };
+
+        // Handlers that do not call the default handler.
+        Module._extensions[".js"] = function (module) {
+          module.exports = { loadedInHandler: module.loaded };
+        };
+        const assigned = require("./assigned.js");
+        Module._extensions[".js"] = original;
+        require.extensions[".xyz"] = function (module, filename) {
+          module._compile("module.exports = 2;", filename);
+        };
+        require.extensions[".abc"] = function () {
+          throw new Error("boom");
+        };
+        require("./compiles.xyz");
+        let handlerThrew = false;
+        try {
+          require("./throws.abc");
+        } catch {
+          handlerThrew = true;
+        }
+        const custom = {
+          assigned,
+          "assigned.js": entry("assigned.js").loaded,
+          "compiles.xyz": entry("compiles.xyz").loaded,
+          handlerThrew,
+          "throws.abc cached": entry("throws.abc") !== undefined,
+        };
+
+        // An ES module imports the file that the handler loaded. It gets the handler's exports.
+        import("./imports-assigned.mjs")
+          .then(
+            ns => ns.default,
+            error => "import failed: " + error.message,
+          )
+          .then(imported => console.log(JSON.stringify({ plain, throwing, wrapped, direct, custom, imported })));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Node v26.3.0 prints the same values.
+    expect(JSON.parse(stdout)).toEqual({
+      plain: { "cjs.cjs": true, "esm.mjs": true, "esm.ts": true, "empty.js": true, loadedWhileEvaluating: false },
+      throwing: { threw: true, cached: false },
+      wrapped: {
+        loadedWhileEvaluating: false,
+        inWrapper: [{ before: false, afterOriginal: false }],
+        "pkg/esm.js": true,
+      },
+      direct: { loaded: false, exports: ["z"] },
+      custom: {
+        assigned: { loadedInHandler: false },
+        "assigned.js": true,
+        "compiles.xyz": true,
+        handlerThrew: true,
+        "throws.abc cached": false,
+      },
+      imported: { loadedInHandler: false },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [

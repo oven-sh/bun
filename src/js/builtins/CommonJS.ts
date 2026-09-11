@@ -137,13 +137,15 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return (mod.exports = moduleExports ?? namespace);
+    mod.exports = moduleExports ?? namespace;
+  } else {
+    const c = $evaluateCommonJSModule(mod, this);
+    if (c && c.indexOf(mod) === -1) {
+      c.push(mod);
+    }
   }
 
-  const c = $evaluateCommonJSModule(mod, this);
-  if (c && c.indexOf(mod) === -1) {
-    c.push(mod);
-  }
+  mod.loaded = true;
   return mod.exports;
 }
 

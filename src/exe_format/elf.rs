@@ -663,8 +663,7 @@ const EI_DATA: usize = 5;
 const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 
-use bun_sys::elf::{PT_INTERP, PT_LOAD};
-const PF_W: u32 = 2;
+use bun_sys::elf::{PF_W, PT_INTERP, PT_LOAD};
 const SHT_NOBITS: u32 = 8;
 
 const EM_PPC64: u16 = 21;

@@ -1407,6 +1407,7 @@ impl CommandLineReporter {
                         if this.jest.bail == 1 { "" } else { "s" }
                     );
                     Output::flush();
+                    this.write_snapshots_before_bail();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
                     Global::exit(1);
@@ -1433,6 +1434,15 @@ impl CommandLineReporter {
         );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
+    }
+
+    pub(crate) fn write_snapshots_before_bail(&mut self) {
+        if let Err(err) = self.jest.snapshots.write_inline_snapshots() {
+            Output::err(err, "Failed to write inline snapshots", ());
+        }
+        if let Err(err) = self.jest.snapshots.write_snapshot_file() {
+            Output::err(err, "Failed to write snapshot file", ());
+        }
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -2935,6 +2945,7 @@ impl TestCommand {
                             reporter.jest.bail,
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
+                        reporter.write_snapshots_before_bail();
                         reporter.write_junit_report_if_needed();
                         reporter.write_timings_if_needed();
 
@@ -3036,6 +3047,11 @@ impl TestCommand {
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);
+        }
+        // Per file, so this file's snapshots are on disk however a later file ends.
+        if let Err(err) = reporter.jest.snapshots.write_snapshot_file() {
+            Output::err(err.name(), "Failed to write snapshot file", ());
+            return Err(err);
         }
         Ok(())
     }

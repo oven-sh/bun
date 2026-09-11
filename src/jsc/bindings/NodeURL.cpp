@@ -117,8 +117,7 @@ bool hasValidPunycodeHost(WTF::StringView host)
 
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
-// base). Returns a null String when host parsing fails. Throws when the URL
-// string for that parse would be longer than String::MaxLength.
+// base). Returns a null String when host parsing fails.
 static String parseDomainAsHost(JSC::JSGlobalObject* globalObject, const String& domain)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

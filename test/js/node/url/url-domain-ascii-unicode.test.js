@@ -104,71 +104,55 @@ describe("url.domainToUnicode", () => {
 });
 
 // The host ends at the first '/', '?', '#' or '\\', whichever comes first.
-test("the host stops at the first path, query, fragment or backslash terminator", () => {
-  const inputs = [
-    "example.com/path",
-    "example.com?q#h",
-    "example.com#h?q/p",
-    "example.com\\x",
-    "a?b/c#d\\e",
-    "a\\b?c",
-    "EXAMPLE.com/",
-    "ü.com/ü",
-    "xn--tda.com?ü",
-    "/x",
-    "?x",
-    "#",
-    "\\",
-  ];
-  expect(inputs.map(input => [url.domainToASCII(input), url.domainToUnicode(input)])).toEqual([
-    ["example.com", "example.com"],
-    ["example.com", "example.com"],
-    ["example.com", "example.com"],
-    ["example.com", "example.com"],
-    ["a", "a"],
-    ["a", "a"],
-    ["example.com", "example.com"],
-    ["xn--tda.com", "ü.com"],
-    ["xn--tda.com", "ü.com"],
-    ["", ""],
-    ["", ""],
-    ["", ""],
-    ["", ""],
-  ]);
+describe("the host stops at the first path, query, fragment or backslash terminator", () => {
+  test.each([
+    ["example.com/path", "example.com", "example.com"],
+    ["example.com?q#h", "example.com", "example.com"],
+    ["example.com#h?q/p", "example.com", "example.com"],
+    ["example.com\\x", "example.com", "example.com"],
+    ["a?b/c#d\\e", "a", "a"],
+    ["a\\b?c", "a", "a"],
+    ["EXAMPLE.com/", "example.com", "example.com"],
+    ["ü.com/ü", "xn--tda.com", "ü.com"],
+    ["xn--tda.com?ü", "xn--tda.com", "ü.com"],
+    ["/x", "", ""],
+    ["?x", "", ""],
+    ["#", "", ""],
+    ["\\", "", ""],
+  ])("'%s'", (input, ascii, unicode) => {
+    expect([url.domainToASCII(input), url.domainToUnicode(input)]).toEqual([ascii, unicode]);
+  });
 });
 
-// Both functions parse the host as "ws://<host>/". With a host near 2^31-1 characters that
-// URL does not fit in a string, and building it used to abort the process in
-// WTF::makeString. The child commits ~2.2GB. It builds the host with "a".repeat(n): JSC fills
-// a one-character repeat directly (1.4s in a debug build), and Buffer.alloc(n, "a").toString()
-// holds the buffer and the string at once, which doubles the peak to ~4.4GB.
+// Both functions parse the host as "ws://<host>/". A host near 2^31-1 characters makes that
+// URL too long for a string, which used to abort in WTF::makeString. "a".repeat(n) is a direct
+// fill in JSC (1.4s in a debug build). Buffer.alloc(n, "a").toString() doubles the ~2.2GB peak.
 describe.skipIf(totalmem() < 8 * 1024 * 1024 * 1024)("a host too long for the URL parse throws", () => {
-  for (const fn of ["domainToASCII", "domainToUnicode"]) {
-    test(`url.${fn}`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const host = "a".repeat(2 ** 31 - 5);
-            try {
-              const result = require("node:url").${fn}(host);
-              console.log("returned", result.length);
-            } catch (e) {
-              console.log("threw", e.name, e.message);
-            }
-          `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "threw RangeError Out of memory\n",
-        stderr: "",
-        exitCode: 0,
-      });
+  test.each(["domainToASCII", "domainToUnicode"])("url.%s", async fn => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import url from "node:url";
+          const host = "a".repeat(2 ** 31 - 5);
+          try {
+            const result = url.${fn}(host);
+            console.log("returned", result.length);
+          } catch (e) {
+            console.log("threw", e.name, e.message);
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "threw RangeError Out of memory\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

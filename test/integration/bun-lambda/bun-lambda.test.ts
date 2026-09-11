@@ -14,7 +14,7 @@ const aws4fetchStub = `export class AwsClient {
 }
 `;
 
-test("lambda HTTP events cannot override the request authority", async () => {
+test.concurrent("lambda HTTP events cannot override the request authority", async () => {
   const runtimeSource = await Bun.file(runtimePath).text();
 
   using dir = tempDir("bun-lambda", {
@@ -131,4 +131,171 @@ test("lambda HTTP events cannot override the request authority", async () => {
   const v1Url = new URL(decodeBody(v1Response));
   expect(v1Url.origin).toBe("https://api.example.com");
   expect(v1Url.pathname).toBe("//attacker.example/reset");
+});
+
+test.concurrent("console.log formats arguments like Node, not Bun.inspect per-arg", async () => {
+  // https://github.com/oven-sh/bun/issues/4826
+  // Bun.inspect("str") wraps the string in quotes and escapes newlines, which
+  // is wrong for console.log: console.log("url:", url) would print
+  //   "url:" "https://..."
+  // instead of
+  //   url: https://...
+  const runtimeSource = await Bun.file(runtimePath).text();
+
+  using dir = tempDir("bun-lambda-log", {
+    "runtime.ts": runtimeSource,
+    "handler.ts": `export default {
+  async fetch(request) {
+    console.log("url:", request.url);
+    console.log("hi %s, you are %d", "bob", 42);
+    console.error("payload:", JSON.stringify({ a: 1 }, null, 2));
+    console.log("obj:", { a: 1 });
+    console.warn("keep %s literal");
+    console.info("crlf:", "a\\r\\nb");
+    return new Response("ok");
+  },
+};
+`,
+    "node_modules/aws4fetch/package.json": JSON.stringify({ name: "aws4fetch", version: "1.0.0", main: "index.js" }),
+    "node_modules/aws4fetch/index.js": aws4fetchStub,
+  });
+
+  const event = {
+    version: "2.0",
+    requestContext: {
+      requestId: "req-log",
+      domainName: "api.example.com",
+      http: { method: "GET", path: "/hello" },
+    },
+    headers: {},
+    isBase64Encoded: false,
+  };
+
+  let served = false;
+  const { promise: responded, resolve: markResponded } = Promise.withResolvers<{
+    unexpected?: string;
+    body?: string;
+  }>();
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/2018-06-01/runtime/invocation/next") {
+        if (served) {
+          // Non-ok status after the single event makes the runtime exit.
+          return new Response(null, { status: 500 });
+        }
+        served = true;
+        return new Response(JSON.stringify(event), {
+          headers: {
+            "Content-Type": "application/json",
+            "Lambda-Runtime-Aws-Request-Id": "req-log",
+            "Lambda-Runtime-Trace-Id": "trace-id",
+            "Lambda-Runtime-Invoked-Function-Arn": "arn:aws:lambda:us-east-1:000000000000:function:test",
+            "Lambda-Runtime-Deadline-Ms": String(Date.now() + 60_000),
+          },
+        });
+      }
+      if (/^\/2018-06-01\/runtime\/invocation\/[^/]+\/response$/.test(url.pathname)) {
+        markResponded({});
+        return new Response(null, { status: 202 });
+      }
+      // Anything else (init/invocation errors) surfaces in the assertions below.
+      markResponded({ unexpected: url.pathname, body: await req.text() });
+      return new Response(null, { status: 202 });
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "runtime.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      AWS_LAMBDA_RUNTIME_API: `localhost:${server.port}`,
+      _HANDLER: "handler.fetch",
+      LAMBDA_TASK_ROOT: String(dir),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stdoutPromise = proc.stdout.text();
+  const stderrPromise = proc.stderr.text();
+  const exitedPromise = proc.exited;
+  const result = await responded;
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exitedPromise]);
+
+  expect(stderr).toBe("");
+  expect(result.unexpected).toBeUndefined();
+  // Lines from inside the invocation carry the RequestId prefix; the trailing
+  // ERROR line is the runtime shutting down after the mock server returns 500.
+  const lines = stdout.split("\n").filter(line => line.includes("RequestId: req-log"));
+  expect(lines).toEqual([
+    "INFO RequestId: req-log url: http://api.example.com/hello",
+    "INFO RequestId: req-log hi bob, you are 42",
+    'ERROR RequestId: req-log payload: {\r  "a": 1\r}',
+    "INFO RequestId: req-log obj: { a: 1 }",
+    "WARN RequestId: req-log keep %s literal",
+    "INFO RequestId: req-log crlf: a\rb",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("init error errorMessage is not wrapped in extra quotes", async () => {
+  // Sibling of #4826: formatError() used Bun.inspect on non-Error causes, so
+  // the runtime's own string diagnostics (e.g. "Function timed out") were sent
+  // to the Lambda error endpoint as "\"Function timed out\"".
+  const runtimeSource = await Bun.file(runtimePath).text();
+
+  using dir = tempDir("bun-lambda-init-error", {
+    "runtime.ts": runtimeSource,
+    // No `fetch` function: init() calls throwError("MethodDoesNotExist", <string>).
+    "handler.ts": `export default {};\n`,
+    "node_modules/aws4fetch/package.json": JSON.stringify({ name: "aws4fetch", version: "1.0.0", main: "index.js" }),
+    "node_modules/aws4fetch/index.js": aws4fetchStub,
+  });
+
+  const { promise: initError, resolve } = Promise.withResolvers<{ pathname: string; body: unknown }>();
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      resolve({ pathname: url.pathname, body: await req.json() });
+      return new Response(null, { status: 202 });
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "runtime.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      AWS_LAMBDA_RUNTIME_API: `localhost:${server.port}`,
+      _HANDLER: "handler.fetch",
+      LAMBDA_TASK_ROOT: String(dir),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stdoutPromise = proc.stdout.text();
+  const stderrPromise = proc.stderr.text();
+  const exitedPromise = proc.exited;
+  const { pathname, body } = await initError;
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exitedPromise]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERROR handler does not have a default export with a function named 'fetch'\n");
+  expect({ pathname, body }).toEqual({
+    pathname: "/2018-06-01/runtime/init/error",
+    body: {
+      errorType: "Error",
+      errorMessage: "handler does not have a default export with a function named 'fetch'",
+    },
+  });
+  expect(exitCode).toBe(1);
 });

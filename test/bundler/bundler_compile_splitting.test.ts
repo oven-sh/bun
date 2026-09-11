@@ -1,8 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isCI, isDebug, isWindows, tempDir } from "harness";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
+
+// The first byte at which two files differ, with the text around it, or `null` when they are identical. Streams both
+// files in blocks: a compiled executable is a copy of bun, hundreds of MB in a debug build.
+function firstDifference(pathA: string, pathB: string): { offset: number; a: string; b: string } | null {
+  const [fdA, fdB] = [openSync(pathA, "r"), openSync(pathB, "r")];
+  try {
+    const [blockA, blockB] = [Buffer.alloc(1 << 20), Buffer.alloc(1 << 20)];
+    const readBlock = (fd: number, block: Buffer, position: number) => {
+      let length = 0;
+      while (length < block.length) {
+        const n = readSync(fd, block, length, block.length - length, position + length);
+        if (n === 0) break;
+        length += n;
+      }
+      return block.subarray(0, length);
+    };
+    for (let offset = 0; ; offset += blockA.length) {
+      const [a, b] = [readBlock(fdA, blockA, offset), readBlock(fdB, blockB, offset)];
+      if (!a.equals(b)) {
+        let i = 0;
+        while (i < a.length && i < b.length && a[i] === b[i]) i++;
+        const around = (block: Buffer) => block.toString("latin1", Math.max(0, i - 32), i + 32);
+        return { offset: offset + i, a: around(a), b: around(b) };
+      }
+      if (a.length < blockA.length) return null;
+    }
+  } finally {
+    closeSync(fdA);
+    closeSync(fdB);
+  }
+}
 
 // `main.ts` loads the entry point `tool.ts` at run time. `tool.ts` loads `main.ts` back with `import()` and with
 // `require()`, and `main.ts` prints what each of the two returns, or the first line of its error.
@@ -634,6 +665,56 @@ describe("bundler", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // Building the same inputs twice must write the same executable. Imports between chunks are printed with a
+    // per-build placeholder as the specifier, and the linker swaps in the final path once chunk hashes are known.
+    // With `--bytecode`, the module record used to keep the placeholder as an extra string, and it was written to the
+    // executable's shared string table. Not concurrent: two in-process compiles would starve the tests beside it.
+    test(
+      "--bytecode: every build of the same inputs writes the same executable",
+      async () => {
+        using dir = tempDir("compile-splitting-reproducible", {
+          "entry.ts": /* js */ `
+            import { x } from "./s";
+            console.log("static", x);
+            const m = await import("./d");
+            console.log("dyn", m.d);
+          `,
+          "s.ts": `export const x = 1;`,
+          "d.ts": `export const d = "D";`,
+        });
+        const build = async (outdir: string) => {
+          const result = await Bun.build({
+            entrypoints: [join(String(dir), "entry.ts"), join(String(dir), "s.ts")],
+            compile: { outfile: join(String(dir), outdir, "app") },
+            splitting: true,
+            bytecode: true,
+            format: "esm",
+          });
+          expect(result.logs).toEqual([]);
+          expect(result.success).toBe(true);
+          return result.outputs[0].path;
+        };
+        const first = await build("1");
+        const second = await build("2");
+
+        expect(firstDifference(first, second)).toBeNull();
+
+        await using proc = Bun.spawn({
+          cmd: [first],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("static 1\ndyn D\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+      // Two compiles with bytecode: the allowance `itBundled` gives one `compile` test.
+      isCI ? undefined : isDebug ? Infinity : 30_000,
+    );
 
     // `--outfile .` writes the executable as `index`. The entry point is embedded under that name too, so `main.ts`
     // resolves `./tool.ts` next to it, and `tool.ts` can load `main.ts` back.

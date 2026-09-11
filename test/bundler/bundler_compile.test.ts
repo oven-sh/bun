@@ -1136,6 +1136,22 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  // A 0-byte file is a valid (empty) database. It used to bundle as `{}`, and
+  // the embedded module must not hand the empty blob to `new Database(bytes)`,
+  // which rejects empty buffers.
+  itBundled("compile/EmbeddedSqliteEmpty", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        console.log(db.constructor.name, db.query("select message from messages").get().message);
+      `,
+      "/db.sqlite": "",
+    },
+    run: { stdout: "Database Hello, world!" },
+  });
   itBundled("compile/sqlite-file", {
     compile: true,
     files: {

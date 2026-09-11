@@ -367,6 +367,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
 
+                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
+                    options::JSX::Runtime::Automatic
+                } else {
+                    options::JSX::Runtime::Classic
+                };
+                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
+
+                // Not in the parse pass: a `@jsxRuntime` pragma, anywhere in the file,
+                // reaches `options.jsx.runtime` only in `prepare_for_visit_pass`.
+                if is_key_after_spread
+                    && runtime == options::JSX::Runtime::Automatic
+                    && !p.has_classic_runtime_warned
+                {
+                    p.has_classic_runtime_warned = true;
+                    let spread_loc = e_
+                        .properties
+                        .slice()
+                        .iter()
+                        .rev()
+                        .find(|property| property.kind == G::PropertyKind::Spread)
+                        .and_then(|property| property.value)
+                        .map_or(expr.loc, |value| value.loc);
+                    p.log().add_warning(
+                        Some(p.source),
+                        spread_loc,
+                        b"\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.",
+                    );
+                }
+
                 for property in e_.properties.slice_mut() {
                     if property.kind != G::PropertyKind::Spread {
                         p.visit_expr(property.key.as_mut().expect("infallible: prop has key"));
@@ -381,12 +410,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let runtime = if p.options.jsx.runtime == options::JSX::Runtime::Automatic {
-                    options::JSX::Runtime::Automatic
-                } else {
-                    options::JSX::Runtime::Classic
-                };
-                let is_key_after_spread = e_.flags.contains(Flags::JSXElement::IsKeyAfterSpread);
                 let children_count = e_.children.len_u32();
 
                 // TODO: maybe we should split these into two different AST Nodes

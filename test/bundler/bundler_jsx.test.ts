@@ -361,6 +361,71 @@ describe("bundler", () => {
       `,
     },
   });
+  // `<div {...props} key="k" />` makes the automatic runtime fall back to
+  // createElement, with a warning. The runtime that decides this is the one in
+  // effect after the @jsxRuntime pragma is applied, and a pragma applies to the
+  // whole file from any position in it.
+  describe("keyAfterSpreadWarning", () => {
+    const keyAfterSpread = /* js */ `
+      import { print } from 'bun-test-helpers'
+      const props = { a: 1 }
+      print(<div {...props} key="k" />)
+    `;
+    const warning = '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.';
+
+    itBundled("jsx/KeyAfterSpreadClassicPragmaNoWarning", {
+      files: {
+        "/index.jsx": `
+          /** @jsxRuntime classic */
+          import * as React from 'custom-classic'
+          ${keyAfterSpread}
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      bundleWarnings: {},
+      run: { stdout: `["custom-classic","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadClassicPragmaAfterJsxNoWarning", {
+      files: {
+        "/index.jsx": `
+          import * as React from 'custom-classic'
+          ${keyAfterSpread}
+          /** @jsxRuntime classic */
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      bundleWarnings: {},
+      run: { stdout: `["custom-classic","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadAutomaticPragmaWarns", {
+      files: {
+        "/index.jsx": `
+          /** @jsxRuntime automatic */
+          ${keyAfterSpread}
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      bundleWarnings: { "/index.jsx": [warning] },
+      run: { stdout: `["react","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadAutomaticPragmaAfterJsxWarns", {
+      files: {
+        "/index.jsx": `
+          ${keyAfterSpread}
+          /** @jsxRuntime automatic */
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      bundleWarnings: { "/index.jsx": [warning] },
+      run: { stdout: `["react","div",{"a":1,"key":"k"},[]]` },
+    });
+  });
   itBundledDevAndProd("jsx/PragmaMultiple", {
     todo: true,
     files: {

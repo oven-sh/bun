@@ -2549,6 +2549,30 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // The key-after-spread warning is for the automatic runtime only. With the
+  // default log level a warning makes these calls throw.
+  it("JSX key after spread does not warn when a @jsxRuntime pragma selects classic", () => {
+    const transpiler = new Bun.Transpiler({ loader: "jsx" });
+    const jsx = `export const el = <div {...obj} key="after" />;`;
+    const output = `export const el = React.createElement("div", {\n  ...obj,\n  key: "after"\n});\n`;
+
+    for (const input of [`/** @jsxRuntime classic */\n${jsx}`, `${jsx}\n/** @jsxRuntime classic */`]) {
+      expect(transpiler.transformSync(input)).toBe(output);
+      expect(transpiler.scan(input)).toEqual({ exports: ["el"], imports: [] });
+    }
+  });
+
+  // scanImports runs the parse pass only. It does not transform the JSX, so it
+  // has no fallback to warn about, with any runtime.
+  it("scanImports does not throw on a JSX key after spread", () => {
+    const transpiler = new Bun.Transpiler({ loader: "jsx" });
+    const jsx = `import { obj } from "./obj";\nexport const el = <div {...obj} key="after" />;`;
+
+    for (const input of [jsx, `/** @jsxRuntime classic */\n${jsx}`]) {
+      expect(transpiler.scanImports(input)).toContainEqual({ kind: "import-statement", path: "./obj" });
+    }
+  });
+
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision

@@ -65,6 +65,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
@@ -3272,7 +3273,6 @@ it.skipIf(!darwinCc)("realpath preserves process-owned POSIX locks", async () =>
   });
   expect(compile.stderr.toString()).toBe("");
   expect(compile.exitCode).toBe(0);
-  const { dlopen, FFIType } = await import("bun:ffi");
   const library = dlopen(dylibPath, {
     lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
   });

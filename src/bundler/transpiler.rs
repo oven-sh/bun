@@ -2938,7 +2938,14 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
-                let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
+                let mut jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
+                // `resolve_result.jsx` is the tsconfig-merged value; an explicit
+                // NODE_ENV / `--production` outranks tsconfig, as in bundle_v2.
+                match self.options.force_node_env {
+                    options::ForceNodeEnv::Development => jsx.development = true,
+                    options::ForceNodeEnv::Production => jsx.development = false,
+                    options::ForceNodeEnv::Unspecified => {}
+                }
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();

@@ -3,7 +3,17 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import {
+  addAbortSignal,
+  Duplex,
+  duplexPair,
+  finished,
+  PassThrough,
+  Readable,
+  Stream,
+  Transform,
+  Writable,
+} from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -651,6 +661,206 @@ it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web so
   expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
     name: "RangeError",
     message: "consumer-gone",
+  });
+});
+
+// Readable.fromWeb drives a native stream's handle directly only while no consumer has
+// started it. getReader() or cancel() start the handle: from then on the web stream's
+// controller owns it and may already hold chunks in its queue, so fromWeb has to read
+// through the stream like it does for any other ReadableStream.
+describe.concurrent("Readable.fromWeb over a native stream that a consumer already started", () => {
+  // 16 blocks with a distinct fill byte each, so a dropped or reordered chunk shows.
+  const payload = Buffer.concat(Array.from({ length: 16 }, (_, i) => Buffer.alloc(64 * 1024, i)));
+  const collect = async readable => {
+    const chunks = [];
+    for await (const chunk of readable) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  };
+
+  const sources = {
+    "Bun.file().stream()": file => Bun.file(file).stream(),
+    "new Response(Bun.file()).body": file => new Response(Bun.file(file)).body,
+    "new Blob().stream()": () => new Blob([payload]).stream(),
+    "new Response(bytes).body": () => new Response(payload).body,
+  };
+
+  // The reader-based adapter class. The native path returns a plain Readable instead.
+  const { _ReadableFromWeb: ReadableFromWeb } = exposedInternals["internal/webstreams/adapters"];
+
+  it.each(Object.keys(sources))("%s: native path while fresh, reader path once started", async name => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const file = join(String(dir), "payload.bin");
+
+    const fresh = Readable.fromWeb(sources[name](file));
+    expect(fresh).toBeInstanceOf(Readable);
+    expect(fresh).not.toBeInstanceOf(ReadableFromWeb);
+    fresh.destroy();
+
+    const started = sources[name](file);
+    started.getReader().releaseLock();
+    const fallback = Readable.fromWeb(started);
+    expect(fallback).toBeInstanceOf(ReadableFromWeb);
+    fallback.destroy();
+
+    const cancelled = sources[name](file);
+    await cancelled.cancel();
+    expect(Readable.fromWeb(cancelled)).toBeInstanceOf(ReadableFromWeb);
+  });
+
+  // The Readable constructor reads user getters. fromWeb reads each option once, like Node,
+  // and a getter that starts the stream must not leave a window where the handle is still taken.
+  it("an options getter that starts the stream sends fromWeb down the reader path", async () => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = Bun.file(join(String(dir), "payload.bin")).stream();
+    let reads = 0;
+    const readable = Readable.fromWeb(web, {
+      get highWaterMark() {
+        reads++;
+        web.getReader().releaseLock();
+        return 64 * 1024;
+      },
+    });
+    expect(reads).toBe(1);
+    expect(readable).toBeInstanceOf(ReadableFromWeb);
+    const out = await collect(readable);
+    expect(out.length).toBe(payload.length);
+    expect(out.equals(payload)).toBe(true);
+  });
+
+  // Node holds the reader before it constructs the Readable. The native path claims the handle
+  // at the same point, so user code the constructor runs (a signal's getters) sees a locked stream.
+  it("the native handle is claimed before the Readable constructor runs user code", () => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = Bun.file(join(String(dir), "payload.bin")).stream();
+    let lockedInGetter;
+    const signal = {
+      get aborted() {
+        lockedInGetter = web.locked;
+        return false;
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const readable = Readable.fromWeb(web, { signal });
+    expect(lockedInGetter).toBe(true);
+    expect(readable).not.toBeInstanceOf(ReadableFromWeb);
+    readable.destroy();
+  });
+
+  it.each(Object.keys(sources))("%s after getReader() + releaseLock()", async name => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = sources[name](join(String(dir), "payload.bin"));
+    web.getReader().releaseLock();
+    const out = await collect(Readable.fromWeb(web));
+    expect(out.length).toBe(payload.length);
+    expect(out.equals(payload)).toBe(true);
+  });
+
+  it.each(Object.keys(sources))("%s after a partial read", async name => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = sources[name](join(String(dir), "payload.bin"));
+    const reader = web.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    reader.releaseLock();
+    const out = Buffer.concat([Buffer.from(first.value), await collect(Readable.fromWeb(web))]);
+    expect(out.length).toBe(payload.length);
+    expect(out.equals(payload)).toBe(true);
+  });
+
+  // A drained stream is closed. fromWeb must end without data, not start the handle over.
+  it.each(Object.keys(sources))("%s after reading to the end", async name => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = sources[name](join(String(dir), "payload.bin"));
+    const reader = web.getReader();
+    let drained = 0;
+    for (let result = await reader.read(); !result.done; result = await reader.read()) drained += result.value.length;
+    reader.releaseLock();
+    expect(drained).toBe(payload.length);
+    expect((await collect(Readable.fromWeb(web))).length).toBe(0);
+  });
+
+  it("Bun.spawn().stdout after getReader() + releaseLock()", async () => {
+    const expected = Buffer.alloc(100 * 1024, "x");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write(Buffer.alloc(100 * 1024, 'x'))"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const web = proc.stdout;
+    web.getReader().releaseLock();
+    const [out, exitCode] = await Promise.all([collect(Readable.fromWeb(web)), proc.exited]);
+    expect(out.length).toBe(expected.length);
+    expect(out.equals(expected)).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // cancel() on a never-read native stream closes it. fromWeb must see a closed stream
+  // and end without data, not restart the handle and read the file again.
+  it("Bun.file().stream() after cancel() ends without data", async () => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = Bun.file(join(String(dir), "payload.bin")).stream();
+    await web.cancel();
+    const readable = Readable.fromWeb(web);
+    const { promise: ended, resolve, reject } = Promise.withResolvers();
+    readable.on("end", resolve);
+    readable.on("error", reject);
+    const chunks = [];
+    readable.on("data", chunk => chunks.push(chunk));
+    await ended;
+    expect(Buffer.concat(chunks).length).toBe(0);
+  });
+
+  // addAbortSignal() errors a web stream in place. A never-read native stream has no
+  // controller yet, so only its state changes. fromWeb must report that error, not
+  // start the handle and read the data.
+  it.each(
+    Object.keys(sources).flatMap(name => [
+      [name, "never read"],
+      [name, "started"],
+    ]),
+  )("%s (%s) errored through addAbortSignal() errors the Readable", async (name, state) => {
+    using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
+    const web = sources[name](join(String(dir), "payload.bin"));
+    if (state === "started") web.getReader().releaseLock();
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    addAbortSignal(controller.signal, web);
+    controller.abort(reason);
+    const readable = Readable.fromWeb(web);
+    expect(readable).toBeInstanceOf(ReadableFromWeb);
+    const { promise: closed, resolve } = Promise.withResolvers();
+    const events = [];
+    readable.on("data", chunk => events.push(["data", chunk.length]));
+    readable.on("end", () => events.push(["end"]));
+    readable.on("error", error => events.push(["error", error.name, error.code, error.cause === reason]));
+    readable.on("close", resolve);
+    await closed;
+    expect(events).toEqual([["error", "AbortError", "ABORT_ERR", true]]);
+  });
+
+  // Bun.spawn drains a piped stdout in the background until a consumer starts the stream's
+  // handle. From then on it only reads when the stream pulls. An errored stream never pulls,
+  // so starting its handle would stall the child on a full pipe.
+  it("a never-read Bun.spawn().stdout that is errored does not stall the child", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write(Buffer.alloc(4 * 1024 * 1024, 'x'))"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const web = proc.stdout;
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, web);
+    controller.abort();
+    const readable = Readable.fromWeb(web);
+    const { promise: errored, resolve, reject } = Promise.withResolvers();
+    readable.on("error", resolve);
+    readable.on("end", () => reject(new Error("ended without an error")));
+    readable.resume();
+    expect((await errored).name).toBe("AbortError");
+    expect({ exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 });
 

@@ -688,7 +688,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
-    visibility : T name;
+    visibility:                                             \
+    T name;
 
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
 

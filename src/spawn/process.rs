@@ -1592,6 +1592,14 @@ impl WindowsSpawnResult {
     pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
         ProcessHandle(self.to_process(event_loop))
     }
+
+    /// Kill and release a child whose post-spawn stdio setup failed.
+    /// Consumes the result so `Drop` also closes stdio pipes still held.
+    pub fn dispose_failed_spawn(mut self) {
+        let process = self.to_process_handle(());
+        let _ = process.kill(bun_core::SignalCode::SIGKILL as u8);
+        // Dropping the handle closes the process and releases its ref.
+    }
 }
 
 #[cfg(windows)]
@@ -1756,6 +1764,9 @@ pub trait SpawnResultExt: Sized {
     fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
         ProcessHandle(self.to_process(event_loop))
     }
+
+    /// Kill, reap, and release a child whose post-spawn stdio setup failed.
+    fn dispose_failed_spawn(self);
 }
 
 #[cfg(unix)]
@@ -1763,6 +1774,22 @@ impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
         // SAFETY: `init_posix` heap-allocates the `Process` with its initial ref.
         unsafe { RefPtr::from_raw(Process::init_posix(&self, event_loop)) }
+    }
+
+    fn dispose_failed_spawn(self) {
+        // `Process::kill` no-ops while `Poller::Detached` (pre-`watch()`);
+        // signal the pid directly so the blocking reap terminates.
+        unsafe extern "C" {
+            #[link_name = "kill"]
+            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
+        }
+        let _ = libc_kill(self.pid, bun_core::SignalCode::SIGKILL as c_int);
+        let _ = posix_spawn::wait4(self.pid, 0, None);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(pidfd) = self.pidfd {
+            use bun_sys::FdExt as _;
+            Fd::from_native(pidfd).close();
+        }
     }
 }
 

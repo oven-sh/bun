@@ -10,6 +10,8 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "JavaScriptCore/JSMapIterator.h"
+#include "JavaScriptCore/JSSetIterator.h"
 
 namespace Bun {
 
@@ -116,6 +118,92 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
         return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
+}
+
+// Walks what a Map or Set iterator has left to yield, in the storage of the collection, the way
+// the iterator's own next() does but without moving the iterator. Copies out at most `limit`
+// entries and returns how many are left in total.
+template<typename Collection, typename Iterator>
+static uint32_t previewRemainingEntries(VM& vm, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
+{
+    using Helper = typename Collection::Helper;
+
+    JSCell* storageCell = iterator->tryGetStorage();
+    // An iterator made while the collection had no storage yet picks it up on its first next().
+    if (!storageCell)
+        storageCell = iterator->iteratedObject()->storage();
+    if (!storageCell || storageCell == vm.orderedHashTableSentinel())
+        return 0;
+
+    IterationKind kind = iterator->kind();
+    auto* storage = uncheckedDowncast<typename Collection::Storage>(storageCell);
+    typename Helper::Entry entry = iterator->entry();
+    uint32_t remaining = 0;
+    while (true) {
+        // Follows the tables a rehash or a clear() left behind, then skips deleted entries.
+        auto next = Helper::transitAndNext(vm, *storage, entry);
+        if (!next.storage)
+            break;
+        storage = next.storage;
+        entry = next.entry + 1;
+        if (remaining++ >= limit)
+            continue;
+        // A Set stores keys only. Its entries() pairs each key with itself.
+        JSValue value = std::is_same_v<Collection, JSSet> ? next.key : next.value;
+        if (kind != IterationKind::Values)
+            entries.append(next.key);
+        if (kind != IterationKind::Keys)
+            entries.append(value);
+    }
+    return remaining;
+}
+
+// Port of V8's `internalBinding('util').previewEntries(iterator, true)`, which util.inspect and
+// console.Console#table use to show a Map or Set iterator. No user code runs: a replaced
+// %MapIteratorPrototype%.next or Map.prototype[Symbol.iterator] is never called.
+// Returns [entries, isKeyValue, length]. `entries` is flat ([key, value, key, value, ...] when
+// isKeyValue) and holds the first `limit` (default: all) of the `length` entries that are left.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue iteratorValue = callFrame->argument(0);
+    JSValue limitValue = callFrame->argument(1);
+    uint32_t limit = std::numeric_limits<uint32_t>::max();
+    if (limitValue.isNumber()) {
+        double number = limitValue.asNumber();
+        // NaN is not > 0.
+        if (!(number > 0))
+            limit = 0;
+        else if (number < limit)
+            limit = static_cast<uint32_t>(number);
+    }
+
+    MarkedArgumentBuffer entries;
+    uint32_t length = 0;
+    bool isKeyValue = false;
+    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(iteratorValue)) {
+        isKeyValue = mapIterator->kind() == IterationKind::Entries;
+        length = previewRemainingEntries<JSMap>(vm, mapIterator, limit, entries);
+    } else if (auto* setIterator = dynamicDowncast<JSSetIterator>(iteratorValue)) {
+        isKeyValue = setIterator->kind() == IterationKind::Entries;
+        length = previewRemainingEntries<JSSet>(vm, setIterator, limit, entries);
+    } else
+        return throwVMTypeError(globalObject, scope, "previewEntries() expects a Map or Set iterator"_s);
+
+    if (entries.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    JSArray* entriesArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), entries);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    MarkedArgumentBuffer result;
+    result.append(entriesArray);
+    result.append(jsBoolean(isKeyValue));
+    result.append(jsNumber(length));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), result)));
 }
 
 }

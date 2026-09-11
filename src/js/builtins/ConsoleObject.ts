@@ -143,7 +143,9 @@ export function write(this: Console, input) {
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
-  const { isBuffer } = require("node:buffer");
+  const {
+    Buffer: { isBuffer },
+  } = require("node:buffer");
   const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
@@ -162,6 +164,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kCounts = Symbol("counts");
 
   const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
+  // [entries, isKeyValue, length] for a Map or Set iterator, without running or advancing it.
+  const previewEntries = $newCppFunction("UtilInspect.cpp", "jsFunctionPreviewEntries", 2);
 
   /**
    * Returns the number of columns required to display the given string.
@@ -666,6 +670,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
+      if (mapIter) {
+        const res = previewEntries(tabularData);
+        tabularData = res[0];
+        isKeyValue = res[1];
+      }
 
       if (isKeyValue || $isMap(tabularData)) {
         const keys = [];
@@ -678,7 +687,10 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
             length++;
           }
         } else {
+          // User code can replace the iterator, so it gets `size` steps, like formatMap() in util.inspect.
+          const size = tabularData.size;
           for (const { 0: k, 1: v } of tabularData) {
+            if (length >= size) break;
             ArrayPrototypePush.$call(keys, _inspect(k));
             ArrayPrototypePush.$call(values, _inspect(v));
             length++;
@@ -688,13 +700,16 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       }
 
       const setIter = isSetIterator(tabularData);
-      // if (setIter) tabularData = previewEntries(tabularData);
+      if (setIter) tabularData = previewEntries(tabularData)[0];
 
       const setlike = setIter || mapIter || $isSet(tabularData);
       if (setlike) {
         const values = [];
         let length = 0;
-        for (const v of tabularData as Set<any>) {
+        // An iterator is an array of its entries by now. A Set is bounded like the Map above.
+        const size = setIter || mapIter ? tabularData.length : tabularData.size;
+        for (const v of tabularData) {
+          if (length >= size) break;
           ArrayPrototypePush.$call(values, _inspect(v));
           length++;
         }

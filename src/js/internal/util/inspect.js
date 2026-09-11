@@ -43,9 +43,7 @@ const {
   TypedArrayPrototypeGetSymbolToStringTag,
 } = primordials;
 
-const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = uncurryThis(Array.prototype.filter);
-const ArrayPrototypeFlat = uncurryThis(Array.prototype.flat);
 const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
 const ArrayPrototypeIncludes = uncurryThis(Array.prototype.includes);
 const ArrayPrototypeIndexOf = uncurryThis(Array.prototype.indexOf);
@@ -67,8 +65,6 @@ const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const FunctionPrototypeToString = uncurryThis(Function.prototype.toString);
 const JSONStringify = JSON.stringify;
 const MapPrototypeEntries = uncurryThis(Map.prototype.entries);
-const MapPrototypeValues = uncurryThis(Map.prototype.values);
-const MapPrototypeKeys = uncurryThis(Map.prototype.keys);
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const MathRound = Math.round;
@@ -98,7 +94,6 @@ const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 const RegExpPrototypeSymbolReplace = uncurryThis(RegExp.prototype[Symbol.replace]);
 const RegExpPrototypeSymbolSplit = uncurryThis(RegExp.prototype[Symbol.split]);
 const RegExpPrototypeToString = uncurryThis(RegExp.prototype.toString);
-const SetPrototypeEntries = uncurryThis(Set.prototype.entries);
 const SetPrototypeValues = uncurryThis(Set.prototype.values);
 const StringPrototypeCharCodeAt = uncurryThis(String.prototype.charCodeAt);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
@@ -2256,9 +2251,10 @@ function formatMap(value, ctx, ignored, recurseTimes) {
   return output;
 }
 
-function formatSetIterInner(ctx, recurseTimes, entries, state) {
+// `length` counts every entry there is. `entries` can stop at maxArrayLength of them.
+function formatSetIterInner(ctx, recurseTimes, entries, state, length = entries.length) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  const maxLength = $min(maxArrayLength, entries.length);
+  const maxLength = $min(maxArrayLength, length);
   const output = new Array(maxLength);
   ctx.indentationLvl += 2;
   for (let i = 0; i < maxLength; i++) {
@@ -2271,17 +2267,16 @@ function formatSetIterInner(ctx, recurseTimes, entries, state) {
     // output is not sorted anyway.
     ArrayPrototypeSort(output);
   }
-  const remaining = entries.length - maxLength;
+  const remaining = length - maxLength;
   if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
   }
   return output;
 }
 
-function formatMapIterInner(ctx, recurseTimes, entries, state) {
+// Entries exist as [key1, val1, key2, val2, ...]. `len` counts every pair there is.
+function formatMapIterInner(ctx, recurseTimes, entries, state, len = entries.length / 2) {
   const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
-  // Entries exist as [key1, val1, key2, val2, ...]
-  const len = entries.length / 2;
   const remaining = len - maxArrayLength;
   const maxLength = $min(maxArrayLength, len);
   const output = new Array(maxLength);
@@ -2329,15 +2324,15 @@ function formatWeakMap(ctx, value, recurseTimes) {
 }
 
 function formatIterator(braces, ctx, value, recurseTimes) {
-  const { 0: entries, 1: isKeyValue } = previewEntries(value, true);
+  const { 0: entries, 1: isKeyValue, 2: length } = previewEntries(value, true, MathMax(ctx.maxArrayLength, 0));
   if (isKeyValue) {
     // TODO(bun): JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
     // Mark entry iterators as such.
     braces[0] = RegExpPrototypeSymbolReplace(/ Iterator] {$/, braces[0], " Entries] {");
-    return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries);
+    return formatMapIterInner(ctx, recurseTimes, entries, kMapEntries, length);
   }
 
-  return formatSetIterInner(ctx, recurseTimes, entries, kIterator);
+  return formatSetIterInner(ctx, recurseTimes, entries, kIterator, length);
 }
 
 function formatPromise(ctx, value, recurseTimes) {
@@ -2783,28 +2778,11 @@ function getProxyDetails(proxy, withHandler = true) {
   if (withHandler) return [target, handler];
   else return target;
 }
-function previewEntries(val, isIterator = false) {
-  if (isIterator) {
-    // the Map or Set instance this iterator belongs to
-    const iteratedObject = $getInternalField(val, 1 /*iteratorFieldIteratedObject*/);
-    // for Maps: 0 = keys, 1 = values,      2 = entries
-    // for Sets:           1 = keys|values, 2 = entries
-    const kind = $getInternalField(val, 3 /*iteratorFieldKind*/);
-    const isEntries = kind === 2;
-    // TODO(bun): improve performance by not using Array.from and instead using the iterator directly to only get the first
-    // few entries which will actually be displayed (this requires changing some logic in the call sites of this function)
-    if ($isMap(iteratedObject)) {
-      if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(iteratedObject)), true];
-      else if (kind === 1) return [ArrayFrom(MapPrototypeValues(iteratedObject)), false];
-      else return [ArrayFrom(MapPrototypeKeys(iteratedObject)), false];
-    } else if ($isSet(iteratedObject)) {
-      if (isEntries) return [ArrayPrototypeFlat(ArrayFrom(SetPrototypeEntries(iteratedObject))), true];
-      else return [ArrayFrom(iteratedObject), false];
-    }
-    // TODO(bun): This function is currently only called for Map and Set iterators
-    // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
-    else throw new Error("previewEntries(): Invalid iterator received");
-  }
+// For a Map or Set iterator: [entries, isKeyValue, length]. `entries` is flat and holds the first
+// `limit` (default: all) of the `length` entries the iterator has left. See UtilInspect.cpp.
+const previewIteratorEntries = $newCppFunction("UtilInspect.cpp", "jsFunctionPreviewEntries", 2);
+function previewEntries(val, isIterator = false, limit) {
+  if (isIterator) return previewIteratorEntries(val, limit);
   // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
   if (isWeakMap(val)) return [];
   if (isWeakSet(val)) return [];

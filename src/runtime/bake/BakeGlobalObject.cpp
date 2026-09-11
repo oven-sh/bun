@@ -47,8 +47,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         BunString result = BakeProdResolve(global, &refererBunString, &keyBunString);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
-        RELEASE_AND_RETURN(scope, moduleLoader->requestImportModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()),
-            JSC::Identifier(), WTF::move(parameters), nullptr));
+        RELEASE_AND_RETURN(scope, moduleLoader->requestImportModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()), JSC::Identifier(), WTF::move(parameters), nullptr));
     }
 
     // TODO: make static cast instead of jscast

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1197,35 +1197,6 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
   // Without a listener on the transport, node:stream throws the error.
 
-  // WHEN=early destroys the transport in the tick of the upgrade, before the
-  // engine exists; WHEN=late once the engine has written its ClientHello.
-  const transportErrorFixture = `
-    const tls = require("tls");
-    const { Duplex } = require("stream");
-    const seen = [];
-    let started = false;
-    const transport = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        callback();
-        if (started) return;
-        started = true;
-        if (process.env.WHEN === "late") process.nextTick(kill);
-      },
-    });
-    function kill() {
-      transport.destroy(new Error("transport failed"));
-    }
-    const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
-    socket.on("error", err => seen.push("error:" + err.message));
-    socket.on("close", () => {
-      seen.push("close");
-      console.log(seen.join("|"));
-      process.exit(0);
-    });
-    if (process.env.WHEN === "early") kill();
-  `;
-
   it("listens for the transport's 'error'", () => {
     const transport = new Duplex({
       read() {},
@@ -1243,15 +1214,13 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   it.each(["early", "late"])("a transport error %s reaches the TLS socket", async when => {
     // Out of process: with nothing listening on the transport the error is
     // thrown, which takes the process down.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", transportErrorFixture],
-      env: { ...bunEnv, WHEN: when },
-      stderr: "pipe",
+    const result = await bunRun(join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts"), { WHEN: when });
+    expect(result).toEqual({
+      stdout: "error:transport failed|close",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("error:transport failed|close");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
   });
 });
 

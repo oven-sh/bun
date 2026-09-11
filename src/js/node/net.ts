@@ -2312,17 +2312,10 @@ function attachUpgradedDuplex(self, connection, events) {
   connection.on("end", events[1]);
   connection.on("drain", events[2]);
   connection.on("close", events[3]);
-  // The engine has no thunk for the transport's 'error', and a plain stream
-  // has no other route to the TLS socket, so node:stream throws that error
-  // instead. Node re-emits it on its wrap, where _init routes it through
-  // _emitTLSError: a client that holds control sees 'error', a server-owned
-  // wrap sees 'tlsClientError'.
+  // The engine has no 'error' thunk. Route a stream's error like node's wrap:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-  // A net.Socket transport (a named pipe, a socket with unflushed writes,
-  // TLS over TLS) keeps its own error path here: its close dispatch
-  // synthesizes a read ECONNRESET as soon as anything listens for 'error',
-  // so that arm needs the raw-socket side handled with it.
+  // Not a net.Socket: an 'error' listener makes its close synthesize ECONNRESET.
   if (!(connection instanceof Socket)) {
     connection.on("error", err => self._emitTLSError(err));
   }

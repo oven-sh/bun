@@ -198,7 +198,7 @@ describe("idle release", () => {
   });
 });
 
-// A tick after the second idle collection the controller also has the kernel reclaim the executable's own read-only
+// A tick after the last idle collection the controller also has the kernel reclaim the executable's own read-only
 // pages if the process was idle on the CPU too. MADV_PAGEOUT skips pages another process maps (the test runner is the
 // same executable) and tmpfs pages are not file-backed, so the child runs from a copy on a disk-backed temp dir.
 // Debug and ASAN executables are too big to copy per test, and their collections alone use more CPU than "idle" allows.
@@ -210,12 +210,13 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
     const { readFileSync } = require("fs");
     const fileResident = () => Number(/^RssFile:\\s+(\\d+) kB/m.exec(readFileSync("/proc/self/status", "utf8"))[1]);
     const before = fileResident();
-    const deadline = Date.now() + ${waitMs};
+    const start = Date.now();
+    const deadline = start + ${waitMs};
     const timer = setInterval(() => {
       const now = fileResident();
       if (now < before * 0.6 || Date.now() > deadline) {
         clearInterval(timer);
-        console.log(JSON.stringify({ before, now }));
+        console.log(JSON.stringify({ before, now, at: Date.now() - start }));
       }
       // A quarter of one core, without growing the heap.
       for (const end = performance.now() + ${busy ? 60 : 0}; performance.now() < end; );
@@ -228,7 +229,7 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
   let copies: string[];
   beforeAll(() => {
     dir = tempDir("idle-page-out", {});
-    copies = [0, 1, 2].map(i => {
+    copies = [0, 1, 2, 3].map(i => {
       const exe = join(String(dir), "bun-copy-" + i);
       copyFileSync(bunExe(), exe);
       chmodSync(exe, 0o755);
@@ -249,13 +250,14 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
         BUN_IDLE_GC_SECONDS: "1,1",
         BUN_GC_TIMER_DISABLE: undefined,
         BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: undefined,
         ...env,
       },
       stdout: "pipe",
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { ...(JSON.parse(stdout) as { before: number; now: number }), exitCode };
+    return { ...(JSON.parse(stdout) as { before: number; now: number; at: number }), exitCode };
   }
 
   test.concurrent("file-backed resident memory drops once the process is idle", async () => {
@@ -263,6 +265,18 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
     expect(now).toBeLessThan(before * 0.6);
     expect(exitCode).toBe(0);
   });
+
+  // Collections at 1, 2 and 4 s: paging the image out after the second one would have the third read it back in.
+  test.concurrent(
+    "only after the last idle collection",
+    async () => {
+      const { before, now, at, exitCode } = await run(false, { BUN_IDLE_GC_SECONDS: "1,1,2" }, 15_000);
+      expect(now).toBeLessThan(before * 0.6);
+      expect(at).toBeGreaterThan(4000);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
 
   test.concurrent("not while the process is using the CPU with a heap that has stopped growing", async () => {
     const { before, now, exitCode } = await run(true, {});

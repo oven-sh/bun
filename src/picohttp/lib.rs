@@ -155,6 +155,17 @@ impl Header {
     }
 }
 
+/// Start of every line of the verbose request/response trace (`[fetch] > ...`,
+/// `[fetch] < ...`). The tag is only shown when stderr has colors; plain output
+/// starts at the `>` / `<`.
+pub fn trace_line_prefix() -> &'static str {
+    if enable_ansi_colors_stderr() {
+        pretty_fmt!("<r><d>[fetch]<r> ", true)
+    } else {
+        ""
+    }
+}
+
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
@@ -295,28 +306,6 @@ impl<'a> Request<'a> {
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
-    }
-}
-
-impl fmt::Display for Request<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if enable_ansi_colors_stderr() {
-            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-        }
-        writeln!(
-            f,
-            "> HTTP/1.1 {} {}",
-            BStr::new(self.method),
-            BStr::new(self.path)
-        )?;
-        for header in self.headers {
-            if enable_ansi_colors_stderr() {
-                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-            }
-            f.write_str("> ")?;
-            writeln!(f, "{}", header)?;
-        }
-        Ok(())
     }
 }
 
@@ -541,10 +530,7 @@ impl<'a> Response<'a> {
 
 impl fmt::Display for Response<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if enable_ansi_colors_stderr() {
-            f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-        }
-
+        f.write_str(trace_line_prefix())?;
         writeln!(
             f,
             "< {} {}",
@@ -554,10 +540,7 @@ impl fmt::Display for Response<'_> {
             BStr::new(self.status),
         )?;
         for header in self.headers.list {
-            if enable_ansi_colors_stderr() {
-                f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
-            }
-
+            f.write_str(trace_line_prefix())?;
             f.write_str("< ")?;
             writeln!(f, "{}", header)?;
         }

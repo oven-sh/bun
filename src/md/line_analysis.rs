@@ -21,11 +21,7 @@ pub struct SetextResult {
 #[derive(Copy, Clone)]
 pub struct HrResult {
     pub(crate) is_hr: bool,
-    /// Where the scan stopped. Every byte in `off..end` is the marker or a
-    /// blank, so when `!is_hr` no thematic break can start anywhere before
-    /// `end` either, and `analyze_line` skips re-checking until `off` reaches
-    /// it (md4c's `hr_killer`). Without that, N list markers nested on one
-    /// line (`- - - … a`) rescan the tail once per container level: O(N²).
+    /// Where the scan stopped. If `!is_hr`, no thematic break starts before it (md4c `hr_killer`).
     pub(crate) end: OFF,
 }
 

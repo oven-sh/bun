@@ -2092,10 +2092,7 @@ impl Data {
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }
             Data::ERegExp(el) => {
-                let item = bump.alloc(E::RegExp {
-                    value: el.value,
-                    flags_offset: el.flags_offset,
-                });
+                let item = bump.alloc(E::RegExp { value: el.value });
                 Ok(Data::ERegExp(StoreRef::from_bump(item)))
             }
             Data::EAwait(el) => {

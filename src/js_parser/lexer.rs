@@ -162,7 +162,6 @@ pub struct LexerSnapshot<'a> {
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
     pub(crate) fn_or_arrow_start_loc: Loc,
-    pub(crate) regex_flags_start: Option<u16>,
     pub(crate) string_literal_raw_content: &'a [u8],
     pub(crate) string_literal_start: usize,
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
@@ -232,7 +231,6 @@ pub struct Lexer<'a> {
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
     pub(crate) fn_or_arrow_start_loc: Loc,
-    pub(crate) regex_flags_start: Option<u16>,
     pub(crate) arena: &'a Arena,
     pub(crate) string_literal_raw_content: &'a [u8],
     pub(crate) string_literal_start: usize,
@@ -347,7 +345,6 @@ impl<'a> Lexer<'a> {
             prev_error_loc: self.prev_error_loc,
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
-            regex_flags_start: self.regex_flags_start,
             string_literal_raw_content: self.string_literal_raw_content,
             string_literal_start: self.string_literal_start,
             string_literal_raw_format: self.string_literal_raw_format,
@@ -385,7 +382,6 @@ impl<'a> Lexer<'a> {
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
-        self.regex_flags_start = original.regex_flags_start;
         self.string_literal_raw_content = original.string_literal_raw_content;
         self.string_literal_start = original.string_literal_start;
         self.string_literal_raw_format = original.string_literal_raw_format;
@@ -2263,7 +2259,6 @@ impl<'a> Lexer<'a> {
             prev_error_loc: Loc::EMPTY,
             prev_token_was_await_keyword: false,
             fn_or_arrow_start_loc: Loc::EMPTY,
-            regex_flags_start: None,
             arena,
             string_literal_raw_content: b"",
             string_literal_start: 0,
@@ -2334,13 +2329,11 @@ impl<'a> Lexer<'a> {
     }
 
     pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {
-        self.regex_flags_start = None;
         loop {
             match self.code_point {
                 0x2F => {
                     self.step();
 
-                    let mut has_set_flags_start = false;
                     const FLAG_CHARACTERS: &[u8] = b"dgimsuvy";
                     const MIN_FLAG: u8 = b'd'; // min of FLAG_CHARACTERS
                     const MAX_FLAG: u8 = b'y'; // max of FLAG_CHARACTERS
@@ -2351,10 +2344,6 @@ impl<'a> Lexer<'a> {
                     while is_identifier_continue(self.code_point) {
                         match self.code_point {
                             0x64 | 0x67 | 0x69 | 0x6D | 0x73 | 0x75 | 0x79 | 0x76 => {
-                                if !has_set_flags_start {
-                                    self.regex_flags_start = Some((self.end - self.start) as u16);
-                                    has_set_flags_start = true;
-                                }
                                 let flag = usize::from(
                                     MAX_FLAG - u8::try_from(self.code_point).expect("int cast"),
                                 );

@@ -2065,19 +2065,10 @@ fn codegen_base_instruction_value(
             raw.push(b'/');
             raw.extend_from_slice(pattern.slice());
             raw.push(b'/');
-            let flags_offset =
-                if flags.is_empty() {
-                    None
-                } else {
-                    Some(u16::try_from(raw.len()).map_err(|_| {
-                        invariant_err("RegExp pattern exceeds u16 flags_offset", None)
-                    })?)
-                };
             raw.extend_from_slice(flags.slice());
             Ok(Expr::init(
                 E::RegExp {
                     value: store_str(&raw),
-                    flags_offset,
                 },
                 loc,
             ))

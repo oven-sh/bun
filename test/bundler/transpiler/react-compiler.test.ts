@@ -1229,6 +1229,60 @@ describe("bundler", () => {
       expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
     },
   });
+
+  // The compiler lowers a regex literal to (pattern, flags) and codegen joins
+  // them back. `E::RegExp::pattern()`/`flags()` must split at the closing `/`
+  // exactly: a pattern that ends in `\/` keeps that slash, and a literal longer
+  // than 65535 bytes still finds its flags.
+  const longRegExpBody = Buffer.alloc(70_000, "a").toString();
+  itBundled("react-compiler/RegExpLiteralPatternAndFlagsRoundTrip", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp({ x }) {
+          const long = /${longRegExpBody}/gi;
+          const trailing = /a\\//g;
+          const only = /\\//;
+          const inClass = /[/]\\//i;
+          return (
+            <div>
+              {[
+                long.source.length, long.flags, long.test(x),
+                trailing.source, trailing.flags, trailing.test("a/"),
+                only.source, only.flags, only.test("/"),
+                inClass.source, inClass.flags, inClass.test("//"),
+              ].join()}
+            </div>
+          );
+        }
+        const el = Comp({ x: Buffer.alloc(${longRegExpBody.length}, "A").toString() });
+        console.log(el.props.children);
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `${longRegExpBody.length},gi,true,a\\/,g,true,\\/,,true,[/]\\/,i,true` },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The component must be compiled, not bailed out, for codegen to be on trial.
+      expect(out).toMatch(/\$\[\d+\]/);
+      // Every regex literal assigned in the output, with the long run of `a` abbreviated.
+      const literals = [...out.matchAll(/ = (\/[^\s*][^\s,;]*)/g)].map(m =>
+        m[1].replace(/a{100,}/, run => `a{${run.length}}`),
+      );
+      expect(literals).toEqual([
+        `/a{${longRegExpBody.length}}/gi`,
+        String.raw`/a\//g`,
+        String.raw`/\//`,
+        String.raw`/[/]\//i`,
+      ]);
+    },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

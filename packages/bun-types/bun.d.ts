@@ -5441,14 +5441,15 @@ declare module "bun" {
        * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
        * with the same set of names share compiled code with each other.
        */
-      globals?: Record<string, unknown>;
+      globals?: Record<string, unknown> | undefined;
       /**
        * Called with uncaught exceptions and unhandled rejections raised by code
        * that belongs to this graph, instead of the process-wide
-       * `uncaughtException` / `unhandledRejection` handling. `kind` is
-       * `"uncaughtException"` or `"unhandledRejection"`.
+       * `uncaughtException` / `unhandledRejection` handling; without it (or for
+       * an error `onError` itself lets escape) they take that normal path.
+       * `kind` is `"uncaughtException"` or `"unhandledRejection"`.
        */
-      onError?: (error: unknown, kind: "uncaughtException" | "unhandledRejection") => void;
+      onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     }
 
     /**
@@ -5464,8 +5465,7 @@ declare module "bun" {
      * the global object's, shared: this runs cooperating instances of a program
      * side by side, it is not a sandbox.
      *
-     * Experimental.
-     *
+     * @experimental
      * @example
      * ```ts
      * const graph = new Bun.unsafe.ModuleGraph({ globals: { config: { name: "a" } }, onError: (err, kind) => {} });
@@ -5489,10 +5489,11 @@ declare module "bun" {
        */
       readonly mainModule: string | undefined;
       /**
-       * Drops the graph's module instances and require cache: pending
-       * `import()`s reject, later ones throw, and modules of the graph that had
-       * not run yet never will. Code from the graph that is still referenced
-       * keeps working.
+       * Drops the graph's module registry and require cache: pending and later
+       * `graph.import()`s reject, `import()` / `require()` of something new from
+       * the graph's own code fails, and modules of the graph that had not run
+       * yet never will. Code from the graph that is still referenced keeps
+       * working, and its errors still go to `onError`. Idempotent.
        */
       dispose(): void;
       [Symbol.dispose](): void;

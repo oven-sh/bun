@@ -1121,6 +1121,32 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
     });
     expect(errs).toEqual(["uncaughtException=hostcb:g"]);
   });
+  test("a rejection by graph code whose reason is an Error constructed by host code → the rejecting graph's onError", async () => {
+    const d = fixture({
+      "rej.mjs": `export function viaReject() { Promise.reject(hostMakeError("made-by-host")); }
+        export async function viaAsync() { throw hostMakeError("rethrown-by-graph"); }
+        export function fire() { viaReject(); viaAsync(); }`,
+    });
+    const seen: string[] = [];
+    const hostSeen: string[] = [];
+    const onHost = (e: any) => hostSeen.push(String(e?.message));
+    process.on("unhandledRejection", onHost);
+    try {
+      const g = new ModuleGraphClass!({
+        globals: { hostMakeError: (m: string) => new Error(m) },
+        onError: (e: any, kind: string) => seen.push(kind + ":" + e.message),
+      });
+      (await g.import(join(d, "rej.mjs"))).fire();
+      for (let i = 0; i < 20 && seen.length < 2; i++) await Bun.sleep(5);
+      expect({ seen: seen.sort(), hostSeen }).toEqual({
+        seen: ["unhandledRejection:made-by-host", "unhandledRejection:rethrown-by-graph"],
+        hostSeen: [],
+      });
+    } finally {
+      process.off("unhandledRejection", onHost);
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
   test("syncThrow → throws to the caller, not onError", async () => {
     const errs = await withGraph(async m => {
       expect(() => m.syncThrow()).toThrow("sync:g");

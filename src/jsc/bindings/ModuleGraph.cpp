@@ -202,15 +202,13 @@ static JSModuleGraph* moduleGraphForError(Zig::GlobalObject* globalObject, JSVal
     return nullptr;
 }
 
-// Rejections by graph code whose reason carries no stack (a plain value) are
-// attributed at rejection time, while the rejecting code is on the stack:
-// promise -> graph, weakly, consulted when the rejection turns out unhandled.
+// Rejections by graph code whose reason does not lead back to a graph (a plain value,
+// or an Error constructed by host code) are attributed at rejection time, while the
+// rejecting code is on the stack: promise -> graph, weakly, consulted when the
+// rejection turns out unhandled.
 void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->m_moduleGraphRegistry.get())
-        return;
-    // A reason with a stack of its own is attributed from that (moduleGraphForError); no walk here.
-    if (auto* instance = dynamicDowncast<ErrorInstance>(promise->result()); instance && instance->stackTrace())
         return;
     JSModuleGraph* graph = ambientModuleGraph(globalObject);
     if (!graph)

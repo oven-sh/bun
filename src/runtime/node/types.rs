@@ -1,5 +1,6 @@
 use bun_paths::strings;
 use core::ffi::c_int;
+use std::borrow::Cow;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
@@ -313,15 +314,22 @@ impl<'a> StringOrBuffer<'a> {
         }
     }
 
-    /// True when [`slice`](Self::slice) reads a `SharedArrayBuffer`: another
-    /// thread can write those bytes while this one reads them. A caller that
-    /// needs the bytes to hold still must copy them first.
-    pub(crate) fn is_shared(&self) -> bool {
-        match self {
+    /// [`slice`](Self::slice), copied when it reads a `SharedArrayBuffer`, whose bytes another thread can write during the call.
+    pub(crate) fn slice_copied_if_shared(&self) -> Result<Cow<'_, [u8]>, bun_alloc::AllocError> {
+        let shared = match self {
             Self::Buffer(buffer) => buffer.buffer.shared,
             Self::PinnedBuffer(buffer) => buffer.shared,
             Self::String(_) | Self::ThreadIsolatedString(_) | Self::Utf8(_) => false,
+        };
+        let bytes = self.slice();
+        if !shared {
+            return Ok(Cow::Borrowed(bytes));
         }
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(bytes.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        copy.extend_from_slice(bytes);
+        Ok(Cow::Owned(copy))
     }
 }
 

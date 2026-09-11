@@ -167,13 +167,14 @@ describe("zlib", () => {
 
 // Compresses a SharedArrayBuffer `CALLS` times while a worker rewrites it
 // between two symbol sets: one that codes in few bits, one that costs more.
-// libdeflate reserves `SIZE + 23` bytes for a gzip stream of `SIZE` bytes, so
-// `LIMIT` leaves room for any output a correct compressor can produce.
+// `RESERVED` is what Bun allocates for the output, libdeflate's bound for
+// `SIZE` bytes: one stored block costs 5 bytes more than its input, and gzip
+// adds a 10 byte header and an 8 byte trailer. libdeflate never picks a block
+// that costs more than a stored one, so a longer output ran past the allocation.
 const sharedArrayBufferRaceFixture = `
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const SIZE = 4096;
-const LIMIT = SIZE + 256;
 const CALLS = 500;
 
 if (isMainThread) {
@@ -185,14 +186,15 @@ if (isMainThread) {
   worker.unref();
 
   const raw = process.argv[2] === "deflate";
+  const RESERVED = SIZE + (raw ? 5 : 23);
   const compress = raw ? Bun.deflateSync : Bun.gzipSync;
   const decompress = raw ? Bun.inflateSync : Bun.gunzipSync;
   const view = new Uint8Array(input);
 
   for (let i = 0; i < CALLS; i++) {
     const out = compress(view, { library: "libdeflate", level: 1 + (i % 12) });
-    if (out.length > LIMIT) {
-      console.error(\`call \${i}: wrote \${out.length} bytes into a \${LIMIT} byte reservation\`);
+    if (out.length > RESERVED) {
+      console.error(\`call \${i}: wrote \${out.length} bytes into a \${RESERVED} byte reservation\`);
       process.exit(1);
     }
     const back = decompress(out, { library: "libdeflate" });

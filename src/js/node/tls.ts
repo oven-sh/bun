@@ -22,7 +22,7 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -888,23 +888,12 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  // Defer the FIN until the TLS handshake completes. net.Socket._final calls
-  // socket.shutdown(), which while SSL is still in init half-closes the write
-  // side before the client's TLS Finished is flushed — the peer then sees a
-  // bare FIN and reports ECONNRESET (e.g. socket.end('') right after
-  // tls.connect()). Node's native TLSWrap.DoShutdown likewise flushes the
-  // handshake output before the underlying stream's FIN.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/src/crypto/crypto_tls.cc#L1203
-  // A never-connected TLSSocket (e.g. new tls.TLSSocket().end(cb)) has no handle
-  // and no handshake to wait for; finish immediately like NetSocket._final's
-  // no-handle fast path, otherwise the deferred callback would never fire.
   if (!this._handle) return callback();
-  if (this.secureConnecting) {
-    // kSecureConnectDone rather than 'secureConnect': server-side sockets
-    // never emit the user event (node parity), but every handshake table
-    // emits the internal signal when secureConnecting clears.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
+  if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);
 };
 

@@ -1442,9 +1442,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
-    // The TLS engine over a wrapped stream failed before it opened. No connect
-    // is pending on that socket, so afterConnect has nothing to settle and
-    // would drop the failure when `connecting` is already false.
+    // A TLS engine that failed before it opened has no connect pending, so afterConnect would drop the failure.
     if (self[kupgraded]) {
       if (!self.destroyed) self.destroy(new ExceptionWithHostPort(error.errno, "connect"));
       return;
@@ -2017,12 +2015,7 @@ Socket.prototype.connect = function connect(...args) {
     }
     // start using existing connection
     if (connection) {
-      // Node: `connecting = socket.connecting || !socket._handle` for a wrapped
-      // net.Socket, and false for any other stream. Only the TLS layer is
-      // pending, which secureConnecting tracks. Nothing emits 'connect' for a
-      // socket wrapped after it connected, so a flag left set would strand
-      // whatever waits for that event.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+      // Node's rule (no 'connect' follows for a socket wrapped after it connected): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
       if (!(connection instanceof Socket) || (connection._handle && !connection.connecting)) {
         this.connecting = false;
       }
@@ -3389,9 +3382,7 @@ function afterConnect(status, handle, req, readable, writable) {
 
   $debug("afterConnect", status, readable, writable);
 
-  // Node asserts `connecting` here. A callback for a connect that something
-  // else already settled has nothing left to do. A TLS engine over a wrapped
-  // stream never gets here: connectError reports its failure directly.
+  // Node asserts `connecting` here. A connect that was settled some other way has nothing left to do.
   if (!self.connecting) return;
   self.connecting = false;
   self._sockname = null;

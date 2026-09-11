@@ -61,10 +61,9 @@ unsafe extern "C" {
     safe fn Bun__memoryFootprint() -> usize;
 }
 
-/// Accurate per-process memory footprint in bytes. Unlike RSS this excludes
-/// pages already returned to the OS that the kernel keeps mapped lazily
-/// (Darwin's `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
-/// Backed by `task_info(TASK_VM_INFO).phys_footprint` (Darwin), `Pss:` from
+/// Per-process memory footprint in bytes. Backed by
+/// `task_info(TASK_VM_INFO).phys_footprint` (Darwin, the same number
+/// `process.memoryUsage().rss` reports there), `Pss:` from
 /// `/proc/self/smaps_rollup` (Linux), `PrivateUsage` (Windows). Returns
 /// `undefined` when no platform-specific accessor is available so the caller
 /// can `?? process.memoryUsage.rss()`.

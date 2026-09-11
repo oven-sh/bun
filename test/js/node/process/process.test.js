@@ -1,5 +1,6 @@
 import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
+import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
@@ -1062,6 +1063,61 @@ describe.concurrent(() => {
 
   it("process.memoryUsage.rss", () => {
     expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
+  });
+
+  // Other threads (GC, JIT) allocate and free memory while these tests run, so
+  // they compare the closest of a few back-to-back reads.
+  function closestDelta(read, reference) {
+    let best = Infinity;
+    for (let i = 0; i < 8; i++) {
+      const value = read();
+      best = Math.min(best, Math.abs(value - reference()));
+    }
+    return best;
+  }
+
+  // On macOS, rss is the task's phys_footprint ledger: the "Memory" column in
+  // Activity Monitor, not resident_size. proc_pid_rusage() hands out the same
+  // ledger and its lifetime peak, so it is the independent reference here.
+  it.skipIf(!isMacOS)("process.memoryUsage().rss is the memory footprint on macOS", () => {
+    const { symbols } = dlopen("libSystem.B.dylib", {
+      proc_pid_rusage: { args: ["int", "int", "ptr"], returns: "int" },
+    });
+    const RUSAGE_INFO_V4 = 4;
+    // struct rusage_info_v4 (<sys/resource.h>): uint8_t ri_uuid[16], then uint64_t fields.
+    const info = new BigUint64Array(2 + 35);
+    const ri_phys_footprint = 2 + 7;
+    const ri_lifetime_max_phys_footprint = 2 + 28;
+    const kernel = field => () => {
+      expect(symbols.proc_pid_rusage(process.pid, RUSAGE_INFO_V4, ptr(info))).toBe(0);
+      return Number(info[field]);
+    };
+    const footprint = kernel(ri_phys_footprint);
+    const peakFootprint = kernel(ri_lifetime_max_phys_footprint);
+
+    const MB = 1024 * 1024;
+    expect(closestDelta(() => process.memoryUsage.rss(), footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => process.memoryUsage().rss, footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => jscMemoryUsage().current, footprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => Bun.unsafe.memoryFootprint(), footprint)).toBeLessThan(4 * MB);
+    // maxRSS is kilobytes.
+    expect(closestDelta(() => process.resourceUsage().maxRSS * 1024, peakFootprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => jscMemoryUsage().peak, peakFootprint)).toBeLessThan(4 * MB);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, peakFootprint)).toBeLessThan(4 * MB);
+  });
+
+  it("bun:jsc memoryUsage() and process.report agree with process.memoryUsage() and resourceUsage()", () => {
+    // Everything is bytes except maxRSS (kilobytes). getReport() allocates
+    // between the two reads, hence the slack. A unit or source mix-up is off
+    // by far more: rss in kilobytes, or a peak where the current value belongs.
+    const slack = 16 * 1024 * 1024;
+    const rss = () => process.memoryUsage.rss();
+    const maxRSS = () => process.resourceUsage().maxRSS * 1024;
+    expect(closestDelta(() => jscMemoryUsage().current, rss)).toBeLessThan(slack);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.rss, rss)).toBeLessThan(slack);
+    expect(closestDelta(() => jscMemoryUsage().peak, maxRSS)).toBeLessThan(slack);
+    expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, maxRSS)).toBeLessThan(slack);
+    expect(maxRSS() + slack).toBeGreaterThan(rss());
   });
 
   // JSC measures the live size of the heap at the end of each collection and

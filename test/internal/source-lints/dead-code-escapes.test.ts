@@ -44,6 +44,7 @@ const MODULE_ESCAPE_ALLOWED = new Set([
   "src/runtime/generated_classes.rs",
   // Shares files with bun_install; each of the two builds uses a different half.
   "src/install/windows-shim/main.rs",
+  // Stale. #40690 removes it together with the items it hides.
   "src/react_compiler/diagnostics/mod.rs",
 ]);
 
@@ -116,7 +117,7 @@ describe("#[allow(dead_code)] escapes", () => {
 });
 
 describe("module-level #![allow(dead_code)] escapes", () => {
-  test("only generated surfaces and the standalone shim opt a whole file out", () => {
-    expect(moduleLevel.filter(source => !MODULE_ESCAPE_ALLOWED.has(source))).toEqual([]);
+  test("the files that opt out wholesale are exactly MODULE_ESCAPE_ALLOWED", () => {
+    expect(moduleLevel.toSorted()).toEqual([...MODULE_ESCAPE_ALLOWED].toSorted());
   });
 });

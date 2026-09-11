@@ -35,8 +35,10 @@ describe.concurrent.skipIf(!isASAN)("stringify throws when the string builder ca
     ["JSON5 appends a UTF-16 key", `Bun.JSON5.stringify({ a: big, "日本": 1 })`],
     ["XML appends a UTF-16 element name", `Bun.XML.stringify({ a: { b: big, "日本": "1" } })`],
   ])("%s", async (_name, expression) => {
+    // "latin1" makes `big` an 8-bit string, so the builder is still 8-bit when the UTF-16 string arrives.
+    const big = `Buffer.alloc(${0.75 * CAP_MIB} * 1024 * 1024, "x").toString("latin1")`;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture(`"x".repeat(${0.75 * CAP_MIB} * 1024 * 1024)`, expression)],
+      cmd: [bunExe(), "-e", fixture(big, expression)],
       env: {
         ...bunEnv,
         Malloc: "1",
@@ -50,13 +52,13 @@ describe.concurrent.skipIf(!isASAN)("stringify throws when the string builder ca
           .join(":"),
       },
       stdout: "pipe",
+      // ASAN logs a warning for every refused allocation; drained, not asserted on.
       stderr: "pipe",
     });
 
-    // ASAN reports the allocation it refused on stderr, so stderr is not compared.
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe(threw);
+    expect(stdout, `the child exited with ${exitCode}\nstderr:\n${stderr}`).toBe(threw);
     expect(exitCode).toBe(0);
   });
 });

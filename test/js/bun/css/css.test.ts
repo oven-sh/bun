@@ -6492,6 +6492,160 @@ describe("css tests", () => {
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
   });
 
+  describe("supports", () => {
+    // A parenthesized `property: value` is parsed into a declaration
+    // condition and printed from it (the form `@import ... supports()` has
+    // always used), so the condition minifies instead of being copied
+    // verbatim. The value itself is still kept as written.
+    minify_test(
+      "@supports (width: calc(10px * 2)) { .test { width: calc(10px * 2) } }",
+      "@supports (width:calc(10px * 2)){.test{width:20px}}",
+    );
+    minify_test(
+      "@supports (color: hsl(0deg, 0%, 0%)) { .test { color: hsl(0deg, 0%, 0%) } }",
+      "@supports (color:hsl(0deg, 0%, 0%)){.test{color:#000}}",
+    );
+    minify_test("@supports (DISPLAY : grid) { a { color: red } }", "@supports (display:grid){a{color:red}}");
+    minify_test("@supports (--x: 1) { a { color: red } }", "@supports (--x:1){a{color:red}}");
+    minify_test("@supports (foo-bar: baz) { a { color: red } }", "@supports (foo-bar:baz){a{color:red}}");
+    minify_test(
+      "@supports (transition-timing-function: linear(0, 1)) { a { color: red } }",
+      "@supports (transition-timing-function:linear(0, 1)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (display: grid) and (gap: 1px) { a { color: red } }",
+      "@supports (display:grid) and (gap:1px){a{color:red}}",
+    );
+    minify_test(
+      "@supports ((display: grid) or (display: flex)) and (gap: 1px) { a { color: red } }",
+      "@supports ((display:grid) or (display:flex)) and (gap:1px){a{color:red}}",
+    );
+    minify_test(
+      "@supports (position: -webkit-sticky) or (position: sticky) { a { color: red } }",
+      "@supports (position:-webkit-sticky) or (position:sticky){a{color:red}}",
+    );
+    minify_test("@import url(x.css) supports((display: grid));", '@import "x.css" supports(display:grid);');
+    minify_test(
+      "@import url(x.css) supports((display: grid) and (gap: 1px));",
+      '@import "x.css" supports((display:grid) and (gap:1px));',
+    );
+
+    // Vendor-prefixed properties keep their prefix when printed.
+    minify_test("@supports (-webkit-mask: none) { a { color: red } }", "@supports ((-webkit-mask:none)){a{color:red}}");
+    minify_test("@import url(x.css) supports(-webkit-mask: none);", '@import "x.css" supports((-webkit-mask:none));');
+
+    // Prefix variants of one declaration joined by `or` fold into a single
+    // condition, whichever order they are written in, as do exact duplicates.
+    minify_test(
+      "@supports (-webkit-mask: none) or (mask: none) { a { color: red } }",
+      "@supports ((-webkit-mask:none) or (mask:none)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (mask: none) or (-webkit-mask: none) { a { color: red } }",
+      "@supports ((-webkit-mask:none) or (mask:none)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (display: grid) or (-webkit-mask: none) or (mask: none) { a { color: red } }",
+      "@supports (display:grid) or ((-webkit-mask:none) or (mask:none)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (display: grid) or (display: grid) { a { color: red } }",
+      "@supports (display:grid){a{color:red}}",
+    );
+    minify_test(
+      "@import url(x.css) supports((-webkit-mask: none) or (mask: none));",
+      '@import "x.css" supports((-webkit-mask:none) or (mask:none));',
+    );
+    minify_test(
+      "@supports ((-webkit-mask:none) or (mask:none)){a{color:red}}",
+      "@supports ((-webkit-mask:none) or (mask:none)){a{color:red}}",
+    );
+
+    // Nothing else folds: a different value, `and` (folding would turn it
+    // into `or`), or custom and unknown properties that differ only by name.
+    minify_test(
+      "@supports (-webkit-mask: none) or (mask: url(a.png)) { a { color: red } }",
+      "@supports ((-webkit-mask:none)) or (mask:url(a.png)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (-webkit-mask: none) and (mask: none) { a { color: red } }",
+      "@supports ((-webkit-mask:none)) and (mask:none){a{color:red}}",
+    );
+    minify_test("@supports (--a: 1) or (--b: 1) { a { color: red } }", "@supports (--a:1) or (--b:1){a{color:red}}");
+    minify_test(
+      "@supports (-webkit-foo: 1) or (foo: 1) { a { color: red } }",
+      "@supports (-webkit-foo:1) or (foo:1){a{color:red}}",
+    );
+
+    // Parenthesized content that is neither a condition nor a declaration is
+    // still kept verbatim, as are unknown functions and selector().
+    minify_test("@supports (unknown) { a { color: red } }", "@supports (unknown){a{color:red}}");
+    minify_test(
+      "@supports (display: grid) or (foo bar) { a { color: red } }",
+      "@supports (display:grid) or (foo bar){a{color:red}}",
+    );
+    minify_test("@supports unknown(test) { a { color: red } }", "@supports unknown(test){a{color:red}}");
+    minify_test("@supports selector(a > b) { a { color: red } }", "@supports selector(a > b){a{color:red}}");
+
+    // Adjacent @supports rules with the same condition are merged (the later
+    // one used to be dropped). Conditions compare by their parsed form, so
+    // the spelling of a declaration condition does not matter.
+    cssTest(
+      `@supports (display: grid) { .a { color: red } }
+@supports (display:grid) { .b { color: blue } }`,
+      indoc`@supports (display: grid) {
+  .a {
+    color: red;
+  }
+
+  .b {
+    color: #00f;
+  }
+}
+`,
+    );
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: grid) { .b { color: blue } }",
+      "@supports (display:grid){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: grid) { .b { color: blue } } @supports (display: grid) { .c { color: green } }",
+      "@supports (display:grid){.a{color:red}.b{color:#00f}.c{color:green}}",
+    );
+    minify_test(
+      "@supports (-webkit-mask: none) or (mask: none) { .a { color: red } } @supports (mask: none) or (-webkit-mask: none) { .b { color: blue } }",
+      "@supports ((-webkit-mask:none) or (mask:none)){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports selector(a > b) { .a { color: red } } @supports selector(a > b) { .b { color: blue } }",
+      "@supports selector(a > b){.a{color:red}.b{color:#00f}}",
+    );
+    // https://github.com/oven-sh/bun/issues/24770
+    minify_test(
+      ".test { border-top: 1px solid red; @supports (color: blue) { border-top: 1px solid blue } @supports (color: blue) { border-left: 1px solid blue } @supports (color: blue) { border-bottom: 1px solid blue } }",
+      ".test{border-top:1px solid red;@supports (color:blue){&{border-top:1px solid #00f;border-bottom:1px solid #00f;border-left:1px solid #00f}}}",
+    );
+
+    // Different conditions stay separate rules, including custom or unknown
+    // properties that share a value and a known property with two prefixes.
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: flex) { .b { color: blue } }",
+      "@supports (display:grid){.a{color:red}}@supports (display:flex){.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (--a: 1) { .a { color: red } } @supports (--b: 1) { .b { color: blue } }",
+      "@supports (--a:1){.a{color:red}}@supports (--b:1){.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (-webkit-backdrop-filter: blur(1px)) { .a { color: red } } @supports (backdrop-filter: blur(1px)) { .b { color: blue } }",
+      "@supports (-webkit-backdrop-filter:blur(1px)){.a{color:red}}@supports (backdrop-filter:blur(1px)){.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (-webkit-mask: none) { .a { color: red } } @supports (mask: none) { .b { color: blue } }",
+      "@supports ((-webkit-mask:none)){.a{color:red}}@supports (mask:none){.b{color:#00f}}",
+    );
+  });
+
   describe("transition", () => {
     minify_test(".foo { transition-duration: 500ms }", ".foo{transition-duration:.5s}");
     minify_test(".foo { transition-duration: .5s }", ".foo{transition-duration:.5s}");

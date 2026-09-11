@@ -1338,6 +1338,7 @@ it("an onread client dialed with readable: false still reads into its buffer", a
     });
     const closed = once(client, "close");
     client.on("error", done.reject);
+    client.on("close", () => done.reject(new Error(`closed after ${JSON.stringify(got)}`)));
     expect(await done.promise).toBe("banner");
     client.destroy();
     await closed;

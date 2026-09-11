@@ -206,9 +206,9 @@ pub trait Sink {
     fn on_push_promise(&self, _parent_id: u32, _promised_id: u32) {}
     /// RFC 7838 ALTSVC.
     fn on_altsvc(&self, _stream_id: u32, _origin: &[u8], _value: &[u8]) {}
-    /// RFC 8336 ORIGIN — the full frame payload (a sequence of 2-byte-length-prefixed origins),
-    /// delivered once per frame so the embedder can surface them as a single event.
-    fn on_origin(&self, _payload: &[u8]) {}
+    /// RFC 8336 ORIGIN: the origins of one well-formed frame (possibly none), delivered once per
+    /// frame so the embedder can surface them as a single event.
+    fn on_origin(&self, _origins: wire::OriginEntries<'_>) {}
     /// The peer exceeded the session's invalid-frame allowance (node's maxSessionInvalidFrames):
     /// the embedder should destroy the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
     fn on_too_many_invalid_frames(&self) {}
@@ -221,6 +221,13 @@ pub trait Sink {
     /// inbound frames for it are not treated as frames on an idle stream.
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
+    }
+    /// Whether `stream_id` is still open on the embedder's side: `Some(false)` once both halves
+    /// closed or the embedder reset it. `None` if the embedder keeps no record of the stream (a
+    /// stream the peer pushed): then this engine's own entry decides. For any other stream this
+    /// engine only sees the inbound half, so it cannot tell on its own.
+    fn is_stream_open(&self, _stream_id: u32) -> Option<bool> {
+        None
     }
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
     /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
@@ -408,6 +415,35 @@ impl Connection {
     /// specific callback (node's `internal_goaway_sent_` path in OnFrameSent/SendPendingData).
     pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
         self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
+    }
+
+    /// node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts against
+    /// maxSessionInvalidFrames (same post-increment comparison as node). Returns true once the
+    /// allowance is exceeded: the session is then torn down with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
+    fn count_invalid_frame(&mut self, sink: &impl Sink) -> bool {
+        let count = self.invalid_frame_count;
+        self.invalid_frame_count = count.saturating_add(1);
+        if count > self.max_invalid_frames {
+            self.terminated = true;
+            sink.on_too_many_invalid_frames();
+            return true;
+        }
+        false
+    }
+
+    /// A frame nghttp2 reports to on_invalid_frame_recv_callback with NGHTTP2_ERR_PROTO and then
+    /// drops, without terminating the session. node counts it, then destroys the session with
+    /// NghttpError("Protocol error"). That destroy writes the only GOAWAY (INTERNAL_ERROR), so
+    /// none is written here. Always returns true: the connection is closing.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1128-L1175
+    fn invalid_frame(&mut self, sink: &impl Sink, debug: &[u8]) -> bool {
+        if self.count_invalid_frame(sink) {
+            return true;
+        }
+        self.going_away = true;
+        self.terminated = true;
+        sink.on_error(wire::lib_error::PROTO, self.last_stream_id, debug);
+        true
     }
 
     fn send_window_update(&mut self, sink: &impl Sink, stream_id: u32, increment: u32) {
@@ -1294,14 +1330,7 @@ impl Connection {
             }
         }
         if malformed && !rejected {
-            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
-            // against maxSessionInvalidFrames; exceeding it tears the session down with
-            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
+            if self.count_invalid_frame(sink) {
                 return true;
             }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
@@ -1496,16 +1525,12 @@ impl Connection {
         }
 
         // An empty DATA frame that does not end the stream carries no information and is only
-        // useful for flooding: count it against the session's invalid-frame allowance (node's
-        // maxSessionInvalidFrames; same post-increment comparison as node).
-        if payload.is_empty() && !wire::flags::has(hdr.flags, wire::flags::END_STREAM) {
-            let count = self.invalid_frame_count;
-            self.invalid_frame_count = count.saturating_add(1);
-            if count > self.max_invalid_frames {
-                self.terminated = true;
-                sink.on_too_many_invalid_frames();
-                return true;
-            }
+        // useful for flooding: count it against the session's invalid-frame allowance.
+        if payload.is_empty()
+            && !wire::flags::has(hdr.flags, wire::flags::END_STREAM)
+            && self.count_invalid_frame(sink)
+        {
+            return true;
         }
 
         // Per-stream flow control + state check, decided under a scoped borrow so the self.* calls
@@ -1758,24 +1783,49 @@ impl Connection {
         self.finish_or_park_header_block(sink, hdr, meta)
     }
 
-    /// RFC 7838 §4 ALTSVC: optional 2-byte origin-length + origin, then the Alt-Svc field value.
+    /// nghttp2_session_get_stream: the stream exists and is neither idle nor closed.
+    fn is_stream_open(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        sink.is_stream_open(stream_id).unwrap_or_else(|| {
+            self.streams
+                .get(&stream_id)
+                .is_some_and(|s| !matches!(s.state, State::Idle | State::Closed))
+        })
+    }
+
+    /// RFC 7838 §4 ALTSVC: 2-byte origin length, origin, then the Alt-Svc field value. Follows
+    /// nghttp2, whose verdicts node turns into session errors where RFC 7838 says to ignore the
+    /// frame (see `invalid_frame`).
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4816-L4852
     fn handle_altsvc(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        if payload.len() < 2 {
-            return false; // malformed ALTSVC is ignored (§4)
-        }
-        let origin_len = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-        if 2 + origin_len > payload.len() {
+        // A server never accepts ALTSVC, whatever its shape.
+        if self.is_server {
             return false;
         }
-        let origin = &payload[2..2 + origin_len];
-        let value = &payload[2 + origin_len..];
-        // RFC 7838 4 MUST-ignore rules: a server never accepts ALTSVC; on stream 0 the origin
-        // must be present; on a request stream it must be empty (the stream's own origin applies).
-        if self.is_server
-            || (hdr.stream_id == 0 && origin.is_empty())
-            || (hdr.stream_id != 0 && !origin.is_empty())
-        {
-            return false;
+        let parsed = payload
+            .split_first_chunk::<2>()
+            .and_then(|(len, rest)| rest.split_at_checked(usize::from(u16::from_be_bytes(*len))));
+        let Some((origin, value)) = parsed else {
+            // RFC 9113 §4.2: too small for its origin length, or for the origin that it announces.
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L5957-L5961
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L6347-L6351
+            self.send_go_away(sink, ErrorCode::FrameSizeError, b"ALTSVC frame too short");
+            return true;
+        };
+        if hdr.stream_id == 0 {
+            if origin.is_empty() {
+                return self.invalid_frame(sink, b"ALTSVC on stream 0 without an origin");
+            }
+        } else {
+            if !origin.is_empty() {
+                return self.invalid_frame(sink, b"ALTSVC on a stream with an origin");
+            }
+            // An idle, closed or unknown stream drops the frame. This is not an invalid frame.
+            if !self.is_stream_open(sink, hdr.stream_id) {
+                return false;
+            }
+        }
+        if value.is_empty() {
+            return self.invalid_frame(sink, b"ALTSVC without a field value");
         }
         sink.on_altsvc(hdr.stream_id, origin, value);
         false
@@ -1784,12 +1834,17 @@ impl Connection {
     /// RFC 8336 §2 ORIGIN: a sequence of (2-byte length + origin) entries on stream 0.
     fn handle_origin(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // §2.1: ORIGIN on a non-zero stream is ignored, and like ALTSVC it is server-to-client
-        // only - a server receiving it must ignore it. The whole payload is delivered once; the
-        // embedder iterates the (2-byte length, origin) entries and surfaces a single event.
-        if hdr.stream_id != 0 || self.is_server {
+        // only - a server receiving it must ignore it. nghttp2 also ignores a frame with any of
+        // the high four flag bits set.
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L5990-L6006
+        if hdr.stream_id != 0 || self.is_server || hdr.flags & 0xf0 != 0 {
             return false;
         }
-        sink.on_origin(payload);
+        // A frame that does not parse is dropped whole; it is not an invalid frame.
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4952-L4960
+        if let Some(origins) = wire::OriginEntries::parse(payload) {
+            sink.on_origin(origins);
+        }
         false
     }
 
@@ -2028,7 +2083,8 @@ mod tests {
         resets: RefCell<Vec<(u32, u32)>>,
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
-        origins: RefCell<Vec<Vec<u8>>>,
+        /// One entry per delivered ORIGIN frame.
+        origins: RefCell<Vec<Vec<Vec<u8>>>>,
     }
     impl Sink for CaptureSink {
         fn write(&self, bytes: &[u8]) -> WriteResult {
@@ -2078,8 +2134,10 @@ mod tests {
                 .borrow_mut()
                 .push((id, origin.to_vec(), value.to_vec()));
         }
-        fn on_origin(&self, origin: &[u8]) {
-            self.origins.borrow_mut().push(origin.to_vec());
+        fn on_origin(&self, origins: wire::OriginEntries<'_>) {
+            self.origins
+                .borrow_mut()
+                .push(origins.map(<[u8]>::to_vec).collect());
         }
     }
 

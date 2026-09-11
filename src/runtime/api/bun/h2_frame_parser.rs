@@ -3946,6 +3946,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
+    fn is_stream_open(&self, stream_id: u32) -> Option<bool> {
+        // On a client the legacy map holds every stream except the ones the peer pushed, until
+        // the read after its teardown. A full close and a local RST_STREAM both set CLOSED first.
+        let stream = self.streams.get().get(&stream_id).copied()?;
+        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+        Some(unsafe { (*stream).state != StreamState::CLOSED })
+    }
+
     fn highest_started_stream_id(&self) -> u32 {
         // handle_received_stream_id raises this for every stream registered on this side
         // (including locally-initiated ones) and eviction never lowers it.
@@ -3966,53 +3974,20 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.rewrite_pending_push.set(promised_id);
     }
 
-    fn on_origin(&self, payload: &[u8]) {
-        // Match the legacy dispatch shape: a single origin is passed as a string, multiple origins
-        // as an array — one onOrigin dispatch per ORIGIN frame.
+    fn on_origin(&self, origins: crate::api::h2::wire::OriginEntries<'_>) {
+        // One onOrigin dispatch per ORIGIN frame, always with an array. A frame without origins
+        // gives an empty array.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1673-L1693
         if !self.can_dispatch(JSH2FrameParser::Gc::onOrigin) {
             return;
         }
         let g = self.global();
-        let mut origin_value = JSValue::UNDEFINED;
-        let mut count: u32 = 0;
-        let mut rest = payload;
-        while rest.len() >= 2 {
-            let len = u16::from_be_bytes([rest[0], rest[1]]) as usize;
-            if 2 + len > rest.len() {
-                break;
-            }
-            let origin = &rest[2..2 + len];
-            let Some(origin_js) = self.or_stop(self.latin1_to_js(origin)) else {
-                return;
-            };
-            if count == 0 {
-                origin_value = origin_js;
-                origin_value.ensure_still_alive();
-            } else if count == 1 {
-                let Some(array) = self.or_stop(JSValue::create_empty_array(&g, 0)) else {
-                    return;
-                };
-                array.ensure_still_alive();
-                let Some(()) = self.or_stop(
-                    array
-                        .push(&g, origin_value)
-                        .and_then(|()| array.push(&g, origin_js)),
-                ) else {
-                    return;
-                };
-                origin_value = array;
-            } else {
-                let Some(()) = self.or_stop(origin_value.push(&g, origin_js)) else {
-                    return;
-                };
-            }
-            count += 1;
-            rest = &rest[2 + len..];
-        }
-        if count == 0 {
+        let array =
+            JSValue::create_array_from_iter(&g, origins, |origin| self.latin1_to_js(origin));
+        let Some(array) = self.or_stop(array) else {
             return;
-        }
-        self.dispatch(JSH2FrameParser::Gc::onOrigin, origin_value);
+        };
+        self.dispatch(JSH2FrameParser::Gc::onOrigin, array);
     }
 
     fn on_stream_open(&self, stream_id: u32) {

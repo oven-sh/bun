@@ -187,6 +187,54 @@ impl FrameHeader {
     }
 }
 
+/// The Origin-Entry sequence of an ORIGIN frame payload (RFC 8336 §2): each entry is a 2-byte
+/// length followed by that many octets of ASCII-Origin. Only built from a payload in which every
+/// entry is complete. Yields the origins in order and skips zero-length entries.
+/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.c#L846-L862
+#[derive(Clone, Debug)]
+pub struct OriginEntries<'a> {
+    rest: &'a [u8],
+    /// Origins left in `rest`, zero-length entries not counted.
+    len: usize,
+}
+
+impl<'a> OriginEntries<'a> {
+    /// `None` when a length prefix or an origin runs past the end of the payload.
+    pub fn parse(payload: &'a [u8]) -> Option<Self> {
+        let mut rest = payload;
+        let mut len = 0;
+        while !rest.is_empty() {
+            let (prefix, tail) = rest.split_first_chunk::<2>()?;
+            let origin_len = usize::from(u16::from_be_bytes(*prefix));
+            rest = tail.get(origin_len..)?;
+            len += usize::from(origin_len != 0);
+        }
+        Some(OriginEntries { rest: payload, len })
+    }
+}
+
+impl<'a> Iterator for OriginEntries<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        loop {
+            let (prefix, tail) = self.rest.split_first_chunk::<2>()?;
+            let (origin, rest) = tail.split_at_checked(usize::from(u16::from_be_bytes(*prefix)))?;
+            self.rest = rest;
+            if !origin.is_empty() {
+                self.len -= 1;
+                return Some(origin);
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl ExactSizeIterator for OriginEntries<'_> {}
+
 /// Outcome of validating an inbound frame header against §4.2/§6 structural rules
 /// (independent of stream state, which the state machine checks separately).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -332,6 +380,26 @@ mod tests {
             validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT),
             HeaderValidation::ConnectionError(ErrorCode::FrameSizeError)
         );
+    }
+
+    #[test]
+    fn origin_entries_parse_whole_or_not_at_all() {
+        let origins = |payload| {
+            let entries = OriginEntries::parse(payload)?;
+            let len = entries.len();
+            let entries: Vec<_> = entries.collect();
+            assert_eq!(entries.len(), len);
+            Some(entries)
+        };
+        assert_eq!(origins(b""), Some(vec![]));
+        assert_eq!(origins(b"\0\0"), Some(vec![]));
+        assert_eq!(
+            origins(b"\0\x01a\0\0\0\x02bc"),
+            Some(vec![&b"a"[..], &b"bc"[..]])
+        );
+        assert_eq!(origins(b"\0"), None);
+        assert_eq!(origins(b"\0\x01a\0"), None);
+        assert_eq!(origins(b"\0\x01a\0\x05bc"), None);
     }
 
     #[test]

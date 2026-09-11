@@ -8,11 +8,12 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { Writable } from "node:stream";
+import tls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -27,6 +28,8 @@ const FrameType = {
   GOAWAY: 0x7,
   WINDOW_UPDATE: 0x8,
   CONTINUATION: 0x9,
+  ALTSVC: 0xa, // RFC 7838
+  ORIGIN: 0xc, // RFC 8336
 } as const;
 
 const ErrorCode = {
@@ -681,18 +684,22 @@ class RawH2Server {
   private sawPreface = false;
   frames: Frame[] = [];
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
+  /** Resolves once the accepted connection has closed: every frame the client wrote is in `frames`. */
+  readonly socketClosed = Promise.withResolvers<void>();
 
   private constructor(server: net.Server) {
     this.server = server;
   }
 
-  static async listen(): Promise<RawH2Server> {
-    const server = net.createServer();
+  /** `secure` serves TLS with ALPN "h2"; connect to `https://localhost:${port}` with `{ ca: tlsCert.cert }`. */
+  static async listen({ secure = false } = {}): Promise<RawH2Server> {
+    const server = secure ? tls.createServer({ ...tlsCert, ALPNProtocols: ["h2"] }) : net.createServer();
     const s = new RawH2Server(server);
-    server.on("connection", socket => {
+    server.on(secure ? "secureConnection" : "connection", (socket: net.Socket) => {
       s.socket = socket;
       socket.on("data", d => s.onData(d));
       socket.on("error", () => {});
+      socket.on("close", () => s.socketClosed.resolve());
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -731,12 +738,14 @@ class RawH2Server {
     this.socket!.write(encodeFrame(type, flags, streamId, payload));
   }
 
+  /** `timeoutMs: Infinity` leaves the deadline to the test runner. */
   waitFor(pred: (f: Frame) => boolean, timeoutMs = 2000): Promise<Frame> {
     const existing = this.frames.find(pred);
     if (existing) return Promise.resolve(existing);
     return new Promise((resolve, reject) => {
       const w = { pred, resolve };
       this.waiters.push(w);
+      if (timeoutMs === Infinity) return;
       const t = setTimeout(() => {
         const i = this.waiters.indexOf(w);
         if (i !== -1) this.waiters.splice(i, 1);
@@ -925,6 +934,320 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
     } finally {
       client.destroy();
       raw.close();
+    }
+  });
+});
+
+// Every expectation below is the output of node v26.3.0 for the same frames. nghttp2 validates
+// the frame (nghttp2_session_on_altsvc_received, nghttp2_frame_unpack_origin_payload). node's
+// Http2Session::OnInvalidFrame destroys the session with NghttpError("Protocol error") for each
+// frame that nghttp2 reports as invalid, also where RFC 7838 says to ignore the frame.
+describe.concurrent("inbound ALTSVC (RFC 7838 §4) and ORIGIN (RFC 8336 §2) frames", () => {
+  const EXAMPLE_ORIGIN = "https://example.org";
+  const lengthPrefixed = (str: string) => {
+    const bytes = Buffer.from(str, "latin1");
+    const prefix = Buffer.alloc(2);
+    prefix.writeUInt16BE(bytes.length);
+    return Buffer.concat([prefix, bytes]);
+  };
+  const altsvcPayload = (origin: string, value: string) =>
+    Buffer.concat([lengthPrefixed(origin), Buffer.from(value, "latin1")]);
+  // Response HEADERS: ":status: 200" (static table index 8) with END_HEADERS.
+  const responseHeaders = (streamId: number, endStream: boolean) =>
+    encodeFrame(FrameType.HEADERS, endStream ? 0x5 : 0x4, streamId, Buffer.from([0x88]));
+
+  type SentFrame = [type: number, flags: number, streamId: number, payload: Buffer] | Buffer;
+  type Scenario = {
+    secure?: boolean;
+    /** Open stream 1 (a request that ended its side) before the frames are sent. */
+    request?: boolean;
+    options?: http2.ClientSessionOptions;
+    frames: SentFrame[];
+  };
+
+  /**
+   * Connects an http2 client to a raw server that sends `frames`. Returns the session events
+   * in order and the error codes of the GOAWAY frames that the client wrote. The run ends
+   * when the client acks a PING that follows `frames`, or when its session closes.
+   */
+  async function run({ secure = false, request = false, options, frames }: Scenario) {
+    const raw = await RawH2Server.listen({ secure });
+    const client = secure
+      ? http2.connect(`https://localhost:${raw.port}`, { ...options, ca: tlsCert.cert })
+      : http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    const events: unknown[] = [];
+    const closed = Promise.withResolvers<void>();
+    client.on("altsvc", (alt, origin, streamId) => events.push({ altsvc: { alt, origin, streamId } }));
+    client.on("origin", origins => events.push({ origin: origins }));
+    client.on("error", err => events.push({ error: { code: (err as any).code, message: err.message } }));
+    client.on("close", () => closed.resolve());
+    client.on("stream", pushed => pushed.on("error", () => {}).resume());
+    try {
+      if (request) {
+        const req = client.request({ ":path": "/" });
+        req.on("error", () => {});
+        req.resume();
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1, Infinity);
+      } else {
+        await raw.waitFor(f => f.type === FrameType.SETTINGS, Infinity);
+      }
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          encodeFrame(FrameType.SETTINGS, 0x1, 0),
+          ...frames.map(f => (Buffer.isBuffer(f) ? f : encodeFrame(...f))),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      const pingAcked = raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0, Infinity);
+      const sessionClosed = await Promise.race([pingAcked.then(() => false), closed.promise.then(() => true)]);
+      if (sessionClosed) await raw.socketClosed.promise;
+      const originSet = secure && !sessionClosed ? client.originSet : undefined;
+      return {
+        events,
+        sessionClosed,
+        goaway: raw.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode),
+        ...(originSet && { originSet: originSet.slice(1) }),
+      };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  const protocolError = { error: { code: "ERR_HTTP2_ERROR", message: "Protocol error" } };
+  const validOnStream0 = altsvcPayload(EXAMPLE_ORIGIN, 'h2=":443"');
+
+  // nghttp2 terminates the session itself: GOAWAY(FRAME_SIZE_ERROR). RFC 9113 §4.2: the frame is
+  // too small for its mandatory Origin-Len field, or for the origin that the field announces.
+  test.each<[string, Buffer]>([
+    ["an empty payload", Buffer.alloc(0)],
+    ["a 1-byte payload", Buffer.from([0])],
+    ["an origin length past the end of the payload", Buffer.from([0, 0x50, 0x61, 0x62])],
+  ])("ALTSVC with %s is a FRAME_SIZE_ERROR", async (_, payload) => {
+    const { events, sessionClosed, goaway } = await run({ frames: [[FrameType.ALTSVC, 0, 0, payload]] });
+    expect({ events, sessionClosed, firstGoaway: goaway[0] }).toEqual({
+      events: [protocolError],
+      sessionClosed: true,
+      firstGoaway: ErrorCode.FRAME_SIZE_ERROR,
+    });
+  });
+
+  // nghttp2 only reports these frames as invalid. The GOAWAY comes from the destroy of the
+  // session, which has no code of its own: INTERNAL_ERROR.
+  test.each<[string, Scenario]>([
+    ["on stream 0 without an origin", { frames: [[FrameType.ALTSVC, 0, 0, altsvcPayload("", "h2")]] }],
+    ["on stream 0 without a field value", { frames: [[FrameType.ALTSVC, 0, 0, lengthPrefixed(EXAMPLE_ORIGIN)]] }],
+    [
+      "on an open stream with an origin",
+      { request: true, frames: [[FrameType.ALTSVC, 0, 1, altsvcPayload(EXAMPLE_ORIGIN, "h2")]] },
+    ],
+    ["on an idle stream with an origin", { frames: [[FrameType.ALTSVC, 0, 99, altsvcPayload(EXAMPLE_ORIGIN, "h2")]] }],
+    [
+      "on an open stream without a field value",
+      { request: true, frames: [[FrameType.ALTSVC, 0, 1, lengthPrefixed("")]] },
+    ],
+  ])("ALTSVC %s destroys the session with a protocol error", async (_, scenario) => {
+    expect(await run(scenario)).toEqual({
+      events: [protocolError],
+      sessionClosed: true,
+      goaway: [ErrorCode.INTERNAL_ERROR],
+    });
+  });
+
+  test("ALTSVC frames before an invalid one are delivered, frames after it are not", async () => {
+    const { events, sessionClosed } = await run({
+      frames: [
+        [FrameType.ALTSVC, 0, 0, validOnStream0],
+        [FrameType.ALTSVC, 0, 0, altsvcPayload("", "h2")],
+        [FrameType.ALTSVC, 0, 0, altsvcPayload(EXAMPLE_ORIGIN, "h3")],
+      ],
+    });
+    expect({ events, sessionClosed }).toEqual({
+      events: [{ altsvc: { alt: 'h2=":443"', origin: EXAMPLE_ORIGIN, streamId: 0 } }, protocolError],
+      sessionClosed: true,
+    });
+  });
+
+  test("an invalid ALTSVC frame counts against maxSessionInvalidFrames", async () => {
+    // A response with a connection-specific header is the first invalid frame. It only resets
+    // its stream. The ALTSVC frame is the second one.
+    const malformedResponse = Buffer.concat([
+      Buffer.from([0x88, 0x00]), // ":status: 200", then a literal field without indexing
+      hpackLiteral("connection"),
+      hpackLiteral("close"),
+    ]);
+    const secondInvalidFrame = (maxSessionInvalidFrames: number) =>
+      run({
+        request: true,
+        options: { maxSessionInvalidFrames },
+        frames: [
+          [FrameType.HEADERS, 0x5, 1, malformedResponse],
+          [FrameType.ALTSVC, 0, 0, altsvcPayload("", "h2")],
+        ],
+      });
+    const tooManyInvalidFrames = {
+      code: "ERR_HTTP2_TOO_MANY_INVALID_FRAMES",
+      message: "Too many invalid HTTP/2 frames",
+    };
+    expect({ 0: (await secondInvalidFrame(0)).events, 1: (await secondInvalidFrame(1)).events }).toEqual({
+      0: [{ error: tooManyInvalidFrames }],
+      1: [protocolError],
+    });
+  });
+
+  test("ALTSVC on a stream is dropped unless the stream is open", async () => {
+    // Idle odd stream, even stream that nothing promised, idle stream without a field value.
+    // The stream lookup comes before the field value check, so the last one is not an error.
+    const dropped = await run({
+      frames: [
+        [FrameType.ALTSVC, 0, 99, altsvcPayload("", "h2")],
+        [FrameType.ALTSVC, 0, 2, altsvcPayload("", "h2")],
+        [FrameType.ALTSVC, 0, 99, lengthPrefixed("")],
+        [FrameType.ALTSVC, 0xff, 0, validOnStream0], // ALTSVC defines no flags
+      ],
+    });
+    expect(dropped).toEqual({
+      events: [{ altsvc: { alt: 'h2=":443"', origin: EXAMPLE_ORIGIN, streamId: 0 } }],
+      sessionClosed: false,
+      goaway: [],
+    });
+
+    const onStream1 = (response: Buffer[]) =>
+      run({ request: true, frames: [...response, [FrameType.ALTSVC, 0, 1, altsvcPayload("", "h2")]] });
+    const delivered = [{ altsvc: { alt: "h2", origin: "", streamId: 1 } }];
+    expect({
+      beforeTheResponse: (await onStream1([])).events,
+      whileTheResponseIsOpen: (await onStream1([responseHeaders(1, false)])).events,
+      afterTheResponseEnded: (await onStream1([responseHeaders(1, true)])).events,
+    }).toEqual({
+      beforeTheResponse: delivered,
+      whileTheResponseIsOpen: delivered,
+      afterTheResponseEnded: [],
+    });
+
+    // A stream that the server promised is open from its PUSH_PROMISE to the end of the pushed response.
+    const promisedId = Buffer.from([0, 0, 0, 2]);
+    const pushPromise = encodeFrame(
+      FrameType.PUSH_PROMISE,
+      0x4 /* END_HEADERS */,
+      1,
+      Buffer.concat([promisedId, requestHeaderBlock("GET")]),
+    );
+    const onStream2 = (pushedResponse: Buffer[]) =>
+      run({
+        request: true,
+        frames: [pushPromise, ...pushedResponse, [FrameType.ALTSVC, 0, 2, altsvcPayload("", "h2")]],
+      });
+    const deliveredOnStream2 = [{ altsvc: { alt: "h2", origin: "", streamId: 2 } }];
+    expect({
+      reserved: (await onStream2([])).events,
+      whileThePushedResponseIsOpen: (await onStream2([responseHeaders(2, false)])).events,
+      afterThePushedResponseEnded: (await onStream2([responseHeaders(2, true)])).events,
+    }).toEqual({
+      reserved: deliveredOnStream2,
+      whileThePushedResponseIsOpen: deliveredOnStream2,
+      afterThePushedResponseEnded: [],
+    });
+  });
+
+  test("ORIGIN is delivered whole or not at all", async () => {
+    const [a, b, c] = ["https://a.example", "https://b.example", "https://c.example"];
+    const result = await run({
+      secure: true,
+      frames: [
+        // A zero-length entry is skipped.
+        [FrameType.ORIGIN, 0, 0, Buffer.concat([lengthPrefixed(a), lengthPrefixed(""), lengthPrefixed(b)])],
+        // A frame without origins still emits.
+        [FrameType.ORIGIN, 0, 0, Buffer.alloc(0)],
+        [FrameType.ORIGIN, 0, 0, lengthPrefixed("")],
+        // Dropped: an entry cut short, a trailing octet, a lone octet.
+        [
+          FrameType.ORIGIN,
+          0,
+          0,
+          Buffer.concat([lengthPrefixed("https://dropped.example"), Buffer.from([0, 10, 0x78])]),
+        ],
+        [FrameType.ORIGIN, 0, 0, Buffer.concat([lengthPrefixed("https://dropped.example"), Buffer.from([0])])],
+        [FrameType.ORIGIN, 0, 0, Buffer.from([0])],
+        // Dropped: a stream id, one of the high four flag bits (nghttp2 reserves them).
+        [FrameType.ORIGIN, 0, 1, lengthPrefixed("https://dropped.example")],
+        [FrameType.ORIGIN, 0x10, 0, lengthPrefixed("https://dropped.example")],
+        [FrameType.ORIGIN, 0x01, 0, lengthPrefixed(c)],
+      ],
+    });
+    expect(result).toEqual({
+      events: [{ origin: [a, b] }, { origin: [] }, { origin: [] }, { origin: [c] }],
+      sessionClosed: false,
+      goaway: [],
+      originSet: [a, b, c],
+    });
+  });
+
+  test("the 'origin' array is built without a call to a setter on Array.prototype", async () => {
+    // The accessor changes every array of the process, so the scenario runs in a child.
+    const fixture = `
+      const http2 = require("node:http2");
+      const tls = require("node:tls");
+      const cert = ${JSON.stringify(tlsCert)};
+      const frame = (type, flags, payload = Buffer.alloc(0)) => {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        return Buffer.concat([header, payload]);
+      };
+      const entry = str => Buffer.concat([Buffer.from([0, str.length]), Buffer.from(str, "latin1")]);
+      const origins = Buffer.concat([entry("https://a.example"), entry("https://b.example")]);
+      const server = tls.createServer({ ...cert, ALPNProtocols: ["h2"] }, socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.write(Buffer.concat([frame(4, 0), frame(4, 1), frame(0xc, 0, origins)])));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("https://localhost:" + server.address().port, { ca: cert.cert });
+        let setterCalls = 0;
+        client.on("connect", () => {
+          Object.defineProperty(Array.prototype, 0, {
+            configurable: true,
+            get() {},
+            set(value) {
+              if (typeof value === "string" && value.startsWith("https://")) setterCalls++;
+              Object.defineProperty(this, 0, { value, writable: true, enumerable: true, configurable: true });
+            },
+          });
+        });
+        client.on("origin", origins => {
+          delete Array.prototype[0];
+          console.log(JSON.stringify({ setterCalls, origins, originSet: client.originSet.slice(1) }));
+          client.destroy();
+          server.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const origins = ["https://a.example", "https://b.example"];
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ setterCalls: 0, origins, originSet: origins }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a server ignores ALTSVC and ORIGIN, well-formed or not", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.ALTSVC, 0, 0, Buffer.from([0]));
+      c.sendFrame(FrameType.ALTSVC, 0, 0, altsvcPayload("", "h2"));
+      c.sendFrame(FrameType.ALTSVC, 0, 0, validOnStream0);
+      c.sendFrame(FrameType.ORIGIN, 0, 0, Buffer.from([0, 10, 0x78]));
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+    } finally {
+      c.destroy();
     }
   });
 });

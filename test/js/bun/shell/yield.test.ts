@@ -348,7 +348,7 @@ describe("yield", async () => {
             }
             // The killed members report from the event loop, after the rejection.
             let live;
-            for (const deadline = performance.now() + 30_000; performance.now() < deadline; ) {
+            for (const deadline = performance.now() + 3000; performance.now() < deadline; ) {
               Bun.gc(true);
               live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
               if (live <= 3) break;

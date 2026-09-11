@@ -64,10 +64,7 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// [`Self::shutdown`] was called before the TLS engine existed. Same window
-    /// as [`Self::pending_data`]: `end()` in the turn that created the socket
-    /// reaches here first. Replayed by [`Self::drain_pending`] once the engine
-    /// has started, so the transport sees the first flight, then the end().
+    /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
     /// The transport delivered EOF (its 'end' event fired). Teardown payloads
     /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
@@ -315,10 +312,10 @@ impl UpgradedDuplex {
         self.pending_data.with_mut(|p| p.extend_from_slice(data));
     }
 
-    /// Replay what arrived before the engine existed: bytes, then an EOF, then
-    /// a shutdown. Called by `DuplexUpgradeContext::run_event` once the
-    /// `StartTLS` branch has finished its bookkeeping, so the replay is
-    /// indistinguishable from an ordinary post-start delivery.
+    /// Replay bytes that arrived before the engine existed. Called by
+    /// `DuplexUpgradeContext::run_event` once the `StartTLS` branch has
+    /// finished its bookkeeping, so the replay is indistinguishable from an
+    /// ordinary post-start delivery.
     pub(super) fn drain_pending(&self) {
         // Nothing to replay, or the engine never came up (the socket died
         // before `StartTLS`). Bail before taking so the bytes are not
@@ -326,18 +323,9 @@ impl UpgradedDuplex {
         if self.wrapper_ref().is_none() {
             return;
         }
-        self.drain_pending_data();
-        self.drain_pending_end();
-        // Last: the staged input arrived first, so the engine answers it
-        // first. A server handed a staged ClientHello writes its flight ahead
-        // of the end().
-        if self.pending_shutdown.replace(false) {
-            self.shutdown();
-        }
-    }
-
-    fn drain_pending_data(&self) {
         if self.pending_data.get().is_empty() {
+            self.drain_pending_end();
+            self.drain_pending_shutdown();
             return;
         }
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears
@@ -358,11 +346,13 @@ impl UpgradedDuplex {
                 _ => break,
             }
         }
+        self.drain_pending_end();
+        self.drain_pending_shutdown();
     }
 
-    /// Replay an EOF that landed before the engine came up. Kept after the
-    /// staged bytes so the engine sees data-then-EOF in the order the peer
-    /// sent it.
+    /// Replay an EOF that landed before the engine came up. Split out so both
+    /// `drain_pending` exits report it, and kept after the staged bytes so the
+    /// engine sees data-then-EOF in the order the peer sent it.
     fn drain_pending_end(&self) {
         if !self.pending_end.get() {
             return;
@@ -375,6 +365,13 @@ impl UpgradedDuplex {
             return;
         }
         (self.handlers.on_end)(self.handlers.ctx);
+    }
+
+    /// After the staged input: a server answers a staged ClientHello before the end().
+    fn drain_pending_shutdown(&self) {
+        if self.pending_shutdown.replace(false) {
+            self.shutdown();
+        }
     }
 
     pub(crate) fn on_timeout(&self) {
@@ -562,10 +559,7 @@ impl UpgradedDuplex {
         }
     }
 
-    /// Half-close (node's `end()`): the close_notify, then the end of the
-    /// transport's write side, like `us_internal_ssl_shutdown` on an fd. The
-    /// engine keeps reading. Mid-handshake there is no close_notify to send
-    /// (`SSL_shutdown` succeeds silently) and the transport is ended bare.
+    /// Half-close like `us_internal_ssl_shutdown`: close_notify (none mid-handshake), then end().
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&self) {
         let Some(w) = self.wrapper_ref() else {

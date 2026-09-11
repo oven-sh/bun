@@ -100,6 +100,11 @@ JSValue fetchCommonJSModule(
     BunString* referrer,
     BunString* typeAttribute);
 
+// Call before loading a module on behalf of require(): drops the module
+// registry entry for `specifier` if an earlier load of it failed, so the module
+// is evaluated again instead of rethrowing the stored error.
+void evictFailedModuleRegistryEntry(Zig::GlobalObject* globalObject, const WTF::String& specifier);
+
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,

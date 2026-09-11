@@ -74,6 +74,8 @@ pkgs.mkShell rec {
     libdrm
     xorg.libxshmfence
     gdk-pixbuf
+  ] ++ lib.optionals stdenv.isDarwin [
+    apple-sdk_11
   ];
 
   shellHook = ''

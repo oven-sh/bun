@@ -68,7 +68,10 @@ if (mode === "profile") {
       }),
   );
 } else if (mode === "heap") {
-  // (5) heap snapshots taken while neverCalledUntilAsked has still never been called.
+  // (5) heap snapshots taken while neverCalledUntilAsked has still never been called. A module's function
+  // declaration only becomes a function object once something reads its binding; hotWork is not read in this
+  // mode otherwise.
+  globalThis.hotWorkForSnapshot = hotWork;
   const snapshot = jsc.generateHeapSnapshotForDebugging();
   // GCDebugging snapshots: nodes are <id, size, classNameIndex, flags, labelIndex, cell, wrapped>.
   const stride = snapshot.type === "GCDebugging" ? 7 : 4;

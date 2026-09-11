@@ -551,6 +551,81 @@ describe("session options and SETTINGS parameters", () => {
     expect(await request({ settings: { maxHeaderListPairs: 4 } })).toBe(204);
     expect(await request({ maxHeaderListPairs: 4 })).toBe("ERR_HTTP2_STREAM_ERROR");
   });
+
+  // The client used to store a top-level NaN as 0 and send it. With a maxFrameSize of 0, request()
+  // split the HEADERS block into empty frames forever. With an initialWindowSize of 0, the body
+  // never arrived. The server ACKs only a valid SETTINGS frame, so wait for the ACK first.
+  test.each(["maxFrameSize", "initialWindowSize"])("connect(url, { %s: NaN }) serves a request", async key => {
+    const client = http2.connect(`http://127.0.0.1:${port}`, { [key]: NaN } as any);
+    try {
+      await once(client, "localSettings");
+      const req = client.request({ ":path": "/" });
+      req.end();
+      const [headers] = await once(req, "response");
+      expect(headers[":status"]).toBe(200);
+      req.setEncoding("utf8");
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      expect(body).toBe("ok");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // A getter can give the JS validation a valid number and the native read NaN. NaN compares false
+  // with both range bounds, so the native check has to reject it by name: stored as 0, it is the
+  // maxFrameSize above. Bun-only: node v26.3.0 aborts on this input (Http2Settings::Send()).
+  test.each([
+    "headerTableSize",
+    "initialWindowSize",
+    "maxFrameSize",
+    "maxConcurrentStreams",
+    "maxHeaderListSize",
+    "maxHeaderSize",
+  ])("the native layer rejects a %s that becomes NaN after the JS validation", async key => {
+    function nanAfterValidation() {
+      let armed = false;
+      return {
+        get [key]() {
+          return armed ? NaN : 65535;
+        },
+        // validateSettings() reads customSettings after every other key.
+        get customSettings() {
+          armed = true;
+          return undefined;
+        },
+      };
+    }
+    function thrownCode(fn: () => void) {
+      try {
+        fn();
+      } catch (err: any) {
+        return err.code;
+      }
+    }
+
+    const url = `http://127.0.0.1:${port}`;
+    const client = http2.connect(url);
+    client.on("error", () => {});
+    // connect() throws from the session constructor, so the test owns the socket it would leave.
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let second: http2.ClientHttp2Session | undefined;
+    try {
+      await Promise.all([once(client, "connect"), once(socket, "connect")]);
+      expect(thrownCode(() => client.settings(nanAfterValidation()))).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+      expect(
+        thrownCode(() => {
+          second = http2.connect(url, { createConnection: () => socket, settings: nanAfterValidation() });
+          second.on("error", () => {});
+        }),
+      ).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+    } finally {
+      second?.destroy();
+      socket.destroy();
+      client.destroy();
+    }
+  });
 });
 
 describe("frame size limit (checklist §4.2)", () => {

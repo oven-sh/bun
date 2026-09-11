@@ -4281,7 +4281,8 @@ impl H2FrameParser {
                 if let Some(v) = options.get(global_object, $key)? {
                     if v.is_number() {
                         let value = v.as_number();
-                        if value < ($min as f64) || value > $max {
+                        // `contains`, not `<`/`>`: NaN compares false with both bounds.
+                        if !(($min as f64)..=$max).contains(&value) {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error($err)
                                 .throw();
@@ -4324,7 +4325,7 @@ impl H2FrameParser {
         if let Some(v) = options.get(global_object, "initialWindowSize")? {
             if v.is_number() {
                 let value = v.as_number();
-                if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
+                if !(0.0..=MAX_WINDOW_SIZE_F64).contains(&value) {
                     return global_object
                         .err_http2_invalid_setting_value_range_error(
                             "Expected initialWindowSize to be a number between 0 and 2^32-1",

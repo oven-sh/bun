@@ -222,9 +222,8 @@ impl HmrSocket {
                             unreachable!()
                         };
 
-                        // A request for an unbundled route starts a bundle
-                        // without consulting the batch; `start_async_bundle`
-                        // requires none in flight.
+                        // An unbundled route's request can start a bundle;
+                        // `start_async_bundle` requires none in flight.
                         if dev.current_bundle.is_some() {
                             dev.testing_batch_events =
                                 super::TestingBatchEvents::ReleaseAfterBundle(batch);

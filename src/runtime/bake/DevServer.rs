@@ -198,8 +198,7 @@ pub enum TestingBatchEvents {
     /// a message saying that new files have been seen. Once DevServer receives
     /// that signal, or times out, it will "release" this batch.
     Enabled(TestingBatch),
-    /// Released while a bundle was in flight. `finalize_bundle_cleanup` starts
-    /// it once no bundle is running.
+    /// Released while a bundle ran; `finalize_bundle_cleanup` starts it after.
     ReleaseAfterBundle(TestingBatch),
 }
 

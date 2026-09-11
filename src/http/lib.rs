@@ -1618,31 +1618,16 @@ impl<'a> HTTPClient<'a> {
         }
         callback.run(self.parent_async_http(), result);
     }
-    /// Body bytes decoded ahead of the failure reach a streaming consumer first, in a progress callback.
+    /// The chunks a `-1` arm decoded ahead of the invalid one go out in a progress callback of their own.
     fn report_body_decoded_before_failure(&mut self) {
-        let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
-            || self.signals.body_receive_mode.is_some();
-        if !is_streaming
+        if !core::mem::take(&mut self.state.flags.has_body_ahead_of_failure)
             || self.state.decoded_body.list.is_empty()
-            || self.state.flags.is_redirect_pending
         {
             return;
         }
-        // An abort or a timeout ends the body where the consumer stands.
-        let fail = match self.state.fail.take() {
-            None => return,
-            Some(
-                fail @ (crate::Error::Aborted
-                | crate::Error::AbortedBeforeConnecting
-                | crate::Error::Timeout),
-            ) => {
-                self.state.fail = Some(fail);
-                return;
-            }
-            Some(fail) => fail,
-        };
+        let fail = self.state.fail.take();
         let mut result = self.to_result();
-        self.state.fail = Some(fail);
+        self.state.fail = fail;
         result.has_more = true;
         let decoded_body = core::mem::take(&mut self.state.decoded_body);
         result.body = decoded_body.list.as_slice();
@@ -4595,6 +4580,11 @@ impl<'a> HTTPClient<'a> {
         Ok(false)
     }
 
+    /// `fetch()` reads the chunks decoded ahead of an invalid one, as in Node.js, which gives a compressed body nothing.
+    fn keeps_chunks_ahead_of_invalid_one(&self) -> bool {
+        self.signals.body_receive_mode.is_some() && !self.state.encoding.is_compressed()
+    }
+
     pub(crate) fn handle_response_body_chunked_encoding(
         &mut self,
         incoming_data: &[u8],
@@ -4652,8 +4642,8 @@ impl<'a> HTTPClient<'a> {
         );
 
         match pret {
-            // Invalid HTTP response body. Node.js gives a compressed body nothing from this read.
-            -1 if self.state.encoding.is_compressed() => {
+            // Invalid HTTP response body.
+            -1 if !self.keeps_chunks_ahead_of_invalid_one() => {
                 return Err(crate::Error::InvalidHTTPResponse);
             }
             // -1: invalid, -2: needs more data. The chunks decoded so far are body either way.
@@ -4672,6 +4662,7 @@ impl<'a> HTTPClient<'a> {
                     processed = self.state.process_body_buffer(buffer_snap, false)?;
                 }
                 if pret == -1 {
+                    self.state.flags.has_body_ahead_of_failure = processed;
                     return Err(crate::Error::InvalidHTTPResponse);
                 }
 
@@ -4732,8 +4723,10 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
         match pret {
-            // Invalid HTTP response body. Node.js gives a compressed body nothing from this read.
-            -1 if self.state.encoding.is_compressed() => Err(crate::Error::InvalidHTTPResponse),
+            // Invalid HTTP response body.
+            -1 if !self.keeps_chunks_ahead_of_invalid_one() => {
+                Err(crate::Error::InvalidHTTPResponse)
+            }
             // -1: invalid, -2: needs more data. The chunks decoded so far are body either way.
             -1 | -2 => {
                 self.report_progress(buffer.len());
@@ -4754,6 +4747,7 @@ impl<'a> HTTPClient<'a> {
                     processed = self.state.process_body_buffer(buffer_snap, false)?;
                 }
                 if pret == -1 {
+                    self.state.flags.has_body_ahead_of_failure = processed;
                     return Err(crate::Error::InvalidHTTPResponse);
                 }
 

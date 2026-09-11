@@ -37,9 +37,8 @@ describe("fetch: chunked chunk-size token validation", () => {
     });
   });
 
-  // The chunks ahead of the malformed one are body. A reader that reads at once gets them,
-  // then the read rejects, whether or not they share a socket read with the malformed line.
-  // node v26.3.0: chunks ["x"], then `TypeError: terminated` (HPE_INVALID_CHUNK_SIZE).
+  // The chunks ahead of the malformed one are body: a reader that is waiting gets them, then the
+  // read rejects. node v26.3.0: chunks ["x"], then `TypeError: terminated` (HPE_INVALID_CHUNK_SIZE).
   describe("delivers the chunks ahead of a malformed chunk-size to a streaming reader", () => {
     const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n";
     // "C" is a hex digit, so this line is chunk-size 0xC followed by junk.
@@ -80,14 +79,7 @@ describe("fetch: chunked chunk-size token validation", () => {
       }
     }
 
-    it("in the same read as the response head", async () => {
-      const { server, url } = await serveParts(`${head}\r\n1\r\nx\r\n${malformed}`);
-      await using _s = server;
-      const res = await fetch(url);
-      expect(await readUntilError(res.body!.getReader())).toEqual({ body: "x", code: "InvalidHTTPResponse" });
-    });
-
-    it("in a read after the response head", async () => {
+    it("in one read", async () => {
       const { server, url, send } = await serveParts(`${head}\r\n`);
       await using _s = server;
       const res = await fetch(url);
@@ -97,41 +89,81 @@ describe("fetch: chunked chunk-size token validation", () => {
       expect(await result).toEqual({ body: "x", code: "InvalidHTTPResponse" });
     });
 
-    // node v26.3.0 delivers nothing here: the error tears its gunzip down before it emits.
-    it("but not of a compressed body", async () => {
-      const gz = Bun.gzipSync("hello hello hello hello");
-      const wire = Buffer.concat([
-        Buffer.from(`${head}Content-Encoding: gzip\r\n\r\n${gz.length.toString(16)}\r\n`),
-        gz,
-        Buffer.from(`\r\n${malformed}`),
-      ]);
-      const { server, url } = await serveParts(wire);
-      await using _s = server;
-      const res = await fetch(url);
-      expect(await readUntilError(res.body!.getReader())).toEqual({ body: "", code: "InvalidHTTPResponse" });
-    });
-
-    it("with a chunk larger than one socket read", async () => {
+    it("in a chunk larger than one read", async () => {
       const payload = Buffer.alloc(256 * 1024, "abcdefghijklmnopqrstuvwxyz").toString();
-      const { server, url } = await serveParts(
-        `${head}\r\n${payload.length.toString(16)}\r\n${payload}\r\n${malformed}`,
-      );
+      const { server, url, send } = await serveParts(`${head}\r\n`);
       await using _s = server;
       const res = await fetch(url);
-      const { body, code } = await readUntilError(res.body!.getReader());
+      const result = readUntilError(res.body!.getReader());
+      await send(`${payload.length.toString(16)}\r\n${payload}\r\n${malformed}`);
+      const { body, code } = await result;
       expect(code).toBe("InvalidHTTPResponse");
       expect(body.length).toBe(payload.length);
       expect(body).toBe(payload);
     });
 
-    it("text() still rejects", async () => {
-      const { server, url } = await serveParts(`${head}\r\n1\r\nx\r\n${malformed}`);
+    // node v26.3.0 delivers nothing here: the error tears its gunzip down before it emits.
+    it("but not of a compressed body", async () => {
+      const gz = Bun.gzipSync("hello hello hello hello");
+      const { server, url, send } = await serveParts(`${head}Content-Encoding: gzip\r\n\r\n`);
       await using _s = server;
-      const result = await fetch(url)
-        .then(res => res.text())
-        .then(body => ({ resolved: body }))
-        .catch(e => e);
-      expect(result?.code).toBe("InvalidHTTPResponse");
+      const res = await fetch(url);
+      const result = readUntilError(res.body!.getReader());
+      await send(Buffer.concat([Buffer.from(`${gz.length.toString(16)}\r\n`), gz, Buffer.from(`\r\n${malformed}`)]));
+      expect(await result).toEqual({ body: "", code: "InvalidHTTPResponse" });
+    });
+
+    it("and no inflater output ahead of a corrupted gzip body's error", async () => {
+      const text = Buffer.alloc(8192, "the quick brown fox jumps over the lazy dog ").toString();
+      const gz = Buffer.from(Bun.gzipSync(text, { level: 1 }));
+      gz[gz.length >> 1] ^= 0xff;
+      gz[(gz.length >> 1) + 1] ^= 0xff;
+      const { server, url, send } = await serveParts(`${head}Content-Encoding: gzip\r\n\r\n`);
+      await using _s = server;
+      const res = await fetch(url);
+      const result = readUntilError(res.body!.getReader());
+      await send(Buffer.concat([Buffer.from(`${gz.length.toString(16)}\r\n`), gz, Buffer.from("\r\n0\r\n\r\n")]));
+      expect(await result).toEqual({ body: "", code: "ZlibError" });
+    });
+
+    // With the response head in the same read the Response is built from the failure, so every
+    // way of reading the body rejects. (node v26.3.0 gives a reader that reads at once "x" first.)
+    describe("when the response head shares the read, the body rejects", () => {
+      const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve));
+      it.each([
+        ["a reader that reads at once", async (res: Response) => readUntilError(res.body!.getReader())],
+        [
+          "a body stream made before a later first read",
+          async (res: Response) => {
+            const body = res.body!;
+            await yieldToEventLoop();
+            return readUntilError(body.getReader());
+          },
+        ],
+        [
+          "a body stream made before a later arrayBuffer()",
+          async (res: Response) => {
+            const body = res.body!;
+            await yieldToEventLoop();
+            return new Response(body).arrayBuffer().then(
+              bytes => ({ body: Buffer.from(bytes).toString(), code: "(resolved)" }),
+              e => ({ body: "", code: e?.code }),
+            );
+          },
+        ],
+        [
+          "text()",
+          async (res: Response) =>
+            res.text().then(
+              body => ({ body, code: "(resolved)" }),
+              e => ({ body: "", code: e?.code }),
+            ),
+        ],
+      ])("%s", async (_, consume) => {
+        const { server, url } = await serveParts(`${head}\r\n1\r\nx\r\n${malformed}`);
+        await using _s = server;
+        expect(await consume(await fetch(url))).toEqual({ body: "", code: "InvalidHTTPResponse" });
+      });
     });
   });
 

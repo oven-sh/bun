@@ -78,6 +78,8 @@ pub struct InternalStateFlags {
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
+    /// `decoded_body` holds chunks decoded ahead of an invalid one; the failure reports them first.
+    pub(crate) has_body_ahead_of_failure: bool,
 }
 
 impl InternalStateFlags {
@@ -93,6 +95,7 @@ impl InternalStateFlags {
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,
+            has_body_ahead_of_failure: false,
         }
     }
 }

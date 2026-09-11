@@ -887,8 +887,8 @@ impl FetchTasklet {
         if self.scheduled_response_buffer.list.is_empty() {
             return None;
         }
-        // Without a head the promise rejects and nothing can read the bytes.
-        if !self.is_waiting_body && self.metadata.is_none() {
+        // A Response built from the failure keeps it; a stream made between the two runs would drop it.
+        if !self.is_waiting_body {
             return None;
         }
         // An abort ends the body where the consumer stands.

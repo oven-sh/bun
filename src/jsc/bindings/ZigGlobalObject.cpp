@@ -3080,8 +3080,6 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
-// True when drainMicrotasks() above would run something: the microtask queue or the
-// process.nextTick queue is not empty.
 extern "C" bool JSC__JSGlobalObject__hasPendingMicrotasks(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();

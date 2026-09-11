@@ -2967,8 +2967,6 @@ impl H2FrameParser {
         }
     }
 
-    /// Whether this parser owns the thread's cork slot, and with it an auto-flush registration
-    /// that `uncork()` releases.
     fn holds_cork(&self) -> bool {
         Self::corked().is_some_and(|corked| std::ptr::eq(corked, self.as_ctx_ptr()))
     }
@@ -3004,23 +3002,21 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
-        if self.transport_write_fatal.get() {
-            if self.has_backpressure() {
-                // Returning `false` makes DeferredTaskQueue::run remove the entry
-                // itself, so only the registration's flag and ref are released here
-                // - never a re-entrant map mutation from inside run(). The flag is
-                // cleared before the close so the teardown paths the close re-enters
-                // (detach -> unregister_auto_flush) see an unregistered flusher and
-                // early-return instead of removing a map entry run() still owns.
-                self.auto_flusher.get().registered.set(false);
-                self.deref();
-                self.close_transport_after_fatal_write();
-                return false;
-            }
-            // An empty write buffer here means a later write already drained the bytes
-            // the failing send left behind - the transport recovered. This tick is still
-            // the only flush the cork is registered for, so carry on with it.
+        if self.transport_write_fatal.get() && !self.has_backpressure() {
+            // A later write drained the buffer: the transport recovered, so this tick flushes.
             self.transport_write_fatal.set(false);
+        }
+        if self.transport_write_fatal.get() {
+            // Returning `false` makes DeferredTaskQueue::run remove the entry
+            // itself, so only the registration's flag and ref are released here
+            // - never a re-entrant map mutation from inside run(). The flag is
+            // cleared before the close so the teardown paths the close re-enters
+            // (detach -> unregister_auto_flush) see an unregistered flusher and
+            // early-return instead of removing a map entry run() still owns.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            self.close_transport_after_fatal_write();
+            return false;
         }
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
@@ -3044,14 +3040,11 @@ impl H2FrameParser {
             return false;
         }
         let _ = self.flush();
-        // A registration waits for one of three things: the cork (uncork() releases it), a
-        // write-fatal latch, or a pending compression error. That flush can have set either
-        // of the last two, and they get their tick at the next checkpoint.
         let still_owed = self.holds_cork()
             || self.transport_write_fatal.get()
             || self.pending_header_compression_error.get();
         if self.auto_flusher.get().registered.get() && !still_owed {
-            // Left over from a latch this tick cleared: nothing else releases it.
+            // Only uncork() releases a registration, and nothing is corked.
             self.auto_flusher.get().registered.set(false);
             self.deref();
             return false;

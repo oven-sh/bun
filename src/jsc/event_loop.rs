@@ -157,8 +157,7 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__hasPendingMicrotasks(global: &JSGlobalObject) -> bool;
 }
 
-/// The yield task `drain_microtasks_with_global` queues. It has nothing to do itself: the tick
-/// that runs it ends in a checkpoint, and that checkpoint runs the deferred queue.
+/// No-op yield task: the tick that runs it ends in a checkpoint, which runs the deferred queue.
 fn deferred_task_checkpoint(_queue: *mut DeferredTaskQueue::DeferredTaskQueue) -> JsResult<()> {
     Ok(())
 }
@@ -438,10 +437,7 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // A deferred task writes its buffer to its transport, and a JS-backed transport (an http2
-        // session over a user Duplex) runs user code for that write, which queues microtasks and
-        // nextTicks. They belong to this checkpoint: the loop can find no work left right after
-        // it and exit, and a timer or I/O callback must not run ahead of them either.
+        // A deferred flush into a JS transport runs user code: drain what it queued.
         if JSC__JSGlobalObject__hasPendingMicrotasks(global_object) {
             match JSC__JSGlobalObject__drainMicrotasks(global_object) {
                 drain_result::SUCCESS => {}
@@ -451,10 +447,7 @@ impl EventLoop {
             }
         }
 
-        // That user code can also post deferred tasks of its own (the peer end of an in-process
-        // transport answering the frame it was just handed). Those run at the next checkpoint,
-        // the way node submits them from a fresh immediate. A yield task keeps the loop alive,
-        // and keeps its poll from blocking, until that checkpoint has run.
+        // A deferred task posted too late for the pass: keep the loop alive for one more.
         if self.deferred_tasks.take_unrun() {
             let task = ManagedTask::ManagedTask::new(
                 core::ptr::from_mut(&mut self.deferred_tasks),

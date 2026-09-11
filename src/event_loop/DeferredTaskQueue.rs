@@ -33,9 +33,7 @@
 //! started; that cap is a livelock bound, not a strict "no new entries this pass" frontier, because
 //! a swap-remove can pull a freshly appended entry forward. Every callback flushes its own object's
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
-//! anything a pass skips runs on the next one. `take_unrun()` tells the event loop that such an
-//! entry may exist, so that it keeps itself alive for the pass that runs it (an entry posted from a
-//! flush into a JS transport has no fd or timer of its own holding the loop open).
+//! anything a pass skips runs on the next one.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -52,7 +50,7 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 #[derive(Default)]
 pub struct DeferredTaskQueue {
     pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
-    /// An entry was posted since the last pass started, so it may not have run yet.
+    /// An entry was posted since the last pass started.
     unrun: bool,
 }
 
@@ -70,10 +68,7 @@ impl DeferredTaskQueue {
         }
     }
 
-    /// Whether an entry posted since the last pass started is still registered, and so may be
-    /// waiting for its first run. Clears the mark: the caller takes over the job of giving the
-    /// queue another pass. Entries that a pass ran and kept (they returned `true`) do not count;
-    /// they wait for whatever checkpoint comes next, as before.
+    /// Whether an entry may still be waiting for its first run. Clears the mark.
     pub fn take_unrun(&mut self) -> bool {
         let unrun = self.unrun && !self.map.is_empty();
         self.unrun = false;
@@ -87,8 +82,6 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        // Every entry present now runs in this pass. Only an entry posted during the pass can
-        // miss it.
         self.unrun = false;
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and

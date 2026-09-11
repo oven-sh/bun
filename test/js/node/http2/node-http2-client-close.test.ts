@@ -324,8 +324,14 @@ for (const [site, table] of [
 
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
+  // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and
+  // the CI runner fails a file for any new core dump, whichever process wrote it. The glibc, macOS
+  // and Windows lanes keep the cross-check.
+  const isMusl =
+    process.platform === "linux" &&
+    !(process.report.getReport() as { header: { glibcVersionRuntime?: string } }).header.glibcVersionRuntime;
   describe("Node.js compatibility", () => {
-    test("tests should run on node.js", { skip: !node }, async () => {
+    test("tests should run on node.js", { skip: !node || isMusl }, async () => {
       await using proc = Bun.spawn({
         cmd: [node as string, "--test", import.meta.filename],
         stdout: "inherit",

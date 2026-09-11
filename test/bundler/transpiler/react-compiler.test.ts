@@ -1411,8 +1411,9 @@ describe("bundler", () => {
         onAfterBundle(api) {
           const out = api.readFile("/out.js");
           // Every component and hook above compiled: the compiler outlines the
-          // empty effect callback (client) or drops the effect (ssr).
-          expect(out).not.toContain("useEffect(() =>");
+          // empty effect callback (client) or drops the effect (ssr), so no
+          // call takes `() => {}` any more. The callee name can be minified.
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
           // A function the compiler leaves alone still reads the export
           // without a namespace object, so tree shaking drops the other one.
           expect(out).not.toContain("NOT_READ_SENTINEL");

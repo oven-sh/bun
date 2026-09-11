@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
@@ -394,6 +395,8 @@ it("screenshot returns a PNG Blob", async () => {
   expect(bytes[1]).toBe(0x50);
   expect(bytes[2]).toBe(0x4e);
   expect(bytes[3]).toBe(0x47);
+  // The mmap-backed Blob has to report its bytes to the GC like a Blob built from them.
+  expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(estimateShallowMemoryUsageOf(new Blob([bytes])));
 });
 
 it("screenshot format options", async () => {

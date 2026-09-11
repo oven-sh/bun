@@ -98,11 +98,8 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 /// holds on them.
 #[derive(Default, Clone, Copy)]
 enum BunSocket {
-    /// No native socket: `_write` hands the bytes to the `onWrite` handler.
     #[default]
     None,
-    /// The native socket closed: `_write` drops the bytes, there is no transport.
-    Closed,
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
     Tcp(bun_ptr::BackRef<TCPSocket>),
@@ -114,12 +111,16 @@ enum BunSocket {
 /// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
 /// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
 #[derive(Default)]
-struct NativeSocket(Cell<BunSocket>);
+struct NativeSocket {
+    socket: Cell<BunSocket>,
+    /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
+    closed: Cell<bool>,
+}
 
 impl NativeSocket {
     #[inline]
     fn get(&self) -> BunSocket {
-        self.0.get()
+        self.socket.get()
     }
 
     /// `attach_native_callback` stores `h2` (a ref on the parser) in the
@@ -131,12 +132,13 @@ impl NativeSocket {
         socket: *mut crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
-        debug_assert!(matches!(self.0.get(), BunSocket::None | BunSocket::Closed));
+        debug_assert!(matches!(self.socket.get(), BunSocket::None));
+        self.closed.set(false);
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper
         // rooted by the caller's `socket_js`.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket = bun_ptr::BackRef::from(socket_nn);
-        self.0
+        self.socket
             .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
                 if SSL {
                     BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -154,35 +156,22 @@ impl NativeSocket {
             });
     }
 
-    /// Releases whatever `attach` took. `Closed` is sticky: only `attach` clears it.
     fn detach(&self) {
-        // Each arm sets the cell before its release call: that call re-enters here.
-        match self.0.get() {
-            BunSocket::Tcp(socket) => {
-                self.0.set(BunSocket::None);
-                socket.detach_native_callback();
-            }
-            BunSocket::Tls(socket) => {
-                self.0.set(BunSocket::None);
-                socket.detach_native_callback();
-            }
+        match self.socket.replace(BunSocket::None) {
+            BunSocket::Tcp(socket) => socket.detach_native_callback(),
+            BunSocket::Tls(socket) => socket.detach_native_callback(),
             // The ref `attach` took.
-            BunSocket::TcpWriteonly(socket) => {
-                self.0.set(BunSocket::None);
-                TCPSocket::deref(socket.get());
-            }
-            BunSocket::TlsWriteonly(socket) => {
-                self.0.set(BunSocket::None);
-                TLSSocket::deref(socket.get());
-            }
-            BunSocket::None | BunSocket::Closed => {}
+            BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
+            BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
+            BunSocket::None => {}
         }
     }
 
-    /// `detach`, then `Closed`: a write after the close must not fall back to JS.
-    fn mark_closed(&self) {
-        self.detach();
-        self.0.set(BunSocket::Closed);
+    /// The socket released the parser. `detach` gets here too, but with nothing attached.
+    fn note_socket_closed(&self) {
+        if !matches!(self.socket.get(), BunSocket::None) {
+            self.closed.set(true);
+        }
     }
 }
 
@@ -2424,18 +2413,25 @@ impl H2FrameParser {
         );
     }
 
-    pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
+    /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
+    fn call_on_write(&self, bytes: JSValue) -> JSValue {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return JSValue::ZERO;
         };
-        value.ensure_still_alive();
+        bytes.ensure_still_alive();
         let _dispatch = self.enter_dispatch();
-        self.handlers
-            .get()
-            .call_event_handler_with_result(event, this_value, &[ctx_value, value])
+        self.handlers.get().call_event_handler_with_result(
+            JSH2FrameParser::Gc::onWrite,
+            this_value,
+            &[
+                ctx_value,
+                bytes,
+                JSValue::from(self.native_socket.closed.get()),
+            ],
+        )
     }
 
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
@@ -2713,8 +2709,6 @@ impl H2FrameParser {
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
                 self.generic_flush(socket.get())
             }
-            // The transport closed: the buffered bytes can never reach the peer.
-            BunSocket::Closed => return written,
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
@@ -2733,7 +2727,7 @@ impl H2FrameParser {
                         return 0;
                     };
                     self.js_socket_flushing.set(true);
-                    let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                    let result = self.call_on_write(output_value);
                     self.js_socket_flushing.set(false);
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
@@ -2790,15 +2784,6 @@ impl H2FrameParser {
             BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
                 self.generic_write(socket.get(), bytes)
             }
-            BunSocket::Closed => {
-                bun_output::scoped_log!(
-                    H2FrameParser,
-                    "_write dropped {} (transport closed)",
-                    bytes.len()
-                );
-                // Sent, not queued: a transport that is gone never drains.
-                true
-            }
             BunSocket::None => {
                 let global = self.global();
                 if self.has_nonnative_backpressure.get() {
@@ -2815,7 +2800,7 @@ impl H2FrameParser {
                     .to_js(bytes, &self.handlers.get().global())
                 {
                     Ok(output_value) => {
-                        let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                        let result = self.call_on_write(output_value);
                         if result.is_number() {
                             result.to_int32()
                         } else {
@@ -2859,8 +2844,6 @@ impl H2FrameParser {
     fn transport_write_runs_js(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::None => true,
-            // `_write` drops the bytes without calling anything.
-            BunSocket::Closed => false,
             BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => matches!(
                 s.get().socket.get().socket,
                 bun_uws::InternalSocket::UpgradedDuplex(_)
@@ -3020,7 +3003,7 @@ impl H2FrameParser {
             BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
                 Self::close_socket_for_dead_transport::<false>(socket.get());
             }
-            BunSocket::None | BunSocket::Closed => {}
+            BunSocket::None => {}
         }
     }
 
@@ -3223,10 +3206,6 @@ impl H2FrameParser {
 
     pub(crate) fn write(&self, mut bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "write {}", bytes.len());
-        if matches!(self.native_socket.get(), BunSocket::Closed) {
-            // Nothing to cork for: `_write` has no transport to hand them to.
-            return self._write(bytes);
-        }
         if !ENABLE_AUTO_CORK {
             return self._write(bytes);
         }
@@ -7550,9 +7529,11 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
-        // mark_closed can drop the socket's last ref (Writeonly deref): hold a +1.
+        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
-        self.native_socket.mark_closed();
+        self.native_socket.note_socket_closed();
+        self.detach_native_socket();
     }
 
     #[bun_jsc::host_fn(method)]

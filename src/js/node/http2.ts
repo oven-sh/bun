@@ -4292,9 +4292,10 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       self.destroy();
     },
-    write(self: ServerHttp2Session, buffer: Buffer) {
+    write(self: ServerHttp2Session, buffer: Buffer, transportClosed: boolean) {
       if (!self) return -1;
       const socket = self[bunHTTP2Socket];
+      if (transportClosed) return writeToClosedTransport(socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
         return socket.write(buffer) ? 1 : 0;
@@ -4899,6 +4900,12 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+function writeToClosedTransport(socket: TLSSocket | Socket | null) {
+  // allowHalfOpen keeps the socket open past 'end', and nothing else ends it once its handle closed.
+  if (socket?.allowHalfOpen && !socket.writableEnded) socket.end();
+  // Sent, like node's Http2Session::ClearOutgoing: a frame for a closed transport completes.
+  return 1;
+}
 
 // After the socket is gone a graceful close can never complete — the parser
 // is detached, so the stream's writable side has nothing left to flush
@@ -5330,9 +5337,10 @@ class ClientHttp2Session extends Http2Session {
         }
       }
     },
-    write(self: ClientHttp2Session, buffer: Buffer) {
+    write(self: ClientHttp2Session, buffer: Buffer, transportClosed: boolean) {
       if (!self) return -1;
       const socket = self[bunHTTP2Socket];
+      if (transportClosed) return writeToClosedTransport(socket);
       if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
         return socket.write(buffer) ? 1 : 0;

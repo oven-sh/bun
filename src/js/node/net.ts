@@ -3143,8 +3143,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
-  // A listener may destroy() the socket. _handle is null then, and doConnect
-  // with no handle would open a native socket that nothing owns or closes.
+  // A listener may destroy() the socket; doConnect(null) would open a handle nothing owns.
   if (!self.connecting) return;
 
   if (addressType === 6 || addressType === 4) {
@@ -3326,9 +3325,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // The if(err) above covers sync failure; this catches a sync open. Arming
-  // the timer now would capture a stale handle and overwrite the next
-  // attempt's kTimeout.
+  // A sync open already moved on; arming the timer now would overwrite the next attempt's kTimeout.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }

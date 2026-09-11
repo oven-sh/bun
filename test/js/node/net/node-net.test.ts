@@ -3135,6 +3135,68 @@ describe("net.Socket bytesRead", () => {
     }
   });
 
+  it("covers one connection of a socket that connects again, like node", async () => {
+    const { server, port } = await listen(c => c.end("banner"));
+    const s = new Socket();
+    s.resume();
+    try {
+      const seen: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        s.connect(port, "127.0.0.1");
+        await once(s, "close");
+        seen.push(s.bytesRead);
+      }
+      // node v26.3.0: a new connection has a new handle, which starts at 0.
+      expect(seen).toEqual([6, 6, 6]);
+    } finally {
+      s.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: a declined tail does not carry over to the next connection", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz"));
+    const calls: string[] = [];
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            calls.push(buf.toString("latin1", 0, n));
+            if (calls.length === 1) {
+              first.resolve();
+              return false;
+            }
+            second.resolve();
+          },
+        },
+      });
+      s.on("error", err => {
+        first.reject(err);
+        second.reject(err);
+      });
+      await first.promise;
+      // 8 bytes sit in the tail: the handle read 12, the callback took 4.
+      expect(s.bytesRead).toBe(4);
+      s.destroy();
+      await once(s, "close");
+      expect(s.bytesRead).toBe(4);
+      s.connect(port, "127.0.0.1");
+      await second.promise;
+      await once(s, "close");
+      expect({ calls, bytesRead: s.bytesRead }).toEqual({ calls: ["AAAA", "xyz"], bytesRead: 3 });
+    } finally {
+      s?.destroy();
+      server.close();
+    }
+  });
+
   it("onread: counts one slice per callback, and stops at a false return until resume()", async () => {
     const peer = Promise.withResolvers<Socket>();
     const { server, port } = await listen(c => {

@@ -265,8 +265,7 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
   handle.close(onSocketHandleClosed);
   setImmediate(emitCloseNT, self, isException);
 }
-// An onread socket leaves out what the handle read but the callback has not received: node's
-// handle reads at most one onread buffer per callback.
+// Bytes the onread callback has not received do not count: node reads one onread buffer per callback.
 function handleBytesRead(self, handle) {
   return handle.bytesRead - (self[kOnreadTail]?.length ?? 0) - (self[kOnreadSlicing] ?? 0);
 }
@@ -658,6 +657,15 @@ function finishSocketEnd(self) {
     socket.unref?.();
     self[kPausedUnref] = false;
   }
+}
+
+// A new connection replaces the handle, and the bytes the old handle read but
+// the onread callback declined go with it, as in node.
+function dropOnreadTail(self) {
+  if (self[kOnreadBuffer] === undefined) return;
+  self[kOnreadTail] = undefined;
+  self[kOnreadPendingEnd] = false;
+  self[kOnreadReadRequested] = false;
 }
 
 function deferEndForOnreadTail(self) {
@@ -2175,6 +2183,7 @@ Socket.prototype.connect = function connect(...args) {
   }
 
   this.connecting = true;
+  dropOnreadTail(this);
 
   const { path } = options;
   const pipe = !!path;

@@ -413,12 +413,8 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 /// clones are owned for the link lifetime — global allocator, no arena tag.
 pub type NestedList = Vec<Vec<Symbol>>;
 
-/// [`Map::follow`] for one file's symbol table (the parser's `p.symbols`,
-/// indexed by `Ref::inner_index`). Returns the end of `ref_`'s link chain and
-/// points every symbol on the way straight at it. `declare_symbol` links each
-/// re-declaration of a name to the next one (`var x; var x;`,
-/// `enum E {} enum E {}`), so without the compression N re-declarations cost
-/// O(N) per lookup instead of O(N) in total.
+/// [`Map::follow`], with the same path compression, for the parser's flat
+/// per-file table (indexed by `Ref::inner_index`).
 pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
     let mut root = ref_;
     loop {

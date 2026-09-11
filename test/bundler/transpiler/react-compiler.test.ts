@@ -1265,6 +1265,91 @@ describe("bundler", () => {
     },
   });
 
+  // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
+  // scope that only the test reaches gets no node, but the local that scope
+  // reassigns still refers to it. Once that local has to be memoized, Babel
+  // raises `Invariant: Expected a node for all scopes` and skips that one
+  // function. The last two functions are the controls.
+  //
+  // A compiled function calls the fake `c` once per render, so the second
+  // number of each pair is 1 for a compiled function and 0 for a skipped one.
+  itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { calls } from "react/compiler-runtime";
+
+        function CallInTest(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-v={[m, r]} />;
+        }
+        function ArrayInTest(p) {
+          let m;
+          const r = (m = [p.a]) ? 1 : 0;
+          return <div data-v={[m]} data-r={r} />;
+        }
+        function ObjectInTest(p) {
+          let m = null;
+          const r = (m = { a: p.a }) ? p.b : p.c;
+          return <div data-v={{ m, r }} />;
+        }
+        function useInHook(p) {
+          "use memo";
+          let m;
+          const r = ((m = p.f()) ? 1 : 0) + 1;
+          return [m, r];
+        }
+        function AssignedLocalNotMemoized(p) {
+          let m;
+          const r = (m = p.f()) ? 1 : 0;
+          return <div data-m={m} data-r={r} />;
+        }
+        function Plain({ name }) {
+          return <div>Hello {name}</div>;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props ?? result, calls() - before];
+        }
+        console.log(JSON.stringify({
+          CallInTest: render(CallInTest, { f: () => "x" }),
+          ArrayInTest: render(ArrayInTest, { a: 1 }),
+          ObjectInTest: render(ObjectInTest, { a: 1, b: 2, c: 3 }),
+          useInHook: render(useInHook, { f: () => "y" }),
+          AssignedLocalNotMemoized: render(AssignedLocalNotMemoized, { f: () => "z" }),
+          Plain: render(Plain, { name: "bun" }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        CallInTest: [{ "data-v": ["x", 1] }, 0],
+        ArrayInTest: [{ "data-v": [[1]], "data-r": 1 }, 0],
+        ObjectInTest: [{ "data-v": { m: { a: 1 }, r: 2 } }, 0],
+        useInHook: [["y", 2], 0],
+        AssignedLocalNotMemoized: [{ "data-m": "z", "data-r": 1 }, 1],
+        Plain: [{ children: ["Hello ", "bun"] }, 1],
+      }),
+    },
+  });
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this

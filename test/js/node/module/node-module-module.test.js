@@ -760,6 +760,93 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  // Node's Module.prototype.require is `Module._load(id, this, false)`: `this` is only the parent,
+  // so it does not have to be a module, or an object at all.
+  test("Module.prototype.require accepts a `this` that is not a module", async () => {
+    using dir = tempDir("module-prototype-require-this", {
+      "dep.cjs": `module.exports = { name: "dep" };`,
+      "sub/dep.cjs": `module.exports = { name: "sub/dep" };`,
+      "bad.cjs": `module.exports = ;`,
+      "main.cjs": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const dep = path.join(__dirname, "dep.cjs");
+        const bad = path.join(__dirname, "bad.cjs");
+        const anchor = path.join(__dirname, "sub", "anchor.cjs");
+
+        function load(parent, request) {
+          try {
+            return Module.prototype.require.call(parent, request);
+          } catch (e) {
+            return "threw " + e.name;
+          }
+        }
+
+        const plain = { id: __filename, filename: __filename };
+        const result = {};
+
+        result.plainObject = load(plain, dep);
+        result.cached = require.cache[dep].exports;
+        result.parentIsThis = require.cache[dep].parent === plain;
+        result.requireAgain = require(dep) === result.plainObject;
+        delete require.cache[dep];
+
+        result.inheritsFromModule = load(Object.create(module), dep);
+        delete require.cache[dep];
+
+        result.number = load(5, dep);
+        delete require.cache[dep];
+
+        result.nullThis = load(null, dep);
+        result.nullParent = require.cache[dep]?.parent;
+        delete require.cache[dep];
+
+        result.undefinedThis = load(undefined, dep);
+        delete require.cache[dep];
+
+        result.relativeToFilename = load({ id: anchor, filename: anchor }, "./dep.cjs");
+        result.builtin = load({}, "path") === path;
+        result.prefixedBuiltin = load({}, "node:path") === path;
+
+        // A load that fails must not leave its placeholder module in require.cache.
+        let threw = false;
+        try {
+          Module.prototype.require.call(plain, bad);
+        } catch {
+          threw = true;
+        }
+        result.failedLoad = { threw, leftInCache: bad in require.cache };
+
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      plainObject: { name: "dep" },
+      cached: { name: "dep" },
+      parentIsThis: true,
+      requireAgain: true,
+      inheritsFromModule: { name: "dep" },
+      number: { name: "dep" },
+      nullThis: { name: "dep" },
+      nullParent: null,
+      undefinedThis: { name: "dep" },
+      relativeToFilename: { name: "sub/dep" },
+      builtin: true,
+      prefixedBuiltin: true,
+      failedLoad: { threw: true, leftInCache: false },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

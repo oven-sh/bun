@@ -2865,6 +2865,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
+        { BuiltinName::k_requireCommonJS, 5, Bun::jsFunctionRequireCommonJS },
+        { BuiltinName::k_requireNativeModule, 1, Bun::jsFunctionRequireNativeModule },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },

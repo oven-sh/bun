@@ -294,6 +294,15 @@ declare function $evaluateCommonJSModule(
   sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
 declare function $evictIsolationSourceProviderCache(key?: string): void;
+/** Loads `id` into `mod`. Returns -1 when the module is ESM and has to come from the ESM registry. */
+declare function $requireCommonJS(
+  id: string,
+  mod: JSCommonJSModule,
+  parentFilename: unknown,
+  userArgumentCount: number,
+  userOptions: unknown,
+): LoaderModule | -1;
+declare function $requireNativeModule(id: string): any;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 

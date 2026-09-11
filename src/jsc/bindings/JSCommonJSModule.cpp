@@ -86,9 +86,6 @@
 namespace Bun {
 using namespace JSC;
 
-JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
-
 static bool canPerformFastEnumeration(Structure* s)
 {
     if (s->typeInfo().overridesGetOwnPropertySlot())
@@ -841,19 +838,6 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
-
-        this->putDirectNativeFunction(
-            vm,
-            globalObject,
-            clientData(vm)->builtinNames().requirePrivateName(),
-            2,
-            jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
-        this->putDirectNativeFunction(
-            vm,
-            globalObject,
-            clientData(vm)->builtinNames().requireNativeModulePrivateName(),
-            0,
-            jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
     }
 };
 
@@ -1300,23 +1284,22 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     if (throwScope.exception()) [[unlikely]] \
     return finishRequireWithError(globalObject, throwScope, specifierValue)
 
-// JSCommonJSModule.$require(resolvedId, newModule, userArgumentCount, userOptions)
+// $requireCommonJS(resolvedId, newModule, parentFilename, userArgumentCount, userOptions)
+//
+// The parent is the `this` of `Module.prototype.require`, which can be any value, so this
+// function takes the filename and not the parent.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(callframe->argumentCount() == 4);
-    // If overriddenRequire is called with invalid this, execution could potentially reach here.
-    JSCommonJSModule* referrerModule = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
-    if (!referrerModule)
-        return throwVMTypeError(globalObject, throwScope);
+    ASSERT(callframe->argumentCount() == 5);
     JSValue specifierValue = callframe->uncheckedArgument(0);
     // If Module._resolveFilename is overridden, this could cause this to be a non-string
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
     // If this.filename is overridden, this could cause this to be a non-string
-    WTF::String referrer = referrerModule->filename().toWTFString(globalObject);
+    WTF::String referrer = callframe->uncheckedArgument(2).toWTFString(globalObject);
     REQUIRE_CJS_RETURN_IF_EXCEPTION;
 
     // This is always a new JSCommonJSModule object; cast cannot fail.
@@ -1329,10 +1312,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     // We need to be able to wire in the "type" import attribute from bundled code..
     // So we do it via CommonJS require().
     // $argumentCount() always returns a Int32 JSValue
-    int32_t userArgumentCount = callframe->argument(2).asInt32();
+    int32_t userArgumentCount = callframe->argument(3).asInt32();
     // If they called require(id), skip the check for the type attribute
     if (userArgumentCount >= 2) [[unlikely]] {
-        JSValue options = callframe->uncheckedArgument(3);
+        JSValue options = callframe->uncheckedArgument(4);
         if (options.isObject()) {
             JSObject* obj = options.getObject();
             // This getter is expensive and rare.
@@ -1368,10 +1351,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
-    if (!thisObject)
-        return throwVMTypeError(globalObject, throwScope);
 
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);

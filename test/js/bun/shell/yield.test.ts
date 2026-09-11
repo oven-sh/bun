@@ -122,8 +122,8 @@ describe("yield", async () => {
         const bun = process.execPath;
         // Writes more than a pipe holds: blocks in write() until its reader reads or closes.
         const big = 'process.stdout.write(Buffer.alloc(1 << 20, "a"))';
-        // Uses neither end of its pipe: only a signal ends it.
-        const forever = "setInterval(() => {}, 1000)";
+        // Uses neither end of its pipe: only a signal ends it before its minute is over.
+        const idle = "setTimeout(() => {}, 60_000)";
         ${body}
         `,
         "--debug-crash-handler-use-trace-string",
@@ -254,7 +254,7 @@ describe("yield", async () => {
       });
 
       test.concurrent("a member that uses neither end of its pipe", async () => {
-        await expectRejection("$`${bun} -e ${forever} | " + fails + "`.quiet()", external);
+        await expectRejection("$`${bun} -e ${idle} | " + fails + "`.quiet()", external);
       });
 
       test.concurrent("a builtin producer that never stops", async () => {
@@ -262,22 +262,22 @@ describe("yield", async () => {
       });
 
       test.concurrent("every member that runs, and the shell's own stdout and stderr", async () => {
-        await expectRejection("$`${bun} -e ${forever} | ${bun} -e ${big} | " + fails + "`", external);
+        await expectRejection("$`${bun} -e ${idle} | ${bun} -e ${big} | " + fails + "`", external);
       });
 
       test.concurrent("the members after the failed one", async () => {
-        await expectRejection("$`${bun} -e ${big} | " + fails + " | ${bun} -e ${forever}`.quiet()", external);
+        await expectRejection("$`${bun} -e ${big} | " + fails + " | ${bun} -e ${idle}`.quiet()", external);
       });
 
       test.concurrent("a pipeline inside a pipeline member", async () => {
         await expectRejection(
-          "$`${bun} -e ${forever} | (${bun} -e ${big} | " + fails + ") | ${bun} -e ${forever}`.quiet()",
+          "$`${bun} -e ${idle} | (${bun} -e ${big} | " + fails + ") | ${bun} -e ${idle}`.quiet()",
           external,
         );
       });
 
       test.concurrent("a pipeline inside a command substitution", async () => {
-        await expectRejection("$`echo $(${bun} -e ${forever} | " + fails + " ; true)`.quiet()", external);
+        await expectRejection("$`echo $(${bun} -e ${idle} | " + fails + " ; true)`.quiet()", external);
       });
 
       // `ls` reads the directory on the thread pool. The interpreter must not be
@@ -318,7 +318,7 @@ describe("yield", async () => {
         using dir = tempDir("shell-failed-pipeline-rest", {});
         await using proc = Bun.spawn({
           cmd: child(`
-            console.log(await settle($\`(\${bun} -e \${forever}; touch in-member) | ${fails}; touch after-pipeline\`.quiet()));
+            console.log(await settle($\`(\${bun} -e \${idle}; touch in-member) | ${fails}; touch after-pipeline\`.quiet()));
           `),
           env: bunEnv,
           cwd: String(dir),
@@ -342,7 +342,7 @@ describe("yield", async () => {
             let rejected = 0;
             const count = () => rejected++;
             for (let i = 0; i < 3; i++) {
-              await $\`\${bun} -e \${forever} | ${fails} | yes\`.quiet().then(() => {}, count);
+              await $\`\${bun} -e \${idle} | ${fails} | yes\`.quiet().then(() => {}, count);
               await $\`yes | yes | ${fails}\`.quiet().then(() => {}, count);
               await $\`${fails} | yes\`.quiet().then(() => {}, count);
             }

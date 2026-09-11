@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (172 symbols)
+# (169 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
@@ -71,7 +71,6 @@ _ZN3bun5N_SVE18IndexOfAnyCharImplEPKhmS2_m                                    [S
 _ZN3bun5N_SVE19CopyAsciiPrefixImplEPKhmPh                                     [SVE]
 _ZN3bun5N_SVE19FirstNonAscii16ImplEPKtm                                       [SVE]
 _ZN3bun5N_SVE20FillWithSkipMaskImplEPKhmPhS2_mb                               [SVE]
-_ZN3bun5N_SVE21CopyLatin1ToAsciiImplEPKhmPh                                   [SVE]
 _ZN3bun5N_SVE21VisibleUTF16WidthImplEPKtmPm                                   [SVE]
 _ZN3bun5N_SVE22IndexOfEscapeChar8ImplEPKhm                                    [SVE]
 _ZN3bun5N_SVE22VisibleLatin1WidthImplEPKhm                                    [SVE]
@@ -112,7 +111,6 @@ _ZN3bun6N_SVE218IndexOfAnyCharImplEPKhmS2_m                                   [S
 _ZN3bun6N_SVE219CopyAsciiPrefixImplEPKhmPh                                    [SVE]
 _ZN3bun6N_SVE219FirstNonAscii16ImplEPKtm                                      [SVE]
 _ZN3bun6N_SVE220FillWithSkipMaskImplEPKhmPhS2_mb                              [SVE]
-_ZN3bun6N_SVE221CopyLatin1ToAsciiImplEPKhmPh                                  [SVE]
 _ZN3bun6N_SVE221VisibleUTF16WidthImplEPKtmPm                                  [SVE]
 _ZN3bun6N_SVE222IndexOfEscapeChar8ImplEPKhm                                   [SVE]
 _ZN3bun6N_SVE222VisibleLatin1WidthImplEPKhm                                   [SVE]
@@ -153,7 +151,6 @@ _ZN3bun9N_SVE_25618IndexOfAnyCharImplEPKhmS2_m                                [S
 _ZN3bun9N_SVE_25619CopyAsciiPrefixImplEPKhmPh                                 [SVE]
 _ZN3bun9N_SVE_25619FirstNonAscii16ImplEPKtm                                   [SVE]
 _ZN3bun9N_SVE_25620FillWithSkipMaskImplEPKhmPhS2_mb                           [SVE]
-_ZN3bun9N_SVE_25621CopyLatin1ToAsciiImplEPKhmPh                               [SVE]
 _ZN3bun9N_SVE_25621VisibleUTF16WidthImplEPKtmPm                               [SVE]
 _ZN3bun9N_SVE_25622IndexOfEscapeChar8ImplEPKhm                                [SVE]
 _ZN3bun9N_SVE_25622VisibleLatin1WidthImplEPKhm                                [SVE]

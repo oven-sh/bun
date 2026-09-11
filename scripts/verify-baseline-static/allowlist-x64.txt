@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
-# (277 symbols)
+# (276 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR11MemRMemImplEPKhmS2_m                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
@@ -654,7 +654,6 @@ _ZN3bun9N_AVX10_218IndexOfAnyCharImplEPKhmS2_m                                 [
 _ZN3bun9N_AVX10_219CopyAsciiPrefixImplEPKhmPh                                  [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_219FirstNonAscii16ImplEPKtm                                    [AVX, AVX512BW, AVX512F]
 _ZN3bun9N_AVX10_220FillWithSkipMaskImplEPKhmPhS2_mb                            [AVX, AVX512DQ, AVX512F]
-_ZN3bun9N_AVX10_221CopyLatin1ToAsciiImplEPKhmPh                                [AVX, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_221VisibleUTF16WidthImplEPKtmPm                                [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun9N_AVX10_222IndexOfEscapeChar8ImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun9N_AVX10_222VisibleLatin1WidthImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]

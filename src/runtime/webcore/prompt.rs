@@ -6,12 +6,85 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
+/// Force stdin into canonical mode for `alert`/`confirm`/`prompt`'s blocking
+/// line read and restore whatever termios were in effect on drop, so they work
+/// when `node:readline`/`bun repl` has put the tty in raw mode (#5267). Must
+/// be installed *before* the prompt text is written: n_tty applies `ICRNL` at
+/// receive time, so a `\r` that lands before `tcsetattr` stays a `\r` and the
+/// canonical read never sees a line. Inert on non-tty stdin.
+#[cfg(unix)]
+struct CookedStdinGuard {
+    saved: Option<libc::termios>,
+}
+
+#[cfg(unix)]
+impl CookedStdinGuard {
+    fn new() -> Self {
+        let saved = match bun_sys::posix::tcgetattr(0) {
+            Ok(orig) => {
+                let mut cooked = orig;
+                cooked.c_iflag |= libc::ICRNL;
+                cooked.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
+                match bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &cooked) {
+                    Ok(()) => Some(orig),
+                    Err(_) => None,
+                }
+            }
+            Err(_) => None,
+        };
+        Self { saved }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CookedStdinGuard {
+    fn drop(&mut self) {
+        if let Some(orig) = self.saved.as_ref() {
+            let _ = bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, orig);
+        }
+    }
+}
+
+#[cfg(windows)]
+struct CookedStdinGuard {
+    _guard: bun_sys::windows::StdinModeGuard,
+}
+
+#[cfg(windows)]
+impl CookedStdinGuard {
+    fn new() -> Self {
+        Self {
+            _guard: bun_sys::windows::StdinModeGuard::set(
+                bun_sys::windows::UpdateStdioModeFlagsOpts {
+                    set: bun_sys::windows::ENABLE_LINE_INPUT
+                        | bun_sys::windows::ENABLE_ECHO_INPUT
+                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                    unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                },
+            ),
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+struct CookedStdinGuard;
+
+#[cfg(not(any(unix, windows)))]
+impl CookedStdinGuard {
+    #[inline]
+    fn new() -> Self {
+        Self
+    }
+}
+
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
     let output = Output::writer();
     let has_message = !arguments.is_empty();
+
+    let _cooked = CookedStdinGuard::new();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
@@ -68,6 +141,8 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
     let output = Output::writer();
     let has_message = !arguments.is_empty();
+
+    let _cooked = CookedStdinGuard::new();
 
     if has_message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -242,6 +317,8 @@ pub mod prompt {
             JSValue::NULL
         };
 
+        let _cooked = CookedStdinGuard::new();
+
         if has_message {
             // 2. Set message to the result of normalizing newlines given message.
             // *  Not pertinent to a server runtime so we will just let the terminal handle this.
@@ -292,15 +369,6 @@ pub mod prompt {
         // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
         // *  Not relevant in a server context.
         Output::flush();
-
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
-        #[cfg(windows)]
-        let _restore =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
-            });
 
         // 7. Pause while waiting for the user's response.
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.

@@ -1202,22 +1202,31 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
     }
 
 #if LAZY_LOAD_SQLITE
-    if (sqlite3_handle) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
-        return {};
-    }
-
-    // Use a static CString to keep the string alive for the lifetime of the process
-    static CString sqlite3_lib_path_storage;
-    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
+    auto requestedPath = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    sqlite3_lib_path = sqlite3_lib_path_storage.data();
-
-    if (lazyLoadSQLite() == -1) {
-        sqlite3_handle = nullptr;
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
-        return {};
+    static CString sqlite3_lib_path_storage;
+    static String selectedSQLitePath;
+    auto requestedPathUTF8 = requestedPath.utf8();
+    RETURN_IF_EXCEPTION(scope, {});
+    {
+        WTF::Locker locker { sqlite3_handle_lock };
+        if (sqlite3_handle) {
+            if (selectedSQLitePath.isNull() || selectedSQLitePath != requestedPath) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nA custom SQLite path can only be selected before SQLite is loaded. Repeating a path is allowed only when that path selected the loaded library."_s));
+                return {};
+            }
+        } else {
+            // Keep the selected path alive for the process-global SQLite handle.
+            sqlite3_lib_path_storage = requestedPathUTF8;
+            sqlite3_lib_path = sqlite3_lib_path_storage.data();
+            if (lazyLoadSQLiteUnlocked() == -1) {
+                sqlite3_handle = nullptr;
+                WTF::String msg = WTF::String::fromUTF8(dlerror());
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
+                return {};
+            }
+            selectedSQLitePath = requestedPath;
+        }
     }
 #endif
 

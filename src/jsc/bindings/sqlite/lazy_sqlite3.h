@@ -340,9 +340,8 @@ inline WTF::Lock sqlite3_handle_lock;
 // APIs must be runtime-gated on this instead of compiled out.
 inline bool lazy_sqlite3_has_session = false;
 
-inline int lazyLoadSQLite()
+inline int lazyLoadSQLiteUnlocked()
 {
-    WTF::Locker locker { sqlite3_handle_lock };
     if (sqlite3_handle)
         return 0;
 #if OS(WINDOWS)
@@ -492,6 +491,12 @@ inline int lazyLoadSQLite()
     }
 
     return 0;
+}
+
+inline int lazyLoadSQLite()
+{
+    WTF::Locker locker { sqlite3_handle_lock };
+    return lazyLoadSQLiteUnlocked();
 }
 
 #if OS(WINDOWS)

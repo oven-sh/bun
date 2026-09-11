@@ -2021,6 +2021,16 @@ function pushToStream(stream, data) {
   }
 }
 
+// The peer's half of the stream is over: END_STREAM arrived, or the stream is a server push,
+// which never has one. A HEADERS frame that carries END_STREAM calls this before the event for
+// that frame is emitted (node's onSessionHeaders): the streamEnd dispatch for the same frame only
+// runs after the listener's ticks have drained, too late for a listener that close()s with an
+// error code, which would never see 'end'.
+function endInboundHalf(stream: Http2Stream) {
+  if (!stream.rstCode) stream.rstCode = 0;
+  pushToStream(stream, null);
+}
+
 enum StreamState {
   EndedCalled = 1 << 0, // 00001 = 1
   WantTrailer = 1 << 1, // 00010 = 2
@@ -3266,6 +3276,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (pushedStream && pushedStream[bunHTTP2Headers] == null) {
       pushedStream[bunHTTP2Headers] = headers;
     }
+    if (pushedStream) endInboundHalf(pushedStream);
     if (onServerStreamCreatedChannel.hasSubscribers) {
       onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
     }
@@ -4057,10 +4068,7 @@ class ServerHttp2Session extends Http2Session {
       }
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          if (!stream.rstCode) {
-            stream.rstCode = 0;
-          }
-          pushToStream(stream, null);
+          endInboundHalf(stream);
 
           // If the user hasn't tried to consume the stream then dump the incoming data so the
           // stream can finish — but at half-close only when nothing is buffered: a consumer may
@@ -4149,7 +4157,9 @@ class ServerHttp2Session extends Http2Session {
         stream[kHeadRequest] = true;
       }
       const status = stream[bunHTTP2StreamStatus];
+      const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
       if ((status & StreamState.StreamResponded) !== 0) {
+        if (endOfStream) endInboundHalf(stream);
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
         // Set the StreamResponded bit BEFORE dispatching the 'stream' event
@@ -4166,6 +4176,7 @@ class ServerHttp2Session extends Http2Session {
         if (onServerStreamStartChannel.hasSubscribers) {
           onServerStreamStartChannel.publish({ stream, headers });
         }
+        if (endOfStream) endInboundHalf(stream);
         // performServerHandshake() sessions have no owning server.
         self[kServer]?.emit("stream", stream, headers, flags, rawheaders);
         self.emit("stream", stream, headers, flags, rawheaders);
@@ -5056,12 +5067,9 @@ class ClientHttp2Session extends Http2Session {
       }
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          if (!stream.rstCode) {
-            stream.rstCode = 0;
-          }
           // Push a null so the stream can end whenever the client consumes
           // it completely.
-          pushToStream(stream, null);
+          endInboundHalf(stream);
           stream.read(0);
         }
       }
@@ -5129,11 +5137,13 @@ class ClientHttp2Session extends Http2Session {
         }
         const status = stream[bunHTTP2StreamStatus];
         const header_status = headers[HTTP2_HEADER_STATUS];
+        const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
         if (header_status === HTTP_STATUS_CONTINUE) {
           stream.emit("continue");
         }
 
         if ((status & StreamState.StreamResponded) !== 0) {
+          if (endOfStream) endInboundHalf(stream);
           stream.emit("trailers", headers, flags, rawheaders);
         } else {
           if (header_status >= 100 && header_status < 200) {
@@ -5151,6 +5161,7 @@ class ClientHttp2Session extends Http2Session {
             if (onClientStreamFinishChannel.hasSubscribers) {
               onClientStreamFinishChannel.publish({ stream, headers, flags });
             }
+            if (endOfStream) endInboundHalf(stream);
             if (stream[kPush]) {
               // A pushed stream delivers its response via 'push'; the session 'stream' event already
               // fired (with the promised request headers) when the PUSH_PROMISE arrived.

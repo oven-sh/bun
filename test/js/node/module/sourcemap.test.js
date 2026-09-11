@@ -215,6 +215,33 @@ console.log("done");`,
   expect(exitCode).toBe(0);
 });
 
+test("SourceMap with many out-of-order mappings sorts in O(n log n)", async () => {
+  // 80000 segments on one line in descending column order: every segment
+  // after the second has a negative generated-column delta, which forces a
+  // stable sort of the entire mapping list. The sort backing
+  // `MultiArrayList::sort` used to be plain insertion sort, so this input
+  // took ~20s on a release build and minutes under debug; with an
+  // O(n log n) sort it finishes in well under a second.
+  const script = `
+    const { SourceMap } = require("node:module");
+    const N = 80000;
+    // VLQ: 0 -> "A", 80000 -> "go8E", -1 -> "D". Segments are 4-field.
+    // Columns visited: 0, 80000, 79999, ..., 1.
+    const mappings = "AAAA,go8EAAA" + Buffer.alloc((N - 1) * 5, ",DAAA").toString();
+    const map = new SourceMap({ version: 3, sources: ["s.js"], names: [], mappings });
+    const probes = [0, 1, 40000, 79999, 80000].map(c => map.findEntry(0, c).generatedColumn);
+    process.stdout.write(JSON.stringify(probes));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[0,1,40000,79999,80000]", stderr: "", exitCode: 0 });
+});
+
 test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns and degrades gracefully", async () => {
   // 'g' is a single base64 byte with the VLQ continuation bit set, so the
   // mappings string ends mid-value. The generated-column field is truncated,

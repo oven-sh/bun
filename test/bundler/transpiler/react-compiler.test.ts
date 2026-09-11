@@ -1168,6 +1168,113 @@ describe("bundler", () => {
     },
   });
 
+  // The parser's constant folding (on under minify.syntax) joins strings as a
+  // rope: the E::String keeps only its first segment in `data` and links the
+  // rest through `next`. Template heads and tails come out of folding in that
+  // shape too, and lowering used to read `data` alone, so every segment after
+  // the first was dropped from the compiled output: "pre" + `fix/${id}` came
+  // out as `pre${id}`. A folded computed object key is the same rope and used
+  // to make the whole function bail out of compilation.
+  itBundled("react-compiler/FoldedTemplateAndKeyKeepAllSegments", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Route { Users = "users" }
+        export function Links({ id }: { id: string }) {
+          const head = "pre" + \`fix/\${id}\`;
+          const tail = \`\${id}/mid\` + "dle";
+          const foldedHead = \`a\${"b"}c/\${id}\`;
+          const foldedTail = \`\${id}/x\${"y"}z\`;
+          const foldedBothEnds = \`p\${"q"}\${id}r\${"s"}\`;
+          const joined = \`\${id}/one\` + \`two/\${id}\`;
+          const emptyHead = \`\${Route.Users}/\${id}\`;
+          const numberInHead = \`n\${1 + 2}m/\${id}\`;
+          const numberInTail = \`\${id}:\${2 * 3}:\${id}\`;
+          return (
+            <a
+              href={head}
+              data-tail={tail}
+              data-fh={foldedHead}
+              data-ft={foldedTail}
+              data-fb={foldedBothEnds}
+              data-j={joined}
+              data-e={emptyHead}
+              data-nh={numberInHead}
+              data-nt={numberInTail}
+            >
+              {id}
+            </a>
+          );
+        }
+        export function ComputedKey({ id }: { id: string }) {
+          const o = { ["a" + "b"]: id };
+          return <a data-keys={Object.keys(o).join()}>{o.ab}</a>;
+        }
+        const { children: _a, ...links } = Links({ id: "7" }).props;
+        const { children: _b, ...computed } = ComputedKey({ id: "7" }).props;
+        console.log(JSON.stringify(links));
+        console.log(JSON.stringify(computed));
+        console.log(globalThis.memoCachesAllocated);
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = n => {
+          globalThis.memoCachesAllocated = (globalThis.memoCachesAllocated ?? 0) + 1;
+          return new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    minifySyntax: true,
+    run: {
+      stdout: [
+        JSON.stringify({
+          "href": "prefix/7",
+          "data-tail": "7/middle",
+          "data-fh": "abc/7",
+          "data-ft": "7/xyz",
+          "data-fb": "pq7rs",
+          "data-j": "7/onetwo/7",
+          "data-e": "users/7",
+          "data-nh": "n3m/7",
+          "data-nt": "7:6:7",
+        }),
+        '{"data-keys":"ab"}',
+        // One memo cache per component: both must have been compiled rather
+        // than left as written.
+        "2",
+      ].join("\n"),
+    },
+  });
+
+  // import() arguments are folded even without minify.syntax, so this rope
+  // reaches the compiler in a default build; the emitted specifier used to lose
+  // its "/" and come out as `./pages${name}.js`.
+  itBundled("react-compiler/FoldedImportSpecifierKeepsAllSegments", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Dir { Pages = "./pages" }
+        export function Loader({ name }: { name: string }) {
+          const load = () => import(Dir.Pages + \`/\${name}.js\`);
+          return <button onClick={load}>{name}</button>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/import\(`\.\/pages\/\$\{name\}\.js`\)/);
+    },
+  });
+
   // A temporary that has to survive as a variable is "promoted": the compiler
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the

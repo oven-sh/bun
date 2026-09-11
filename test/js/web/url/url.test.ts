@@ -739,19 +739,22 @@ describe("URL setters at the string length limit", () => {
     ["protocol", "foo://h/", "latin1", "a", 1, -3],
   ];
 
-  test.each(cases)("%s of %s, %s string of %j", (property, base, kind, unit, unitLength, change) => {
-    // The value alone is as long as the limit once serialized: the setter throws and the URL keeps its value.
-    const url = new URL(base);
-    expect(() => {
-      url[property] = build[kind](unit, Math.ceil(limit / unitLength));
-    }).toThrow(tooLong);
-    expect(url.href).toBe(base);
+  for (const [property, base, kind, unit, unitLength, change] of cases) {
+    const codePoint = unit.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
+    test(`${property} of ${base}, ${kind} string of U+${codePoint}`, () => {
+      // The value alone is as long as the limit once serialized: the setter throws and the URL keeps its value.
+      const url = new URL(base);
+      expect(() => {
+        url[property] = build[kind](unit, Math.ceil(limit / unitLength));
+      }).toThrow(tooLong);
+      expect(url.href).toBe(base);
 
-    // A value that stays 4 KiB below the limit is set, and is as long as expected.
-    const count = Math.floor((limit - 4096) / unitLength);
-    url[property] = build[kind](unit, count);
-    expect(url.href.length).toBe(base.length + change + count * unitLength);
-  });
+      // A value that stays 4 KiB below the limit is set, and is as long as expected.
+      const count = Math.floor((limit - 4096) / unitLength);
+      url[property] = build[kind](unit, count);
+      expect(url.href.length).toBe(base.length + change + count * unitLength);
+    });
+  }
 
   // WTF::URL copies the host of a special URL into a Vector<char16_t>, which
   // holds half as many characters as a string (and as the lowered limit).

@@ -773,42 +773,50 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     return JSValue::encode(promise);
 }
 
+static JSObject* createHeapStatisticsObject(VM& vm, JSGlobalObject* globalObject, const WorkerMessagingProxy::HeapStatistics& statistics)
+{
+    double heapSize = static_cast<double>(statistics.size);
+    double capacity = static_cast<double>(statistics.capacity);
+    JSObject* o = constructEmptyObject(globalObject);
+    auto set = [&](ASCIILiteral k, double v) { o->putDirect(vm, Identifier::fromString(vm, k), jsNumber(v)); };
+    set("total_heap_size"_s, heapSize);
+    set("total_heap_size_executable"_s, heapSize / 2.0);
+    set("total_physical_size"_s, capacity);
+    set("total_available_size"_s, capacity > heapSize ? capacity - heapSize : 0);
+    set("used_heap_size"_s, heapSize);
+    set("heap_size_limit"_s, capacity * 10.0);
+    set("malloced_memory"_s, heapSize);
+    set("peak_malloced_memory"_s, capacity);
+    o->putDirect(vm, Identifier::fromString(vm, "does_zap_garbage"_s), jsBoolean(false));
+    set("number_of_native_contexts"_s, 1);
+    set("number_of_detached_contexts"_s, 0);
+    set("total_global_handles_size"_s, 8192);
+    set("used_global_handles_size"_s, 2208);
+    set("external_memory"_s, static_cast<double>(statistics.extraMemory));
+    set("total_allocated_bytes"_s, heapSize);
+    return o;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
 
+    if (auto statistics = worker.contextProxy().heapStatistics()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, createHeapStatisticsObject(vm, globalObject, *statistics))));
+    }
+
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        auto& wvm = workerCtx.vm();
-        double heapSize = static_cast<double>(wvm.heap.size());
-        double capacity = static_cast<double>(wvm.heap.capacity());
-        double extra = static_cast<double>(wvm.heap.extraMemorySize());
-        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
+        auto statistics = WorkerMessagingProxy::HeapStatistics::measure(workerCtx.vm().heap);
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), statistics](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                JSObject* o = constructEmptyObject(go);
-                auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
-                double avail = capacity > heapSize ? capacity - heapSize : 0;
-                set("total_heap_size"_s, heapSize);
-                set("total_heap_size_executable"_s, heapSize / 2.0);
-                set("total_physical_size"_s, capacity);
-                set("total_available_size"_s, avail);
-                set("used_heap_size"_s, heapSize);
-                set("heap_size_limit"_s, capacity * 10.0);
-                set("malloced_memory"_s, heapSize);
-                set("peak_malloced_memory"_s, capacity);
-                o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
-                set("number_of_native_contexts"_s, 1);
-                set("number_of_detached_contexts"_s, 0);
-                set("total_global_handles_size"_s, 8192);
-                set("used_global_handles_size"_s, 2208);
-                set("external_memory"_s, extra);
-                set("total_allocated_bytes"_s, heapSize);
-                return o;
+                return createHeapStatisticsObject(pvm, go, statistics);
             });
         });
     });
@@ -872,11 +880,25 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
+static JSObject* createCpuUsageObject(VM& vm, JSGlobalObject* globalObject, const WorkerMessagingProxy::CpuUsage& usage)
+{
+    JSObject* o = constructEmptyObject(globalObject);
+    o->putDirect(vm, Identifier::fromString(vm, "user"_s), jsNumber(usage.userMicroseconds));
+    o->putDirect(vm, Identifier::fromString(vm, "system"_s), jsNumber(usage.systemMicroseconds));
+    return o;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
+
+    if (auto usage = worker.contextProxy().cpuUsage()) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, createCpuUsageObject(vm, globalObject, *usage))));
+    }
+
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
@@ -914,10 +936,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
 #endif
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), user, sys](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                JSObject* o = constructEmptyObject(go);
-                o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
-                o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
-                return o;
+                // One source for every answer, where there is one, so that no answer is below an earlier one.
+                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage().value_or(WorkerMessagingProxy::CpuUsage { user, sys }));
             });
         });
     });

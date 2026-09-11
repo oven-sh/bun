@@ -327,6 +327,8 @@ private:
     WebCore::DOMURLBaseCache m_urlBaseCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
+    // A worker's VM: publishes the heap's counters to the parent (WorkerMessagingProxy::heapStatistics()).
+    std::unique_ptr<JSC::HeapObserver> m_workerHeapStatistics;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };

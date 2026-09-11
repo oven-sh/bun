@@ -1831,6 +1831,14 @@ unsafe extern "system" {
         out_lpUserTime: *mut FILETIME,
     ) -> BOOL;
 
+    pub fn GetThreadTimes(
+        in_hThread: HANDLE,
+        out_lpCreationTime: *mut FILETIME,
+        out_lpExitTime: *mut FILETIME,
+        out_lpKernelTime: *mut FILETIME,
+        out_lpUserTime: *mut FILETIME,
+    ) -> BOOL;
+
     /// `RegisterWaitForSingleObject` (`winbase.h`). Queues `Callback` to the
     /// system thread pool once `hObject` is signaled (or `dwMilliseconds`
     /// elapses). Returns non-zero on success; `*phNewWaitObject` receives the

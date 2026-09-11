@@ -1555,6 +1555,44 @@ test("getHeapStatistics settles when terminated mid-request", async () => {
   ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
 });
 
+describe("a worker that does not return to its event loop", () => {
+  // The worker spins until the parent sets the flag, and the parent sets it only once the calls have
+  // settled: a call that waits for the worker's event loop never settles.
+  test.concurrent.each(["while its entry module evaluates", "inside a message handler"])(
+    "answers cpuUsage() and getHeapStatistics() %s",
+    async where => {
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const spin = `parentPort.postMessage("spinning"); while (Atomics.load(workerData, 0) === 0) {}`;
+      const worker = new Worker(
+        `const { parentPort, workerData } = require("node:worker_threads");
+        ${where === "inside a message handler" ? `parentPort.once("message", () => { ${spin} });` : spin}`,
+        { eval: true, workerData: flag },
+      );
+      try {
+        const spinning = once(worker, "message");
+        if (where === "inside a message handler") worker.postMessage("go");
+        await spinning;
+
+        const statistics = await worker.getHeapStatistics();
+        expect(statistics.used_heap_size).toBeGreaterThan(0);
+        expect(statistics.total_physical_size).toBeGreaterThan(0);
+
+        // The operating system may account CPU time in ticks as long as several milliseconds.
+        let usage = await worker.cpuUsage();
+        while (usage.user + usage.system === 0) usage = await worker.cpuUsage();
+        const since = await worker.cpuUsage(usage);
+        expect(since.user).toBeGreaterThanOrEqual(0);
+        expect(since.system).toBeGreaterThanOrEqual(0);
+
+        expect(Atomics.load(flag, 0)).toBe(0);
+      } finally {
+        Atomics.store(flag, 0, 1);
+        await worker.terminate();
+      }
+    },
+  );
+});
+
 test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   const enumerable: string[] = [];
   for (const k in globalThis.Worker.prototype) enumerable.push(k);

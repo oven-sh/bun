@@ -103,6 +103,8 @@ pub struct WebWorker {
     parent_poll_ref: JsCell<KeepAlive>,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
+    /// The last `worker.cpuUsage()` answer, which the next one never goes below.
+    last_cpu_usage: Cell<ThreadCpuUsage>,
 
     // ---- Worker-thread only -----------------------------------------------------
     // Mutated only on the worker thread, but through `&self` because other
@@ -130,6 +132,140 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+}
+
+/// One thread's CPU times in microseconds, read from any thread.
+#[derive(Clone, Copy, Default)]
+struct ThreadCpuUsage {
+    user: u64,
+    system: u64,
+}
+
+impl ThreadCpuUsage {
+    /// `thread` must not have exited.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn of(thread: &JoinHandle<()>) -> Option<Self> {
+        use std::os::unix::thread::JoinHandleExt as _;
+        // A thread's three CPU clocks differ in the low two bits of the id
+        // (CPUCLOCK_PROF/VIRT/SCHED, include/linux/posix-timers_types.h).
+        const CLOCK_MASK: libc::clockid_t = 3;
+        const USER_AND_SYSTEM_TICKS: libc::clockid_t = 0;
+        const USER_TICKS: libc::clockid_t = 1;
+        let mut runtime_clock: libc::clockid_t = 0;
+        let pthread = thread.as_pthread_t() as libc::pthread_t;
+        // SAFETY: the thread is alive (fn contract), so its pthread_t is valid.
+        if unsafe { libc::pthread_getcpuclockid(pthread, &raw mut runtime_clock) } != 0 {
+            return None;
+        }
+        let nanos = |clock: libc::clockid_t| -> Option<u64> {
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // SAFETY: `ts` is a valid out-pointer.
+            (unsafe { libc::clock_gettime(clock, &raw mut ts) } == 0)
+                .then(|| ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64)
+        };
+        let runtime = nanos(runtime_clock)?;
+        let user_ticks = nanos((runtime_clock & !CLOCK_MASK) | USER_TICKS)?;
+        let system_ticks = nanos((runtime_clock & !CLOCK_MASK) | USER_AND_SYSTEM_TICKS)?
+            .saturating_sub(user_ticks);
+        // What getrusage(RUSAGE_THREAD) reports: the exact runtime, split in the
+        // ratio of the tick-sampled times (cputime_adjust(), kernel/sched/cputime.c).
+        let system = match (user_ticks, system_ticks) {
+            (_, 0) => 0,
+            (0, _) => runtime,
+            (user, system) => {
+                (u128::from(runtime) * u128::from(system) / (u128::from(user) + u128::from(system)))
+                    as u64
+            }
+        };
+        Some(Self {
+            user: (runtime - system) / 1000,
+            system: system / 1000,
+        })
+    }
+
+    /// `thread` must not have exited.
+    #[cfg(target_os = "macos")]
+    fn of(thread: &JoinHandle<()>) -> Option<Self> {
+        use std::os::unix::thread::JoinHandleExt as _;
+        // SAFETY: all-zero is a valid `thread_basic_info` (POD C struct).
+        let mut info: libc::thread_basic_info = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut count = libc::THREAD_BASIC_INFO_COUNT;
+        // SAFETY: the thread is alive (fn contract), so its mach port is valid;
+        // `info` and `count` are valid out-pointers of the size `count` states.
+        let status = unsafe {
+            libc::thread_info(
+                libc::pthread_mach_thread_np(thread.as_pthread_t() as libc::pthread_t),
+                libc::THREAD_BASIC_INFO as libc::thread_flavor_t,
+                (&raw mut info).cast(),
+                &raw mut count,
+            )
+        };
+        let micros = |t: libc::time_value_t| t.seconds as u64 * 1_000_000 + t.microseconds as u64;
+        (status == libc::KERN_SUCCESS).then(|| Self {
+            user: micros(info.user_time),
+            system: micros(info.system_time),
+        })
+    }
+
+    #[cfg(windows)]
+    fn of(thread: &JoinHandle<()>) -> Option<Self> {
+        use bun_sys::windows::FILETIME;
+        use std::os::windows::io::AsRawHandle as _;
+        // SAFETY: all-zero is a valid FILETIME (POD C struct).
+        let [mut creation, mut exit, mut kernel, mut user]: [FILETIME; 4] =
+            unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: the JoinHandle keeps the thread's HANDLE open; valid out-pointers.
+        if unsafe {
+            bun_sys::windows::GetThreadTimes(
+                thread.as_raw_handle().cast(),
+                &raw mut creation,
+                &raw mut exit,
+                &raw mut kernel,
+                &raw mut user,
+            )
+        } == 0
+        {
+            return None;
+        }
+        // FILETIME counts 100 ns units.
+        let micros =
+            |t: FILETIME| ((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) / 10;
+        Some(Self {
+            user: micros(user),
+            system: micros(kernel),
+        })
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        windows
+    )))]
+    fn of(_: &JoinHandle<()>) -> Option<Self> {
+        None
+    }
+
+    /// `self`, adjusted so that neither time is below what `previous` reported
+    /// (the split on Linux is an estimate that can move between readings).
+    fn never_below(self, previous: Self) -> Self {
+        let total = self.user + self.system;
+        if total <= previous.user + previous.system {
+            return previous;
+        }
+        let system = self.system.max(previous.system);
+        let user = total - system;
+        if user < previous.user {
+            return Self {
+                user: previous.user,
+                system: total - previous.user,
+            };
+        }
+        Self { user, system }
+    }
 }
 
 enum EntryOutcome {
@@ -425,6 +561,7 @@ impl WebWorker {
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
+            last_cpu_usage: Cell::new(ThreadCpuUsage::default()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
@@ -558,6 +695,32 @@ impl WebWorker {
             // safepoint and its loop woken.
             handle.request_termination();
         }
+    }
+
+    /// `worker.cpuUsage()`, answered without the worker thread's help so that a
+    /// worker which never returns to its loop still answers. Parent thread.
+    /// `false` before the VM exists and once the thread is in `shutdown()`.
+    #[unsafe(export_name = "WebWorker__threadCpuUsage")]
+    pub(crate) extern "C" fn thread_cpu_usage(
+        this: *mut WebWorker,
+        user_micros: &mut f64,
+        system_micros: &mut f64,
+    ) -> bool {
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        // shutdown() takes this lock to unpublish the handle, so while it is
+        // held and `Some` the thread has not exited.
+        let handle = this.vm_handle.lock();
+        if handle.is_none() {
+            return false;
+        }
+        let Some(now) = this.join_handle.get().as_ref().and_then(ThreadCpuUsage::of) else {
+            return false;
+        };
+        let usage = now.never_below(this.last_cpu_usage.get());
+        this.last_cpu_usage.set(usage);
+        *user_micros = usage.user as f64;
+        *system_micros = usage.system as f64;
+        true
     }
 
     /// The parent is releasing this thread: drop the keep-alive on the parent's

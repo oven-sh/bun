@@ -80,6 +80,9 @@ void WebWorker__releaseParentPollRef(void*);
 void WebWorker__join(void*);
 // Drop one ref on the thread object; the last one frees it.
 void WebWorker__deref(void*);
+// The thread's CPU times in microseconds, read from the parent thread. False before its VM exists
+// and once it has begun shutting down.
+bool WebWorker__threadCpuUsage(void*, double* user, double* system);
 
 } // extern "C"
 
@@ -253,6 +256,38 @@ JSC::Strong<JSC::JSPromise> WorkerMessagingProxy::takeCrossVMRequest(uint64_t id
     return m_pendingCrossVMRequests.take(id);
 }
 
+WorkerMessagingProxy::HeapStatistics WorkerMessagingProxy::HeapStatistics::measure(JSC::Heap& heap)
+{
+    // Heap::size() counts what the last collection marked: nothing before the first one, when
+    // nothing has been freed either and every block counts as used (as process.memoryUsage() does).
+    size_t size = heap.size();
+    return { size ? size : heap.blockBytesAllocated(), heap.capacity(), heap.extraMemorySize() };
+}
+
+std::optional<WorkerMessagingProxy::HeapStatistics> WorkerMessagingProxy::heapStatistics()
+{
+    if (!m_sawThreadStart || m_askedToTerminate || isClosingOrClosed())
+        return std::nullopt;
+    Locker locker { m_heapStatisticsLock };
+    return m_heapStatistics;
+}
+
+std::optional<WorkerMessagingProxy::CpuUsage> WorkerMessagingProxy::cpuUsage()
+{
+    if (!m_sawThreadStart || m_askedToTerminate || isClosingOrClosed() || !m_workerThread)
+        return std::nullopt;
+    CpuUsage usage;
+    if (!WebWorker__threadCpuUsage(m_workerThread, &usage.userMicroseconds, &usage.systemMicroseconds))
+        return std::nullopt;
+    return usage;
+}
+
+void WorkerMessagingProxy::publishHeapStatistics(std::optional<HeapStatistics> statistics)
+{
+    Locker locker { m_heapStatisticsLock };
+    m_heapStatistics = statistics;
+}
+
 void WorkerMessagingProxy::rejectAllCrossVMRequests()
 {
     HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> pending;
@@ -386,7 +421,10 @@ void WorkerMessagingProxy::workerThreadStarted()
         if (m_state.load() != State::Pending)
             return;
     }
+    // The heap as the entry point finds it. From here each collection publishes (JSVMClientData).
+    publishHeapStatistics(HeapStatistics::measure(defaultGlobalObject()->vm().heap));
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        protectedThis->m_sawThreadStart = true;
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;

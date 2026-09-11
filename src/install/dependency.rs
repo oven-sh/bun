@@ -880,65 +880,39 @@ impl TagExt for Tag {
             // hello/world
             // hello.tar.gz
             // https://github.com/user/repo
+            // httplatest (a dist-tag, not a URL)
             b'h' => {
-                if dependency.starts_with(b"http") {
+                if dependency.starts_with(b"http:") || dependency.starts_with(b"https:") {
                     let mut url = &dependency[b"http".len()..];
-                    if url.len() > 2 {
-                        match url[0] {
-                            b':' => {
-                                if url.starts_with(b"://") {
-                                    url = &url[b"://".len()..];
-                                }
-                            }
-                            b's' => {
-                                if url.starts_with(b"s://") {
-                                    url = &url[b"s://".len()..];
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        if url.starts_with(b"github.com/") {
-                            let path = &url[b"github.com/".len()..];
-                            if is_github_tarball_path(path) {
-                                return Tag::Tarball;
-                            }
-                            if hosted_git_info::is_github_shorthand(path) {
-                                return Tag::Github;
-                            }
-                        }
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-
-                        return Tag::Tarball;
+                    if url.starts_with(b"://") {
+                        url = &url[b"://".len()..];
+                    } else if url.starts_with(b"s://") {
+                        url = &url[b"s://".len()..];
                     }
+
+                    if url.starts_with(b"github.com/") {
+                        let path = &url[b"github.com/".len()..];
+                        if is_github_tarball_path(path) {
+                            return Tag::Tarball;
+                        }
+                        if hosted_git_info::is_github_shorthand(path) {
+                            return Tag::Github;
+                        }
+                    }
+
+                    if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
+                        return hgi_to_tag(&info);
+                    }
+
+                    return Tag::Tarball;
                 }
             }
+            // ssh://git@example.com/repo.git
+            // sshlatest (a dist-tag, not a URL)
             b's' => {
-                if dependency.starts_with(b"ssh") {
-                    let mut url = &dependency[b"ssh".len()..];
-                    if url.len() > 2 {
-                        if url[0] == b':' {
-                            if url.starts_with(b"://") {
-                                url = &url[b"://".len()..];
-                            }
-                        }
-
-                        if url.len() > 4 && &url[0..b"git@".len()] == b"git@" {
-                            url = &url[b"git@".len()..];
-                        }
-
-                        let _ = url; // not used after this point
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-                        return Tag::Git;
-                    }
+                // an ssh URL is never a github shortcut, so always a git clone
+                if dependency.starts_with(b"ssh:") {
+                    return Tag::Git;
                 }
             }
             // lisp.tgz

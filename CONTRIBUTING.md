@@ -8,9 +8,6 @@ A Nix flake is provided as an alternative to manual dependency installation:
 
 ```bash
 nix develop
-# or explicitly use the pure shell
-# nix develop .#pure
-export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
 bun bd
 ```
 
@@ -150,7 +147,7 @@ $ export PATH="$PATH:/usr/lib/llvm21/bin"
 
 ## Building Bun
 
-After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
+After cloning the repository, run the following command to build. This may take a while as it downloads and builds dependencies.
 
 ```bash
 $ bun run build
@@ -305,7 +302,7 @@ Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/We
 
 The Clang compiler typically uses the `libstdc++` C++ standard library by default. `libstdc++` is the default C++ Standard Library implementation provided by the GNU Compiler Collection (GCC). While Clang may link against the `libc++` library, this requires explicitly providing the `-stdlib` flag when running Clang.
 
-Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
+Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `bun run build` may fail with the following error:
 
 ```
 fatal error: 'span' file not found
@@ -313,7 +310,7 @@ fatal error: 'span' file not found
          ^~~~~~
 ```
 
-The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+The issue may manifest when initially running `bun run build` as Clang being unable to compile a simple program:
 
 ```
 The C++ compiler
@@ -363,7 +360,7 @@ $ xcode-select --install
 Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ bun run build -DUSE_STATIC_LIBATOMIC=OFF
+$ bun run build --static-libatomic=off
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

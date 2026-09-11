@@ -100,49 +100,62 @@ if (mode === "end" || mode === "destroySoon") {
   serverSocket?.destroy();
   server.close();
   report({ clientSawFin: true });
-} else if (mode === "wrap-end" || mode === "wrap-destroySoon") {
+} else if (mode === "wrap") {
   // new TLSSocket(stream) without isServer: a client-side wrap that nothing
-  // starts a handshake on. Shutting it down shuts the wrapped stream down.
-  const method = mode.slice("wrap-".length);
+  // starts a handshake on. Shutting it down shuts the wrapped stream down. One
+  // report per method, each on a wrap and a stream of its own.
   const transport = process.argv[3];
-  const peer = transport === "duplex" ? undefined : await stalledPeer();
 
-  let raw;
-  if (transport === "duplex") {
-    raw = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        callback();
-      },
-      final(callback) {
-        log.push("transport final");
-        callback();
-      },
-    });
-  } else if (transport === "unconnected") {
-    raw = new net.Socket();
-  } else {
-    raw = net.connect(peer.port, "127.0.0.1");
-    if (transport === "connected") await once(raw, "connect");
+  async function shutDown(method) {
+    const log = [];
+    const peer = transport.startsWith("duplex") ? undefined : await stalledPeer();
+
+    let raw;
+    if (peer === undefined) {
+      raw = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+        },
+        final(callback) {
+          log.push("transport final");
+          callback();
+        },
+      });
+      // A stream's own close() is not the close(callback) of a handle: an
+      // http2 stream takes close(code, callback).
+      if (transport === "duplex-with-close") raw.close = code => log.push(`transport close(${typeof code})`);
+    } else if (transport === "unconnected") {
+      raw = new net.Socket();
+    } else {
+      raw = net.connect(peer.port, "127.0.0.1");
+      if (transport === "connected") await once(raw, "connect");
+    }
+    raw.on("connect", () => log.push("transport connect"));
+
+    const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+    socket.on("finish", () => log.push("finish"));
+    socket.on("error", error => log.push(`error:${error.code ?? error.message}`));
+    socket.on("close", () => log.push("close"));
+
+    socket[method]();
+    // Only the graceful shapes owe the peer a FIN, and destroy() leaves nothing to connect.
+    const peerSawFin = peer !== undefined && method !== "destroy";
+    if (transport === "unconnected" && peerSawFin) raw.connect(peer.port, "127.0.0.1");
+
+    await Promise.all([once(socket, method === "end" ? "finish" : "close"), peerSawFin && peer.sawFin]);
+
+    const { writableFinished, readyState, destroyed } = socket;
+    const result = { log: [...log], peerSawFin, writableFinished, readyState, destroyed, transportDestroyed: raw.destroyed };
+    socket.destroy();
+    raw.destroy();
+    peer?.close();
+    return result;
   }
-  raw.on("connect", () => log.push("transport connect"));
 
-  const socket = new TLSSocket(raw, { rejectUnauthorized: false });
-  socket.on("finish", () => log.push("finish"));
-  socket.on("error", error => log.push(`error:${error.code ?? error.message}`));
-  socket.on("close", () => log.push("close"));
-
-  socket[method]();
-  if (transport === "unconnected") raw.connect(peer.port, "127.0.0.1");
-
-  await Promise.all([once(socket, method === "end" ? "finish" : "close"), peer?.sawFin]);
-
-  const { writableFinished, readyState, destroyed } = socket;
-  const transportDestroyed = raw.destroyed;
-  socket.destroy();
-  raw.destroy();
-  peer?.close();
-  report({ peerSawFin: peer !== undefined, writableFinished, readyState, destroyed, transportDestroyed });
+  const [end, destroySoon, destroy] = await Promise.all(["end", "destroySoon", "destroy"].map(shutDown));
+  console.log(JSON.stringify({ end, destroySoon, destroy }));
+  process.exit(0);
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

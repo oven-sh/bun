@@ -1261,9 +1261,10 @@ describe("pathological thematic break inputs", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("DONE");
     expect(exitCode).toBe(0);
+  }, 90_000);
 
-    // Thematic breaks are still recognized at every container level, including
-    // right where an earlier level's scan gave up.
+  test("thematic breaks are still recognized at every container level", () => {
+    // Including right where an earlier level's failed scan stopped.
     expect(Markdown.html("- - -\n")).toBe("<hr />\n");
     expect(Markdown.html("* * * a\n")).toBe(
       "<ul>\n<li>\n<ul>\n<li>\n<ul>\n<li>a</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n",
@@ -1272,7 +1273,7 @@ describe("pathological thematic break inputs", () => {
     expect(Markdown.html("- - _ _ _\n")).toBe("<ul>\n<li>\n<ul>\n<li>\n<hr />\n</li>\n</ul>\n</li>\n</ul>\n");
     expect(Markdown.html("> - ***\n")).toBe("<blockquote>\n<ul>\n<li>\n<hr />\n</li>\n</ul>\n</blockquote>\n");
     expect(Markdown.html("- foo\n- * * *\n")).toBe("<ul>\n<li>foo</li>\n<li>\n<hr />\n</li>\n</ul>\n");
-  }, 90_000);
+  });
 });
 
 describe("inputs the parser cannot address", () => {

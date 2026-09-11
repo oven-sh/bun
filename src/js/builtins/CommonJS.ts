@@ -166,17 +166,22 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
-  const requireMap = parent ? parent.$requireMap : $requireMap;
-  $assert(requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  // `id` keys the module cache and may carry a `?query` suffix;
-  // `process.dlopen` needs the on-disk path.
-  const queryIndex = id.indexOf("?");
-  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
-  $assert(filename.endsWith(".node"));
+  // Native addons are process-wide: one module object, in the global cache; a require()
+  // from a Bun.unsafe.ModuleGraph enters that same object into the graph's cache too.
+  const requireMap = (parent && parent.$requireMap) || $requireMap;
+  let module = $requireMap.$get(id);
+  if (!module) {
+    // `id` keys the module cache and may carry a `?query` suffix;
+    // `process.dlopen` needs the on-disk path.
+    const queryIndex = id.indexOf("?");
+    const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+    $assert(filename.endsWith(".node"));
 
-  const module = $createCommonJSModule(id, {}, true, parent);
-  process.dlopen(module, filename);
-  requireMap.$set(id, module);
+    module = $createCommonJSModule(id, {}, true, parent);
+    process.dlopen(module, filename);
+    $requireMap.$set(id, module);
+  }
+  if (requireMap !== $requireMap) requireMap.$set(id, module);
   return module.exports;
 }
 

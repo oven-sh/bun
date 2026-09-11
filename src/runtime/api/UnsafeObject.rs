@@ -16,17 +16,14 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("setJITPolicy", __jsc_host_set_jit_policy, 1),
         ],
     );
-    // `Bun.unsafe.ModuleGraph` — further instances of an ES module graph in this global (ModuleGraph.cpp).
-    object.put(
-        global,
-        "ModuleGraph",
-        Bun__ModuleGraph__getConstructor(global),
-    );
+    // `Bun.unsafe.ModuleGraph` — further instances of an ES module graph in this global
+    // (ModuleGraph.cpp); the class is created on first access.
+    Bun__ModuleGraph__installConstructor(global, object);
     object
 }
 
 unsafe extern "C" {
-    safe fn Bun__ModuleGraph__getConstructor(global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__ModuleGraph__installConstructor(global: &JSGlobalObject, target: JSValue);
 }
 
 #[bun_jsc::host_fn]

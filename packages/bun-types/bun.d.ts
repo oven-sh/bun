@@ -5446,8 +5446,11 @@ declare module "bun" {
        * Called with uncaught exceptions and unhandled rejections raised by code
        * that belongs to this graph, instead of the process-wide
        * `uncaughtException` / `unhandledRejection` handling; without it (or for
-       * an error `onError` itself lets escape) they take that normal path.
-       * `kind` is `"uncaughtException"` or `"unhandledRejection"`.
+       * an error `onError` itself lets escape) they take that normal path. An
+       * error belongs to the graph whose module or CommonJS code is the
+       * innermost such code on the stack where it was created (functions passed
+       * in through `globals` are the host's code). `kind` is
+       * `"uncaughtException"` or `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     }

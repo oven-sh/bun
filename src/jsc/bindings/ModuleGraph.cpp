@@ -7,6 +7,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -740,9 +741,16 @@ void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 
-extern "C" JSC::EncodedJSValue Bun__ModuleGraph__getConstructor(JSC::JSGlobalObject* globalObject)
+// Bun.unsafe.ModuleGraph (UnsafeObject.rs): the class is created on first access.
+JSC_DECLARE_CUSTOM_GETTER(moduleGraphConstructorGetter);
+JSC_DEFINE_CUSTOM_GETTER(moduleGraphConstructorGetter, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return JSValue::encode(defaultGlobalObject(globalObject)->JSModuleGraphConstructor());
+}
+extern "C" void Bun__ModuleGraph__installConstructor(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue target)
+{
+    VM& vm = globalObject->vm();
+    asObject(JSValue::decode(target))->putDirectCustomAccessor(vm, Identifier::fromString(vm, "ModuleGraph"_s), CustomGetterSetter::create(vm, moduleGraphConstructorGetter, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
 } // namespace Bun

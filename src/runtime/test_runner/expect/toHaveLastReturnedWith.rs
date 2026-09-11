@@ -16,7 +16,7 @@ pub(crate) fn to_have_last_returned_with(
     let (this, returns, _value) = this.mock_prologue(
         global_this,
         callframe.this(),
-        "toHaveBeenLastReturnedWith",
+        "toHaveLastReturnedWith",
         "<green>expected<r>",
         super::mock::MockKind::Returns,
     )?;
@@ -58,13 +58,13 @@ pub(crate) fn to_have_last_returned_with(
     // Handle failure
     let mut formatter = Formatter::new(global_this).with_quote_strings(true);
 
-    let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
+    let signature = Expect::get_signature("toHaveLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
         return throw!(
             this,
             global_this,
-            Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
+            Expect::get_signature("toHaveLastReturnedWith", "<green>expected<r>", true),
             concat!(
                 "\n\n",
                 "Expected mock function not to have last returned: <green>{}<r>\n",

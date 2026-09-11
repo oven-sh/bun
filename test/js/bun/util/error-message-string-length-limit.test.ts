@@ -12,7 +12,7 @@
 // `Buffer.alloc(n, fill).toString()`: it is faster here and it allocates the
 // 2 GiB once instead of twice.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import { totalmem } from "node:os";
 
 const LENGTH = 2 ** 31 - 10;
@@ -145,4 +145,47 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("an error message past the string l
     },
     TIMEOUT,
   );
+
+  // ERR_INVALID_ARG_VALUE quotes and escapes the value like `util.inspect`, so
+  // a control character renders as 4 ("\x00"). 2**29 of them render to exactly
+  // 2**31 characters, one past the limit, from a 512 MiB value. The renderer
+  // escapes one character at a time. That takes seconds in a release build
+  // and about 8 minutes in a debug build, so these two cases skip there.
+  describe.skipIf(isDebug)("from a value that ERR_INVALID_ARG_VALUE escapes", () => {
+    function reportThrowEscaped(statement: string) {
+      return `
+        const escaped = "\\x00".repeat(2 ** 29);
+        try {
+          ${statement}
+          console.log("did not throw");
+        } catch (e) {
+          console.log(e.name + ": " + e.message);
+        }
+      `;
+    }
+
+    test(
+      "throws instead of aborting for a Buffer#fill value that is not valid hex",
+      async () => {
+        expect(await run(reportThrowEscaped(`Buffer.alloc(4).fill(escaped, "hex");`))).toEqual({
+          stdout: "RangeError: Out of memory",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "throws instead of aborting for a child_process.spawn file with null bytes",
+      async () => {
+        expect(await run(reportThrowEscaped(`require("node:child_process").spawn(escaped);`))).toEqual({
+          stdout: "RangeError: Out of memory",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      TIMEOUT,
+    );
+  });
 });

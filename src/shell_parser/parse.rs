@@ -1643,6 +1643,12 @@ impl<'bump> Parser<'bump> {
                         ))?;
                         return Err(ParseError::Unexpected.into());
                     }
+                    Token::JSObjRef(_) => {
+                        self.add_error(format_args!(
+                            "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used with a redirect operator (`<`, `>`), not as a command name, argument, or assignment value"
+                        ))?;
+                        return Err(ParseError::Expected.into());
+                    }
                     Token::Pipe
                     | Token::DoublePipe
                     | Token::Ampersand
@@ -1652,7 +1658,6 @@ impl<'bump> Parser<'bump> {
                     | Token::Newline
                     | Token::CmdSubstQuoted
                     | Token::CmdSubstEnd
-                    | Token::JSObjRef(_)
                     | Token::Delimit
                     | Token::Eof
                     | Token::DoubleBracketOpen
@@ -2092,7 +2097,9 @@ impl Token {
             Token::Text(r) => &strpool[r.start as usize..r.end as usize],
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
-            Token::JSObjRef(_) => b"JSObjRef",
+            Token::JSObjRef(_) => {
+                b"an interpolated Response, Blob, ReadableStream, ArrayBuffer, or TypedArray"
+            }
             Token::DoubleBracketOpen => b"[[",
             Token::DoubleBracketClose => b"]]",
             Token::Delimit => b"Delimit",

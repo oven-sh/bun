@@ -8408,7 +8408,12 @@ pub unsafe fn page_out_range(ptr: *const u8, len: usize) {
 /// This process's resident file-backed memory (mapped files, the executable among them), from `/proc/self/statm`.
 #[cfg(target_os = "linux")]
 pub fn file_backed_resident_bytes() -> Option<usize> {
-    let fd = open(bun_core::zstr!("/proc/self/statm"), O::RDONLY | O::CLOEXEC, 0).ok()?;
+    let fd = open(
+        bun_core::zstr!("/proc/self/statm"),
+        O::RDONLY | O::CLOEXEC,
+        0,
+    )
+    .ok()?;
     let mut buf = [0u8; 128];
     let n = read(fd, &mut buf).unwrap_or(0);
     let _ = close(fd);

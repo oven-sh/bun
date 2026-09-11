@@ -6492,6 +6492,61 @@ describe("css tests", () => {
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
   });
 
+  describe("supports", () => {
+    // Whatever precedes a `not` condition (`@supports `, a grouping `(`, or
+    // `supports(` in @import) already writes its own separator, so `not` must
+    // not be printed with a leading space of its own.
+    minify_test("@supports not (display:grid) { a { color: red } }", "@supports not (display:grid){a{color:red}}");
+    minify_test(
+      "@supports not selector(:focus-visible) { a { color: red } }",
+      "@supports not selector(:focus-visible){a{color:red}}",
+    );
+    minify_test(
+      "@supports not ((display:grid) and (display:flex)) { a { color: red } }",
+      "@supports not ((display:grid) and (display:flex)){a{color:red}}",
+    );
+    minify_test(
+      "@supports not ((display:grid) or (display:flex)) { a { color: red } }",
+      "@supports not ((display:grid) or (display:flex)){a{color:red}}",
+    );
+    minify_test(
+      "@supports not (not (display:grid)) { a { color: red } }",
+      "@supports not (not (display:grid)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (display:grid) and (not (display:inline-grid)) { a { color: red } }",
+      "@supports (display:grid) and (not (display:inline-grid)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (not (display:grid)) and (display:flex) { a { color: red } }",
+      "@supports (not (display:grid)) and (display:flex){a{color:red}}",
+    );
+    minify_test(
+      "@supports (display:grid) or (not (display:inline-grid)) { a { color: red } }",
+      "@supports (display:grid) or (not (display:inline-grid)){a{color:red}}",
+    );
+    minify_test(
+      "@import url(foo.css) supports(not (display:grid));",
+      '@import "foo.css" supports(not (display:grid));',
+    );
+    minify_test(
+      "@import url(foo.css) supports((display:grid) and (not (display:flex)));",
+      '@import "foo.css" supports((display:grid) and (not (display:flex)));',
+    );
+    minify_test(
+      "@import url(foo.css) supports(not (display:grid)) screen;",
+      '@import "foo.css" supports(not (display:grid)) screen;',
+    );
+
+    // The minified forms parse back to themselves.
+    minify_test("@supports not (display:grid){a{color:red}}", "@supports not (display:grid){a{color:red}}");
+    minify_test(
+      "@supports (display:grid) and (not (display:inline-grid)){a{color:red}}",
+      "@supports (display:grid) and (not (display:inline-grid)){a{color:red}}",
+    );
+    minify_test('@import "foo.css" supports(not (display:grid));', '@import "foo.css" supports(not (display:grid));');
+  });
+
   describe("transition", () => {
     minify_test(".foo { transition-duration: 500ms }", ".foo{transition-duration:.5s}");
     minify_test(".foo { transition-duration: .5s }", ".foo{transition-duration:.5s}");

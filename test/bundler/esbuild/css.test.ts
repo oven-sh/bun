@@ -1660,6 +1660,51 @@ c {
     },
   });
 
+  // `not` conditions print without a stray leading space in all three places
+  // they can appear: an @supports rule, the @supports wrapper generated for a
+  // bundled conditional @import, and a supports() clause on an external @import.
+  itBundled("css/CSSAtSupportsNotCondition", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "http://example.com/foo.css" supports(not (display: grid));
+        @import "./foo.css" supports(not (display: grid));
+        @supports not (display: grid) {
+          a { color: red }
+        }
+        @supports (display: grid) and (not (display: inline-grid)) {
+          b { color: red }
+        }
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      // Exact comparison on purpose: the bug is a whitespace difference.
+      api.expectFile("/out.css").toBe(/* css */ `@import "http://example.com/foo.css" supports(not (display: grid));
+
+/* foo.css */
+@supports not (display: grid) {
+  body {
+    color: red;
+  }
+}
+
+/* entry.css */
+@supports not (display: grid) {
+  a {
+    color: red;
+  }
+}
+
+@supports (display: grid) and (not (display: inline-grid)) {
+  b {
+    color: red;
+  }
+}
+`);
+    },
+  });
+
   const files = [
     "/001/default/style.css",
     "/001/relative-url/style.css",

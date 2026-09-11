@@ -64,9 +64,7 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// [`Self::pause_stream`] paused `origin` and no [`Self::resume_stream`]
-    /// followed. [`Self::on_close`] resumes such a transport so it can still
-    /// drain to its own EOF once the engine is gone.
+    /// [`Self::pause_stream`] paused `origin`; [`Self::on_close`] undoes it.
     pub reads_paused: Cell<bool>,
 }
 
@@ -210,8 +208,7 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
 
         (this.handlers.on_close)(this.handlers.ctx);
-        // A transport left paused would never read its peer's EOF and close.
-        // `teardown` neuters the thunks, so whatever it still delivers is dropped.
+        // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
         if this.reads_paused.get() {
             this.resume_stream();
         }
@@ -223,16 +220,10 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
     }
 
-    /// node's `JSStreamSocket.readStop()` / `readStart()`: the transport only
-    /// emits 'data' while the TLS socket wants more. A chunk already handed to
-    /// the engine is still decrypted and delivered in full.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
-    ///
-    /// A pause before `start_tls` ran is left alone, like a socket that is
-    /// still connecting: `on_open` forgets the owner's paused flag, and the
-    /// handshake needs the reads.
+    /// node's `JSStreamSocket.readStop()`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
     #[uws_callback(export = "UpgradedDuplex__pause_stream")]
     pub(crate) fn pause_stream(&self) -> bool {
+        // Before `start_tls` the handshake still needs the reads, and `on_open` clears the owner's paused flag.
         if self.wrapper_ref().is_none() || !self.call_origin("pause") {
             return false;
         }
@@ -249,8 +240,7 @@ impl UpgradedDuplex {
         true
     }
 
-    /// Calls `origin[name]()`. False when there is no JS duplex to talk to
-    /// (see [`Self::call_write_or_end`]) or the call threw (routed to `on_error`).
+    /// Calls `origin[name]()`. A throw goes to `on_error`; false when the call did not complete.
     fn call_origin(&self, name: &str) -> bool {
         let duplex = self.origin.get();
         if duplex.is_empty() {
@@ -291,11 +281,11 @@ impl UpgradedDuplex {
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
             // A teardown payload (close_notify) after the transport's readable
-            // side got its EOF has no reader behind it: node writes nothing
-            // there, and a transport that forwards into an auto-ended
-            // net.Socket throws writeAfterFIN (EPIPE). The trailing end() is
-            // not a write and still goes through the writableEnded probe
-            // below, so a half-open transport sees our FIN.
+            // side ended has no reader behind it: node writes nothing there,
+            // and a transport that forwards into an auto-ended net.Socket
+            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
+            // and still goes through the writableEnded probe below, so a
+            // half-open transport sees our FIN.
             if data.is_some() {
                 match Self::readable_got_eof(duplex, &global) {
                     Ok(false) => {}
@@ -340,8 +330,7 @@ impl UpgradedDuplex {
         }
     }
 
-    /// `duplex._readableState.ended`. The 'end' event comes too late to tell:
-    /// a paused transport holds it back until the unread bytes are consumed.
+    /// `_readableState.ended`, not the 'end' event: a paused transport holds 'end' back.
     fn readable_got_eof(duplex: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         let Some(state) = duplex.get(global, "_readableState")? else {
             return Ok(false);

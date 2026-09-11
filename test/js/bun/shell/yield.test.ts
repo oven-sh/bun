@@ -204,14 +204,15 @@ describe("yield", async () => {
       });
     });
 
-    // Without a pipeline nothing else is in flight when the command fails, so
-    // the interpreter must become collectable, not stay pinned until exit.
+    // Once every member of a failed script has exited, the interpreter must
+    // become collectable, not stay pinned until the process exits.
     test.concurrent("failed scripts are collected", async () => {
       await using proc = Bun.spawn({
         cmd: child(`
           let rejected = 0;
           for (let i = 0; i < 10; i++) {
             await $\`ls .; echo hi > \${new Blob(["x"])}\`.quiet().then(() => {}, () => rejected++);
+            await $\`\${bun} --version | echo hi > \${new Blob(["x"])}\`.quiet().then(() => {}, () => rejected++);
           }
           let live;
           for (let i = 0; i < 10; i++) {
@@ -230,7 +231,7 @@ describe("yield", async () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
-        result: JSON.stringify({ rejected: 10, collected: true }),
+        result: JSON.stringify({ rejected: 20, collected: true }),
         stderr: "",
         exitCode: 0,
       });
@@ -273,7 +274,10 @@ describe("yield", async () => {
       // The thread-pool task of `ls` completes after the failure and writes
       // to a pipe whose read end is closed by then.
       test.concurrent("a builtin producer on the thread pool", async () => {
-        await expectRejection(`$\`ls ${"${" + JSON.stringify(import.meta.dir) + "}"} | ${bad}\`.quiet().nothrow()`, external);
+        await expectRejection(
+          `$\`ls ${"${" + JSON.stringify(import.meta.dir) + "}"} | ${bad}\`.quiet().nothrow()`,
+          external,
+        );
       });
     });
   });

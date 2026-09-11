@@ -6337,7 +6337,7 @@ describe("a client session reports a peer reset that one of its writes sees firs
   // before any event.
   //
   // Node reports a reset only when its read side sees it. It drops the status of a failed
-  // write (node_http2.cc, the TODO in ClearOutgoing), and on linux the failed send() consumes
+  // write (node_http2.cc, see the note in ClearOutgoing), and on linux the failed send() consumes
   // the socket error, so the read that follows is a clean EOF. Which side sees the reset
   // first depends on where the request is made. Node defers a write made from a timer until
   // after the next poll, so its read reports ECONNRESET. It writes at once from inside a read

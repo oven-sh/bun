@@ -284,7 +284,7 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
   // One peer reset gives a different send errno per platform: linux reports
   // ECONNRESET, darwin EPIPE. The read side reports ECONNRESET for it on every
   // platform, and that is the only side Node reports a reset from (it drops the
-  // status of a failed write, see the TODO in node_http2.cc ClearOutgoing).
+  // status of a failed write, see the note in node_http2.cc ClearOutgoing).
   // Injecting each errno pins the code bun reports on every platform.
   //
   // phase "request": the failing send is a later request() on an idle session.

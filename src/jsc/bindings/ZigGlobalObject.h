@@ -821,7 +821,30 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::PendingRejectionList m_aboutToBeNotifiedRejectedPromises;
+public:
+    // Promises rejected while they had no handler, awaiting handleRejectedPromises()
+    // after the microtask drain, each with whose rejection it is as decided when it
+    // happened: a Bun.unsafe.ModuleGraph, or null for the global object's own code.
+    // Guarded by cellLock() like WriteBarrierList (visited on the GC thread).
+    class RejectedPromiseQueue {
+    public:
+        void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
+        bool remove(JSC::JSCell* owner, JSC::JSPromise*);
+        // Move every entry out (index-aligned; jsNull() owner for the global object's) and clear.
+        void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
+        template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
+        bool isEmpty() const { return m_entries.isEmpty(); }
+
+    private:
+        struct Entry {
+            JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
+            JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        };
+        WTF::Vector<Entry> m_entries;
+    };
+
+private:
+    RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

@@ -3265,6 +3265,44 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
+void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
+{
+    WTF::Locker locker { owner->cellLock() };
+    m_entries.append({});
+    m_entries.last().promise.set(vm, owner, promise);
+    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
+}
+
+bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
+{
+    WTF::Locker locker { owner->cellLock() };
+    return m_entries.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
+}
+
+void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
+{
+    WTF::Locker locker { owner->cellLock() };
+    promises.ensureCapacity(promises.size() + m_entries.size());
+    rejectionOwners.ensureCapacity(rejectionOwners.size() + m_entries.size());
+    for (Entry& entry : m_entries) {
+        if (entry.promise.get().isCell()) {
+            promises.append(entry.promise.get());
+            rejectionOwners.append(entry.rejectionOwner.get());
+        }
+    }
+    m_entries.clear();
+}
+
+template<typename Visitor>
+void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
+{
+    WTF::Locker locker { owner->cellLock() };
+    for (auto& entry : m_entries) {
+        visitor.append(entry.promise);
+        visitor.append(entry.rejectionOwner);
+    }
+}
+
 void GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]

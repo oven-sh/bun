@@ -3,8 +3,6 @@
 #include <type_traits>
 #include <wtf/Vector.h>
 #include <JavaScriptCore/WriteBarrier.h>
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/ArgList.h>
 
 namespace Bun {
 
@@ -74,62 +72,6 @@ public:
 
 private:
     WTF::Vector<JSC::WriteBarrier<T>> m_list;
-};
-
-/**
- * Promises rejected with no handler, awaiting the end-of-microtasks check, each with
- * whose rejection it is, decided when it happened: a Bun.unsafe.ModuleGraph, or null
- * for the global object's own code. Same locking as WriteBarrierList.
- */
-class PendingRejectionList {
-public:
-    void append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        m_list.append({ JSC::WriteBarrier<JSC::JSPromise>(vm, owner, promise), JSC::WriteBarrier<JSC::JSObject>() });
-        m_list.last().rejectionOwner.setMayBeNull(vm, owner, rejectionOwner);
-    }
-
-    // Move every entry into `promises` / `rejectionOwners` (index-aligned; jsNull() for
-    // the global object's) and clear the backing vector, under one cellLock.
-    void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        promises.ensureCapacity(promises.size() + m_list.size());
-        rejectionOwners.ensureCapacity(rejectionOwners.size() + m_list.size());
-        for (Entry& entry : m_list) {
-            if (auto* promise = entry.promise.get()) {
-                promises.append(promise);
-                rejectionOwners.append(entry.rejectionOwner ? JSC::JSValue(entry.rejectionOwner.get()) : JSC::jsNull());
-            }
-        }
-        m_list.clear();
-    }
-
-    template<typename Visitor>
-    void visit(JSC::JSCell* owner, Visitor& visitor)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        for (auto& entry : m_list) {
-            visitor.append(entry.promise);
-            visitor.append(entry.rejectionOwner);
-        }
-    }
-
-    bool isEmpty() const { return m_list.isEmpty(); }
-
-    bool remove(JSC::JSCell* owner, JSC::JSPromise* promise)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        return m_list.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
-    }
-
-private:
-    struct Entry {
-        JSC::WriteBarrier<JSC::JSPromise> promise;
-        JSC::WriteBarrier<JSC::JSObject> rejectionOwner;
-    };
-    WTF::Vector<Entry> m_list;
 };
 
 }

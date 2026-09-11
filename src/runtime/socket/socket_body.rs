@@ -5061,7 +5061,7 @@ pub mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
-            } else if syscall_str.eql_comptime(b"ssl_write") {
+            } else if syscall_str.eq_ascii(b"ssl_write") {
                 fi::SSL_WRITE
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;

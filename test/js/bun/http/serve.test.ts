@@ -24,6 +24,7 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import http from "node:http";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
@@ -2476,6 +2477,108 @@ it("unix socket connection in Bun.serve", async () => {
   await promise;
   expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nhey");
   connection.end();
+});
+
+// https://github.com/oven-sh/bun/issues/41381
+it("unix socket responds via fetch({unix})", async () => {
+  using dir = tempDir("serve-unix-41381-fetch", {});
+  const unix = join(String(dir), "fetch.sock");
+  using server = Bun.serve({
+    unix,
+    fetch: () => new Response("hello-from-uds"),
+  });
+
+  const res = await fetch("http://localhost/x", { unix });
+  expect(res.status).toBe(200);
+  expect(await res.text()).toBe("hello-from-uds");
+});
+
+// https://github.com/oven-sh/bun/issues/41381
+it("node:http .listen(socketPath) responds via fetch({unix})", async () => {
+  using dir = tempDir("serve-unix-41381-node-http", {});
+  const socketPath = join(String(dir), "node-http.sock");
+  const srv = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end("ok");
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      srv.once("error", reject);
+      srv.listen(socketPath, () => {
+        srv.removeListener("error", reject);
+        resolve();
+      });
+    });
+    const res = await fetch("http://localhost/x", { unix: socketPath });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  } finally {
+    await new Promise<void>(resolve => srv.close(() => resolve()));
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/41381
+it("Bun.listen({unix}) echoes to socket client", async () => {
+  using dir = tempDir("serve-unix-41381-listen", {});
+  const unix = join(String(dir), "listen.sock");
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let received = "";
+  let request = "";
+  let responded = false;
+  let settled = false;
+  const fail = (err: unknown) => {
+    if (!settled) {
+      settled = true;
+      reject(err);
+    }
+  };
+  const listener = Bun.listen({
+    unix,
+    socket: {
+      data(sock, data) {
+        if (responded) {
+          return;
+        }
+        request += data.toString();
+        if (request.includes("ping")) {
+          responded = true;
+          try {
+            sock.write("pong\n");
+          } catch (e) {
+            fail(e);
+          }
+        }
+      },
+      error(_sock, err) {
+        fail(err);
+      },
+    },
+  });
+  try {
+    await using conn = await Bun.connect({
+      unix,
+      socket: {
+        data(_sock, data) {
+          received += data.toString();
+          if (!settled && received.endsWith("pong\n")) {
+            settled = true;
+            resolve(received);
+          }
+        },
+        error(_sock, err) {
+          fail(err);
+        },
+        close(_sock) {
+          fail(new Error("closed before pong"));
+        },
+      },
+    });
+    conn.write("ping");
+    conn.flush();
+    await expect(promise).resolves.toBe("pong\n");
+  } finally {
+    listener.stop();
+  }
 });
 
 it("unix socket connection throws an error on a bad domain without crashing", async () => {

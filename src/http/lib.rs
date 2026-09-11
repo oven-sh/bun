@@ -1596,6 +1596,7 @@ impl<'a> HTTPClient<'a> {
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
     /// build the result, reset request state, and dispatch the callback.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
+        self.report_body_decoded_before_failure();
         let callback = self.result_callback;
         let result = self.to_result();
         self.state.reset();
@@ -1616,6 +1617,39 @@ impl<'a> HTTPClient<'a> {
             self.flags.proxy_tunneling = false;
         }
         callback.run(self.parent_async_http(), result);
+    }
+    /// A read can hold valid body bytes followed by the bytes that fail the
+    /// response (a malformed chunk-size line). A streaming consumer gets the
+    /// body bytes in a progress callback of their own ahead of the failure,
+    /// as it would have had the two arrived in separate reads.
+    fn report_body_decoded_before_failure(&mut self) {
+        let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
+            || self.signals.body_receive_mode.is_some();
+        if !is_streaming
+            || self.state.decoded_body.list.is_empty()
+            || self.state.flags.is_redirect_pending
+        {
+            return;
+        }
+        // An abort or a timeout ends the body where the consumer stands.
+        let fail = match self.state.fail.take() {
+            None => return,
+            Some(
+                fail @ (crate::Error::Aborted
+                | crate::Error::AbortedBeforeConnecting
+                | crate::Error::Timeout),
+            ) => {
+                self.state.fail = Some(fail);
+                return;
+            }
+            Some(fail) => fail,
+        };
+        let mut result = self.to_result();
+        self.state.fail = Some(fail);
+        result.has_more = true;
+        let decoded_body = core::mem::take(&mut self.state.decoded_body);
+        result.body = decoded_body.list.as_slice();
+        self.result_callback.run(self.parent_async_http(), result);
     }
     #[inline]
     fn progress_node_mut(&mut self) -> Option<&mut bun_core::Progress::Node> {
@@ -4621,11 +4655,13 @@ impl<'a> HTTPClient<'a> {
         );
 
         match pret {
-            // Invalid HTTP response body
-            -1 => return Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+            // -2: needs more data.
+            // -1: invalid HTTP response body. The chunks decoded ahead of the
+            // invalid one are body all the same; `fail` reports them to a
+            // streaming consumer before the error.
+            -1 | -2 => {
                 self.report_progress(buffer_len);
+                let mut processed = false;
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming)
                     || self.signals.body_receive_mode.is_some()
@@ -4635,10 +4671,13 @@ impl<'a> HTTPClient<'a> {
                     // Move the
                     // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    processed = self.state.process_body_buffer(buffer_snap, false)?;
+                }
+                if pret == -1 {
+                    return Err(crate::Error::InvalidHTTPResponse);
                 }
 
-                return Ok(false);
+                return Ok(processed);
             }
             // Done
             _ => {
@@ -4695,13 +4734,15 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
         match pret {
-            // Invalid HTTP response body
-            -1 => Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+            // -2: needs more data.
+            // -1: invalid HTTP response body. The chunks decoded ahead of the
+            // invalid one are body all the same; `fail` reports them to a
+            // streaming consumer before the error.
+            -1 | -2 => {
                 self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
+                let mut processed = false;
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming)
                     || self.signals.body_receive_mode.is_some()
@@ -4713,10 +4754,13 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/decoded_body).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    processed = self.state.process_body_buffer(buffer_snap, false)?;
+                }
+                if pret == -1 {
+                    return Err(crate::Error::InvalidHTTPResponse);
                 }
 
-                Ok(false)
+                Ok(processed)
             }
             // Done
             _ => {

@@ -881,14 +881,47 @@ impl FetchTasklet {
         Ok(())
     }
 
+    /// The HTTP thread can report body bytes and then fail before the JS thread runs, so one
+    /// `on_progress_update` sees both. The error must not overtake bytes that arrived before
+    /// it: this run handles the bytes as the progress update they arrived as, and a second run
+    /// on the next task handles the failure (returned here, restored by `cleanup`).
+    fn hold_failure_behind_unseen_body(&mut self) -> Option<http::Error> {
+        let fail = self.result.fail?;
+        if self.scheduled_response_buffer.list.is_empty() {
+            return None;
+        }
+        // Without a head the promise rejects and nothing can read the bytes.
+        if !self.is_waiting_body && self.metadata.is_none() {
+            return None;
+        }
+        // An abort ends the body where the consumer stands.
+        if self.is_waiting_abort
+            || self.abort_reason.has()
+            || self.result.abort_reason().is_some()
+            || self.signal_store.aborted.load(Ordering::Relaxed)
+        {
+            return None;
+        }
+        self.result.fail = None;
+        self.result.has_more = true;
+        Some(fail)
+    }
+
     pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
-        self.has_schedule_callback.store(false, Ordering::Relaxed);
-        let is_done = !self.result.has_more;
+        // Set by `callback` only: this run was posted by the HTTP thread.
+        let posted_by_http_thread = self.has_schedule_callback.swap(false, Ordering::Relaxed);
 
         let vm = self.global_this.bun_vm();
+        let failure_behind_body = if posted_by_http_thread && vm.script_allowed() {
+            self.hold_failure_behind_unseen_body()
+        } else {
+            None
+        };
+        let is_done = !self.result.has_more;
+
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
@@ -910,6 +943,16 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
+            if let Some(fail) = failure_behind_body {
+                // This run consumed the body bytes. The failure is the terminal update again,
+                // and it carries this thread's ref like the task the HTTP thread posted.
+                this.result.fail = Some(fail);
+                this.result.has_more = false;
+                // SAFETY: `vm.event_loop()` is the live JS-thread loop.
+                unsafe {
+                    (*vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut(this)));
+                }
+            }
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
@@ -929,8 +972,9 @@ impl FetchTasklet {
             // start streaming
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
+                // A failure held back for a second run is the terminal update; no run follows.
                 self.mutex.unlock();
-                if is_done {
+                if is_done || failure_behind_body.is_some() {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }

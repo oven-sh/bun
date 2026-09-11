@@ -664,3 +664,79 @@ describe("util.parseEnv", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
   });
 });
+
+describe("util.debuglog", () => {
+  it("exposes an enumerable enabled getter that is false by default", () => {
+    const log = util.debuglog("bb-focus");
+    expect(log.enabled).toBe(false);
+    const desc = Object.getOwnPropertyDescriptor(log, "enabled");
+    expect(desc).toBeDefined();
+    expect(typeof desc.get).toBe("function");
+    expect(desc.enumerable).toBe(true);
+  });
+
+  it("invokes the optional callback once on first log call", () => {
+    let calls = 0;
+    let received;
+    const log = util.debuglog("bb-focus-cb", fn => {
+      calls++;
+      received = fn;
+    });
+    expect(calls).toBe(0);
+    log("once");
+    log("twice");
+    expect(calls).toBe(1);
+    expect(typeof received).toBe("function");
+  });
+
+  it("passes the impl an enumerable enabled getter", () => {
+    let received;
+    const log = util.debuglog("bb-focus-cb-enabled", fn => {
+      received = fn;
+    });
+    log("x");
+    const desc = Object.getOwnPropertyDescriptor(received, "enabled");
+    expect(typeof desc.get).toBe("function");
+    expect(desc.enumerable).toBe(true);
+    expect(received.enabled).toBe(false);
+  });
+
+  it("does not reenter the callback when it logs through the original function", () => {
+    let calls = 0;
+    const log = util.debuglog("bb-focus-reenter", fn => {
+      calls++;
+      log("nested");
+      fn("via-impl");
+    });
+    log("first");
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry the callback if it throws", () => {
+    let calls = 0;
+    const log = util.debuglog("bb-focus-throw", () => {
+      calls++;
+      throw new Error("cb");
+    });
+    expect(() => log("a")).toThrow("cb");
+    log("b");
+    expect(calls).toBe(1);
+  });
+
+  it("enabled is true when NODE_DEBUG matches the section", () => {
+    const proc = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { debuglog } = require("node:util");
+         const log = debuglog("bb-focus");
+         const desc = Object.getOwnPropertyDescriptor(log, "enabled");
+         console.log(JSON.stringify({ enabled: log.enabled, enumerable: desc.enumerable }));`,
+      ],
+      env: { ...bunEnv, NODE_DEBUG: "bb-focus" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(JSON.parse(proc.stdout.toString())).toEqual({ enabled: true, enumerable: true });
+    expect(proc.exitCode).toBe(0);
+  });
+});

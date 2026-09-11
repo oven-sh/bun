@@ -71,13 +71,12 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
+    if (enabled) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
+      debugs[set] = function debug() {
         var msg = lazyInspectModule().format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
@@ -86,6 +85,48 @@ function debuglog(set) {
     }
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  var enabled;
+  // Match Node: replace this wrapper with debuglogImpl before invoking cb, so a
+  // nested log or a throwing callback cannot run cb again.
+  var debug = function () {
+    set = String(set).toUpperCase();
+    enabled = debugEnvRegex.test(set);
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      var callback = cb;
+      cb = undefined;
+      Object.defineProperty(debug, "enabled", {
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      callback(debug);
+    }
+    return debug.$apply(this, arguments);
+  };
+  function logger() {
+    if (enabled === false) {
+      return;
+    }
+    return debug.$apply(this, arguments);
+  }
+  Object.defineProperty(logger, "enabled", {
+    get() {
+      if (enabled === undefined) {
+        set = String(set).toUpperCase();
+        enabled = debugEnvRegex.test(set);
+      }
+      return enabled;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {

@@ -413,6 +413,75 @@ describe("Glob.match", () => {
     expect(new Glob("{a,b},x").match("b,x")).toBeTrue();
   });
 
+  test("`**` that ends a brace branch is a globstar", () => {
+    // A brace group matches one of its branches, so each pattern below must
+    // match exactly what the brace-free patterns in its comment match. The `**`
+    // used to be demoted to a single-segment `*` whenever the byte after it was
+    // the `,` or `}` of the group instead of `/` or the end of the pattern.
+    const cases: [pattern: string, matches: string[], rejects: string[]][] = [
+      // a/** | a/b
+      ["a/{**,b}", ["a/x", "a/x/y", "a/x/y/z", "a/b", "a/b/c", "a/"], ["a", "ab", "c/x/y"]],
+      // a/b | a/**  (branch closed by `}` rather than `,`)
+      ["a/{b,**}", ["a/b", "a/x/y"], ["a", "b/x"]],
+      // a/** | a/   (empty branch)
+      ["a/{**,}", ["a/x/y", "a/"], ["a"]],
+      ["a/{,**}", ["a/x/y", "a/"], ["a"]],
+      // a/** | b    (the `**` follows a `/` inside the branch)
+      ["{a/**,b}", ["a/", "a/x", "a/x/y", "b"], ["a", "b/x", "c/x"]],
+      // ** | b      (the group is the whole pattern)
+      ["{**,b}", ["x", "x/", "x/y/z", "b"], []],
+      // a/**/c | a/b/c
+      ["a/{**,b}/c", ["a/c", "a/x/c", "a/x/y/c", "a/b/c", "a/b/x/c"], ["a/x/y/d", "a/x/y/c/d", "a/bc", "c"]],
+      // test/foo/**/baz | test/bar/baz
+      ["test/{foo/**,bar}/baz", ["test/foo/baz", "test/foo/x/y/baz", "test/bar/baz"], ["test/bar/x/baz", "test/baz"]],
+      // **/c | b/c
+      ["{**,b}/c", ["c", "x/c", "x/y/c", "b/x/c"], ["x/y/d", "cc"]],
+      // a/**/c | a/**/d | a/b/c | a/b/d  (a later group backtracks into the globstar)
+      ["a/{**,b}/{c,d}", ["a/c", "a/d", "a/x/y/c", "a/x/y/d", "a/b/x/d"], ["a/x/y/e", "a/x/y", "a/cd"]],
+      // a/**/* | a/b/*  (the trailing `/*` still needs a non-empty final segment)
+      ["a/{**,b}/*", ["a/x", "a/x/y", "a/b/z"], ["a/x/", "a/", "a"]],
+      // src/**/*.ts | src/lib/*.ts
+      ["src/{**,lib}/*.ts", ["src/a.ts", "src/x/a.ts", "src/x/y/a.ts", "src/lib/a.ts"], ["src/x/y/a.js", "lib/a.ts"]],
+      // x/**/y/** | x/**/y/c | x/b/y/** | x/b/y/c  (two such groups in one pattern)
+      ["x/{**,b}/y/{**,c}", ["x/1/2/y/3/4", "x/y/", "x/y/3", "x/b/y/c", "x/1/y/c/2"], ["x/y", "x/1/z/3"]],
+      // **/**/b | **/a/b  (a globstar before the group)
+      ["**/{**,a}/b", ["b", "x/b", "x/y/b", "x/a/b"], ["x/y/c", "bb"]],
+      // a/c | a/** | a/d  (nested: the `**` ends the inner branch and the outer one)
+      ["a/{c,{**,d}}", ["a/c", "a/d", "a/x/y", "a/"], ["a", "b/x"]],
+      // a/c/e | a/**/e | a/d/e
+      ["a/{c,{**,d}}/e", ["a/e", "a/c/e", "a/x/y/e", "a/c/x/e"], ["a/x/y/f", "a/x/y"]],
+      // a/**/d | a/c/d | a/b/d
+      ["a/{{**,c},b}/d", ["a/d", "a/x/y/d", "a/b/x/d"], ["a/x/y", "a/x/y/e"]],
+      // !(a/** | a/b)
+      ["!a/{**,b}", ["a", "c/x/y"], ["a/x/y", "a/b"]],
+
+      // The group continues with something other than `/`: `a/**x` is not a
+      // whole segment, so the `**` stays a single-segment `*` there.
+      // a/**x | a/bx
+      ["a/{**,b}x", ["a/yx", "a/bx", "a/x"], ["a/y/zx"]],
+      // a/c | a/**x | a/dx  (the inner group closes but the outer branch continues)
+      ["a/{c,{**,d}x}", ["a/c", "a/yx", "a/dx"], ["a/y/zx"]],
+      // a/**c | a/**d | a/bc | a/bd
+      ["a/{**,b}{c,d}", ["a/c", "a/yd", "a/bc"], ["a/x/yc"]],
+      // A `**` that does not start the segment is a `*` no matter what follows it.
+      // a/x** | a/b
+      ["a/{x**,b}", ["a/xy", "a/b"], ["a/x/y"]],
+      // A `,` or `}` outside any brace group is a literal, not the end of a branch.
+      ["**,x", ["a,x"], ["a/b,x"]],
+      ["{a,b}/**,x", ["a/c,x", "b/,x"], ["a/c/d,x", "a/c"]],
+    ];
+
+    for (const [pattern, matches, rejects] of cases) {
+      const glob = new Glob(pattern);
+      for (const path of matches) {
+        expect(glob.match(path), `${JSON.stringify(pattern)} should match ${JSON.stringify(path)}`).toBeTrue();
+      }
+      for (const path of rejects) {
+        expect(glob.match(path), `${JSON.stringify(pattern)} should not match ${JSON.stringify(path)}`).toBeFalse();
+      }
+    }
+  });
+
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
   // pattern matching algorithm wants to deal with single chars, for example
   // using the `[...]` syntax, it tries to match each char in the brackets. With

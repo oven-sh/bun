@@ -28,6 +28,7 @@
 
 #include "HTTPHeaderNames.h"
 #include <utility>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
@@ -42,65 +43,83 @@ namespace WebCore {
 // behavior.
 String lowercaseHeaderName(const String&);
 
-// One header's value. From the second value on it lives in a StringBuilder, so N appends copy O(N) bytes.
+// One header's value, in one word: a StringImpl*, or past builderThreshold a StringBuilder* tagged in bit 0, so N appends copy O(N) bytes.
 class HeaderValue {
 public:
     HeaderValue() = default;
     HeaderValue(const String& value)
-        : m_string(value)
+        : HeaderValue(String { value })
     {
     }
     HeaderValue(String&& value)
-        : m_string(WTF::move(value))
+        : m_bits(reinterpret_cast<uintptr_t>(value.releaseImpl().leakRef()))
     {
     }
     HeaderValue(const HeaderValue& other)
-        : m_string(other.string())
+        : HeaderValue(other.string())
     {
     }
-    HeaderValue(HeaderValue&&) = default;
+    HeaderValue(HeaderValue&& other)
+        : m_bits(std::exchange(other.m_bits, 0))
+    {
+    }
     HeaderValue& operator=(const HeaderValue& other) { return *this = HeaderValue(other); }
-    HeaderValue& operator=(HeaderValue&&) = default;
+    HeaderValue& operator=(HeaderValue&& other)
+    {
+        HeaderValue moved { WTF::move(other) };
+        std::swap(m_bits, moved.m_bits);
+        return *this;
+    }
+    ALWAYS_INLINE ~HeaderValue()
+    {
+        if (m_bits & builderTag) [[unlikely]]
+            deleteBuilder();
+        else if (auto* impl = reinterpret_cast<StringImpl*>(m_bits))
+            impl->deref();
+    }
 
-    const String& string() const LIFETIME_BOUND { return m_builder ? m_builder->toStringPreserveCapacity() : m_string; }
-    unsigned length() const { return m_builder ? m_builder->length() : m_string.length(); }
+    ALWAYS_INLINE String string() const
+    {
+        if (m_bits & builderTag) [[unlikely]]
+            return builderString();
+        return reinterpret_cast<StringImpl*>(m_bits);
+    }
 
     // False, with nothing stored, when the combined value would pass String::MaxLength.
-    bool append(ASCIILiteral delimiter, const String& value)
+    ALWAYS_INLINE bool append(ASCIILiteral delimiter, const String& value)
     {
-        if (static_cast<uint64_t>(length()) + delimiter.length() + value.length() > String::MaxLength)
-            return false;
-
-        if (!m_builder) {
-            m_builder = makeUnique<StringBuilder>();
-            m_builder->append(as8Bit(m_string));
-            m_string = {};
+        if (!(m_bits & builderTag)) [[likely]] {
+            String current { reinterpret_cast<StringImpl*>(m_bits) };
+            if (static_cast<uint64_t>(current.length()) + delimiter.length() + value.length() < builderThreshold) {
+                *this = HeaderValue(makeString(WTF::move(current), delimiter, value));
+                return true;
+            }
         }
-        m_builder->append(delimiter, as8Bit(value));
-        return true;
+        return appendToBuilder(delimiter, value);
     }
-
-    size_t memoryCost() const
-    {
-        if (!m_builder)
-            return m_string.sizeInBytes();
-        return sizeof(StringBuilder) + m_builder->capacity() * (m_builder->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t));
-    }
+    size_t memoryCost() const;
 
     bool operator==(const HeaderValue& other) const { return string() == other.string(); }
 
 private:
-    // Values are Latin-1 (isValidHTTPHeaderValue). A 16-bit builder can grow to a capacity StringImpl refuses, which aborts.
-    static String as8Bit(const String& value)
+    // Below this length a join is one exact-fit makeString, as before, so a short value never pays for a builder.
+    static constexpr unsigned builderThreshold = 4096;
+    static constexpr uintptr_t builderTag = 1;
+    static_assert(alignof(StringImpl) > builderTag && alignof(StringBuilder) > builderTag);
+
+    explicit HeaderValue(std::unique_ptr<StringBuilder>&& builder)
+        : m_bits(reinterpret_cast<uintptr_t>(builder.release()) | builderTag)
     {
-        if (value.is8Bit())
-            return value;
-        return StringImpl::create8BitIfPossible(value.span16());
     }
 
-    String m_string;
-    std::unique_ptr<StringBuilder> m_builder;
+    StringBuilder* builder() const { return (m_bits & builderTag) ? reinterpret_cast<StringBuilder*>(m_bits & ~builderTag) : nullptr; }
+    NEVER_INLINE void deleteBuilder();
+    NEVER_INLINE String builderString() const;
+    NEVER_INLINE bool appendToBuilder(ASCIILiteral delimiter, const String& value);
+
+    uintptr_t m_bits { 0 };
 };
+static_assert(sizeof(HeaderValue) == sizeof(String), "an entry of HTTPHeaderMap must not grow");
 
 class HTTPHeaderMap {
 public:
@@ -219,8 +238,12 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    // Every add function returns false, with nothing stored, when the combined value would pass String::MaxLength.
-    WEBCORE_EXPORT bool add(const String& name, const String& value);
+    // ValueTooLong: the combined value would pass String::MaxLength, and nothing is stored.
+    enum class AddResult : uint8_t {
+        Stored,
+        ValueTooLong,
+    };
+    WEBCORE_EXPORT AddResult add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
@@ -228,7 +251,7 @@ public:
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
     void set(HTTPHeaderName, const String& value);
-    bool add(HTTPHeaderName, const String& value);
+    AddResult add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -280,8 +303,8 @@ public:
     }
 
     void setUncommonHeader(const String& name, const String& value);
-    bool addUncommonHeader(const String& name, const String& value);
-    bool addUncommonHeaderCloneName(const StringView name, const String& value);
+    AddResult addUncommonHeader(const String& name, const String& value);
+    AddResult addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;

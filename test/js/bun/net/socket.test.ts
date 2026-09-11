@@ -4783,6 +4783,7 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
       stdout: "pipe",
       stderr: "pipe",
     });
+    const stderrText = proc.stderr.text();
     let stdout = "";
     let reset = false;
     for await (const chunk of proc.stdout) {
@@ -4795,7 +4796,7 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
         await Bun.write(resetDoneFile, "");
       }
     }
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     const lines = stdout.trim().split("\n");
     // Debug builds may write benign diagnostics to stderr, so it is only shown
     // when the fixture failed.

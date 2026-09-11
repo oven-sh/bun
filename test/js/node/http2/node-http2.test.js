@@ -6407,6 +6407,7 @@ it("a session over TLS whose peer reset is first seen by a write ends without a 
       stdout: "pipe",
       stderr: "pipe",
     });
+    const stderrText = proc.stderr.text();
     let stdout = "";
     let reset = false;
     for await (const chunk of proc.stdout) {
@@ -6419,7 +6420,7 @@ it("a session over TLS whose peer reset is first seen by a write ends without a 
         fs.writeFileSync(resetDoneFile, "");
       }
     }
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     const lines = stdout.trim().split("\n");
     const state = JSON.parse(lines[lines.length - 1]);
     // Debug builds may write benign diagnostics to stderr, so it is only shown

@@ -1,6 +1,9 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { once } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -917,5 +920,87 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// A framework-route request that is deferred (SavedRequest in
+// DeferredRequest::ServerHandler) and then aborted by the client must release
+// its RequestContext refcount so `pending_requests` reaches zero and the
+// server can deinit. The harness's gracefulExit() asserts deinit fires.
+devTest("client disconnect on a deferred framework route releases the RequestContext", {
+  framework: minimalFramework,
+  // The plugin makes bundling observable: it writes `.entered` once the
+  // route's bundle has started (i.e. the request has been deferred) and then
+  // blocks until `.unblock` appears, giving the test a deterministic window to
+  // close the socket mid-bundle.
+  pluginFile: `
+    import * as fs from 'node:fs';
+    import * as path from 'node:path';
+    export default [
+      {
+        name: 'gate',
+        setup(build) {
+          build.onLoad({ filter: /gate\\.ts$/ }, async (args) => {
+            const dir = path.dirname(args.path);
+            fs.writeFileSync(path.join(dir, 'gate.entered'), '');
+            while (!fs.existsSync(path.join(dir, 'gate.unblock'))) {
+              await new Promise(r => setTimeout(r, 5));
+            }
+            return { contents: 'export const gate = 1;', loader: 'ts' };
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "gate.ts": `throw new Error('plugin should have replaced this');`,
+    "routes/index.ts": `
+      import { gate } from '../gate.ts';
+      export default function () {
+        return new Response('gate: ' + gate);
+      }
+    `,
+  },
+  async test(dev) {
+    const entered = dev.join("gate.entered");
+    const unblock = dev.join("gate.unblock");
+
+    // Raw TCP so closing the socket is an unambiguous client abort.
+    const sock = net.connect(dev.port, "127.0.0.1");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        sock.once("connect", resolve);
+        sock.once("error", reject);
+      });
+      sock.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${dev.port}\r\nConnection: keep-alive\r\n\r\n`);
+
+      // Wait until the bundler has actually picked up gate.ts: the request has
+      // reached the server and is parked in the deferred list.
+      const deadline = Date.now() + 5_000 * WAIT_MULTIPLIER;
+      while (!fs.existsSync(entered)) {
+        if (Date.now() > deadline) throw new Error("plugin gate never entered");
+        await new Promise(r => setTimeout(r, 5));
+      }
+
+      // Client goes away mid-bundle → RequestContext::on_abort runs the
+      // DeferredRequest abort callback and drops the SavedRequest.
+      sock.destroy();
+      await once(sock, "close");
+    } finally {
+      sock.destroy();
+    }
+    // Force the server's event loop to turn so the FIN is processed (and
+    // DeferredRequest::abort has run) before the plugin gate is released.
+    // /_dev_server_test_set is a plain route added by the harness bootstrap,
+    // so it returns without touching the bundler.
+    await dev.fetch("/_dev_server_test_set");
+
+    // Let bundling finish so the deferred list is drained (Handler is now
+    // Aborted; the drain loop skips it).
+    fs.writeFileSync(unblock, "");
+    await dev.fetch("/").equals("gate: 1");
+
+    // gracefulExit() at the end of this test sends `stop(true)` and polls
+    // getDevServerDeinitCount(); if pending_requests is stuck at 1 the
+    // server never deinits and the harness throws.
   },
 });

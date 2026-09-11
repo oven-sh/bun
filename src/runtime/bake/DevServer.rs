@@ -2612,7 +2612,7 @@ impl DevServer {
         // SAFETY: `self` is live; `framework_bundle` points into
         // `self.route_bundles[route_bundle_index].data`. Raw-ptr receiver — see
         // Note on `compute_arguments_for_framework_request`.
-        let args = unsafe {
+        let args = match unsafe {
             Self::compute_arguments_for_framework_request(
                 self,
                 route_bundle_index,
@@ -2620,7 +2620,16 @@ impl DevServer {
                 params_js_value,
                 true,
             )
-        }?;
+        } {
+            Ok(a) => a,
+            Err(e) => {
+                // `Saved.ctx` is `Copy`; explicit deinit so the pool slot releases.
+                if let SavedRequestUnion::Saved(mut saved) = req {
+                    saved.deinit();
+                }
+                return Err(e);
+            }
+        };
 
         self.server
             .as_ref()
@@ -3069,7 +3078,7 @@ impl DeferredRequest {
         );
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
-            Handler::ServerHandler(saved) => {
+            Handler::ServerHandler(mut saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
@@ -3078,8 +3087,8 @@ impl DeferredRequest {
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Note: saved.js_request (jsc::Strong) drops at end of arm
-                drop(saved);
+                // `ctx` is `Copy`; explicit deinit so `on_abort`'s deref reaches 0.
+                saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the

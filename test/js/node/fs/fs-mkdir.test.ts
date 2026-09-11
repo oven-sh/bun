@@ -305,6 +305,57 @@ describe("fs.mkdir - return values", () => {
   });
 });
 
+// The recursive mkdir creates the directories under their names without the
+// trailing separators (mkdir(2) of `link/` creates the link's target on macOS
+// and FreeBSD), but everything it reports keeps the path as spelled, like node.
+// Skipped on Windows, where the path is normalized before the walk.
+describe.skipIf(isWindows)("fs.mkdir - recursive with a trailing separator", () => {
+  let tmpdir: string;
+
+  beforeEach(() => {
+    tmpdir = getTmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpdir, { recursive: true, force: true });
+  });
+
+  it("returns the path as spelled when it is the directory created", () => {
+    expect(fs.mkdirSync(`${tmpdir}/a/`, { recursive: true })).toBe(`${tmpdir}/a/`);
+    expect(fs.mkdirSync(`${tmpdir}/b//`, { recursive: true })).toBe(`${tmpdir}/b//`);
+    expect(fs.readdirSync(tmpdir).sort()).toEqual(["a", "b"]);
+  });
+
+  it("returns the first directory created when parents are created as well", async () => {
+    expect(fs.mkdirSync(`${tmpdir}/c/d/`, { recursive: true })).toBe(`${tmpdir}/c`);
+    expect(await fs.promises.mkdir(`${tmpdir}/e/f/`, { recursive: true })).toBe(`${tmpdir}/e`);
+    expect(fs.readdirSync(path.join(tmpdir, "c"))).toEqual(["d"]);
+    expect(fs.readdirSync(path.join(tmpdir, "e"))).toEqual(["f"]);
+  });
+
+  it("returns undefined when the directory already exists", () => {
+    fs.mkdirSync(path.join(tmpdir, "existing"));
+    expect(fs.mkdirSync(`${tmpdir}/existing/`, { recursive: true })).toBeUndefined();
+  });
+
+  // Before the trailing separator was dropped from the name given to mkdir(2),
+  // this created `missing` on macOS and FreeBSD. The code is EEXIST until the
+  // walk reports the stat error for an entry it cannot follow (node: ENOENT).
+  it("fails on a dangling symlink and creates nothing", async () => {
+    fs.symlinkSync("missing", path.join(tmpdir, "dangling"));
+
+    for (const pathname of [`${tmpdir}/dangling/`, `${tmpdir}/dangling//`]) {
+      const err = await fs.promises.mkdir(pathname, { recursive: true }).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toMatchObject({ syscall: "mkdir", path: pathname });
+      expect(["EEXIST", "ENOENT"]).toContain(err.code);
+    }
+    expect(fs.readdirSync(tmpdir)).toEqual(["dangling"]);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/34413
 describe.skipIf(!isWindows)("fs.mkdir - recursive with ReadOnly attribute (Windows)", () => {
   let tmpdir: string;

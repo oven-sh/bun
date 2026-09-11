@@ -1910,39 +1910,58 @@ export function textLockfile(version: number, pkgs: any): string {
 }
 
 export class VerdaccioRegistry {
-  port: number;
+  #port: number | undefined;
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
     this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
     this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
   }
 
+  /** The port verdaccio is listening on. Only known once `start()` has resolved. */
+  get port(): number {
+    if (this.#port === undefined) {
+      throw new Error("VerdaccioRegistry.port is not known until start() has resolved");
+    }
+    return this.#port;
+  }
+
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
-    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
-    // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
+    // The fixture listens on port 0 and reports the port the kernel handed it, so there
+    // is no port picked here that another test file, a leftover registry or an outgoing
+    // connection could already be holding.
+    const fixture = join(import.meta.dir, "cli", "install", "registry", "verdaccio-fixture.ts");
+    this.process = fork(fixture, [this.configPath], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",
+        // Exit together with the test process, whether or not stop() ran.
+        BUN_FEATURE_FLAG_NO_ORPHANS: "1",
       },
     });
+
+    // A failed startup is explained partly by verdaccio's logger, which writes to
+    // stdout, and partly by the fixture's uncaught error on stderr, so collect both
+    // until start() settles and put them in the rejection.
+    let startupOutput = "";
+    const collectStartupOutput = (data: Buffer) => {
+      startupOutput += data;
+    };
+    this.process.stdout?.on("data", collectStartupOutput);
+    this.process.stderr?.on("data", collectStartupOutput);
 
     this.process.stderr?.on("data", data => {
       console.error(`[verdaccio] stderr: ${data}`);
     });
 
-    const started = Promise.withResolvers();
+    const started = Promise.withResolvers<number>();
 
     this.process.on("error", error => {
       console.error(`Failed to start verdaccio: ${error}`);
@@ -1957,13 +1976,30 @@ export class VerdaccioRegistry {
       }
     });
 
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
+    // "close" rather than "exit": it fires once stdout/stderr have been read to the
+    // end, so the error carries everything verdaccio printed.
+    this.process.on("close", (code, signal) => {
+      started.reject(
+        new Error(
+          `Verdaccio exited with code ${code} and signal ${signal} before it started listening\n${startupOutput}`,
+        ),
+      );
+    });
+
+    this.process.on("message", (message: { verdaccio_port?: number }) => {
+      if (typeof message.verdaccio_port === "number") {
+        started.resolve(message.verdaccio_port);
       }
     });
 
-    await started.promise;
+    try {
+      this.#port = await started.promise;
+    } finally {
+      // Leave stdout unread from here on, as before: a registry serves thousands of
+      // requests per test file and logs every one of them.
+      this.process.stdout?.off("data", collectStartupOutput).pause();
+      this.process.stderr?.off("data", collectStartupOutput);
+    }
   }
 
   registryUrl() {

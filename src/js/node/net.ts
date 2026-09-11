@@ -271,8 +271,14 @@ function destroyNT(self, err) {
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
-  if (self[kupgraded] === connection) self.destroy();
+  if (self[kupgraded] !== connection) return;
+  // The stream-level engine reads its transport with no backpressure, so the
+  // transport can close after the peer's EOF with plaintext still unread.
+  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self.destroy);
+  else self.destroy();
 }
+// Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts
+// a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
@@ -2037,11 +2043,11 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
+          destroyWhenUpgradedCloses(this, connection);
           connection.on("data", events[0]);
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2090,11 +2096,11 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
+                destroyWhenUpgradedCloses(this, connection);
                 connection.on("data", events[0]);
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                destroyWhenUpgradedCloses(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2396,11 +2402,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
+    destroyWhenUpgradedCloses(this, connection);
     connection.on("data", events[0]);
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
-    destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2426,11 +2432,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
+      destroyWhenUpgradedCloses(this, connection);
       connection.on("data", events[0]);
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
-      destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;

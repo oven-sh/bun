@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
@@ -1183,10 +1184,44 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
         return total;
       })();
 
+      const closed = once(client, "close");
       expect(await Promise.race([read, failed.promise])).toBe(payload.length);
-      client.destroy();
+      // The transport is gone, so once the data was read the socket closes on
+      // its own, even though a wrap over a Duplex is half-open.
+      await Promise.race([closed, failed.promise]);
+      expect(client.destroyed).toBe(true);
       server.destroy();
     });
+  });
+
+  it("a transport destroyed before the engine starts leaves no native socket behind", async () => {
+    // The queued engine start has to see that close. An engine started for a
+    // transport that is gone is never closed, and it keeps the native socket,
+    // and through it the TLSSocket, strongly referenced for good.
+    const nativeSockets = () => heapStats().objectTypeCounts.TLSSocket || 0;
+    Bun.gc(true);
+    const baseline = nativeSockets();
+    const count = 20;
+    await (async () => {
+      const closes: Promise<unknown>[] = [];
+      for (let i = 0; i < count; i++) {
+        const transport = makeTransport();
+        const socket =
+          i % 2 === 0
+            ? tls.connect({ socket: transport, rejectUnauthorized: false })
+            : new TLSSocket(transport, serverContext());
+        closes.push(once(socket, "close"));
+        transport.destroy();
+      }
+      await Promise.all(closes);
+    })();
+    let alive = count;
+    for (let i = 0; i < 10 && alive > count / 2; i++) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      alive = nativeSockets() - baseline;
+    }
+    expect(alive).toBeLessThanOrEqual(count / 2);
   });
 });
 

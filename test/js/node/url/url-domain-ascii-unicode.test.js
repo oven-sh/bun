@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 import url from "node:url";
 
 const pairs = [
@@ -97,6 +99,74 @@ describe("url.domainToUnicode", () => {
   for (const [input, expected] of invalids) {
     test(`-> '${input}' is '${expected}'`, () => {
       expect(url.domainToASCII(input)).toEqual(expected);
+    });
+  }
+});
+
+// The host ends at the first '/', '?', '#' or '\\', whichever comes first.
+test("the host stops at the first path, query, fragment or backslash terminator", () => {
+  const inputs = [
+    "example.com/path",
+    "example.com?q#h",
+    "example.com#h?q/p",
+    "example.com\\x",
+    "a?b/c#d\\e",
+    "a\\b?c",
+    "EXAMPLE.com/",
+    "ü.com/ü",
+    "xn--tda.com?ü",
+    "/x",
+    "?x",
+    "#",
+    "\\",
+  ];
+  expect(inputs.map(input => [url.domainToASCII(input), url.domainToUnicode(input)])).toEqual([
+    ["example.com", "example.com"],
+    ["example.com", "example.com"],
+    ["example.com", "example.com"],
+    ["example.com", "example.com"],
+    ["a", "a"],
+    ["a", "a"],
+    ["example.com", "example.com"],
+    ["xn--tda.com", "ü.com"],
+    ["xn--tda.com", "ü.com"],
+    ["", ""],
+    ["", ""],
+    ["", ""],
+    ["", ""],
+  ]);
+});
+
+// Both functions parse the host as "ws://<host>/". With a host near 2^31-1 characters that
+// URL does not fit in a string, and building it used to abort the process in
+// WTF::makeString. The child commits ~2.2GB.
+describe.skipIf(totalmem() < 8 * 1024 * 1024 * 1024)("a host too long for the URL parse throws", () => {
+  for (const fn of ["domainToASCII", "domainToUnicode"]) {
+    test(`url.${fn}`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const host = "a".repeat(2 ** 31 - 5);
+            try {
+              const result = require("node:url").${fn}(host);
+              console.log("returned", result.length);
+            } catch (e) {
+              console.log("threw", e.name, e.message);
+            }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "threw RangeError Out of memory\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   }
 });

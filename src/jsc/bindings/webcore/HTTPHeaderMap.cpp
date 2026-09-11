@@ -75,6 +75,49 @@ String lowercaseHeaderName(const String& name)
     return result;
 }
 
+// Values are Latin-1 (isValidHTTPHeaderValue). A 16-bit builder can grow to a capacity StringImpl refuses, which aborts.
+static String as8Bit(const String& value)
+{
+    if (value.is8Bit())
+        return value;
+    return StringImpl::create8BitIfPossible(value.span16());
+}
+
+void HeaderValue::deleteBuilder()
+{
+    delete builder();
+}
+
+String HeaderValue::builderString() const
+{
+    return builder()->toStringPreserveCapacity();
+}
+
+bool HeaderValue::appendToBuilder(ASCIILiteral delimiter, const String& value)
+{
+    auto* builder = this->builder();
+    String current = builder ? String() : string();
+    if (static_cast<uint64_t>(builder ? builder->length() : current.length()) + delimiter.length() + value.length() > String::MaxLength)
+        return false;
+
+    if (!builder) {
+        auto promoted = makeUnique<StringBuilder>();
+        promoted->append(as8Bit(current));
+        builder = promoted.get();
+        *this = HeaderValue(WTF::move(promoted));
+    }
+    builder->append(delimiter, as8Bit(value));
+    return true;
+}
+
+size_t HeaderValue::memoryCost() const
+{
+    if (auto* builder = this->builder())
+        return sizeof(StringBuilder) + builder->capacity() * (builder->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t));
+    auto* impl = reinterpret_cast<StringImpl*>(m_bits);
+    return impl ? impl->length() * (impl->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)) : 0;
+}
+
 HTTPHeaderMap::HTTPHeaderMap()
 {
 }
@@ -137,19 +180,19 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
         m_uncommonHeaders[index].value = value;
 }
 
-bool HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
+HTTPHeaderMap::AddResult HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound) {
         m_uncommonHeaders.append(UncommonHeader { name, value });
-        return true;
+        return AddResult::Stored;
     }
-    return m_uncommonHeaders[index].value.append(", "_s, value);
+    return m_uncommonHeaders[index].value.append(", "_s, value) ? AddResult::Stored : AddResult::ValueTooLong;
 }
 
-bool HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
+HTTPHeaderMap::AddResult HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -159,12 +202,12 @@ bool HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const Stri
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
-        return true;
+        return AddResult::Stored;
     }
-    return m_uncommonHeaders[index].value.append(", "_s, value);
+    return m_uncommonHeaders[index].value.append(", "_s, value) ? AddResult::Stored : AddResult::ValueTooLong;
 }
 
-bool HTTPHeaderMap::add(const String& name, const String& value)
+HTTPHeaderMap::AddResult HTTPHeaderMap::add(const String& name, const String& value)
 {
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
@@ -274,11 +317,11 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
     });
 }
 
-bool HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
+HTTPHeaderMap::AddResult HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
         m_setCookieHeaders.append(value);
-        return true;
+        return AddResult::Stored;
     }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
@@ -286,9 +329,9 @@ bool HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
     });
     if (index == notFound) {
         m_commonHeaders.append(CommonHeader { name, value });
-        return true;
+        return AddResult::Stored;
     }
-    return m_commonHeaders[index].value.append(name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
+    return m_commonHeaders[index].value.append(name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value) ? AddResult::Stored : AddResult::ValueTooLong;
 }
 
 } // namespace WebCore

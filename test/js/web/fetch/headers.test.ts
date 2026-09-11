@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { jscDescribe } from "bun:jsc";
 import { isDebug, withoutAggressiveGC } from "harness";
 
 beforeAll(() => {
@@ -261,90 +262,92 @@ describe("Headers", () => {
     // Appending to a name that already has a value used to rebuild the whole
     // combined value with makeString(), so N appends copied O(N^2) bytes:
     // 200,000 appends took 1.8s and 400,000 took 9.4s on a release build, where
-    // Node takes 0.5s for 400,000. The blocks below cover both halves of the
-    // fix: the combined value is still exactly the same string, and the cost of
-    // producing it is now linear.
+    // Node takes 0.5s for 400,000. A combined value under 4 KB is still one
+    // exact-fit string. Past that it moves into a builder that grows in place.
+    // Every case below runs in both states, and the last one measures the cost.
     describe("with a name that repeats", () => {
-      describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
-        const delimiter = name === "cookie" ? "; " : ", ";
-
-        test("2000 appends join in order", () => {
+      const COUNT = 100;
+      describe.each([
+        ["under 4 KB", "v"],
+        ["past 4 KB", Buffer.alloc(100, "v").toString()],
+      ])("combined value %s", (_, unit) => {
+        const valueAt = (i: number) => `${unit}${i}`;
+        const joined = (count: number, delimiter = ", ") =>
+          Array.from({ length: count }, (_, i) => valueAt(i)).join(delimiter);
+        const filled = (name = "x-repeated") => {
           const headers = new Headers();
-          const values: string[] = [];
-          for (let i = 0; i < 2000; i++) {
-            values.push(`v${i}`);
-            headers.append(name, `v${i}`);
-          }
-          expect(headers.get(name)).toBe(values.join(delimiter));
+          for (let i = 0; i < COUNT; i++) headers.append(name, valueAt(i));
+          return headers;
+        };
+
+        describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
+          const delimiter = name === "cookie" ? "; " : ", ";
+
+          test("appends join in order", () => {
+            expect(filled(name).get(name)).toBe(joined(COUNT, delimiter));
+          });
+
+          test("reading between appends does not change the result", () => {
+            const headers = new Headers();
+            const snapshots: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              headers.append(name, valueAt(i));
+              // Each read hands out the combined value so far. A later append
+              // must not edit a string that was already handed out.
+              snapshots.push(headers.get(name)!);
+            }
+            expect(snapshots).toEqual(Array.from({ length: COUNT }, (_, i) => joined(i + 1, delimiter)));
+          });
         });
 
-        test("reading between appends does not change the result", () => {
-          const headers = new Headers();
-          const values: string[] = [];
-          const snapshots: string[] = [];
-          for (let i = 0; i < 200; i++) {
-            values.push(`v${i}`);
-            headers.append(name, `v${i}`);
-            // Each read hands out the combined value so far. A later append
-            // must not edit a string that was already handed out.
-            snapshots.push(headers.get(name)!);
-          }
-          expect(snapshots.at(-1)).toBe(values.join(delimiter));
-          expect(snapshots[0]).toBe("v0");
-          expect(snapshots[99]).toBe(values.slice(0, 100).join(delimiter));
+        test("set() after appends replaces the combined value", () => {
+          const headers = filled();
+          headers.set("x-repeated", "only");
+          expect(headers.get("x-repeated")).toBe("only");
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe("only, next");
         });
-      });
 
-      test("set() after appends replaces the combined value", () => {
-        const headers = new Headers();
-        for (let i = 0; i < 100; i++) headers.append("x-repeated", `v${i}`);
-        headers.set("x-repeated", "only");
-        expect(headers.get("x-repeated")).toBe("only");
-        headers.append("x-repeated", "next");
-        expect(headers.get("x-repeated")).toBe("only, next");
-      });
+        test("delete() after appends drops the header", () => {
+          const headers = filled();
+          headers.delete("x-repeated");
+          expect(headers.has("x-repeated")).toBe(false);
+          expect(headers.get("x-repeated")).toBeNull();
+        });
 
-      test("delete() after appends drops the header", () => {
-        const headers = new Headers();
-        for (let i = 0; i < 100; i++) headers.append("x-repeated", `v${i}`);
-        headers.delete("x-repeated");
-        expect(headers.has("x-repeated")).toBe(false);
-        expect(headers.get("x-repeated")).toBeNull();
-      });
+        test("a copy does not change when the original keeps appending", () => {
+          const original = filled();
+          const copy = new Headers(original);
+          original.append("x-repeated", "c");
+          expect(copy.get("x-repeated")).toBe(joined(COUNT));
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+          copy.append("x-repeated", "d");
+          expect(copy.get("x-repeated")).toBe(`${joined(COUNT)}, d`);
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+        });
 
-      test("a copy does not change when the original keeps appending", () => {
-        const original = new Headers();
-        original.append("x-repeated", "a");
-        original.append("x-repeated", "b");
-        const copy = new Headers(original);
-        original.append("x-repeated", "c");
-        expect(copy.get("x-repeated")).toBe("a, b");
-        expect(original.get("x-repeated")).toBe("a, b, c");
-        copy.append("x-repeated", "d");
-        expect(copy.get("x-repeated")).toBe("a, b, d");
-        expect(original.get("x-repeated")).toBe("a, b, c");
-      });
+        test("iteration and toJSON report the combined value", () => {
+          const headers = filled();
+          expect([...headers]).toEqual([["x-repeated", joined(COUNT)]]);
+          expect(headers.toJSON()).toEqual({ "x-repeated": joined(COUNT) });
+        });
 
-      test("iteration and toJSON report the combined value", () => {
-        const headers = new Headers();
-        for (let i = 0; i < 50; i++) headers.append("x-repeated", `v${i}`);
-        const expected = Array.from({ length: 50 }, (_, i) => `v${i}`).join(", ");
-        expect([...headers]).toEqual([["x-repeated", expected]]);
-        expect(headers.toJSON()).toEqual({ "x-repeated": expected });
-      });
-
-      // A Latin-1 value can arrive in a 16-bit string. Appending a code unit
-      // above 0xFF and slicing it off again forces that representation.
-      test("values in 16-bit strings combine with values in 8-bit strings", () => {
-        const to16 = (s: string) => (s + "\u0100").slice(0, -1);
-        for (const first of ["caf\u00e9", to16("caf\u00e9")]) {
-          const headers = new Headers();
-          headers.append("x-repeated", first);
-          headers.append("x-repeated", to16("th\u00e9"));
-          headers.append("x-repeated", "latte");
-          headers.append("x-repeated", to16("\u00ff"));
-          expect(headers.get("x-repeated")).toBe("caf\u00e9, th\u00e9, latte, \u00ff");
-        }
+        // A Latin-1 value can arrive in a 16-bit string. A UTF-16 round trip
+        // forces that storage, and the first assertion proves that it did.
+        test("values in 16-bit strings combine with values in 8-bit strings", () => {
+          const wide = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+          expect(jscDescribe(wide(`${unit}caf\u00e9`))).toContain("8Bit:(0)");
+          for (const wideFirst of [false, true]) {
+            const headers = new Headers();
+            const values: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              const value = `${unit}caf\u00e9${i}`;
+              values.push(value);
+              headers.append("x-repeated", (i % 2 === 0) === wideFirst ? wide(value) : value);
+            }
+            expect(headers.get("x-repeated")).toBe(values.join(", "));
+          }
+        });
       });
 
       // set() is the baseline. It makes the same number of calls with the same

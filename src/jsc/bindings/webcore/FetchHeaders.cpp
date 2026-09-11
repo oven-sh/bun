@@ -104,7 +104,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
         if (!canWriteResult.releaseReturnValue())
             return {};
 
-        if (!headers.add(headerName, normalizedValue))
+        if (headers.add(headerName, normalizedValue) == HTTPHeaderMap::AddResult::ValueTooLong)
             return Exception { OutOfMemoryError };
         return {};
     }
@@ -115,7 +115,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.addUncommonHeader(name, normalizedValue))
+    if (headers.addUncommonHeader(name, normalizedValue) == HTTPHeaderMap::AddResult::ValueTooLong)
         return Exception { OutOfMemoryError };
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
@@ -133,10 +133,10 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    bool stored = header.keyAsHTTPHeaderName
+    auto result = header.keyAsHTTPHeaderName
         ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
         : headers.add(header.key, header.value);
-    if (!stored)
+    if (result == HTTPHeaderMap::AddResult::ValueTooLong)
         return Exception { OutOfMemoryError };
 
     return {};

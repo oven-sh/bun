@@ -1943,6 +1943,35 @@ it.skipIf(!nodeExe())(
   },
 );
 
+it("tls.connect({ socket }) closes when a 'connect' listener destroys the transport before the upgrade", async () => {
+  const accepted: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    accepted.push(socket);
+    socket.on("error", () => {});
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    raw.on("error", () => {});
+    // Registered first, so it runs before the listener that upgrades the socket.
+    raw.once("connect", () => raw.destroy());
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    client.on("error", () => {});
+    const events: string[] = [];
+    client.on("finish", () => events.push("finish"));
+    client.end();
+    await new Promise<void>(resolve => client.once("close", () => resolve()));
+    expect({ events, destroyed: client.destroyed, transportDestroyed: raw.destroyed }).toEqual({
+      events: [],
+      destroyed: true,
+      transportDestroyed: true,
+    });
+  } finally {
+    for (const socket of accepted) socket.destroy();
+    server.close();
+  }
+});
+
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must
 // still finish its writable side and send the FIN, as node does:

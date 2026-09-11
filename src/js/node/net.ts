@@ -2075,7 +2075,6 @@ Socket.prototype.connect = function connect(...args) {
             // wait to be connected
             this[kUpgradePending] = true;
             const onConnect = () => {
-              connection.removeListener("close", onClose);
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
               // start a handshake on a dead socket.
@@ -2123,6 +2122,8 @@ Socket.prototype.connect = function connect(...args) {
                   throw new Error("Invalid socket");
                 }
               }
+              // destroyWhenUpgradedCloses took over above. An upgrade that threw keeps onClose.
+              connection.removeListener("close", onClose);
               this[kUpgradePending] = false;
               this.emit(kUpgradeAttached);
             };

@@ -1122,6 +1122,25 @@ describe("collection previews stop at the display limit", () => {
     expect(Bun.inspect(new Set(values(100)))).toEndWith("  99,\n}");
     expect(Bun.inspect(new Map(entries(100)).entries())).toEndWith("  [ 99, 99 ],\n}");
   });
+
+  it("the preview of a large Map stays small", () => {
+    const lines = Bun.inspect(new Map(entries(10_000))).split("\n");
+    // The header, 100 entries, the marker and the closing brace.
+    expect(lines.length).toBe(103);
+    expect(lines.slice(-3)).toEqual(["  99: 99,", "  ... 9900 more items", "}"]);
+  });
+
+  it("the limit counts stored entries, not what a size getter reports", () => {
+    class Undercount extends Map {
+      get size() {
+        return 1;
+      }
+    }
+    const lines = Bun.inspect(new Undercount(entries(500))).split("\n");
+    expect(lines.length).toBe(103);
+    // `size` is below the number of entries printed, so the marker has no count.
+    expect(lines.slice(-3)).toEqual(["  99: 99,", "  ... more items", "}"]);
+  });
 });
 
 // The formatter used to drive `Symbol.iterator`, so user code decided when the

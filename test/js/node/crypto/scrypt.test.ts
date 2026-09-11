@@ -93,7 +93,7 @@ test("scrypt copies a password over a WebAssembly.Memory that grows after the ca
       bunExe(),
       "-e",
       /* js */ `
-      const { scrypt, scryptSync } = require("node:crypto");
+      import { scrypt, scryptSync } from "node:crypto";
       const PAGES = 128; // 8 MB
       const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 

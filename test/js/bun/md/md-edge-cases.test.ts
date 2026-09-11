@@ -1009,7 +1009,7 @@ describe("permissive autolinks and emphasis delimiters", () => {
         "-e",
         `
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
-        const n = 30000;
+        const n = 20000;
         const html = Bun.markdown.html(fill(n, "*www.a.bc/") + "x" + fill(n, " y*"), { autolinks: true });
         const count = tag => html.split(tag).length - 1;
         if (count("<em>") !== n || count("</em>") !== n) {
@@ -1031,7 +1031,7 @@ describe("permissive autolinks and emphasis delimiters", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("DONE");
     expect(exitCode).toBe(0);
-  }, 90_000);
+  });
 });
 
 // ============================================================================

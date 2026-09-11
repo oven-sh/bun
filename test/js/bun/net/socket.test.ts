@@ -4463,6 +4463,54 @@ it("a paused socket with a backpressured write still closes when its peer resets
   expect(error?.code).toBe("ECONNRESET");
 });
 
+// end() on a TLS socket sends close_notify and keeps the fd until it has read the peer's reply
+// (the peer's own close_notify, or its FIN). end() also detaches the socket, so a resume() after
+// it does nothing. A socket that was paused at that point kept its reads off for good: it never
+// saw the reply, never reported `close`, and held its fd for the life of the process.
+describe.concurrent.each(["end", "close"] as const)(
+  "tls socket that is paused when it ends, peer answers with %s()",
+  answer => {
+    it("reads the peer's reply and closes", async () => {
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          data(socket) {
+            socket.write("pong");
+            socket.pause();
+            socket.end();
+          },
+          close() {
+            closed.resolve();
+          },
+        },
+      });
+
+      const peerClosed = Promise.withResolvers<void>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        socket: {
+          handshake(socket, success, authorizationError) {
+            if (success) socket.write("ping");
+            else peerClosed.reject(authorizationError ?? new Error("client handshake failed"));
+          },
+          // end() replies with close_notify and a FIN, close() with the FIN alone.
+          data: socket => void socket[answer](),
+          error: (_socket, error) => peerClosed.reject(error),
+          connectError: (_socket, error) => peerClosed.reject(error),
+          close: () => peerClosed.resolve(),
+        },
+      });
+      await peerClosed.promise;
+      await closed.promise;
+    });
+  },
+);
+
 // A close that the event loop initiated passes the read error to close(). usockets
 // reports that error in the platform's own numbering (an errno on POSIX, a WSA code
 // such as WSAECONNRESET = 10054 on Windows) and on_close has to map it: unmapped, a

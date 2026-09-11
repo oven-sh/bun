@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6328,4 +6328,118 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       }
     },
   );
+});
+
+it("a session over TLS whose peer reset is first seen by a write ends without a hang", async () => {
+  // An idle connected https session whose peer resets the connection while the
+  // client's event loop is blocked: the HEADERS write of the next request() is
+  // the first operation that observes the reset, and its send() fails. The TLS
+  // transport reports that failed send to the frame parser, as a plain TCP
+  // transport does. How the reset then reaches JS differs by kernel, in Node as
+  // well: on Linux the failed send() consumes the socket's pending error, the
+  // read side sees a plain EOF, and the request ends clean (rstCode 8); on
+  // Windows the reset stays readable and both the stream and the session get
+  // ECONNRESET. So this asserts what holds everywhere: the stream and the
+  // session both close, no response appears, and any error is the reset.
+  using dir = tempDir("h2-tls-write-sees-reset", {});
+  const resetDoneFile = path.join(String(dir), "reset-done");
+  const fixture = `
+    const http2 = require("node:http2");
+    const fs = require("node:fs");
+    const state = { requested: false, sawResponse: false, streamClosed: false, sessionClosed: false, errors: [] };
+    let reported = false;
+    function report() {
+      if (reported) return;
+      reported = true;
+      fs.writeSync(1, JSON.stringify(state) + "\\n");
+      process.exit(0);
+    }
+    function closed() {
+      if (state.streamClosed && state.sessionClosed) report();
+    }
+    const session = http2.connect("https://127.0.0.1:" + process.env.H2_PEER_PORT, { rejectUnauthorized: false });
+    session.on("error", err => state.errors.push(err.code));
+    session.on("close", () => {
+      state.sessionClosed = true;
+      closed();
+    });
+    session.on("remoteSettings", () => {
+      // Block the loop until the parent has reset the connection. Nothing is
+      // polled in between, so the request's write meets the reset first.
+      fs.writeSync(1, "busy\\n");
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 30000;
+      while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+        Atomics.wait(cell, 0, 0, 5);
+      }
+      const req = session.request({ ":path": "/" });
+      state.requested = true;
+      req.on("response", () => (state.sawResponse = true));
+      req.on("error", err => state.errors.push(err.code));
+      req.on("close", () => {
+        state.streamClosed = true;
+        closed();
+      });
+      req.resume();
+      req.end();
+    });
+    // Report whatever happened if the teardown never completes.
+    setTimeout(report, 20000);
+  `;
+  const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+  // The raw TCP socket under the server's TLSSocket: resetting it sends the RST
+  // with no TLS alert in front of it.
+  let raw = null;
+  const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+    socket.on("error", () => {});
+    socket.write(frame(4, 0)); // empty SETTINGS
+    socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+  });
+  server.on("connection", socket => {
+    raw = socket;
+    socket.on("error", () => {});
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, H2_PEER_PORT: String(server.address().port), RESET_DONE_FILE: resetDoneFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let stdout = "";
+    let reset = false;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (!reset && stdout.includes("busy\n")) {
+        reset = true;
+        const rawClosed = new Promise(resolve => raw.once("close", resolve));
+        raw.resetAndDestroy();
+        await rawClosed;
+        fs.writeFileSync(resetDoneFile, "");
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = stdout.trim().split("\n");
+    const state = JSON.parse(lines[lines.length - 1]);
+    // Debug builds may write benign diagnostics to stderr, so it is only shown
+    // when the fixture failed.
+    expect({
+      reset,
+      ...state,
+      errors: state.errors.filter(code => code !== "ECONNRESET" && code !== "EPIPE"),
+      failureDetail: exitCode === 0 ? "" : stderr,
+    }).toEqual({
+      reset: true,
+      requested: true,
+      sawResponse: false,
+      streamClosed: true,
+      sessionClosed: true,
+      errors: [],
+      failureDetail: "",
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
 });

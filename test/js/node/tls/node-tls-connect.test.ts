@@ -1993,3 +1993,123 @@ describe.each([
     });
   });
 });
+
+// The peer resets the connection while the client's event loop is blocked, so
+// the client's next write is the first operation that observes the reset. On
+// Linux that send() returns ECONNRESET and consumes the socket's pending error,
+// so the read side only ever sees a plain EOF afterwards: the failed send is the
+// one report of the reset. The TLS write path dropped its errno and the socket
+// ended as a clean close (no write error, 'end', 'close' with hadError false).
+// Node fails the write: the callback and 'error' get `write ECONNRESET` (EPIPE
+// on BSD kernels), then 'close' with hadError true. Verified against node
+// v26.3.0 on Linux and Windows, for both ways to connect.
+describe.concurrent("a write that is the first to observe the peer's reset fails with a write error", () => {
+  it.each([
+    ["tls.connect({ port })", "0"],
+    ["tls.connect({ socket })", "1"],
+  ])("%s", async (_name, overSocket) => {
+    using dir = tempDir("tls-write-sees-reset", {});
+    const resetDoneFile = join(String(dir), "reset-done");
+
+    // The raw TCP socket under the server's TLSSocket: resetting it sends the
+    // RST with no TLS alert in front of it.
+    let raw: net.Socket | undefined;
+    const server = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert }, socket => {
+      socket.on("error", () => {});
+      socket.write("hello");
+    });
+    server.on("connection", socket => {
+      raw = socket;
+      socket.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const script = `
+      const tlsMod = require("node:tls");
+      const netMod = require("node:net");
+      const fs = require("node:fs");
+      const port = Number(process.env.TLS_PEER_PORT);
+      const events = [];
+      let write;
+      function run(socket) {
+        socket.on("error", function onError(err) {
+          events.push("error:" + err.code + ":" + err.syscall);
+        });
+        socket.on("end", function onEnd() {
+          events.push("end");
+        });
+        socket.on("close", function onClose(hadError) {
+          fs.writeSync(1, JSON.stringify({ write, events, hadError }) + "\\n");
+          process.exit(0);
+        });
+        socket.once("data", function onData() {
+          // Block the loop until the parent has reset the connection. Nothing
+          // is polled in between, so the write below meets the reset first.
+          fs.writeSync(1, "busy\\n");
+          const cell = new Int32Array(new SharedArrayBuffer(4));
+          const deadline = Date.now() + 30000;
+          while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+            Atomics.wait(cell, 0, 0, 5);
+          }
+          socket.write("ping", function onWritten(err) {
+            write = err ? { code: err.code, syscall: err.syscall } : "ok";
+          });
+        });
+      }
+      if (process.env.TLS_OVER_SOCKET === "1") {
+        const transport = netMod.connect({ port, host: "127.0.0.1" }, function onConnect() {
+          run(tlsMod.connect({ socket: transport, rejectUnauthorized: false }));
+        });
+      } else {
+        run(tlsMod.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }));
+      }
+    `;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          TLS_PEER_PORT: String((server.address() as AddressInfo).port),
+          TLS_OVER_SOCKET: overSocket,
+          RESET_DONE_FILE: resetDoneFile,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let stdout = "";
+      let reset = false;
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        if (!reset && stdout.includes("busy\n")) {
+          reset = true;
+          const rawClosed = once(raw!, "close");
+          raw!.resetAndDestroy();
+          await rawClosed;
+          await Bun.write(resetDoneFile, "");
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const lines = stdout.trim().split("\n");
+      // Debug builds may write benign diagnostics to stderr, so it is only
+      // shown when the fixture failed.
+      expect({
+        reset,
+        result: JSON.parse(lines[lines.length - 1]),
+        failureDetail: exitCode === 0 ? "" : stderr,
+      }).toEqual({
+        reset: true,
+        result: {
+          write: { code: expect.stringMatching(/^(ECONNRESET|EPIPE)$/), syscall: "write" },
+          events: [expect.stringMatching(/^error:(ECONNRESET|EPIPE):write$/)],
+          hadError: true,
+        },
+        failureDetail: "",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+});

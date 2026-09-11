@@ -4706,3 +4706,96 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// The peer resets the connection while the client's loop is blocked, so the
+// client's write() is the first operation that observes the reset and the
+// kernel rejects its send(). write() documents -1 for a socket that cannot be
+// written to. A TLS socket used to count the dropped bytes as written (it
+// returned their length), and the errno of the failed send, which only the
+// node:net write path hands to JS, leaked out of a plain TCP socket as a raw
+// negative number (-104).
+describe.concurrent("write() that is the first to observe the peer's reset returns -1", () => {
+  it.each([["tcp"], ["tls"]])("%s", async kind => {
+    using dir = tempDir("socket-write-sees-reset", {});
+    const resetDoneFile = join(String(dir), "reset-done");
+
+    const opened = Promise.withResolvers<Socket>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: kind === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: {
+        open(s) {
+          if (kind === "tcp") {
+            s.write("hello");
+            opened.resolve(s);
+          }
+        },
+        handshake(s) {
+          s.write("hello");
+          opened.resolve(s);
+        },
+        data() {},
+        error() {},
+        close() {},
+      },
+    });
+
+    const script = `
+      const fs = require("node:fs");
+      const writes = [];
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.env.PEER_PORT),
+        tls: process.env.PEER_KIND === "tls" ? { rejectUnauthorized: false } : undefined,
+        socket: {
+          data(socket) {
+            // Block the loop until the parent has reset the connection.
+            // Nothing is polled in between, so write() meets the reset first.
+            fs.writeSync(1, "busy\\n");
+            const cell = new Int32Array(new SharedArrayBuffer(4));
+            const deadline = Date.now() + 30000;
+            while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+              Atomics.wait(cell, 0, 0, 5);
+            }
+            writes.push(socket.write("ping"), socket.write("ping"));
+          },
+          error() {},
+          close() {
+            fs.writeSync(1, JSON.stringify({ writes }) + "\\n");
+            process.exit(0);
+          },
+        },
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, PEER_PORT: String(server.port), PEER_KIND: kind, RESET_DONE_FILE: resetDoneFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let stdout = "";
+    let reset = false;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (!reset && stdout.includes("busy\n")) {
+        reset = true;
+        // terminate() closes the fd with SO_LINGER 0, so the RST is on the wire
+        // when it returns.
+        (await opened.promise).terminate();
+        await Bun.write(resetDoneFile, "");
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = stdout.trim().split("\n");
+    // Debug builds may write benign diagnostics to stderr, so it is only shown
+    // when the fixture failed.
+    expect({
+      reset,
+      result: JSON.parse(lines[lines.length - 1]),
+      failureDetail: exitCode === 0 ? "" : stderr,
+    }).toEqual({ reset: true, result: { writes: [-1, -1] }, failureDetail: "" });
+    expect(exitCode).toBe(0);
+  });
+});

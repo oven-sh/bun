@@ -1229,20 +1229,51 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Client => {
-                {
+                let (failed, css_root_id, is_css_child) = {
                     let f = &self.bundled_files.values()[file_index.get() as usize];
-                    match &f.content {
-                        Content::CssChild => {
-                            debug_assert!(false, "only CSS roots should be found by tracing");
+                    (
+                        f.failed,
+                        match f.content {
+                            Content::CssRoot(id) => Some(id),
+                            _ => None,
+                        },
+                        matches!(f.content, Content::CssChild),
+                    )
+                };
+                if failed {
+                    if goal == TraceImportGoal::FindErrors {
+                        let owner =
+                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
+                        let fail = self
+                            .dev_bundling_failures()
+                            .get(&owner)
+                            .cloned()
+                            .expect("Failed to get bundling failure");
+                        self.dev_incremental_result().failures_added.push(fail);
+                        return Ok(());
+                    }
+                    // A failed css chunk entry contributes its slot (the id
+                    // is the path hash, so the stylesheet keeps its place)
+                    // and stops: its imports may be css children only a root
+                    // may reach. A failed js file's css imports are roots, so
+                    // it keeps tracing below.
+                    if let Some(id) = css_root_id {
+                        if goal == TraceImportGoal::FindCss {
+                            self.current_css_files.push(id);
                         }
-                        Content::CssRoot(id) => {
-                            if goal == TraceImportGoal::FindCss {
-                                self.current_css_files.push(*id);
-                            }
-                            // CSS can't import JS; trace is done.
-                            return Ok(());
+                        return Ok(());
+                    }
+                    if is_css_child {
+                        return Ok(());
+                    }
+                } else {
+                    debug_assert!(!is_css_child, "only CSS roots should be found by tracing");
+                    if let Some(id) = css_root_id {
+                        if goal == TraceImportGoal::FindCss {
+                            self.current_css_files.push(id);
                         }
-                        _ => {}
+                        // CSS can't import JS; trace is done.
+                        return Ok(());
                     }
                 }
 
@@ -1254,20 +1285,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .unwrap_or(0);
                     self.current_chunk_parts.push(file_index);
                     self.current_chunk_len += len;
-                }
-
-                if goal == TraceImportGoal::FindErrors
-                    && self.bundled_files.values()[file_index.get() as usize].failed
-                {
-                    let owner =
-                        serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                    let fail = self
-                        .dev_bundling_failures()
-                        .get(&owner)
-                        .cloned()
-                        .expect("Failed to get bundling failure");
-                    self.dev_incremental_result().failures_added.push(fail);
-                    return Ok(());
                 }
             }
         }
@@ -1331,8 +1348,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     // Note: re-derive owned key via `RawSlice` so
                     // `free_file_content` can borrow `&mut self`.
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+                    let prior_css_root = match existing.content {
+                        Content::CssRoot(id) => Some(id),
+                        _ => None,
+                    };
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
-                    existing.kind = FileKind::Unknown;
+                    if let Some(id) = prior_css_root {
+                        // Keep css chunk entries routable as css roots (the
+                        // id is the path hash) so traces keep their slot.
+                        existing.kind = FileKind::Css;
+                        existing.content = Content::CssRoot(id);
+                    } else {
+                        existing.kind = FileKind::Unknown;
+                    }
                     self.bundled_files.values_mut()[idx] = existing;
                 } else {
                     self.bundled_files.values_mut()[idx] = File::default();
@@ -1429,6 +1457,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
+    /// Keep a print-failed chunk entry routable as a css root so traces and
+    /// hot updates keep the stylesheet's slot (the id is the path hash).
+    pub(crate) fn restore_failed_css_root(&mut self, index: FileIndex<SIDE>, id: u64) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        let f = &mut self.bundled_files.values_mut()[index.get() as usize];
+        debug_assert!(f.failed);
+        f.kind = FileKind::Css;
+        f.content = Content::CssRoot(id);
+    }
+
     /// `IncrementalGraph(side).insertFailure` (spec :1419).
     pub(crate) fn insert_failure(
         &mut self,
@@ -1458,9 +1496,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if found_existing {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
+                    let prior_css_root = match existing.content {
+                        Content::CssRoot(id) => Some(id),
+                        _ => None,
+                    };
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
                     existing.failed = true;
-                    existing.kind = FileKind::Unknown;
+                    if let Some(id) = prior_css_root {
+                        // Keep css chunk entries routable as css roots (the
+                        // id is the path hash) so traces keep their slot.
+                        existing.kind = FileKind::Css;
+                        existing.content = Content::CssRoot(id);
+                    } else {
+                        existing.kind = FileKind::Unknown;
+                    }
                     self.bundled_files.values_mut()[idx] = existing;
                 } else {
                     self.bundled_files.values_mut()[idx] = File {
@@ -1645,6 +1694,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
+                            } else if self.bundled_files.values()[dep.get() as usize].failed {
+                                // A chunk entry whose last build failed has
+                                // `Unknown` content; re-enqueue it like a
+                                // direct edit of that file would.
+                                let k = bun_ptr::RawSlice::new(
+                                    &*self.bundled_files.keys()[dep.get() as usize],
+                                );
+                                entry_points.append_js(k.slice(), bake::Graph::Client)?;
                             }
                             it = entry.next_dependency;
                         }
@@ -1675,6 +1732,33 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     Content::Js(_) | Content::Unknown => {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             self.append_client_entry_point(entry_points, index)?;
+                        }
+                        // A failed file may have failed dependents whose
+                        // failure is downstream of it (a css root importing a
+                        // failed css entry); re-enqueue them too.
+                        if self.bundled_files.values()[index].failed {
+                            let mut it = self.first_dep[index];
+                            while let Some(edge_index) = it {
+                                let entry = self.edges[edge_index.get() as usize];
+                                let dep = entry.dependency;
+                                it = entry.next_dependency;
+                                let (dep_is_css_root, dep_failed) = {
+                                    let f = &self.bundled_files.values()[dep.get() as usize];
+                                    (matches!(f.content, Content::CssRoot(_)), f.failed)
+                                };
+                                if !dep_is_css_root && !dep_failed {
+                                    continue;
+                                }
+                                self.stale_files.set(dep.get() as usize);
+                                let k = bun_ptr::RawSlice::new(
+                                    &*self.bundled_files.keys()[dep.get() as usize],
+                                );
+                                if dep_is_css_root {
+                                    entry_points.append_css(k.slice())?;
+                                } else {
+                                    entry_points.append_js(k.slice(), bake::Graph::Client)?;
+                                }
+                            }
                         }
                     }
                 },

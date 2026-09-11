@@ -601,8 +601,9 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return 0;
     }
     if (s->ssl) {
-        /* TLS writes have their own error propagation; keep the existing path. */
-        return us_socket_write(s, data, length);
+        /* The raw sends of a TLS write happen inside the SSL layer, which
+         * reports a fatal one through the same out-parameter. */
+        return us_internal_ssl_write_check_error(s, data, length, fatal_write_error);
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
@@ -644,7 +645,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     return written < 0 ? 0 : (int)written;
 }
 
-int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
+int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
     /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
@@ -655,12 +656,24 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
+    if (written < 0) {
+        if (fatal_send_error) {
+            int send_error = us_internal_classify_failed_send(s);
+            if (send_error) *fatal_send_error = send_error;
+        }
+    } else {
+        s->unclassified_send_failures = 0;
+    }
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
+}
+
+int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
+    return us_internal_socket_raw_write(s, data, length, NULL);
 }
 
 #if !defined(_WIN32)

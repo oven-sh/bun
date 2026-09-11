@@ -1440,6 +1440,30 @@ describe("server stream reset (RFC 9113 §6.4)", () => {
     }
   });
 
+  test.each([
+    ["in the same tick", (stream: any, respond: () => void) => respond()],
+    ["on a later turn", (stream: any, respond: () => void) => void stream.once("finish", respond)],
+  ])("respond() after end() %s ends the stream on its HEADERS frame", async (_when, schedule) => {
+    // end() first left the stream open with nothing sent, so the HEADERS frame is the only one
+    // that can still carry END_STREAM. Without it the peer gets a response that never finishes.
+    const closed = Promise.withResolvers<void>();
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.on("close", closed.resolve);
+      stream.end();
+      schedule(stream, () => stream.respond({ ":status": 200 }));
+    });
+    try {
+      const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      expect(headers.flags & 0x1).toBe(0x1);
+      await closed.promise;
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.filter(f => f.streamId === 1).map(f => f.type)).toEqual([FrameType.HEADERS]);
+    } finally {
+      cleanup();
+    }
+  });
+
   test("destroy() mid-body sends RST_STREAM(NO_ERROR) rather than a clean end-of-stream", async () => {
     const { c, cleanup } = await resetServer("GET", stream => {
       stream.respond({ ":status": 200 });

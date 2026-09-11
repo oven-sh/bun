@@ -3632,7 +3632,10 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NO_CONTENT ||
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest === true
+      this.headRequest === true ||
+      // end() ran before any HEADERS went out, so _final settled the writable without a frame
+      // and nothing else will end the stream (node: SubmitResponse sets EMPTY_PAYLOAD).
+      (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().

@@ -58,7 +58,6 @@ test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/js/bun/css/css-fuzz.test.ts
 test/js/bun/ffi/cc.test.ts
 test/js/bun/http/bun-serve-html-manifest.test.ts
 test/js/bun/http/bun-server.test.ts

@@ -2,6 +2,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/BunFFI.h>
+#include <JavaScriptCore/FFIConversions.h>
 #include <JavaScriptCore/FFISignature.h>
 #include <JavaScriptCore/FFIType.h>
 #include <JavaScriptCore/FFIContext.h>
@@ -17,6 +18,8 @@
 
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::CString) == 14, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Function) == 17, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::JSValue) == 19, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Buffer) == 20, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::BufferLength) == 21, "FFI::Type tag drift");
@@ -118,4 +121,20 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
 {
     if (auto* callback = dynamicDowncast<JSC::JSFFICallback>(JSC::JSValue::decode(callbackValue)))
         callback->close();
+}
+
+// JSVALUE_TO_PTR_SLOW in the wrappers cc() compiles (src/runtime/ffi/FFI.h).
+extern "C" void* Bun__FFI__jsValueToPointerSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint64_t slot = 0;
+    // No string arena: nothing would free a transcoded cstring after the native call, so JS strings throw.
+    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, /* arena */ nullptr);
+    if (scope.exception()) [[unlikely]] {
+        *threw = true;
+        return nullptr;
+    }
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(slot));
 }

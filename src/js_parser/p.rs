@@ -4357,15 +4357,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut item_refs = ImportItemForNamespaceMap::new();
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-        let count_excluding_namespace = u16::try_from(stmt.items.len()).expect("int cast")
-            + u16::from(stmt.default_name.is_some());
+        let count_excluding_namespace = stmt.items.len() + usize::from(stmt.default_name.is_some());
 
-        item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
+        item_refs.ensure_unused_capacity(count_excluding_namespace)?;
         // Even though we allocate ahead of time here
         // we cannot use putAssumeCapacity because a symbol can have existing links
         // those may write to this hash table, so this estimate may be innaccurate
-        self.is_import_item
-            .reserve(count_excluding_namespace as usize);
+        self.is_import_item.reserve(count_excluding_namespace);
         let mut remap_count: u32 = 0;
         // Link the default item to the namespace
         if let Some(name_loc) = &mut stmt.default_name {

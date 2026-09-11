@@ -332,7 +332,7 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
-    /// Set by [`Interpreter::reject_with_pending_exception`].
+    /// Set by [`Interpreter::fail`]: `child_done` then frees nodes and runs nothing more of the script.
     pub(crate) const fn failed(self) -> bool {
         self.0 & 0b100 != 0
     }
@@ -1264,7 +1264,7 @@ impl Interpreter {
         );
         debug_assert!(
             !self.flags.get().failed(),
-            "a failed node never reports to its parent, so the root script cannot complete"
+            "after a failure `child_done` never reaches the root script's completion"
         );
         // Decrement pending activity unconditionally on exit. Paired with the
         // increment in `run_from_js`; harmless wrap on the mini path (flag is

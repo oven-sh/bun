@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -119,6 +120,10 @@ describe("yield", async () => {
         import { heapStats } from "bun:jsc";
         const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.constructor.name + ": " + e.message);
         const bun = process.execPath;
+        // Writes more than a pipe holds: blocks in write() until its reader reads or closes.
+        const big = 'process.stdout.write(Buffer.alloc(1 << 20, "a"))';
+        // Uses neither end of its pipe: only a signal ends it.
+        const forever = "setInterval(() => {}, 1000)";
         ${body}
         `,
         "--debug-crash-handler-use-trace-string",
@@ -233,6 +238,136 @@ describe("yield", async () => {
         result: JSON.stringify({ rejected: 10, collected: true }),
         stderr: "",
         exitCode: 0,
+      });
+    });
+
+    // When a pipeline member fails, the members before it run and the members
+    // after it did not start. The script is over: the pipe ends of the failed
+    // member and of the members that did not start must close, the members
+    // that run must end, nothing more of the script may run, and the
+    // interpreter must be released once the last member is gone.
+    describe("in a pipeline", () => {
+      const fails = "${bun} --version > ${new Response('r')}";
+
+      test.concurrent("a producer that blocks on the pipe to the failed member", async () => {
+        await expectRejection("$`${bun} -e ${big} | " + fails + "`.quiet()", external);
+      });
+
+      test.concurrent("a member that uses neither end of its pipe", async () => {
+        await expectRejection("$`${bun} -e ${forever} | " + fails + "`.quiet()", external);
+      });
+
+      test.concurrent("a builtin producer that never stops", async () => {
+        await expectRejection("$`yes | " + fails + "`.quiet()", external);
+      });
+
+      test.concurrent("every member that runs, and the shell's own stdout and stderr", async () => {
+        await expectRejection("$`${bun} -e ${forever} | ${bun} -e ${big} | " + fails + "`", external);
+      });
+
+      test.concurrent("the members after the failed one", async () => {
+        await expectRejection("$`${bun} -e ${big} | " + fails + " | ${bun} -e ${forever}`.quiet()", external);
+      });
+
+      test.concurrent("a pipeline inside a pipeline member", async () => {
+        await expectRejection(
+          "$`${bun} -e ${forever} | (${bun} -e ${big} | " + fails + ") | ${bun} -e ${forever}`.quiet()",
+          external,
+        );
+      });
+
+      test.concurrent("a pipeline inside a command substitution", async () => {
+        await expectRejection("$`echo $(${bun} -e ${forever} | " + fails + " ; true)`.quiet()", external);
+      });
+
+      // `ls` reads the directory on the thread pool. The interpreter must not be
+      // collected while that task can still call back into it.
+      test.concurrent("a builtin with a thread-pool task in flight, with a GC before it completes", async () => {
+        using dir = tempDir("shell-failed-pipeline-ls", {
+          ...Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`file${i}.txt`, ""])),
+        });
+        await using proc = Bun.spawn({
+          cmd: child(`
+            const pending = settle($\`ls -R . | ${fails}\`.quiet());
+            for (let i = 0; i < 5; i++) {
+              Bun.gc(true);
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            const out = [await pending];
+            Bun.gc(true);
+            out.push(await settle($\`echo ok\`.quiet()));
+            Bun.gc(true);
+            console.log(JSON.stringify(out));
+          `),
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+          result: JSON.stringify([external, "resolved 0"]),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test.concurrent("nothing more of the script runs", async () => {
+        using dir = tempDir("shell-failed-pipeline-rest", {});
+        await using proc = Bun.spawn({
+          cmd: child(`
+            console.log(await settle($\`(\${bun} -e \${forever}; touch in-member) | ${fails}; touch after-pipeline\`.quiet()));
+          `),
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode, files: readdirSync(String(dir)) }).toEqual({
+          result: external,
+          stderr: "",
+          exitCode: 0,
+          files: [],
+        });
+      });
+
+      test.concurrent("failed pipelines are collected once their members are gone", async () => {
+        await using proc = Bun.spawn({
+          cmd: child(`
+            let rejected = 0;
+            const count = () => rejected++;
+            for (let i = 0; i < 3; i++) {
+              await $\`\${bun} -e \${forever} | ${fails} | yes\`.quiet().then(() => {}, count);
+              await $\`yes | yes | ${fails}\`.quiet().then(() => {}, count);
+              await $\`${fails} | yes\`.quiet().then(() => {}, count);
+            }
+            // The killed members report from the event loop, after the rejection.
+            let live;
+            for (const deadline = performance.now() + 30_000; performance.now() < deadline; ) {
+              Bun.gc(true);
+              live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
+              if (live <= 3) break;
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            console.log(JSON.stringify({ rejected, collected: live <= 3 ? true : live }));
+          `),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+          result: JSON.stringify({ rejected: 9, collected: true }),
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1222,4 +1223,41 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(stdout.trim()).toEndWith("[eval]:5:14)"); // 2:18 when the lexer resumed on the template literal's first line
     expect(exitCode).toBe(0);
   },
+);
+
+// The message and the frames of a stack trace come from JS. A trace past
+// `WTF::String::MaxLength` (2**31 - 1 characters) aborted the process (exit code
+// 134) while it was formatted. It now keeps the "name: message" header and drops
+// the frames. The length is what is under test, so the child needs a string of
+// about 2 GiB, and the test skips on small machines. The child touches about
+// 6 GB of pages, which takes longer than the default limit in a debug build.
+test.skipIf(totalmem() < 10 * 1024 ** 3)(
+  "a stack trace past the string length limit drops its frames instead of aborting the process",
+  async () => {
+    const length = 2 ** 31 - 10;
+    const src = `
+      const long = "q".repeat(${length});
+      const describe = stack => typeof stack + " " + stack.length + " " + JSON.stringify(stack.slice(0, 9));
+      console.log(".stack: " + describe(new Error(long).stack));
+      Bun.gc(true);
+      const frames = [{ toString: () => "frame" }];
+      console.log("default Error.prepareStackTrace: " + describe(Error.prepareStackTrace(new Error(long), frames)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        `.stack: string ${"Error: ".length + length} "Error: qq"`,
+        `default Error.prepareStackTrace: string ${"Error: ".length + length} "Error: qq"`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
 );

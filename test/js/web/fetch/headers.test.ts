@@ -265,21 +265,20 @@ describe("Headers", () => {
     // fix: the combined value is still exactly the same string, and the cost of
     // producing it is now linear.
     describe("with a name that repeats", () => {
-      const names = ["x-repeated", "accept", "cookie"];
-      const delimiterFor = (name: string) => (name === "cookie" ? "; " : ", ");
+      describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
+        const delimiter = name === "cookie" ? "; " : ", ";
 
-      for (const name of names) {
-        test(`${name}: 2000 appends join in order`, () => {
+        test("2000 appends join in order", () => {
           const headers = new Headers();
           const values: string[] = [];
           for (let i = 0; i < 2000; i++) {
             values.push(`v${i}`);
             headers.append(name, `v${i}`);
           }
-          expect(headers.get(name)).toBe(values.join(delimiterFor(name)));
+          expect(headers.get(name)).toBe(values.join(delimiter));
         });
 
-        test(`${name}: reading between appends does not change the result`, () => {
+        test("reading between appends does not change the result", () => {
           const headers = new Headers();
           const values: string[] = [];
           const snapshots: string[] = [];
@@ -290,11 +289,11 @@ describe("Headers", () => {
             // must not edit a string that was already handed out.
             snapshots.push(headers.get(name)!);
           }
-          expect(snapshots.at(-1)).toBe(values.join(delimiterFor(name)));
+          expect(snapshots.at(-1)).toBe(values.join(delimiter));
           expect(snapshots[0]).toBe("v0");
-          expect(snapshots[99]).toBe(values.slice(0, 100).join(delimiterFor(name)));
+          expect(snapshots[99]).toBe(values.slice(0, 100).join(delimiter));
         });
-      }
+      });
 
       test("set() after appends replaces the combined value", () => {
         const headers = new Headers();

@@ -114,31 +114,37 @@ var require_constants = __commonJS({
     exports.WASI_ETXTBSY = 74;
     exports.WASI_EXDEV = 75;
     exports.WASI_ENOTCAPABLE = 76;
-    exports.WASI_SIGABRT = 0;
-    exports.WASI_SIGALRM = 1;
-    exports.WASI_SIGBUS = 2;
-    exports.WASI_SIGCHLD = 3;
-    exports.WASI_SIGCONT = 4;
-    exports.WASI_SIGFPE = 5;
-    exports.WASI_SIGHUP = 6;
-    exports.WASI_SIGILL = 7;
-    exports.WASI_SIGINT = 8;
+    // wasi_snapshot_preview1 `signal` enum order (0 is SIGNONE).
+    exports.WASI_SIGHUP = 1;
+    exports.WASI_SIGINT = 2;
+    exports.WASI_SIGQUIT = 3;
+    exports.WASI_SIGILL = 4;
+    exports.WASI_SIGTRAP = 5;
+    exports.WASI_SIGABRT = 6;
+    exports.WASI_SIGBUS = 7;
+    exports.WASI_SIGFPE = 8;
     exports.WASI_SIGKILL = 9;
-    exports.WASI_SIGPIPE = 10;
-    exports.WASI_SIGQUIT = 11;
-    exports.WASI_SIGSEGV = 12;
-    exports.WASI_SIGSTOP = 13;
-    exports.WASI_SIGTERM = 14;
-    exports.WASI_SIGTRAP = 15;
-    exports.WASI_SIGTSTP = 16;
-    exports.WASI_SIGTTIN = 17;
-    exports.WASI_SIGTTOU = 18;
-    exports.WASI_SIGURG = 19;
-    exports.WASI_SIGUSR1 = 20;
-    exports.WASI_SIGUSR2 = 21;
-    exports.WASI_SIGVTALRM = 22;
+    exports.WASI_SIGUSR1 = 10;
+    exports.WASI_SIGSEGV = 11;
+    exports.WASI_SIGUSR2 = 12;
+    exports.WASI_SIGPIPE = 13;
+    exports.WASI_SIGALRM = 14;
+    exports.WASI_SIGTERM = 15;
+    exports.WASI_SIGCHLD = 16;
+    exports.WASI_SIGCONT = 17;
+    exports.WASI_SIGSTOP = 18;
+    exports.WASI_SIGTSTP = 19;
+    exports.WASI_SIGTTIN = 20;
+    exports.WASI_SIGTTOU = 21;
+    exports.WASI_SIGURG = 22;
     exports.WASI_SIGXCPU = 23;
     exports.WASI_SIGXFSZ = 24;
+    exports.WASI_SIGVTALRM = 25;
+    exports.WASI_SIGPROF = 26;
+    exports.WASI_SIGWINCH = 27;
+    exports.WASI_SIGPOLL = 28;
+    exports.WASI_SIGPWR = 29;
+    exports.WASI_SIGSYS = 30;
     exports.WASI_FILETYPE_UNKNOWN = 0;
     exports.WASI_FILETYPE_BLOCK_DEVICE = 1;
     exports.WASI_FILETYPE_CHARACTER_DEVICE = 2;
@@ -394,6 +400,11 @@ var require_constants = __commonJS({
       [exports.WASI_SIGXCPU]: "SIGXCPU",
       [exports.WASI_SIGXFSZ]: "SIGXFSZ",
       [exports.WASI_SIGVTALRM]: "SIGVTALRM",
+      [exports.WASI_SIGPROF]: "SIGPROF",
+      [exports.WASI_SIGWINCH]: "SIGWINCH",
+      [exports.WASI_SIGPOLL]: "SIGPOLL",
+      [exports.WASI_SIGPWR]: "SIGPWR",
+      [exports.WASI_SIGSYS]: "SIGSYS",
     };
   },
 });
@@ -1606,7 +1617,13 @@ var require_wasi = __commonJS({
             if (!(sig in constants_1.SIGNAL_MAP)) {
               return constants_1.WASI_EINVAL;
             }
-            bindings.kill(constants_1.SIGNAL_MAP[sig]);
+            try {
+              bindings.kill(constants_1.SIGNAL_MAP[sig]);
+            } catch (err) {
+              // e.g. SIGPOLL/SIGPWR do not exist on every host.
+              if (err?.code === "ERR_UNKNOWN_SIGNAL") return constants_1.WASI_ENOTSUP;
+              throw err;
+            }
             return constants_1.WASI_ESUCCESS;
           },
           random_get: (bufPtr, bufLen) => {

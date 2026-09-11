@@ -36,7 +36,7 @@ pub struct GarbageCollectionController {
 #[derive(Default)]
 struct IdleImagePageOut {
     quiet_since: Cell<Option<CpuSample>>,
-    /// Set with the second idle collection: the sample at the previous tick.
+    /// Set with the last idle collection: the sample at the previous tick.
     pending: Cell<Option<CpuSample>>,
     last: Cell<Option<std::time::Instant>>,
 }
@@ -199,7 +199,8 @@ impl GarbageCollectionController {
     /// Decides whether this tick's collection should be a full one. After the first `BUN_IDLE_GC_SECONDS` entry (main
     /// thread only) of ticks in which the heap did not grow, the tick's collection is made Full (it collects what the
     /// last burst left and lets JSC snapshot which code is still running), and again after each further entry of quiet
-    /// (the second also pages out an embedded module graph and, a tick later, the executable's code and constants): JSC
+    /// (the second also pages out an embedded module graph; the last is followed, a tick later, by the executable's code
+    /// and constants): JSC
     /// drops code that has not run since the previous one, and each round makes a little more releasable (code whose
     /// last owner died in that collection, pages it emptied). Returns (full, ms until the next such tick is due).
     fn idle_tick(&self, vm: &VirtualMachine, grew: bool, interval_ms: i32) -> (bool, Option<u32>) {
@@ -219,8 +220,8 @@ impl GarbageCollectionController {
         let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
         let full = dues.clone().any(crossed);
-        // The page-out goes with the second collection (or the only one): after a pause of a few seconds the user is
-        // likely to come straight back, and those file-backed pages would just be read in again.
+        // The module graph's page-out goes with the second collection (or the only one): after a pause of a few seconds
+        // the user is likely to come straight back, and those file-backed pages would just be read in again.
         #[cfg(target_os = "linux")]
         {
             let image = &self.idle_image_page_out;
@@ -229,12 +230,15 @@ impl GarbageCollectionController {
             }
             let at = self.idle_gc_at_ms.get();
             if crossed(if at[1] != 0 { at[1] } else { at[0] }) {
-                image.pending.set(Some(CpuSample::now()));
                 if let Some(graph) = vm.standalone_module_graph {
                     // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread
                     // only madvise()s file-backed pages of the executable and touches no VM or JS state.
                     spawn_idle_page_out(move || graph.page_out());
                 }
+            }
+            // The image goes after the last idle collection: an earlier page-out would be read back by the next one.
+            if crossed(if at[1] != 0 { at[1] } else { at[0] }) {
+                image.pending.set(Some(CpuSample::now()));
             } else if !full && image.quiet_tick() {
                 spawn_idle_page_out(bun_sys::elf::page_out_program_image);
             }

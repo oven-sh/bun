@@ -1865,11 +1865,8 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     return len;
 }
 
-// Copy `src` to `dst` with the high bit of every byte cleared: Node's 'ascii'
-// decode (`byte & 0x7F`). Every stored byte comes from one load and is masked,
-// so the output is 7-bit even when `src` is shared memory that another thread
-// writes during the call. A scan for non-ASCII followed by a memcpy does not
-// have that property.
+// dst[i] = src[i] & 0x7F. Each byte is loaded once and stored masked, so the
+// output is ASCII even while another thread writes `src`.
 void CopyLatin1ToAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     D8 d;
@@ -1878,11 +1875,8 @@ void CopyLatin1ToAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
 
     if (len >= N) {
-        // `dst` is usually a new WTF string, whose characters follow the
-        // StringImpl header in one allocation and are never vector-aligned.
-        // Store the first vector unaligned, then continue from the next
-        // N-aligned `dst` address so the body stores do not split cache
-        // lines. The bytes in the overlap are stored twice.
+        // Align the body stores: WTF string characters are never
+        // vector-aligned, and a 64-byte store that splits a line costs double.
         hn::StoreU(hn::And(hn::LoadU(d, src), vec_0x7F), d, dst);
         size_t i = N - (reinterpret_cast<uintptr_t>(dst) % N);
         for (; i + N <= len; i += N) {

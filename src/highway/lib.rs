@@ -624,11 +624,7 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
     copied
 }
 
-/// Copies `min(src.len(), dst.len())` bytes of `src` into `dst` with the high
-/// bit of every byte cleared (`byte & 0x7F`, Node's `'ascii'` decode).
-///
-/// One pass: every stored byte comes from one load and is masked, so the output
-/// is 7-bit even when `src` is shared memory that another thread writes.
+/// `dst[i] = src[i] & 0x7F` for the first `min(src.len(), dst.len())` bytes.
 #[inline(always)]
 pub fn copy_latin1_to_ascii(src: &[u8], dst: &mut [u8]) {
     let len = src.len().min(dst.len());

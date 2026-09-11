@@ -479,12 +479,9 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     bun_highway::copy_u16_to_u8(&input[..count], &mut output[..count]);
 }
 
-/// Copies `src` into `dest` with the high bit of every byte cleared (Node's
-/// `'ascii'` decode).
-///
-/// One pass, and every stored byte is masked: the output is 7-bit even when
-/// `src` is a `SharedArrayBuffer` that another thread writes during the call.
-/// A scan for non-ASCII followed by a `memcpy` does not have that property.
+/// Node's `'ascii'` decode: `dest[i] = src[i] & 0x7f`. `src` can be a
+/// `SharedArrayBuffer` another thread writes, so it is read once: no
+/// check-then-`memcpy` fast path.
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
     debug_assert_eq!(dest.len(), src.len());
     bun_highway::copy_latin1_to_ascii(src, dest);

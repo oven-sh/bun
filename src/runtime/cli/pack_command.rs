@@ -3325,6 +3325,83 @@ fn add_archive_entry(
     Ok(entry.clear())
 }
 
+/// Why `published_version` has no version for a `workspace:` or `catalog:` dependency.
+#[derive(Clone, Copy)]
+pub(crate) enum UnresolvedVersion {
+    /// `workspace:^`, `workspace:~` or `workspace:*`, and the lockfile has no version for that workspace.
+    Workspace,
+    /// `catalog:`, and there is no lockfile to read the catalogs from.
+    CatalogWithoutLockfile,
+    /// `catalog:`, and that catalog has no entry for the dependency.
+    CatalogEntry,
+}
+
+impl UnresolvedVersion {
+    /// The error `bun pm pack` stops with. The `{}`s are the dependency's name and its package.json section.
+    fn message(self) -> &'static str {
+        match self {
+            UnresolvedVersion::Workspace => {
+                "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again."
+            }
+            UnresolvedVersion::CatalogWithoutLockfile => {
+                "Failed to resolve catalog version for \"{}\" in `{}` (catalogs require a lockfile)."
+            }
+            UnresolvedVersion::CatalogEntry => {
+                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency)."
+            }
+        }
+    }
+}
+
+/// The version the tarball's package.json gets in place of a `workspace:` or `catalog:` dependency version.
+/// `None` when `spec` uses neither protocol and is published as written. Shared with `bun pm diff`, which shows a
+/// local package.json with the versions that would be published.
+pub(crate) fn published_version(
+    maybe_lockfile: Option<&Lockfile>,
+    dependency_name: &[u8],
+    spec: &[u8],
+) -> Option<Result<Vec<u8>, UnresolvedVersion>> {
+    if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
+        // Only a bare `^`, `~` or `*` stands for the workspace's current version; any other range is published as
+        // written.
+        let prefix: &[u8] = match range {
+            b"^" => b"^",
+            b"~" => b"~",
+            b"*" => b"",
+            _ => return Some(Ok(range.to_vec())),
+        };
+        let Some(lockfile) = maybe_lockfile else {
+            return Some(Err(UnresolvedVersion::Workspace));
+        };
+        let Some(workspace_version) = lockfile
+            .workspace_versions
+            .get(&Semver::string::Builder::string_hash(dependency_name))
+        else {
+            return Some(Err(UnresolvedVersion::Workspace));
+        };
+        return Some(Ok(format!(
+            "{}{}",
+            bstr::BStr::new(prefix),
+            workspace_version.fmt(lockfile.buffers.string_bytes.as_slice()),
+        )
+        .into_bytes()));
+    }
+
+    let catalog_name = strings::without_prefix_if_possible_comptime(spec, b"catalog:")?;
+    let Some(lockfile) = maybe_lockfile else {
+        return Some(Err(UnresolvedVersion::CatalogWithoutLockfile));
+    };
+    let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
+    let catalog_name = strings::trim(catalog_name, &strings::WHITESPACE_CHARS);
+    let Some(dep) = lockfile
+        .catalogs
+        .find(map_buf, catalog_name, dependency_name)
+    else {
+        return Some(Err(UnresolvedVersion::CatalogEntry));
+    };
+    Some(Ok(dep.version.literal.slice(map_buf).to_vec()))
+}
+
 /// Strips workspace and catalog protocols from dependency versions then
 /// returns the printed json
 fn edit_root_package_json(
@@ -3344,85 +3421,26 @@ fn edit_root_package_json(
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
-                    if dependency.key.is_none() {
-                        continue;
-                    }
-                    if dependency.value.is_none() {
-                        continue;
-                    }
-
-                    let Some(package_spec) = dependency
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_utf8_string_literal()
-                    else {
+                    let (Some(dependency_name), Some(package_spec)) = (
+                        dependency
+                            .key
+                            .as_ref()
+                            .and_then(Expr::as_utf8_string_literal),
+                        dependency
+                            .value
+                            .as_ref()
+                            .and_then(Expr::as_utf8_string_literal),
+                    ) else {
                         continue;
                     };
-                    if let Some(without_workspace_protocol) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
-                    {
-                        // TODO: make semver parsing more strict. `^`, `~` are not valid
 
-                        if without_workspace_protocol.len() == 1 {
-                            // TODO: this might be too strict
-                            let c = without_workspace_protocol[0];
-                            if c == b'^' || c == b'~' || c == b'*' {
-                                let dependency_name = match dependency
-                                    .key
-                                    .as_ref()
-                                    .expect("infallible: prop has key")
-                                    .as_utf8_string_literal()
-                                {
-                                    Some(n) => n,
-                                    None => {
-                                        Output::err_generic(
-                                            "expected string value for dependency name in \"{}\"",
-                                            format_args!("{}", bstr::BStr::new(dependency_group)),
-                                        );
-                                        Global::crash();
-                                    }
-                                };
-
-                                let resolved = 'failed_to_resolve: {
-                                    // find the current workspace version and append to package spec without `workspace:`
-                                    let Some(lockfile) = maybe_lockfile else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let Some(workspace_version) = lockfile.workspace_versions.get(
-                                        &Semver::string::Builder::string_hash(dependency_name),
-                                    ) else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let prefix: &[u8] = match c {
-                                        b'^' => b"^",
-                                        b'~' => b"~",
-                                        b'*' => b"",
-                                        _ => unreachable!(),
-                                    };
-                                    // Format on the heap then copy into the
-                                    // pack arena; `EString::init` erases the
-                                    // lifetime.
-                                    let tmp = format!(
-                                        "{}{}",
-                                        bstr::BStr::new(prefix),
-                                        workspace_version
-                                            .fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    );
-                                    let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
-                                    dependency.value = Some(Expr::init(
-                                        E::EString::init(data),
-                                        Default::default(),
-                                    ));
-                                    true
-                                };
-                                if resolved {
-                                    continue;
-                                }
-
-                                // only produce this error only when we need to get the workspace version
+                    let version =
+                        match published_version(maybe_lockfile, dependency_name, package_spec) {
+                            None => continue,
+                            Some(Ok(version)) => version,
+                            Some(Err(unresolved)) => {
                                 Output::err_generic(
-                                    "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
+                                    unresolved.message(),
                                     (
                                         bstr::BStr::new(dependency_name),
                                         bstr::BStr::new(dependency_group),
@@ -3430,55 +3448,11 @@ fn edit_root_package_json(
                                 );
                                 Global::crash();
                             }
-                        }
-
-                        let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(dup), Default::default()));
-                    } else if let Some(catalog_name_str) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
-                    {
-                        let dep_name_str = dependency
-                            .key
-                            .as_ref()
-                            .expect("infallible: prop has key")
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked");
-
-                        let lockfile = match maybe_lockfile {
-                            Some(l) => l,
-                            None => {
-                                Output::err_generic(
-                                    "Failed to resolve catalog version for \"{}\" in `{}` (catalogs require a lockfile).",
-                                    (
-                                        bstr::BStr::new(dep_name_str),
-                                        bstr::BStr::new(dependency_group),
-                                    ),
-                                );
-                                Global::crash();
-                            }
                         };
 
-                        let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
-                        let catalog_name =
-                            strings::trim(catalog_name_str, &strings::WHITESPACE_CHARS);
-                        let Some(dep) = lockfile.catalogs.find(map_buf, catalog_name, dep_name_str)
-                        else {
-                            Output::err_generic(
-                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
-                                (
-                                    bstr::BStr::new(dep_name_str),
-                                    bstr::BStr::new(dependency_group),
-                                ),
-                            );
-                            Global::crash();
-                        };
-
-                        let literal =
-                            pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(literal), Default::default()));
-                    }
+                    // `EString::init` erases the lifetime, so the bytes go into the pack arena.
+                    let data = pack_bump().alloc_slice_copy(&version);
+                    dependency.value = Some(Expr::init(E::EString::init(data), Default::default()));
                 }
             }
         }

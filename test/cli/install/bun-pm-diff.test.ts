@@ -270,6 +270,82 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("a workspace package's workspace: and catalog: versions are compared as `bun pm pack` publishes them", async () => {
+    const manifest = (pkg: object) => JSON.stringify(pkg, null, 2) + "\n";
+    const a = manifest({
+      name: "ws-a",
+      version: "1.0.0",
+      dependencies: { "ws-b": "workspace:^", diffme: "catalog:" },
+      devDependencies: { "ws-c": "workspace:2.x" },
+      peerDependencies: { "ws-b": "workspace:*", diffme: "catalog:legacy" },
+      optionalDependencies: { "ws-d": "workspace:~" },
+    });
+    using dir = tempDir("pm-diff-workspace", {
+      "package.json": manifest({
+        name: "ws-root",
+        private: true,
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { diffme: "^1.0.0" },
+          catalogs: { legacy: { diffme: "1.0.0" } },
+        },
+      }),
+      "packages/a/package.json": a,
+      "packages/a/index.js": "module.exports = 1;\n",
+      "packages/b/package.json": manifest({ name: "ws-b", version: "1.0.1" }),
+      "packages/c/package.json": manifest({ name: "ws-c", version: "2.3.4" }),
+      "packages/d/package.json": manifest({ name: "ws-d", version: "3.0.0" }),
+      // The same files outside the `workspaces` globs: `bun pm pack` has no lockfile to resolve these from.
+      "vendor/a/package.json": a,
+      "vendor/a/index.js": "module.exports = 1;\n",
+      "out/.keep": "",
+    });
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, installErr, installExit] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(installErr).not.toContain("error:");
+    expect(installExit).toBe(0);
+    const member = join(String(dir), "packages", "a");
+    const tgz = await pack(member, join(String(dir), "out"));
+
+    // What was just packed from this folder is this folder, from inside the package and from the workspace root.
+    expect(await diff([tgz, "."], member)).toEqual({
+      stdout: `${tgz} → .\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await diff([tgz, "./packages/a/"], String(dir))).toEqual({
+      stdout: `${tgz} → ./packages/a/\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // A folder this project's lockfile does not list keeps what it says: `workspace:2.x` is published as `2.x`
+    // anywhere, and the others are not taken from a workspace here that has the same name.
+    const vendored = await diff([tgz, "./vendor/a", "--json"], String(dir));
+    expect(vendored.stderr).toBe("");
+    expect(JSON.parse(vendored.stdout)).toMatchObject({
+      files: [{ path: "package.json", linesAdded: 5, linesRemoved: 5 }],
+      notes: [
+        "dependencies ws-b: ^1.0.1 → workspace:^",
+        "dependencies diffme: ^1.0.0 → catalog:",
+        "optionalDependencies ws-d: ~3.0.0 → workspace:~",
+        "peerDependencies ws-b: 1.0.1 → workspace:*",
+        "peerDependencies diffme: 1.0.0 → catalog:legacy",
+      ],
+    });
+    expect(vendored.exitCode).toBe(0);
+  });
+
   test("patch output marks a side that ends without a newline", async () => {
     using dir = tempDir("pm-diff-nonl", {
       "a/package.json": `{"name":"x","version":"1.0.0"}`,

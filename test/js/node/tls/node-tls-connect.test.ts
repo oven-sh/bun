@@ -1128,6 +1128,66 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
       wrapped.destroy();
     }
   });
+
+  // The engine reads the transport with no backpressure, so a peer that ends
+  // cleanly leaves the whole payload decrypted inside the TLS socket while its
+  // transport is already closing. A consumer that is not flowing reads it
+  // after that close, so the close must not destroy the socket there.
+  describe.each(["paused", "for-await"] as const)("a clean peer close keeps unread data (%s reader)", reader => {
+    it("delivers the whole payload and 'end'", async () => {
+      const pair = () => {
+        const makeSide = (peer: () => Duplex) =>
+          new Duplex({
+            read() {},
+            write(chunk, _encoding, callback) {
+              peer().push(chunk);
+              callback();
+            },
+            final(callback) {
+              peer().push(null);
+              callback();
+            },
+          });
+        const clientSide: Duplex = makeSide(() => serverSide);
+        const serverSide: Duplex = makeSide(() => clientSide);
+        return { clientSide, serverSide };
+      };
+      const { clientSide, serverSide } = pair();
+      const payload = Buffer.alloc(256 * 1024, "bun");
+      const server = new TLSSocket(serverSide, serverContext());
+      server.on("secure", () => server.end(payload));
+      const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      const failed = Promise.withResolvers<never>();
+      server.on("error", failed.reject);
+      client.on("error", failed.reject);
+
+      const read = (async () => {
+        if (reader === "for-await") {
+          let total = 0;
+          for await (const chunk of client) {
+            total += chunk.length;
+            // Yield, so the transport's close lands between two reads.
+            await new Promise<void>(resolve => setImmediate(resolve));
+          }
+          return total;
+        }
+        client.pause();
+        // Resume only once the transport is gone, which is the case this
+        // covers: the socket holds every decrypted byte at that point.
+        await once(clientSide, "close");
+        let total = 0;
+        client.on("data", chunk => (total += chunk.length));
+        const ended = once(client, "end");
+        client.resume();
+        await ended;
+        return total;
+      })();
+
+      expect(await Promise.race([read, failed.promise])).toBe(payload.length);
+      client.destroy();
+      server.destroy();
+    });
+  });
 });
 
 describe("a TLS socket over a Duplex transport reports that transport's error", () => {

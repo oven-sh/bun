@@ -2302,7 +2302,12 @@ function hasUnflushedWrites(connection) {
 function attachUpgradedDuplex(self, connection, events) {
   // Ahead of events[3], so the engine's close finds the socket already
   // destroyed and reports neither the aborted handshake nor a second 'close'.
-  connection.on("close", () => self.destroy());
+  connection.on("close", () => {
+    // The engine reads the transport without backpressure, so after a clean
+    // EOF the transport can close while decrypted data is still unread. The
+    // stream's own end finishes the socket then; a destroy would drop the data.
+    if (!self[kended] && !self[kOnreadPendingEnd]) self.destroy();
+  });
   connection.on("data", events[0]);
   connection.on("end", events[1]);
   connection.on("drain", events[2]);

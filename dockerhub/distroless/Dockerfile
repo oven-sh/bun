@@ -67,7 +67,7 @@ ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
 
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
-ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
+ENV PATH="${PATH}:/usr/local/bun-node-fallback-bin"
 
 # Temporarily use the `build`-stage image binaries to create a symlink:
 RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \

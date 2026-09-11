@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { totalmem } from "node:os";
 import { join } from "node:path";
 
 describe.concurrent("process.execve", () => {
@@ -359,6 +360,56 @@ describe.concurrent("process.execve", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // Each string that execve takes comes from JS. One that does not fit in a
+  // WTF::String ("KEY=VALUE" past 2**31 - 1 characters), or whose UTF-8 form does
+  // not fit in a buffer (2**30 Latin-1 characters or more), aborted the process
+  // (exit code 134) instead of throwing. The length is what is under test, so
+  // the child needs a string of about 2 GiB and the test skips on small machines.
+  // It is serial so that it does not hold 4.4 GB next to the concurrent tests.
+  test.serial.skipIf(isWindows || totalmem() < 10 * 1024 ** 3)(
+    "throws instead of aborting for a string past the string limits",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const long = "q".repeat(2 ** 31 - 10);
+            const cases = {
+              "env entry longer than a string": () => process.execve("/bin/true", [], { ["K".repeat(20)]: long }),
+              "env entry too long for UTF-8": () => process.execve("/bin/true", [], { A: long }),
+              "argument too long for UTF-8": () => process.execve("/bin/true", ["true", long], {}),
+              "path too long for UTF-8": () => process.execve(long, [], {}),
+            };
+            for (const [name, run] of Object.entries(cases)) {
+              try {
+                run();
+                console.log(name + ": did not throw");
+              } catch (e) {
+                console.log(name + ": " + e.name + ": " + e.message);
+              }
+            }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // stderr has the ExperimentalWarning for process.execve.
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect(stdout.trim().split("\n")).toEqual([
+        "env entry longer than a string: RangeError: Out of memory",
+        "env entry too long for UTF-8: RangeError: Out of memory",
+        "argument too long for UTF-8: RangeError: Out of memory",
+        "path too long for UTF-8: RangeError: Out of memory",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   test.skipIf(!isWindows)("throws ERR_FEATURE_UNAVAILABLE_ON_PLATFORM on Windows", () => {
     expect(() => process.execve(process.execPath, [process.execPath], {})).toThrow(

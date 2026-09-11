@@ -707,21 +707,6 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     pub(crate) fn write_string(&mut self, str: &bun_core::String) {
         self.print(format_args!("{}", str));
     }
-
-    #[inline]
-    pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
-        // `format_utf16_type` writes through `fmt::Write`; buffer to a `String`
-        // and forward bytes (UTF-16 → UTF-8 conversion is the point, so the
-        // intermediate allocation is unavoidable without a `bun_io::Write` overload).
-        let mut buf = String::new();
-        if bun_fmt::format_utf16_type(input, &mut buf).is_err() {
-            self.failed = true;
-            return;
-        }
-        if self.ctx.write_all(buf.as_bytes()).is_err() {
-            self.failed = true;
-        }
-    }
 }
 
 use bun_io::AsFmt;
@@ -967,29 +952,15 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
-            } else if key.is_16bit() {
-                let utf16_slice = key.utf16_slice();
-
-                this.add_for_new_line(utf16_slice.len() + 2);
-
-                if ENABLE_ANSI_COLORS {
-                    writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
-                }
-
-                writer.write_all(b"\"");
-                writer.write_16_bit(utf16_slice);
-                writer.print(format_args!(
-                    "\"{}:{} ",
-                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
-                    pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                ));
             } else {
                 this.add_for_new_line(key.len + 2);
 
+                // One escaper over the UTF-8 form, so a key prints the same
+                // whether JSC stores it as Latin-1 or as UTF-16.
                 writer.print(format_args!(
                     "{}{}{}:{} ",
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><green>"),
-                    bun_fmt::format_json_string_latin1(key.slice()),
+                    bun_fmt::format_json_string_utf8(&key.to_utf8(), Default::default()),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));

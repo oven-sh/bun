@@ -2700,19 +2700,6 @@ pub mod formatter {
         pub(crate) fn write_string(&mut self, str: &bun_core::String) {
             self.print(format_args!("{str}"));
         }
-
-        #[inline]
-        pub(crate) fn write_16_bit(&mut self, input: &[u16]) {
-            // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
-            // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
-            self.print(format_args!(
-                "{}",
-                bun_core::fmt::FormatUTF16 {
-                    buf: input,
-                    path_fmt_opts: None
-                }
-            ));
-        }
     }
 
     const INDENTATION_BUF: [u8; 64] = [b' '; 64];
@@ -2980,34 +2967,15 @@ pub mod formatter {
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16bit() {
-                    let mut utf16_slice = key.utf16_slice();
-
-                    writer.add_for_new_line(utf16_slice.len() + 2);
-
-                    if C {
-                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                    }
-
-                    writer.write_all(b"\"");
-
-                    const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j]);
-                        writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j + 1..];
-                    }
-
-                    writer.write_16_bit(utf16_slice);
-
-                    writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
                 } else {
                     writer.add_for_new_line(key.len + 2);
 
+                    // One escaper over the UTF-8 form, so a key prints the same
+                    // whether JSC stores it as Latin-1 or as UTF-16.
                     writer.print(format_args!(
                         "{}{}{}",
                         pfmt!("<r><green>", C),
-                        bun_core::fmt::format_json_string_latin1(key.slice()),
+                        bun_core::fmt::format_json_string_utf8(&key.to_utf8(), Default::default()),
                         pfmt!("<r><d>:<r> ", C),
                     ));
                 }

@@ -160,6 +160,27 @@ it("utf16 property name", () => {
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
 });
 
+it("property keys get the same escapes in Latin-1 and UTF-16 strings", () => {
+  // A string decoded from UTF-16 bytes keeps 16-bit storage, even when every character is ASCII.
+  const utf16 = s => Buffer.from(s, "utf16le").toString("utf16le");
+  const special = '"\\\n\x1b';
+  expect(
+    Bun.inspect({
+      [utf16(["ascii in utf16 ", special].join(""))]: 1,
+      ["latin1 " + special]: 2,
+      ["日本 " + special]: 3,
+      ["😀 " + special]: 4,
+    }),
+  ).toMatchInlineSnapshot(`
+    "{
+      "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+      "latin1 \\"\\\\\\n\\u001B": 2,
+      "日本 \\"\\\\\\n\\u001B": 3,
+      "😀 \\"\\\\\\n\\u001B": 4,
+    }"
+  `);
+});
+
 it("latin1", () => {
   expect(Bun.inspect("English")).toBe('"English"');
   expect(Bun.inspect("Français")).toBe('"Français"');

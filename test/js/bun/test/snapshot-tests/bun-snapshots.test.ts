@@ -33,6 +33,62 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+test("object keys get the same escapes in Latin-1 and UTF-16 strings", () => {
+  // A string decoded from UTF-16 bytes keeps 16-bit storage, even when every character is ASCII.
+  const utf16 = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+  const special = '"\\\n\x1b';
+  const value = {
+    [utf16(["ascii in utf16 ", special].join(""))]: 1,
+    ["latin1 " + special]: 2,
+    ["日本 " + special]: 3,
+    ["😀 " + special]: 4,
+  };
+  expect(value).toMatchInlineSnapshot(`
+    {
+      "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+      "latin1 \\"\\\\\\n\\u001B": 2,
+      "日本 \\"\\\\\\n\\u001B": 3,
+      "😀 \\"\\\\\\n\\u001B": 4,
+    }
+  `);
+
+  // A matcher failure prints the value too. toEqual uses the snapshot formatter. toBe uses the console formatter.
+  const failure = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      return Bun.stripANSI((e as Error).message);
+    }
+  };
+  expect(failure(() => expect(value).toEqual(0))).toMatchInlineSnapshot(`
+    "expect(received).toEqual(expected)
+
+    - 0
+    + {
+    +   "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+    +   "latin1 \\"\\\\\\n\\u001B": 2,
+    +   "日本 \\"\\\\\\n\\u001B": 3,
+    +   "😀 \\"\\\\\\n\\u001B": 4,
+    + }
+
+    - Expected  - 1
+    + Received  + 6
+    "
+  `);
+  expect(failure(() => expect(value).toBe(0))).toMatchInlineSnapshot(`
+    "expect(received).toBe(expected)
+
+    Expected: 0
+    Received: {
+      "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+      "latin1 \\"\\\\\\n\\u001B": 2,
+      "日本 \\"\\\\\\n\\u001B": 3,
+      "😀 \\"\\\\\\n\\u001B": 4,
+    }
+    "
+  `);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

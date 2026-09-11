@@ -1598,14 +1598,9 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
         // deflate already dropped in clear_data; this is defensive
         self.deflate.replace(None);
         if let Some(task) = self.pending_initial_task.take() {
-            // Still queued (or abandoned with the VM's microtask queue); it
-            // must not follow its back-reference to us.
+            // Still owned by the microtask queue (run later, or dropped unrun
+            // at teardown); it must not follow its back-reference to us.
             task.ws.set(None);
-            if self.global_this.bun_vm().is_shutting_down() {
-                // The queue will never run it; release the C++ pending-activity
-                // ref it holds now.
-                task.data.set(None);
-            }
         }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, self);
     }
@@ -1850,6 +1845,16 @@ impl<const SSL: bool> jsc::MicrotaskCallback for InitialDataTask<SSL> {
         if let Some(initial_data) = self.data.replace(None) {
             let _guard = RefPtr::from_this(ws);
             initial_data.deliver(ws);
+        }
+    }
+}
+
+impl<const SSL: bool> Drop for InitialDataTask<SSL> {
+    fn drop(&mut self) {
+        // Dropped unrun by the microtask queue while the client is still
+        // alive: clear its back-reference to us.
+        if let Some(ws) = self.ws.take() {
+            ws.this_ptr().pending_initial_task.set(None);
         }
     }
 }

@@ -475,6 +475,7 @@ fn iterate_included_project_tree(
         });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // On iterator error, treat as end of iteration.
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -712,6 +713,7 @@ fn add_entire_tree(
         }
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -883,6 +885,7 @@ fn iterate_bundled_deps(
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+    iter.resolve_unknown_entry_types = true;
     while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -1022,6 +1025,7 @@ fn add_bundled_dep(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        iter.resolve_unknown_entry_types = true;
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1284,6 +1288,7 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;

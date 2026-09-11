@@ -21,13 +21,15 @@ import { isMacOS } from "harness";
 //
 // The expectations come from Intl.DateTimeFormat, which asks ICU directly and
 // shares no state with Date, so they follow whatever tzdata this build has. A
-// scenario whose transitions the tzdata does not have fails, unless they are
-// predictions or the tzdata is not ours.
+// scenario whose transitions the tzdata does not have fails, unless it says
+// that they may be absent, or the ICU is the operating system's.
 
-// The macOS build uses the operating system's ICU, and its tzdata can be years
-// old (the CI hosts do not have 2025a, which made -03 Paraguay's standard time
-// as of 2024-10-15). Every other build carries its own ICU.
-const tzdataIsOurs = !isMacOS;
+// The tzdata is not always the one bun ships. The macOS build uses the
+// operating system's ICU (the CI hosts do not have 2025a), and a Linux build
+// with a local WebKit links the distribution's. So a scenario about a recent
+// change says that it may be absent. On macOS the age of the data is not
+// known, so an absent scenario is always left out there.
+const absentScenarioIsAnError = !isMacOS;
 
 const originalTZ = process.env.TZ;
 afterAll(() => {
@@ -101,7 +103,9 @@ function makeScenario(
   firstTransition: string,
   lastTransition: string,
   checkNames: boolean,
-  predicted = false,
+  // The transitions are predictions, which tzdata revises, or newer than the
+  // ICU an operating system or a distribution may ship.
+  mayBeAbsent = false,
 ) {
   const first = Date.parse(firstTransition);
   const last = Date.parse(lastTransition);
@@ -113,7 +117,7 @@ function makeScenario(
   const changesAt = (time: number) =>
     offsetOracle(time - msPerMinute) !== offsetOracle(time) || longName(time - msPerMinute) !== longName(time);
   if (!changesAt(first) || !changesAt(last)) {
-    if (!predicted && tzdataIsOurs)
+    if (!mayBeAbsent && absentScenarioIsAnError)
       throw new Error(`${timeZone}: the tzdata in use has no transitions at ${firstTransition} and ${lastTransition}`);
     return null;
   }
@@ -183,7 +187,7 @@ const scenarios = [
   makeScenario("America/Cambridge_Bay", "2000-10-29T07:00Z", "2000-11-05T05:00Z", false),
   // -04 until 2024-10-06T04:00Z, then -03 DST until 2024-10-15T03:00Z, then -03 as the standard time (tzdata 2025a).
   // The offset does not tell the last two apart, the name in Date.prototype.toString() does.
-  makeScenario("America/Asuncion", "2024-10-06T04:00Z", "2024-10-15T03:00Z", true),
+  makeScenario("America/Asuncion", "2024-10-06T04:00Z", "2024-10-15T03:00Z", true, true),
   // +01 (CET) until 1944-04-03T01:00Z, then +02 DST (CEST) until 1944-04-12T22:00Z, then +03 (MSK).
   makeScenario("Europe/Simferopol", "1944-04-03T01:00Z", "1944-04-12T22:00Z", false),
   // +02 DST (CEST) until 1944-10-02T01:00Z, then +01 (CET) until 1944-10-12T23:00Z, then +03 (MSK).

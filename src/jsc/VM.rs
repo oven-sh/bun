@@ -38,7 +38,7 @@ unsafe extern "C" {
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
-    safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn JSC__VM__totalBytesAllocated(vm: &VM) -> u64;
 }
 
 bun_opaque::opaque_ffi! {
@@ -151,10 +151,9 @@ impl VM {
         JSC__VM__drainMicrotasks(self)
     }
 
-    /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
-    /// This is faster than checking the heap size
-    pub(crate) fn block_bytes_allocated(&self) -> usize {
-        JSC__VM__blockBytesAllocated(self)
+    /// Everything the program has allocated (cells and reported extra memory) since the VM was created. JS thread only.
+    pub(crate) fn total_bytes_allocated(&self) -> u64 {
+        JSC__VM__totalBytesAllocated(self)
     }
 }
 

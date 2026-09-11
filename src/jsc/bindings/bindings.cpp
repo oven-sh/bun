@@ -5745,13 +5745,9 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__createRopeString(JSC::EncodedJSValu
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsString(globalObject, str0, str1)));
 }
 
-extern "C" size_t JSC__VM__blockBytesAllocated(JSC::VM* vm)
+extern "C" uint64_t JSC__VM__totalBytesAllocated(JSC::VM* vm)
 {
-#if ENABLE(RESOURCE_USAGE)
-    return vm->heap.blockBytesAllocated() + vm->heap.extraMemorySize();
-#else
-    return 0;
-#endif
+    return vm->heap.totalBytesAllocated();
 }
 extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
 {

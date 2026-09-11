@@ -154,47 +154,92 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   });
 });
 
-// After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
-// the controller requests a full collection (so JSC can age out code that no
-// longer runs and return memory). An app parked at a prompt still fires the odd
-// timer and still counts as idle.
-describe("idle release", () => {
-  // Count FullCollection lines from BUN_JSC_logGC=1 while the script sits idle for a few seconds. Nothing allocates in
-  // that window, so a full collection there is the idle one.
-  const script = `
-    setTimeout(() => console.error("MARK"), 1200);
-    setTimeout(() => console.error("DONE"), 4200);
-  `;
-
-  async function run(seconds: string) {
+// After BUN_IDLE_GC_SECONDS in which the program did no real work, the controller requests a full collection (so JSC can
+// age out code that no longer runs and return memory). Work is measured by allocation: a leaky bucket that drains at
+// 2 MB per second and holds 8 MB. An app parked at a prompt still fires timers and runs the odd background job and
+// still counts as idle; one that allocates faster than that for long does not, whether or not its heap grows.
+describe.concurrent("idle release", () => {
+  // Counts the FullCollection lines BUN_JSC_logGC=1 prints after the child's MARK, until the first one (`untilFirst`)
+  // or until the child prints DONE and exits. minEdenToOldGenerationRatio=0 keeps JSC from deciding on a full collection
+  // by itself, so one in that window is the idle one.
+  async function idleCollections(script: string, seconds: string, untilFirst: boolean, tickMs?: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: {
         ...bunEnv,
         BUN_IDLE_GC_SECONDS: seconds,
         BUN_JSC_logGC: "1",
+        BUN_JSC_minEdenToOldGenerationRatio: "0",
         BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_TIMER_INTERVAL: tickMs,
       },
       stdout: "ignore",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    // Startup and (with BUN_DESTRUCT_VM_ON_EXIT) teardown do collections of their own; only count the idle window.
-    const fulls = (stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/FullCollection/g) || []).length;
-    return { fulls, exitCode };
+    let log = "";
+    // Teardown (with BUN_DESTRUCT_VM_ON_EXIT) does a full collection of its own after DONE.
+    const count = () =>
+      (
+        log
+          .slice(log.indexOf("MARK"))
+          .split("DONE")[0]
+          .match(/FullCollection/g) ?? []
+      ).length;
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      log += decoder.decode(chunk, { stream: true });
+      // Seen: the child is killed on the way out, so there is no exit code to report.
+      if (untilFirst && log.includes("MARK") && count() > 0) return { collections: count() };
+    }
+    // Ran to its own deadline: it must have got there in one piece.
+    expect(log).toContain("DONE");
+    return { collections: count(), exitCode: await proc.exited };
   }
+  // The child gives up (DONE) after `windowMs`: the deadline of a test that waits for a collection, the whole
+  // observation of one that expects none (there is no positive signal for "was not collected").
+  const child = (windowMs: number, body = "") => `
+    ${body}
+    setTimeout(() => console.error("MARK"), 300);
+    setTimeout(() => { console.error("DONE"); process.exit(0); }, ${windowMs});
+  `;
 
-  test.concurrent("requests a full collection once the heap has been quiet long enough", async () => {
-    const { fulls, exitCode } = await run("2");
-    expect(fulls).toBeGreaterThanOrEqual(1);
-    expect(exitCode).toBe(0);
+  test.concurrent("requests a full collection once the program has been quiet long enough", async () => {
+    expect(await idleCollections(child(4500), "2", true)).toEqual({ collections: 1 });
   });
 
   test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
-    const { fulls, exitCode } = await run("0");
-    expect(fulls).toBe(0);
-    expect(exitCode).toBe(0);
+    expect(await idleCollections(child(3500), "0", false)).toEqual({ collections: 0, exitCode: 0 });
+  });
+
+  // Debug and ASAN builds run the workloads and the collections 10-100x slower, so what a job allocates no longer lines
+  // up with the ticks these two count on.
+  const workloadTest = test.skipIf(isDebug || isASAN);
+
+  // ~3 MB of short-lived objects every 1.7 s: each run needs that much in fresh blocks and the collection after it
+  // hands them back, so a controller that watches the heap's footprint sees growth every time and never 2 s of quiet.
+  workloadTest("a background job that allocates a few MB now and then does not prevent it", async () => {
+    const job = `
+      const fill = Buffer.alloc(80, "x").toString();
+      setInterval(() => {
+        let n = 0;
+        for (let i = 0; i < 36_000; i++) n += { i, s: fill + i }.s.length;
+        globalThis.sink = n;
+      }, 1700);
+    `;
+    expect(await idleCollections(child(4500, job), "2", true, "500")).toEqual({ collections: 1 });
+  });
+
+  // ~10 MB of short-lived arrays every second, in small pieces, like a server under load: the same blocks are reused
+  // over and over, so the heap's footprint is flat.
+  workloadTest("a program that keeps allocating is not idle, even though its heap does not grow", async () => {
+    const churn = `
+      setInterval(() => {
+        let n = 0;
+        for (let i = 0; i < 320; i++) n += new Array(1024).fill(i).length;
+        globalThis.sink = n;
+      }, 250);
+    `;
+    expect(await idleCollections(child(4000, churn), "2", false, "500")).toEqual({ collections: 0, exitCode: 0 });
   });
 });
 

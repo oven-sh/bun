@@ -367,6 +367,9 @@ describe.concurrent("process.execve", () => {
   // (exit code 134) instead of throwing. The length is what is under test, so
   // the child needs a string of about 2 GiB and the test skips on small machines.
   // It is serial so that it does not hold 4.4 GB next to the concurrent tests.
+  // `repeat` and not `Buffer.alloc(n, fill).toString()`: for one character at
+  // this size it is faster in a debug build (1.6 s against 2.9 s), and it does
+  // not hold a second 2 GiB.
   test.serial.skipIf(isWindows || totalmem() < 10 * 1024 ** 3)(
     "throws instead of aborting for a string past the string limits",
     async () => {
@@ -397,8 +400,8 @@ describe.concurrent("process.execve", () => {
         stderr: "pipe",
       });
 
-      // stderr has the ExperimentalWarning for process.execve.
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // stderr has the ExperimentalWarning for process.execve, so it is read but not compared.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stdout.trim().split("\n")).toEqual([
         "env entry longer than a string: RangeError: Out of memory",

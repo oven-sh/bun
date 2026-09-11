@@ -7,6 +7,9 @@
 // with libdeflate_deflate_compress_bound, so the cost always fits for an input
 // that holds still. An input another thread rewrites between the two passes
 // can outgrow that bound, and the emit pass then writes past the buffer.
+//
+// With the emit path bounded, that same call returns 0 instead. It has to
+// surface as an error, never as an empty result.
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const SIZE = 4096;
@@ -24,11 +27,18 @@ if (isMainThread) {
 
   for (let i = 0; i < CALLS; i++) {
     for (const compress of [Bun.deflateSync, Bun.gzipSync]) {
+      let output: Uint8Array;
       try {
-        compress(view, { library: "libdeflate" });
+        output = compress(view, { library: "libdeflate" });
       } catch (error) {
         // A racing input may outgrow the bound. That call is refused, which is fine. A crash is not.
         if (!/insufficient space/.test((error as Error).message)) throw error;
+        continue;
+      }
+      // libdeflate returns 0 for "did not fit". Read as a byte count, that is an empty stream handed back as success.
+      if (output.length === 0) {
+        console.log(`${compress.name} returned an empty result on call ${i}`);
+        process.exit(1);
       }
     }
   }

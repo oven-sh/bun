@@ -821,7 +821,7 @@ describe("crc32", () => {
 describe("libdeflate one-shot", () => {
   // The fixture explains the race. Only a sanitizer sees the stray write.
   it.skipIf(!isASAN)(
-    "does not overrun the output when a writer races the input",
+    "neither overruns the output nor returns an empty result when a writer races the input",
     async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts")],

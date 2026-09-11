@@ -31,6 +31,9 @@ JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 // Whether `loader` belongs to a disposed graph; the throwing form throws ERR_INVALID_STATE then.
 bool isDisposedModuleGraphLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
+// The loader whose instances of ES modules a require() bound to `graph` returns: the graph's,
+// or the global object's for null. Throws ERR_INVALID_STATE (nullptr) once the graph is disposed.
+JSC::JSModuleLoader* moduleLoaderForRequire(JSC::JSGlobalObject*, JSC::ThrowScope&, JSModuleGraph*);
 // promiseRejectionTracker: the graph whose module code is rejecting `promise` right now,
 // or null (the global object's code, or no graph exists).
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);

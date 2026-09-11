@@ -75,6 +75,7 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
+    macro(esModule) \
     macro(esmLoadSync) \
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
@@ -126,6 +127,7 @@ using namespace JSC;
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
+    macro(moduleGraph) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \

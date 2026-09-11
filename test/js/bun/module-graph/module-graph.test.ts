@@ -1579,30 +1579,39 @@ describe("Bun.unsafe.ModuleGraph — constructor / method contract", () => {
   });
 });
 
-// A graph instantiates ES modules. CommonJS modules, require() (createRequire, import.meta.require,
-// require inside CommonJS), require.cache and native addons are the global object's: one instance,
-// shared with the host and every graph.
-describe("Bun.unsafe.ModuleGraph — CommonJS and require() are the global object's", () => {
+// A graph instantiates ES modules. `import.meta.require` of a graph's module (also what a bare
+// `require` in an ES module is) returns that graph's instance of an ES module; CommonJS modules,
+// createRequire(), require inside CommonJS code, require.cache and native addons are the global
+// object's: one instance, shared with the host and every graph.
+describe("Bun.unsafe.ModuleGraph — require(): ES modules per graph, CommonJS the global object's", () => {
   const dir = fixture({
-    "c.cjs": `__cjsEvals.push("c"); let n = 0; module.exports = { inc() { return ++n }, who: () => (typeof T === "undefined" ? "host" : T), dyn: () => import("./e.mjs") }`,
+    "c.cjs": `__cjsEvals.push("c"); let n = 0; module.exports = { inc() { return ++n }, who: () => (typeof T === "undefined" ? "host" : T), dyn: () => import("./e.mjs"), req: () => require("./e.mjs") }`,
     "named.cjs": `exports.value = 42; exports.fn = () => "named"`,
     "e.mjs": `export const who = typeof T === "undefined" ? "host" : T; export let count = 0; export const bump = () => ++count`,
+    "me.mjs": `const v = { who: typeof T === "undefined" ? "host" : T }; export { v as "module.exports" }`,
+    "only-required.mjs": `export const who = typeof T === "undefined" ? "host" : T`,
+    "tla.mjs": `await 1; export const x = 1`,
     "d.json": `{"a":[1]}`,
     "entry.mjs": `import c from "./c.cjs"; import { value, fn } from "./named.cjs"; import * as ns from "./named.cjs"; import json from "./d.json";
-      import { createRequire } from "node:module"; import { who as esmWho } from "./e.mjs";
-      const require = createRequire(import.meta.url);
+      import { createRequire } from "node:module"; import * as e from "./e.mjs";
+      const created = createRequire(import.meta.url);
       export { c, json };
+      export const onlyRequired = () => import.meta.require("./only-required.mjs");
       export const report = async () => ({
-        who: typeof T === "undefined" ? "host" : T, esmWho,
+        who: typeof T === "undefined" ? "host" : T, esmWho: e.who,
         cjsInc: c.inc(), cjsWho: c.who(),
-        sameAsCreateRequire: c === require("./c.cjs"), sameAsMetaRequire: c === import.meta.require("./c.cjs"),
+        sameAsCreateRequire: c === created("./c.cjs"), sameAsMetaRequire: c === import.meta.require("./c.cjs"), sameAsBareRequire: c === require("./c.cjs"),
         named: [value, fn(), ns.value],
-        requireEsmWho: require("./e.mjs").who, dynamicImportFromCjsWho: (await c.dyn()).who,
-        jsonViaRequireIsHosts: require("./d.json") === hostRequire("./d.json"),
+        metaRequireEsm: [import.meta.require("./e.mjs") === e, require("./e.mjs") === e, import.meta.require("./e.mjs").who],
+        metaRequireModuleExportsInterop: import.meta.require("./me.mjs").who,
+        onlyRequiredWho: import.meta.require("./only-required.mjs").who,
+        createRequireEsmWho: created("./e.mjs").who, requireInCjsEsmWho: c.req().who, dynamicImportFromCjsWho: (await c.dyn()).who,
+        tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return String(err.message).includes("await import") } })(),
+        jsonViaRequireIsThisImport: import.meta.require("./d.json").default === json,
         inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
       })`,
   });
-  test("a CommonJS module imported by two graphs and the host is one module object, evaluated once; require() from graph code is the host's", async () => {
+  test("import.meta.require of an ES module is the graph's instance; CommonJS modules are one module object, evaluated once, shared with the host", async () => {
     const evals: string[] = ((globalThis as any).__cjsEvals = []);
     const hostRequire = createRequire(join(dir, "entry.mjs"));
     const mk = (t: string) => new ModuleGraphClass({ globals: { T: t, __cjsEvals: evals, hostRequire } });
@@ -1618,24 +1627,37 @@ describe("Bun.unsafe.ModuleGraph — CommonJS and require() are the global objec
         cjsWho: "host", // CommonJS code does not see a graph's globals
         sameAsCreateRequire: true,
         sameAsMetaRequire: true,
+        sameAsBareRequire: true,
         named: [42, "named", 42],
-        requireEsmWho: "host", // require(esm) loads into the global registry
-        dynamicImportFromCjsWho: "host", // import() in CommonJS code is the global loader's
-        jsonViaRequireIsHosts: true,
+        metaRequireEsm: [true, true, who], // import.meta.require / bare require of an ES module: this graph's instance
+        metaRequireModuleExportsInterop: who,
+        onlyRequiredWho: who, // also when nothing imported it before
+        createRequireEsmWho: "host", // createRequire() is the global object's
+        requireInCjsEsmWho: "host", // so is require() inside CommonJS code
+        dynamicImportFromCjsWho: "host", // and import() in CommonJS code
+        tla: true, // a module with top-level await cannot be require()d
+        jsonViaRequireIsThisImport: true, // already an ES module record in this loader: require() answers from it
         inRequireCache: true,
       });
+      const cacheHas = (f: string) => Object.keys(hostRequire.cache).includes(join(dir, f));
+      const reports = { a: await a.report(), b: await b.report() };
+      // a graph's instance is not an entry of the global require cache; the host's (createRequire above) is
+      const cached = { e: cacheHas("e.mjs"), onlyRequired: cacheHas("only-required.mjs") };
       expect({
-        a: await a.report(),
-        b: await b.report(),
+        ...reports,
+        cached,
         host: await host.report(),
         identity: [a.c === b.c, a.c === host.c, a.c === hostRequire("./c.cjs")],
+        onlyRequired: [a.onlyRequired() === a.onlyRequired(), a.onlyRequired() !== b.onlyRequired()],
         jsonPerGraph: [a.json !== b.json, a.json !== host.json], // a JSON *import* is an ES module record: per graph
         evals,
       }).toEqual({
         a: expected("A", 1),
         b: expected("B", 2),
+        cached: { e: true, onlyRequired: false },
         host: expected("host", 3),
         identity: [true, true, true],
+        onlyRequired: [true, true],
         jsonPerGraph: [true, true],
         evals: ["c"],
       });
@@ -1650,7 +1672,7 @@ describe("Bun.unsafe.ModuleGraph — CommonJS and require() are the global objec
       const g = new ModuleGraphClass({ globals: { T: "G" } });
       const ns = await g.import(join(dir, "c.cjs"));
       expect([Object.keys(ns).sort(), ns.default === createRequire(join(dir, "entry.mjs"))("./c.cjs")]).toEqual([
-        ["default", "dyn", "inc", "who"],
+        ["default", "dyn", "inc", "req", "who"],
         true,
       ]);
       g.dispose();

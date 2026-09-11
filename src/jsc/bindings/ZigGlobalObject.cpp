@@ -797,7 +797,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
 
-    auto* loader = globalObject->moduleLoader();
+    // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
+    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequire(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
@@ -2872,7 +2875,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmNamespaceForCjs, 1, functionEsmNamespaceForCjs },
         { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
-        { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
+        { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },

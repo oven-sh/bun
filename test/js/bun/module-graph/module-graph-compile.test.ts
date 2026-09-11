@@ -32,6 +32,8 @@ const sources: Record<string, string> = {
     import data from "./data.json";
     import { tlaWho } from "./tla.ts";
     const cjs = require("./c.cjs");
+    // require() of an ES module from a graph's module: this graph's instance (import.meta.require of the chunk when split)
+    const reqDep = require("./dep.ts");
     (typeof __log !== "undefined" ? __log : undefined)?.push("instance@" + (process.env.TAG ?? "host"));
     const short = (u: string) => u.replace(/^.*[\\\\/]/, "<embedded>/");
     export async function runInstance(n: number) {
@@ -39,7 +41,7 @@ const sources: Record<string, string> = {
       new Thing();
       const lazyDep = await import("./dep.ts");
       cjs.inc();
-      return { tag, count, nsCount: depNs.count, lazyDepCount: lazyDep.count, via: viaLocal(1), made: Thing.made, owner: new Thing().owner, env: process.env.TAG ?? null, meta: short(import.meta.url), json: data.kind, cjs: [cjs.who, cjs.n], tla: tlaWho };
+      return { tag, count, nsCount: depNs.count, lazyDepCount: lazyDep.count, via: viaLocal(1), made: Thing.made, owner: new Thing().owner, env: process.env.TAG ?? null, meta: short(import.meta.url), json: data.kind, cjs: [cjs.who, cjs.n], tla: tlaWho, req: [reqDep.tag, reqDep.count === count, reqDep.bump === bump] };
     }
     // dynamic import of a chunk that is only reachable through import()
     export const lazy = () => import("./lazy.ts");
@@ -177,6 +179,7 @@ const instanceRun = (tag: string | null, n: number, made: number, cjsN: number) 
   json: "json",
   cjs: [tag ?? "host", cjsN],
   tla: tag ?? "host",
+  req: [tag ?? "host", true, true],
 });
 
 type Combo = { name: string; args: string[] };

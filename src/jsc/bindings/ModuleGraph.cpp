@@ -82,6 +82,17 @@ bool throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope,
     return true;
 }
 
+JSModuleLoader* moduleLoaderForRequire(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleGraph* graph)
+{
+    if (!graph)
+        return globalObject->moduleLoader();
+    if (graph->disposed()) {
+        throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
+        return nullptr;
+    }
+    return graph->loader();
+}
+
 // ─── Attribution: which graph's code an error / rejection belongs to ────────────────
 //
 // std::optional<JSModuleGraph*>: nullopt = this frame / stack does not say (plain

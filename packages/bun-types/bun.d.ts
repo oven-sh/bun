@@ -5451,9 +5451,11 @@ declare module "bun" {
        * An error belongs to the graph whose module code threw it or rejected
        * with it: the innermost module code on the stack at that moment
        * (functions passed in through `globals`, and CommonJS modules, are the
-       * host's code). A rejection no code claims that way goes by where the
-       * error was created. `kind` is `"uncaughtException"` or
-       * `"unhandledRejection"`.
+       * host's code); a promise the runtime rejects on that code's behalf (an
+       * async function, a reaction whose handler threw) counts as rejected by
+       * it. Anything else — including a promise derived through `.then()`
+       * without a rejection handler — takes the normal path. `kind` is
+       * `"uncaughtException"` or `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     }
@@ -5464,13 +5466,14 @@ declare module "bun" {
      * Every graph that imports an ES module shares that module's parsed code,
      * bytecode and JIT-compiled code with every other graph and with the host;
      * each graph gets its own module-level state (top-level bindings, classes,
-     * closures), its own module registry for `import` / `import()`, its own
-     * `import.meta`, and its own values for the names in `globals`. Everything
-     * else — `globalThis`, `process`, intrinsics, builtin modules, CommonJS
-     * modules and `require()` (one instance and one `require.cache`, the
-     * host's), native addons, the event loop — is the global object's, shared:
-     * this runs cooperating instances of a program side by side, it is not a
-     * sandbox.
+     * closures), its own module registry for `import` / `import()` and for
+     * `import.meta.require()` of an ES module (what a bare `require()` in an
+     * ES module is), its own `import.meta`, and its own values for the names in
+     * `globals`. Everything else — `globalThis`, `process`, intrinsics, builtin
+     * modules, CommonJS modules (one instance, in the one `require.cache`;
+     * `createRequire()` and `require()` inside CommonJS code are the host's),
+     * native addons, the event loop — is the global object's, shared: this runs
+     * cooperating instances of a program side by side, it is not a sandbox.
      *
      * @experimental
      * @example

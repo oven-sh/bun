@@ -656,7 +656,8 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        // A graph module's require() returns that graph's instances of ES modules.
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
         RETURN_IF_EXCEPTION(scope, );
         ASSERT(object);
         init.set(uncheckedDowncast<JSFunction>(object));

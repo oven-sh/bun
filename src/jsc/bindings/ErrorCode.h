@@ -24,19 +24,7 @@
 
 namespace Bun {
 
-// Builds one error message. A message can embed text that comes from JS (an
-// encoding name, a constructor name, an inspected value), so its length is
-// user controlled and can pass `WTF::String::MaxLength` (2^31 - 1 characters).
-// A default-constructed `WTF::StringBuilder` calls `CRASH()` on that append,
-// and on a failed allocation, which aborts the process instead of reporting
-// the error it was building. This builder records the overflow. A message that
-// did not fit is reported as `RangeError: Out of memory`, which is what JSC
-// reports for a string it cannot create.
-//
-// Pass the builder to `Bun::createError` or `Bun::throwError`. For any other
-// sink (`JSC::throwTypeError`, a `WebCore::Exception`) build the message with
-// `tryMakeString` and use `throwTypeErrorOrOutOfMemory` or
-// `Exception { OutOfMemoryError }`.
+// For a message that embeds text from JS: past `String::MaxLength` it records the overflow where a default `StringBuilder` calls `CRASH()`.
 class MessageBuilder final : public WTF::StringBuilder {
 public:
     MessageBuilder()
@@ -52,13 +40,11 @@ public:
         return WTF::StringBuilder::toString();
     }
 
-    // The message. When it did not fit, throws `RangeError: Out of memory` and
-    // returns a null string.
+    // Throws `RangeError: Out of memory` and returns a null string when the message did not fit.
     WTF::String finish(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
 private:
-    // These assert that the builder did not overflow, so they abort on the
-    // input this type exists for. Use `tryToString` or `finish`.
+    // These assert `!hasOverflowed()`. Use `tryToString` or `finish`.
     using WTF::StringBuilder::capacity;
     using WTF::StringBuilder::length;
     using WTF::StringBuilder::toAtomString;
@@ -66,9 +52,7 @@ private:
     using WTF::StringBuilder::toStringPreserveCapacity;
 };
 
-// Throws a TypeError whose message was built with `tryMakeString`. A null
-// `message` means the text did not fit in a string. That is reported as
-// `RangeError: Out of memory`.
+// For a message built with `tryMakeString`: a null `message` did not fit, and is thrown as `RangeError: Out of memory`.
 void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& message);
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
@@ -104,11 +88,10 @@ private:
 };
 
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
-// Throws the error `message` describes, or `RangeError: Out of memory` when the
-// message overflowed. Same for the `createError` overload below.
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
+// A message that overflowed becomes `RangeError: Out of memory`. `throwError(..., MessageBuilder&)` throws the same.
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);

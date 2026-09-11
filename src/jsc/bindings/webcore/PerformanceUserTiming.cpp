@@ -116,8 +116,7 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& 
     if (iterator != m_marksMap.end())
         return iterator->value.last()->startTime();
 
-    // `mark` comes from JS, so the message can pass `String::MaxLength`.
-    // `makeString` calls `CRASH()` there; `tryMakeString` returns a null string.
+    // `mark` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
     auto message = tryMakeString("No mark named '"_s, mark, "' exists"_s);
     if (!message) [[unlikely]]
         return Exception { OutOfMemoryError };

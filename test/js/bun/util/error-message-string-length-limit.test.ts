@@ -28,10 +28,12 @@ const fixture = `
   const cases = {
     "unknown Buffer encoding": () => Buffer.from("x", long),
     "constructor name in ERR_INVALID_ARG_TYPE": () => Buffer.from(new C()),
+    "constructor name in the Buffer#indexOf message": () => Buffer.alloc(1).indexOf(new C()),
     "constructor name rendered for a Rust validator": () => new SocketAddress({ address: "1.2.3.4", port: new C() }),
     "missing performance mark": () => performance.measure("m", long),
     "invalid SubtleCrypto key format": () => crypto.subtle.importKey(long, new Uint8Array(8), "AES-GCM", false, ["encrypt"]),
     "invalid ReadableStream source type": () => new ReadableStream({ type: long }),
+    "value that ReadableStream.from cannot iterate": () => ReadableStream.from(Symbol(long)),
   };
   for (const [name, run] of Object.entries(cases)) {
     try {
@@ -43,9 +45,10 @@ const fixture = `
   }
 `;
 
-// The child touches about 2.4 GB of pages. That takes 2 to 3 seconds in a debug
-// ASAN build and more on a loaded machine, which is too close to the default
-// 5 second limit, so this one test carries its own ceiling.
+// The child touches about 4.4 GB of pages: the string, and one rendering of it
+// for the last case. That takes 3 to 4 seconds in a debug ASAN build and more
+// on a loaded machine, which is too close to the default 5 second limit, so
+// this one test carries its own ceiling.
 test.skipIf(totalmem() < 10 * 1024 ** 3)(
   "an error message past the string length limit is thrown instead of aborting the process",
   async () => {
@@ -60,10 +63,12 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
       stdout: [
         "unknown Buffer encoding: RangeError: Out of memory",
         "constructor name in ERR_INVALID_ARG_TYPE: RangeError: Out of memory",
+        "constructor name in the Buffer#indexOf message: RangeError: Out of memory",
         "constructor name rendered for a Rust validator: RangeError: Out of memory",
         "missing performance mark: RangeError: Out of memory",
         "invalid SubtleCrypto key format: RangeError: Out of memory",
         "invalid ReadableStream source type: RangeError: Out of memory",
+        "value that ReadableStream.from cannot iterate: RangeError: Out of memory",
       ],
       stderr: "",
       exitCode: 0,

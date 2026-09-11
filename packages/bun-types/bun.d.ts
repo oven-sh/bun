@@ -6177,9 +6177,11 @@ declare module "bun" {
      *
      * It is the loader that Bun picks for the module without the plugin: the
      * `type` attribute of the import (`with { type: "text" }`) when the import
-     * has one, and the loader for the file extension otherwise. One case
-     * differs. Where Bun picks the `"file"` loader for an extension that has no
-     * loader, the default loader is `"js"`.
+     * has one, and the loader for the file extension otherwise.
+     *
+     * One case differs. For an extension that has no loader, Bun picks the
+     * `"file"` loader, but the default loader is `"js"`. The default loader is
+     * also `"js"` when the import of such a file has `with { type: "file" }`.
      */
     loader: Loader;
     /**

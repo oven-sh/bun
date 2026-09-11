@@ -201,7 +201,32 @@ declare module "bun:jsc" {
    *
    * JavaScriptCore performs proper tail calls in strict mode code, which
    * includes every ES module, so a helper that does `return callerSourceOrigin()`
-   * reports the file of the helper's caller rather than its own.
+   * reports the file of the helper's caller rather than its own. A generator
+   * or async function never makes a tail call, so a helper of that kind
+   * reports its own file.
+   *
+   * @example
+   * ```ts
+   * // helper.ts
+   * import { callerSourceOrigin } from "bun:jsc";
+   *
+   * export function origin() {
+   *   return callerSourceOrigin();
+   * }
+   *
+   * export async function originAsync() {
+   *   return callerSourceOrigin();
+   * }
+   *
+   * // index.ts
+   * import { origin, originAsync } from "./helper.ts";
+   *
+   * console.log(origin());
+   * // file:///home/me/app/index.ts
+   *
+   * console.log(await originAsync());
+   * // file:///home/me/app/helper.ts
+   * ```
    */
   function callerSourceOrigin(): string | null;
 

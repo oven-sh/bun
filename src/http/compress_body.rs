@@ -92,7 +92,7 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor, Status};
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -120,7 +120,11 @@ fn compress_libdeflate_fast(
         _ => cached,
     };
 
-    Some(compressor.compress(input, shared_buffer, enc).written)
+    let result = compressor.compress(input, shared_buffer, enc);
+    // `InsufficientSpace` means the output outgrew the bound, which an input
+    // another thread rewrote during the call can do. Fall back to streaming
+    // zlib, which bounds every write by `avail_out`.
+    (result.status == Status::Success).then_some(result.written)
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the

@@ -1,5 +1,7 @@
 import { serve, type ServerWebSocket } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
+import path from "node:path";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
   let serverReceivedExtensions = "";
@@ -539,4 +541,92 @@ test("server enforces maxPayloadLength on compressed messages inflated through t
   expect(events[1]).toBe("close");
 
   expect(serverReceived).toEqual([900]);
+});
+
+test("every ServerWebSocket send method delivers the bytes of a SharedArrayBuffer view", async () => {
+  const shared = new SharedArrayBuffer(4000);
+  const payload = new Uint8Array(shared);
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 7) & 0xff;
+  // A control frame carries at most 125 bytes.
+  const control = new Uint8Array(shared, 100, 125);
+
+  using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      // The one client is also the one subscriber, so it has to see its own publishes.
+      publishToSelf: true,
+      open(ws) {
+        ws.subscribe("topic");
+        ws.send(payload, true);
+        ws.sendBinary(payload, true);
+        ws.publish("topic", payload, true);
+        ws.publishBinary("topic", payload, true);
+        server.publish("topic", payload, true);
+        ws.ping(control);
+        ws.pong(control);
+      },
+      message() {},
+    },
+  });
+
+  const received = { message: [] as Buffer[], ping: [] as Buffer[], pong: [] as Buffer[] };
+  const all = Promise.withResolvers<void>();
+  const client = new WebSocket(`ws://localhost:${server.port}`);
+  for (const kind of ["message", "ping", "pong"] as const) {
+    client.addEventListener(kind, ({ data }) => {
+      received[kind].push(data);
+      if (received.message.length === 5 && received.ping.length === 1 && received.pong.length === 1) all.resolve();
+    });
+  }
+  client.addEventListener("error", all.reject);
+  client.addEventListener("close", all.reject);
+
+  await all.promise;
+  expect(client.extensions).toContain("permessage-deflate");
+  expect(received).toEqual({
+    message: Array(5).fill(Buffer.from(payload)),
+    ping: [Buffer.from(control)],
+    pong: [Buffer.from(control)],
+  });
+  client.close();
+});
+
+// libdeflate reads the input twice in one call: it costs the deflate block from
+// the first pass, compares that cost against the room left in the 4 KiB
+// uWS::DeflationStream::reset_buffer once, then emits the block in a second
+// pass with no further bounds check. A worker that rewrites the input between
+// the two passes made the emitted block longer than the cost, so the second
+// pass wrote past that buffer. Only a sanitizer sees that write: without one
+// the stray bytes land in a neighbouring allocation and the run exits 0.
+//
+// Both memory kinds race. Sharing is not the property that matters, so
+// "mmap" (a plain Uint8Array over a MAP_SHARED region) must hold too.
+describe.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => {
+  test.skipIf(!isASAN)("does not overrun the deflate buffer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "websocket-shared-buffer-deflate-fixture.ts")],
+      env: {
+        ...bunEnv,
+        MODE: mode,
+        // Symbolizing a sanitizer report costs several seconds, which is
+        // longer than the budget for this test. Raw frames still say it failed.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("done");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // Booting a worker under a sanitizer costs about 3s before the race even
+    // starts, so this one needs more than the default ceiling.
+  }, 20_000);
 });

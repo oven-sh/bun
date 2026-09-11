@@ -527,8 +527,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // Reached from `error.stack` and the error printer: a FIFO
-                // here must not block them.
+                // `error.stack` and the error printer get here: a FIFO must not block them.
                 let data = match bun_sys::File::read_regular_from(bun_core::Fd::cwd(), load_path) {
                     Ok(data) => data,
                     Err(_) => break 'try_external,

@@ -2604,8 +2604,7 @@ fn transpile_source_code_inner(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: None,
-                    // The error printer must not block on, or read from, what is
-                    // no longer the regular file the loader read.
+                    // The error printer reads after the fact: the path can name a FIFO by now.
                     non_regular_file: if disable_transpilying {
                         bun_resolver::cache::NonRegularFile::Reject
                     } else {
@@ -2692,11 +2691,13 @@ fn transpile_source_code_inner(
                             hash,
                             package_json,
                         );
-                        // Node compile cache: record the failed module so exit-time
-                        // persist logs the "was not initialized" skip (Node parity).
-                        note_compile_cache_parse_failure(path, loader, module_type);
                     }
                     arena_guard.2 = false; // give_back_arena = false
+                    // Node compile cache: record the failed module so exit-time
+                    // persist logs the "was not initialized" skip (Node parity).
+                    if !disable_transpilying {
+                        note_compile_cache_parse_failure(path, loader, module_type);
+                    }
                     return Err(crate::Error::ParseError);
                 };
 

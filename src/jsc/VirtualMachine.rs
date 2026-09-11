@@ -4458,9 +4458,7 @@ impl VirtualMachine {
             } else {
                 bun_ast::Loader::File
             }),
-            // The one caller fetches with `PrintSource`, which returns the
-            // file as it is. A `package.json` lookup for the module type would
-            // scan a directory the error printer has no other reason to touch.
+            // Unused: the one caller fetches with `PrintSource`, which does not parse.
             module_type: bun_bundler::options::ModuleType::Unknown,
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.

@@ -2088,16 +2088,12 @@ pub mod cache {
         }
     }
 
-    /// What [`Fs::read_file_with_allocator`] does with a path that is not a
-    /// regular file.
+    /// What [`Fs::read_file_with_allocator`] does with a path that is not a regular file.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum NonRegularFile {
         /// Open and read it like a file. A FIFO blocks until it has a writer.
         Read,
-        /// Fail (`EISDIR` for a directory, `ENODEV` otherwise) without
-        /// blocking on it or reading a byte from it. For a read that happens
-        /// after the fact, such as the error printer's re-read of a module
-        /// that has already run.
+        /// Fail through [`bun_sys::File::open_regular_at`]: no blocking open, no byte read.
         Reject,
     }
 

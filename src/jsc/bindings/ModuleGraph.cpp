@@ -68,10 +68,15 @@ static JSObject* createModuleGraphDisposedError(JSGlobalObject* globalObject)
     return createError(globalObject, ErrorCode::ERR_INVALID_STATE, "ModuleGraph has been disposed"_s);
 }
 
-bool throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleLoader* loader)
+bool isDisposedModuleGraphLoader(JSGlobalObject* globalObject, JSModuleLoader* loader)
 {
     JSModuleGraph* graph = moduleGraphForLoader(globalObject, loader);
-    if (!graph || !graph->disposed())
+    return graph && graph->disposed();
+}
+
+bool throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleLoader* loader)
+{
+    if (!isDisposedModuleGraphLoader(globalObject, loader))
         return false;
     throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
     return true;
@@ -322,46 +327,48 @@ static JSModuleGraph* thisModuleGraph(JSGlobalObject* globalObject, ThrowScope& 
 
 // The promise import() returned settles like the loader's unless dispose() rejected it
 // first. Called with (the loader's result / error, [that promise, the module key]).
-static JSPromise* settlingImport(JSGlobalObject* globalObject, JSModuleGraph* graph, JSValue context, JSString*& key)
+static void settleImport(JSGlobalObject* globalObject, CallFrame* callFrame, bool rejected)
 {
-    JSValue promise = context.get(globalObject, 0u);
-    key = context.get(globalObject, 1u).toStringOrNull(globalObject);
-    if (JSSet* pending = graph->pendingImports())
-        pending->remove(globalObject, promise);
-    auto* result = dynamicDowncast<JSPromise>(promise);
-    return result && result->status() == JSPromise::Status::Pending ? result : nullptr;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* graph = uncheckedDowncast<JSModuleGraph>(callFrame->jsCallee()->getDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName()));
+    JSValue settlement = callFrame->argument(0);
+    JSValue context = callFrame->argument(1);
+    JSValue promiseValue = context.get(globalObject, 0u);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue key = context.get(globalObject, 1u);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (JSSet* pending = graph->pendingImports()) {
+        pending->remove(globalObject, promiseValue);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    auto* promise = dynamicDowncast<JSPromise>(promiseValue);
+    if (!promise || promise->status() != JSPromise::Status::Pending)
+        return;
+    if (!rejected) {
+        scope.release();
+        promise->resolve(globalObject, vm, settlement);
+        return;
+    }
+    // A first import that failed leaves the graph without a main module rather than
+    // with one that never loaded.
+    if (graph->mainPath() == key)
+        graph->clearMainPath();
+    promise->reject(vm, settlement);
+    // graph.import()'s promise is its caller's to handle, not the graph's (whose code threw).
+    defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* key = nullptr;
-    JSPromise* promise = settlingImport(globalObject, uncheckedDowncast<JSModuleGraph>(callFrame->jsCallee()->getDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName())), callFrame->argument(1), key);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (promise)
-        promise->resolve(globalObject, vm, callFrame->argument(0));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    settleImport(globalObject, callFrame, false);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* key = nullptr;
-    auto* graph = uncheckedDowncast<JSModuleGraph>(callFrame->jsCallee()->getDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName()));
-    JSPromise* promise = settlingImport(globalObject, graph, callFrame->argument(1), key);
-    RETURN_IF_EXCEPTION(scope, {});
-    // A first import that failed leaves the graph without a main module rather than
-    // with one that never loaded.
-    if (key && graph->mainPath() == JSValue(key))
-        graph->clearMainPath();
-    if (promise) {
-        promise->reject(vm, callFrame->argument(0));
-        // graph.import()'s promise is its caller's to handle, not the graph's (whose code threw).
-        defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    settleImport(globalObject, callFrame, true);
+    return JSValue::encode(jsUndefined());
 }
 
 // import(): like dynamic import(), every failure past the receiver check is a

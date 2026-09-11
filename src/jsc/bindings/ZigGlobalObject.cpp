@@ -4212,10 +4212,10 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 {
     // Nothing evaluates in a disposed Bun.unsafe.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
-    {
+    if (Bun::isDisposedModuleGraphLoader(lexicalGlobalObject, moduleLoader)) {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-        if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
-            return {};
+        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader);
+        return {};
     }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,

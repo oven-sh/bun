@@ -30,7 +30,8 @@ class JSModuleGraph;
 // object — a JSC module loader whose module scope (the "overlay") holds the host's
 // `globals` for the graph.
 JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// Throws ERR_INVALID_STATE if `loader` belongs to a disposed graph; returns whether it threw.
+// Whether `loader` belongs to a disposed graph; the throwing form throws ERR_INVALID_STATE then.
+bool isDisposedModuleGraphLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
 // Rejections of promises while a graph exists, for attributing unhandled ones (onError).
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);

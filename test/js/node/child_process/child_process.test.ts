@@ -890,6 +890,16 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.stderr).toEqual(null);
 });
 
+// Node sets error.path to the file for every spawnSync failure. A file that
+// exists but CreateProcess refuses to run fails inside uv_spawn, which used to
+// produce an error without a path on Windows.
+it.if(isWindows)("spawnSync(file CreateProcess refuses) reports error.path", () => {
+  using dir = tempDir("spawnsync-bad-exe", { "bad.exe": Buffer.from("\x00\x01\x02garbage\n", "latin1") });
+  const exe = path.join(String(dir), "bad.exe");
+  const r = spawnSync(exe);
+  expect({ path: r.error?.path, syscall: r.error?.syscall }).toEqual({ path: exe, syscall: `spawnSync ${exe}` });
+});
+
 // https://github.com/oven-sh/bun/issues/32067
 // Darwin's posix_spawn file actions reject any fd number >= OPEN_MAX (10240)
 // with EBADF at registration time, before checking whether the fd is open.
@@ -1228,8 +1238,9 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     }
     expect(thrown?.code).toBe("ENOTSUP");
 
+    // Like node, error.path is the file as given, not the resolved cmd.exe.
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
-    expect(r.error?.code).toBe("ENOTSUP");
+    expect({ code: r.error?.code, path: r.error?.path }).toEqual({ code: "ENOTSUP", path: "cmd.exe" });
   });
 });
 

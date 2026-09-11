@@ -2222,7 +2222,12 @@ mod spawn_process_body {
                 (*process).close();
                 Process::deref(process);
             }
-            return Ok(Err(err));
+            // Blame argv[0], as `posix_spawn::spawn_z` does on Linux and as
+            // Node's `err.path` does, rather than the resolved `file`.
+            // SAFETY: argv[0] is non-null (read above for `file`) and the
+            // caller keeps argv alive for the duration of this call.
+            let arg0 = unsafe { bun_core::ffi::cstr(*argv) }.to_bytes();
+            return Ok(Err(err.with_path(arg0)));
         }
         // The process handle is open on this thread's loop until `close()`; a
         // thread teardown closes it through us (the child keeps running, as with

@@ -2,7 +2,8 @@ import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
-import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
+import * as moduleNamespace from "module";
+import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin } from "module";
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
@@ -65,10 +66,24 @@ describe.concurrent("node-module-module", () => {
     expect(ns.default.prototype).toBe(Module.prototype);
   });
 
+  test("wrap, wrapper and _stat are not enumerable either (#16933)", () => {
+    const hidden = ["_stat", "wrap", "wrapper"];
+    expect(hidden.filter(name => Object.getOwnPropertyDescriptor(Module, name).enumerable)).toEqual([]);
+    expect(Object.keys(Module).filter(name => hidden.includes(name))).toEqual([]);
+    // The ES module exports Object.keys(Module), so, as in Node, these are not named exports.
+    expect(hidden.filter(name => name in moduleNamespace)).toEqual([]);
+    expect(moduleNamespace.createRequire).toBe(createRequire);
+    // Still reachable the way Node code reaches them.
+    expect(typeof Module.wrap).toBe("function");
+    expect(typeof Module.wrapper[0]).toBe("string");
+    expect(typeof Module._stat).toBe("function");
+  });
+
   // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this
-  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `wrapper` / `_resolveFilename`
-  // / `runMain` setters with their current values, which must not count as overriding them (an overridden wrapper
-  // re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
+  // needs `prototype` to be non-enumerable; and the copy goes through the inherited `_resolveFilename` / `runMain`
+  // setters with their current values, which must not count as overriding them. `wrapper` is not enumerable
+  // either, so the test writes its current value back explicitly: that must not count as an override (an
+  // overridden wrapper re-wraps every CommonJS module from source and bypasses the --isolate SourceProvider cache).
   test("Module's enumerable statics can be copied onto a subclass without overriding the CJS wrapper", async () => {
     using dir = tempDir("module-statics-copy", {
       "dep.cjs": `module.exports = "dep";`,
@@ -83,6 +98,7 @@ describe.concurrent("node-module-module", () => {
           expect(Sub.prototype).toBeInstanceOf(Module);
           expect(Sub._extensions).toBe(Module._extensions);
           expect(Sub.wrapper[0]).toBe(Module.wrapper[0]);
+          Module.wrapper = Module.wrapper;
 
           expect(require("./dep.cjs")).toBe("dep");
           expect(isolatedModuleCacheSourceType(require.resolve("./dep.cjs"))).toBe("Program");
@@ -558,9 +574,9 @@ console.log("survived", require("./late.js"));`,
 
   test("Module.wrap", () => {
     var mod = { exports: {} };
-    expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
+    expect(eval(Module.wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
     expect(mod.exports.foo).toBe(1);
-    expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
+    expect(Module.wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
   });
 
   test("Overwriting _resolveFilename", async () => {

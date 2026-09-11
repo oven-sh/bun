@@ -6,6 +6,7 @@ interface MetafileImport {
   path: string;
   kind: string;
   original?: string;
+  entryPoint?: string;
   external?: boolean;
   with?: { type: string };
 }
@@ -456,6 +457,66 @@ describe("bundler metafile", () => {
     const outputs = (result.metafile as Metafile).outputs as Record<string, MetafileOutput>;
     const outputPaths = Object.keys(outputs);
     expect(outputPaths).toContain(dynamicImport!.path);
+  });
+
+  describe.each(["browser", "bun"] as const)("target %s", target => {
+    test.each([
+      { kind: "dynamic-import", call: `import("./lazy.js").then(m => console.log(m.value))` },
+      ...(target === "bun"
+        ? [{ kind: "require-call", call: `export const load = () => require("./lazy.js").value` }]
+        : []),
+    ])("metafile names the input a split $kind loads as entryPoint", async ({ kind, call }) => {
+      using dir = tempDir("metafile-split-import-test", {
+        "entry.js": `import { shared } from "./shared.js"; console.log(shared); ${call};`,
+        "lazy.js": `import { shared } from "./shared.js"; export const value = shared + 1;`,
+        "shared.js": `export const shared = 123;`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/entry.js`],
+        metafile: true,
+        splitting: true,
+        target,
+      });
+
+      expect(result.success).toBe(true);
+      const { inputs, outputs } = result.metafile as Metafile;
+      const [lazyInput] = Object.keys(inputs).filter(path => path.endsWith("lazy.js"));
+      const [entryInput] = Object.keys(inputs).filter(path => path.endsWith("entry.js"));
+      const [lazyOutput] = Object.keys(outputs).filter(path => outputs[path].entryPoint === lazyInput);
+      expect(lazyInput).toBeString();
+      expect(lazyOutput).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === kind)).toEqual([
+        { path: lazyOutput, kind, original: "./lazy.js", entryPoint: lazyInput, external: true },
+      ]);
+      // A static import has no chunk of its own to name.
+      expect(inputs[entryInput].imports.filter(imp => imp.kind === "import-statement")).toEqual([
+        {
+          path: Object.keys(inputs).find(path => path.endsWith("shared.js"))!,
+          kind: "import-statement",
+          original: "./shared.js",
+        },
+      ]);
+    });
+  });
+
+  test("metafile names the same input as entryPoint when two entry points import() it", async () => {
+    using dir = tempDir("metafile-split-import-two-entries", {
+      "a.js": `import("./lazy.js").then(m => console.log("a", m.value));`,
+      "b.js": `import("./lazy.js").then(m => console.log("b", m.value));`,
+      "lazy.js": `export const value = 1;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [`${dir}/a.js`, `${dir}/b.js`],
+      metafile: true,
+      splitting: true,
+    });
+    expect(result.success).toBe(true);
+    const { inputs } = result.metafile as Metafile;
+    const input = (name: string) => Object.keys(inputs).find(path => path.endsWith(name))!;
+    const split = (name: string) =>
+      inputs[input(name)].imports.filter(imp => imp.kind === "dynamic-import").map(imp => imp.entryPoint);
+    expect({ a: split("a.js"), b: split("b.js") }).toEqual({ a: [input("lazy.js")], b: [input("lazy.js")] });
   });
 
   test("metafile includes cssBundle for CSS outputs", async () => {

@@ -4372,6 +4372,15 @@ declare module "bun" {
           kind: ImportKind;
           /** Original import specifier before resolution (if different from path) */
           original?: string;
+          /**
+           * With `splitting`, an `import()` (or, for `target: "bun"`, a
+           * `require()` of an ES module) of a bundled file loads another
+           * output file: `path` then points at that output instead of an
+           * input, and `external` is `true`. `entryPoint` is the input file
+           * that output was built from. It is a key of `inputs` and equals
+           * that output's `outputs[...].entryPoint`.
+           */
+          entryPoint?: string;
           /** Whether this import is external to the bundle */
           external?: boolean;
           /** Import attributes, for example `{ type: "json" }` */

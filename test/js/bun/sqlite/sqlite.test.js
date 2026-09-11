@@ -1138,6 +1138,30 @@ describe("Statement.iterate() busy guard", () => {
     expect(db.prepare("SELECT id, pid FROM child").all()).toEqual([{ id: 1, pid: 999 }]);
     db.close();
   });
+
+  it("an exception from the loop body is not masked by a commit failure while releasing the cursor", () => {
+    const db = new Database(":memory:");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
+    db.exec(
+      "CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+    );
+    const s = db.prepare("INSERT INTO child (id, pid) VALUES (1, 999) RETURNING id");
+
+    // Both fail here: the body throws, and releasing the cursor fails the deferred FK check.
+    // for..of closes the iterator with a throw completion, which keeps the body's exception.
+    expect(() => {
+      for (const _row of s.iterate()) {
+        throw new Error("boom");
+      }
+    }).toThrow("boom");
+
+    // The statement was still released.
+    expect(db.prepare("SELECT * FROM child").all()).toEqual([]);
+    db.exec("INSERT INTO parent (id) VALUES (999)");
+    expect(s.get()).toEqual({ id: 1 });
+    db.close();
+  });
 });
 
 it("db.run()", () => {

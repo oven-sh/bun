@@ -1718,6 +1718,7 @@ function Socket(options?) {
       while (offset < total) {
         const dest = self[kOnreadBuffer];
         if (dest === true) {
+          self.bytesRead += total - offset;
           let ret;
           try {
             ret = onreadCallback(total - offset, true);
@@ -1749,6 +1750,8 @@ function Socket(options?) {
         const n = MathMin(dest.length, total - offset);
         dest.set(buffer.subarray(offset, offset + n));
         offset += n;
+        // Counted here per slice, not per native read in data(): node's handle reads into the onread buffer and counts before the callback, https://github.com/nodejs/node/blob/v26.3.0/src/stream_base-inl.h#L75-L80
+        self.bytesRead += n;
         let ret;
         try {
           ret = onreadCallback(n, dest);

@@ -30,7 +30,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, createServer as createTLSServer, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -2737,6 +2737,108 @@ it("onread: `false` from a callback holding the `true` sentinel still pauses unt
     client?.destroy();
     server.close();
   }
+});
+
+// Node counts on the handle, one onread-buffer-sized read at a time, before the callback runs:
+// https://github.com/nodejs/node/blob/v26.3.0/src/stream_base-inl.h#L75-L80
+// Expected values observed under node v26.3.0.
+describe.concurrent("net.Socket onread bytesRead", () => {
+  async function listen(server: Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return (server.address() as import("node:net").AddressInfo).port;
+  }
+
+  it.each(["net", "tls"] as const)("%s: counts each slice as it reaches the callback", async kind => {
+    const onConnection = (c: Socket) => {
+      c.on("error", () => {});
+      c.end("abcdefghij");
+    };
+    const server = kind === "tls" ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
+    let client: Socket | undefined;
+    try {
+      const seen: number[][] = [];
+      let delivered = 0;
+      const options = {
+        port: await listen(server),
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number) {
+            delivered += n;
+            seen.push([delivered, client!.bytesRead]);
+          },
+        },
+      };
+      client =
+        kind === "tls" ? tlsConnect({ ...options, ca: tlsCert.cert, servername: "localhost" }) : connect(options);
+      await once(client, "close");
+      // The last slice is shorter than the buffer.
+      expect(seen).toEqual([
+        [4, 4],
+        [8, 8],
+        [10, 10],
+      ]);
+      expect(client.bytesRead).toBe(10);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("does not count the bytes a false return holds back", async () => {
+    const server = createServer(c => c.end("abcdefghij"));
+    let client: Socket | undefined;
+    try {
+      const paused = Promise.withResolvers<void>();
+      let delivered = 0;
+      client = connect({
+        port: await listen(server),
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number) {
+            delivered += n;
+            if (delivered !== 4) return;
+            paused.resolve();
+            return false;
+          },
+        },
+      });
+      const closed = once(client, "close");
+      await paused.promise;
+      expect(client.bytesRead).toBe(4);
+      client.resume();
+      await closed;
+      expect({ delivered, bytesRead: client.bytesRead }).toEqual({ delivered: 10, bytesRead: 10 });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("counts a read that reaches the callback as the `true` sentinel", async () => {
+    const server = createServer(c => c.end("hello"));
+    let client: Socket | undefined;
+    try {
+      const seen: unknown[][] = [];
+      client = connect({
+        port: await listen(server),
+        host: "127.0.0.1",
+        onread: {
+          buffer: () => null as any,
+          callback(n: number, buf: unknown) {
+            seen.push([n, buf, client!.bytesRead]);
+          },
+        },
+      });
+      await once(client, "close");
+      expect(seen).toEqual([[5, true, 5]]);
+      expect(client.bytesRead).toBe(5);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
 });
 
 // node lets a throwing onread callback escape as an uncaught exception:

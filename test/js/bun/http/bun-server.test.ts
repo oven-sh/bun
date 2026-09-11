@@ -1378,6 +1378,75 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("stop() drains TLS connections whose handshake is queued behind the per-iteration budget", async () => {
+    // The loop runs five TLS handshakes per iteration and parks the rest of a
+    // burst in a loop-wide low-priority queue, unlinked from the socket list
+    // the stop() sweep walks. The first request to arrive stops the server, so
+    // most of the burst is still parked at that moment. A parked connection
+    // that the sweep misses stays keep-alive: it answers every later request
+    // and holds the drain promise open until the client hangs up. The client
+    // only hangs up after a third answer, so one answer on a connection means
+    // the server closed it after the first response.
+    const connections = 30;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let stopped;
+          let resolved = false;
+          const server = Bun.serve({
+            port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)},
+            idleTimeout: 255,
+            fetch() {
+              stopped ??= server.stop().then(() => { resolved = true; });
+              return new Response("ok");
+            },
+          });
+          const GET = "GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
+          const END = "\\r\\n\\r\\nok";
+          const conns = [];
+          for (let i = 0; i < ${connections}; i++) {
+            const closed = Promise.withResolvers();
+            const conn = { answers: 0, closed: closed.promise };
+            let buf = "";
+            Bun.connect({
+              hostname: "127.0.0.1", port: server.port, tls: { rejectUnauthorized: false },
+              socket: {
+                handshake: s => void s.write(GET),
+                data(s, d) {
+                  buf += d.toString("latin1");
+                  while (buf.includes(END)) {
+                    buf = buf.slice(buf.indexOf(END) + END.length);
+                    if (++conn.answers < 3) s.write(GET);
+                    else s.end();
+                  }
+                },
+                close: () => closed.resolve(),
+                error: () => {},
+                connectError: () => closed.resolve(),
+              },
+            }).catch(() => {});
+            conns.push(conn);
+          }
+          await Promise.all(conns.map(c => c.closed));
+          await stopped;
+          console.log(JSON.stringify({ resolved, answers: conns.map(c => c.answers).join("") }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolved: true, answers: "1".repeat(connections) },
+      exitCode: 0,
+    });
+  });
+
   test("server.reload() keeps the connection count coherent", async () => {
     // clearRoutes() used to wipe filterHandlers, so a connection open across
     // reload left active_connection_count stuck > 0 forever. With the stuck

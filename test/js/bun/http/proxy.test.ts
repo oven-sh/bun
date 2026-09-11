@@ -1392,6 +1392,39 @@ for (const scheme of ["http", "https"] as const) {
   }, 15000);
 }
 
+// A fatal SSL_read inside a proxy tunnel whose data callback writes back freed
+// the HTTPClient under its own caller. The origin's 101 and a record that
+// cannot be decrypted arrive together: the 101 arm of handle_on_data_headers
+// flushes the request body into the now-fatal SSL, SSLWrapper::write_data
+// closed the wrapper, ProxyTunnel::on_close freed the client, and the 101 arm
+// kept reading it (ASAN: heap-use-after-free in handle_response_metadata).
+test("a bad record delivered with a 101 through a proxy tunnel does not free the client mid-dispatch", async () => {
+  const iterations = 3;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), require.resolve("./proxy-upgrade-fatal-record-fixture.ts"), String(iterations)],
+    env: {
+      ...bunEnv,
+      // Same reason as the fixture above: the per-request proxy must not be
+      // bypassed by ambient proxy configuration (see PROXY_ENV_KEYS).
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
+  // The request itself may resolve with the 101 or fail on the bad record;
+  // either is fine. What must hold is that the process survives every
+  // iteration and still serves a fresh request.
+  expect(stdout.trim().split("\n")).toHaveLength(iterations + 1);
+  expect(stdout).toEndWith("probe: probe-ok\n");
+  expect(exitCode).toBe(0);
+}, 30000);
+
 describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {

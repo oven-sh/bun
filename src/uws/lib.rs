@@ -766,6 +766,12 @@ pub mod ssl_wrapper {
             if self.flags.sent_ssl_shutdown() {
                 return Err(WriteDataError::ConnectionClosed);
             }
+            // A callback of the pass that hit a fatal error wrote back. That pass
+            // closes once the callback returns. Closing here instead runs the owner's
+            // `on_close` (fetch's ProxyTunnel frees itself there) under its own frame.
+            if self.flags.fatal_error() {
+                return Err(WriteDataError::ConnectionClosed);
+            }
 
             if data.is_empty() {
                 // just cycle through internal openssl's state

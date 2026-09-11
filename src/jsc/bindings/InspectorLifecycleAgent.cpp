@@ -171,15 +171,19 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> argv = JSON::ArrayOf<String>::create();
     {
-
-        auto* array = uncheckedDowncast<JSC::JSArray>(process->getArgv(global));
+        // process.argv is writable, so this slot holds whatever the program
+        // last assigned to it. Report an empty argv for a value that is not an
+        // array.
+        auto argvValue = process->getArgv(global);
         RETURN_IF_EXCEPTION(scope, fail("Failed to get argv"_s));
-        for (size_t i = 0, length = array->length(); i < length; i++) {
-            auto value = array->getIndex(global, i);
-            RETURN_IF_EXCEPTION(scope, fail("Failed to get value at index"_s));
-            auto string = value.toWTFString(global);
-            RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
-            argv->addItem(string);
+        if (auto* array = dynamicDowncast<JSC::JSArray>(argvValue)) {
+            for (size_t i = 0, length = array->length(); i < length; i++) {
+                auto value = array->getIndex(global, i);
+                RETURN_IF_EXCEPTION(scope, fail("Failed to get value at index"_s));
+                auto string = value.toWTFString(global);
+                RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
+                argv->addItem(string);
+            }
         }
     }
 

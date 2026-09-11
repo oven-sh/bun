@@ -99,7 +99,8 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
 ) -> JSValue {
     jsc::to_js_host_fn_result(
         global,
-        new_cstring(global, ptr, Some(byte_offset), Some(byte_length)),
+        super::check_ffi_enabled(global)
+            .and_then(|()| new_cstring(global, ptr, Some(byte_offset), Some(byte_length))),
     )
 }
 
@@ -711,12 +712,7 @@ fn to_buffer(
     )
 }
 
-/// `Bun.FFI`; `undefined` under `--no-ffi-cc` / `--no-addons`, so no native
-/// entry point or DOMJIT fast path is created (`bun:ffi` then exports throwers).
 pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
-    if !global_object.bun_vm().allow_ffi() {
-        return JSValue::UNDEFINED;
-    }
     to_js(global_object)
 }
 
@@ -763,6 +759,7 @@ fn eat_string<'a>(
 /// fn-pointer const generics, so this is a `macro_rules!` rather than a
 /// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
 /// Windows-x64 and `extern "C"` elsewhere — matching the `JSHostFn` typedef.
+/// Every field is gated on `check_ffi_enabled` (`--no-ffi-cc` / `--no-addons`).
 macro_rules! wrap_host_fn {
     ($body:path) => {{
         bun_jsc::jsc_host_abi! {
@@ -772,7 +769,10 @@ macro_rules! wrap_host_fn {
             ) -> JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the host call.
                 let (global, callframe) = unsafe { (&*global, &*callframe) };
-                jsc::to_js_host_fn_result(global, $body(global, callframe))
+                jsc::to_js_host_fn_result(
+                    global,
+                    super::check_ffi_enabled(global).and_then(|()| $body(global, callframe)),
+                )
             }
         }
         thunk as jsc::JSHostFn

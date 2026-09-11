@@ -1,15 +1,15 @@
-// --no-ffi-cc and --no-addons disable bun:ffi and Bun.FFI. The module still
-// loads, but everything that would reach native code throws ERR_FFI_DISABLED.
+// --no-ffi-cc and --no-addons disable bun:ffi and Bun.FFI. The module and the
+// object keep their shape, but every native entry point throws ERR_FFI_DISABLED.
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Runs in a child process. Calls every bun:ffi entry point with arguments that
 // are safe when FFI is enabled (nothing is dlopen'd, compiled C is never run)
 // and reports, per entry, "ok", the error code, or the error message. The raw
-// `native.dlopen` returns its error instead of throwing it. The address is
-// taken once up front (0 when ptr() itself is disabled) so that every probe
-// reaches its own entry point instead of failing inside its argument list.
-// `report` receives the JSON string.
+// `native.dlopen` / `Bun.FFI.dlopen` return their error instead of throwing it.
+// The address is taken once up front (it stays 1 when ptr() itself is
+// disabled) so that every probe reaches its own entry point instead of failing
+// inside its argument list. `report` receives the JSON string.
 const probeWith = (report: string) => /* js */ `
   const ffi = require("bun:ffi");
   const describeError = e => (e && e.code) || String(e && e.message);
@@ -22,12 +22,14 @@ const probeWith = (report: string) => /* js */ `
     }
   };
   const bytes = new Uint8Array([104, 105, 0, 0, 0, 0, 0, 0]);
-  let address = 0;
+  let address = 1;
   const ptr = attempt(() => { address = ffi.ptr(bytes); });
+  const missingLibrary = "/does-not-exist-" + process.pid + "." + ffi.suffix;
   ${report}(JSON.stringify({
-    BunFFI: typeof Bun.FFI,
-    dlopen: attempt(() => ffi.dlopen("/does-not-exist-" + process.pid + "." + ffi.suffix, { f: { args: [], returns: "int" } })),
-    nativeDlopen: attempt(() => ffi.native.dlopen("/does-not-exist-" + process.pid + "." + ffi.suffix, { f: { args: [], returns: "int" } })),
+    BunFFIdlopen: attempt(() => Bun.FFI.dlopen(missingLibrary, { f: { args: [], returns: "int" } })),
+    BunFFIread: attempt(() => Bun.FFI.read.u8(address, 0)),
+    dlopen: attempt(() => ffi.dlopen(missingLibrary, { f: { args: [], returns: "int" } })),
+    nativeDlopen: attempt(() => ffi.native.dlopen(missingLibrary, { f: { args: [], returns: "int" } })),
     cc: attempt(() => ffi.cc({ source: "does-not-exist.c", symbols: {} })),
     JSCallback: attempt(() => new ffi.JSCallback(() => {}, { args: [], returns: "void" }).close()),
     CFunction: attempt(() => ffi.CFunction({ ptr: address, args: [], returns: "void" })),
@@ -46,7 +48,8 @@ const probeWith = (report: string) => /* js */ `
 const probe = probeWith("console.log");
 
 const enabled = {
-  BunFFI: "object",
+  BunFFIdlopen: "ERR_DLOPEN_FAILED",
+  BunFFIread: "ok",
   dlopen: "ERR_DLOPEN_FAILED",
   nativeDlopen: "ERR_DLOPEN_FAILED",
   cc: "Expected at least one exported symbol",
@@ -65,7 +68,8 @@ const enabled = {
 };
 
 const disabled = {
-  BunFFI: "undefined",
+  BunFFIdlopen: "ERR_FFI_DISABLED",
+  BunFFIread: "ERR_FFI_DISABLED",
   dlopen: "ERR_FFI_DISABLED",
   nativeDlopen: "ERR_FFI_DISABLED",
   cc: "ERR_FFI_DISABLED",
@@ -115,7 +119,7 @@ const macroFiles = {
     };
     export function probe() {
       return {
-        BunFFI: typeof Bun.FFI,
+        BunFFIptr: attempt(() => (Bun as any).FFI.ptr(new Uint8Array(8))),
         ptr: attempt(() => ptr(new Uint8Array(8))),
         processDlopen:
           process.env.PROBE_PROCESS_DLOPEN === "1"
@@ -235,23 +239,11 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
     expect({ results, stderr, exitCode }).toMatchObject({ results: disabled, exitCode: 0 });
   });
 
-  it("Bun stays inspectable when FFI is disabled", async () => {
-    const { results, stderr, exitCode } = await run([
-      "--no-ffi-cc",
-      "-e",
-      'for (const key in Bun) void Bun[key]; Bun.inspect(Bun); console.log(JSON.stringify({ hasFFIKey: Object.keys(Bun).includes("FFI"), FFI: typeof Bun.FFI }));',
-    ]);
-    expect({ results, stderr, exitCode }).toMatchObject({
-      results: { hasFFIKey: true, FFI: "undefined" },
-      exitCode: 0,
-    });
-  });
-
   it("a macro run by Bun.build() has bun:ffi by default", async () => {
     using dir = tempDir("no-ffi-cc-macro", macroFiles);
     const { results, stderr, exitCode } = await run(["build.ts"], bunEnv, String(dir));
     expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFI: "object", ptr: "ok", processDlopen: "skipped" },
+      results: { BunFFIptr: "ok", ptr: "ok", processDlopen: "skipped" },
       exitCode: 0,
     });
   });
@@ -260,7 +252,7 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
     using dir = tempDir("no-ffi-cc-macro", macroFiles);
     const { results, stderr, exitCode } = await run(["--no-ffi-cc", "build.ts"], bunEnv, String(dir));
     expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFI: "undefined", ptr: "ERR_FFI_DISABLED", processDlopen: "skipped" },
+      results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "skipped" },
       exitCode: 0,
     });
   });
@@ -273,7 +265,7 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
       String(dir),
     );
     expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFI: "undefined", ptr: "ERR_FFI_DISABLED", processDlopen: "ERR_DLOPEN_DISABLED" },
+      results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "ERR_DLOPEN_DISABLED" },
       exitCode: 0,
     });
   });

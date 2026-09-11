@@ -14,8 +14,8 @@ use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSValue, JsCell, JsClass, JsError, JsResult, SystemError,
+    self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
+    JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -44,7 +44,7 @@ unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
 }
 
-use super::{FFI_DISABLED_MESSAGE, get_dl_error};
+use super::get_dl_error;
 
 /// Run a function that needs to write to JIT-protected memory.
 ///
@@ -984,14 +984,7 @@ impl FFI {
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if !global_this.bun_vm().allow_ffi() {
-            return Err(global_this
-                .err(
-                    ErrorCode::FFI_DISABLED,
-                    format_args!("{}", FFI_DISABLED_MESSAGE),
-                )
-                .throw());
-        }
+        super::check_ffi_enabled(global_this)?;
         if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"

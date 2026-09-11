@@ -598,7 +598,7 @@ await Bun.write("out.png", png);
 
 ## Disabling `bun:ffi`
 
-Pass `--no-ffi-cc` to disable `bun:ffi` for a process. The module still imports, but every function in it that reaches native code or memory throws an error with the code `ERR_FFI_DISABLED`: `dlopen`, `native.dlopen`, `cc`, `JSCallback`, `CFunction`, `linkSymbols`, `ptr`, `read.*`, `toBuffer`, `toArrayBuffer`, `CString`, and `viewSource`. `Bun.FFI` is `undefined`. Constants such as `FFIType` and `suffix` stay available.
+Pass `--no-ffi-cc` to disable `bun:ffi` for a process. The module still imports, but every function in it that reaches native code or memory throws an error with the code `ERR_FFI_DISABLED`: `dlopen`, `native.dlopen`, `cc`, `JSCallback`, `CFunction`, `linkSymbols`, `ptr`, `read.*`, `toBuffer`, `toArrayBuffer`, `CString`, and `viewSource`. The same functions on `Bun.FFI` throw too. Constants such as `FFIType` and `suffix` stay available.
 
 ```sh
 bun --no-ffi-cc ./app.ts

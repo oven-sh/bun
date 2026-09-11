@@ -5443,15 +5443,16 @@ declare module "bun" {
        */
       globals?: Record<string, unknown> | undefined;
       /**
-       * Called with uncaught exceptions and unhandled rejections raised by code
-       * that belongs to this graph, instead of the process-wide
-       * `uncaughtException` / `unhandledRejection` handling; without it (or for
-       * an error `onError` itself lets escape) they take that normal path. An
-       * error belongs to the graph whose module code threw it or rejected with
-       * it — the innermost module code on the stack at that moment (functions
-       * passed in through `globals`, and CommonJS modules, are the host's
-       * code); for a rejection that cannot be placed that way, where the error
-       * was created decides. `kind` is `"uncaughtException"` or
+       * Called with uncaught exceptions and unhandled rejections raised by this
+       * graph's module code, instead of the process-wide `uncaughtException` /
+       * `unhandledRejection` handling. Without it, or for an error `onError`
+       * itself lets escape, they take that normal path.
+       *
+       * An error belongs to the graph whose module code threw it or rejected
+       * with it: the innermost module code on the stack at that moment
+       * (functions passed in through `globals`, and CommonJS modules, are the
+       * host's code). A rejection no code claims that way goes by where the
+       * error was created. `kind` is `"uncaughtException"` or
        * `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
@@ -5474,7 +5475,10 @@ declare module "bun" {
      * @experimental
      * @example
      * ```ts
-     * const graph = new Bun.unsafe.ModuleGraph({ globals: { config: { name: "a" } }, onError: (err, kind) => {} });
+     * const graph = new Bun.unsafe.ModuleGraph({
+     *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
+     *   onError: (err, kind) => console.error(kind, err),
+     * });
      * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
      * app.start();
      * graph.dispose();
@@ -5485,13 +5489,16 @@ declare module "bun" {
       /**
        * Load `specifier` (resolved against `process.cwd()` when relative) and
        * instantiate it and its dependencies into this graph, evaluating what
-       * has not been evaluated in this graph yet. Resolves with the module's
-       * namespace object for this graph.
+       * has not been evaluated in this graph yet.
+       *
+       * @param specifier module specifier, as for `import()`
+       * @returns the module's namespace object for this graph
        */
-      import<T = Record<string, any>>(specifier: string): Promise<T>;
+      import<T = any>(specifier: string): Promise<T>;
       /**
-       * Resolved path of the first module `import()`ed into this graph — the
-       * module for which `import.meta.main` is true inside the graph.
+       * Resolved path of the first module successfully `import()`ed into this
+       * graph — the module for which `import.meta.main` is true inside the
+       * graph — or `undefined` before that.
        */
       readonly mainModule: string | undefined;
       /**

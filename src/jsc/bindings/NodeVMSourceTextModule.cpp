@@ -165,14 +165,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    // The record's loader decides the scope its module environment is created in (and
-    // where import() from it goes): the context's global object when there is one.
-    JSGlobalObject* moduleGlobalObject = globalObject;
-    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    JSModuleLoader* loader = moduleLoader(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (nodeVmGlobalObject)
-        moduleGlobalObject = nodeVmGlobalObject;
-    ModuleAnalyzer analyzer(globalObject, moduleGlobalObject->moduleLoader(), Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);

@@ -411,7 +411,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         err: JSValue,
         promise: JSValue,
-        is_rejection: c_int,
+        is_rejection: bool,
     ) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
@@ -1729,12 +1729,7 @@ impl VirtualMachine {
 
         // An error from a Bun.unsafe.ModuleGraph's code is the graph's (or its host
         // callback's) to handle — ahead of the test runner and the thread-wide path.
-        if Bun__ModuleGraph__handleUnhandled(
-            global_object,
-            err,
-            JSValue::ZERO,
-            if is_rejection { 1 } else { 0 },
-        ) {
+        if Bun__ModuleGraph__handleUnhandled(global_object, err, JSValue::ZERO, is_rejection) {
             return true;
         }
 
@@ -3860,7 +3855,7 @@ impl VirtualMachine {
             return;
         }
 
-        if Bun__ModuleGraph__handleUnhandled(global_object, reason, promise, 1) {
+        if Bun__ModuleGraph__handleUnhandled(global_object, reason, promise, true) {
             let _ = self.event_loop_mut().drain_microtasks();
             return;
         }

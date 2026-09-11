@@ -38,6 +38,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+struct ModuleGraphState;
 class GCProfilerObserver;
 } // namespace Bun
 
@@ -300,11 +301,10 @@ public:
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
-    JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); }
-    JSWeakMap* moduleGraphRegistryIfExists() const { return m_moduleGraphRegistry.isInitialized() ? m_moduleGraphRegistry.get(this) : nullptr; } // null until the first Bun.unsafe.ModuleGraph
-    JSWeakMap* moduleGraphAttributions() const { return m_moduleGraphAttributions.getInitializedOnMainThread(this); }
-    JSWeakMap* moduleGraphAttributionsIfExists() const { return m_moduleGraphAttributions.isInitialized() ? m_moduleGraphAttributions.get(this) : nullptr; }
-    JSC::JSMap* moduleGraphOverlaySymbolTables() const { return m_moduleGraphOverlaySymbolTables.getInitializedOnMainThread(this); }
+    // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
+    bool hasModuleGraphs() const { return m_moduleGraphRegistry.isInitialized(); }
+    JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); } // overlay -> graph
+    JSWeakMap* moduleGraphAttributions() const { return m_moduleGraphAttributions.getInitializedOnMainThread(this); } // promise / error -> whose it is
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
@@ -530,11 +530,8 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp): overlay -> graph; promise / error object -> graph it is */  \
-    /* attributed to (null: the host's); sorted `globals` names -> overlay SymbolTable */                    \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphAttributions)                             \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_moduleGraphOverlaySymbolTables)                          \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -810,9 +807,7 @@ public:
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
-    // Set while a Bun.unsafe.ModuleGraph's onError runs: an error it throws is the host's,
-    // not attributed to a graph again (ModuleGraph.cpp).
-    bool m_inModuleGraphOnError { false };
+    std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

@@ -145,4 +145,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
+// process.cwd() as a JSString, cached on the process object until it changes.
+JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
+
 } // namespace Bun

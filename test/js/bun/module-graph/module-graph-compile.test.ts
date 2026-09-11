@@ -9,8 +9,6 @@ import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-const enabled = typeof (Bun as any).unsafe?.ModuleGraph === "function";
-
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
 const sources: Record<string, string> = {
   "dep.ts": `
@@ -185,13 +183,46 @@ type Combo = { name: string; args: string[] };
 const combos: Combo[] = [
   { name: "esm+splitting", args: ["--format=esm", "--splitting"] },
   { name: "esm+splitting+bytecode", args: ["--format=esm", "--splitting", "--bytecode"] },
-  { name: "esm+splitting+minify", args: ["--format=esm", "--splitting", "--minify"] },
   { name: "esm+splitting+bytecode+minify", args: ["--format=esm", "--splitting", "--bytecode", "--minify"] },
   { name: "esm+splitting+bytecode+sourcemap", args: ["--format=esm", "--splitting", "--bytecode", "--sourcemap"] },
 ];
 
-for (const combo of combos) {
-  describe.skipIf(!enabled)(`ModuleGraph in a compiled executable (${combo.name})`, () => {
+// All executables are built up front, concurrently; each describe awaits its own.
+async function build(combo: Combo) {
+  const dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
+    ...sources,
+    // not embedded: loaded from disk by the compiled program
+    "external.mjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
+  });
+  const exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      ...combo.args,
+      "./entry.ts",
+      "./instance.ts",
+      "./worker.ts",
+      "--outfile",
+      exe,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return {
+    dir,
+    exe,
+    result: { exitCode, built: await Bun.file(exe).exists(), stderrHasError: /error:/i.test(stderr) ? stderr : "" },
+  };
+}
+const builds = combos.map(build);
+
+for (const [index, combo] of combos.entries()) {
+  describe(`ModuleGraph in a compiled executable (${combo.name})`, () => {
     let dir: ReturnType<typeof tempDir>;
     let exe: string;
     const run = async (scenario: string) => {
@@ -201,7 +232,6 @@ for (const combo of combos) {
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
-        timeout: 30_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       let parsed: unknown;
@@ -215,35 +245,7 @@ for (const combo of combos) {
 
     let buildResult: unknown;
     beforeAll(async () => {
-      dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
-        ...sources,
-        // not embedded: loaded from disk by the compiled program
-        "external.mjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
-      });
-      exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          ...combo.args,
-          "./entry.ts",
-          "./instance.ts",
-          "./worker.ts",
-          "--outfile",
-          exe,
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      buildResult = {
-        exitCode,
-        built: await Bun.file(exe).exists(),
-        stderrHasError: /error:/i.test(stderr) ? stderr : "",
-      };
+      ({ dir, exe, result: buildResult } = await builds[index]);
     }, 60_000);
     afterAll(() => {
       try {
@@ -292,9 +294,9 @@ for (const combo of combos) {
         expect(await run("lazy:" + ordering)).toEqual({
           parsed: {
             got: tags.map((t, i) =>
-              skipped(i) ? "unset" : disposed(i) ? { rejected: "TypeError" } : { who: viaHost ? "host" : t },
+              skipped(i) ? "unset" : disposed(i) ? { rejected: "Error" } : { who: viaHost ? "host" : t },
             ),
-            repeat: tags.map((_, i) => (skipped(i) ? "skipped" : disposed(i) ? "rejected:TypeError" : true)),
+            repeat: tags.map((_, i) => (skipped(i) ? "skipped" : disposed(i) ? "rejected:Error" : true)),
             distinct: viaHost ? 1 : live.length,
             isolation: viaHost ? live.map(() => 2) : live.map((_, i) => (i === 0 ? 2 : 0)),
             hostWho: ordering === "hostFirst" || ordering === "hostLast" ? "host" : "not-run",

@@ -2,48 +2,58 @@
 
 #include "ModuleGraph.h"
 #include "ZigGlobalObject.h"
+#include "BunClientData.h"
+#include "BunProcess.h"
+#include "ErrorCode.h"
+#include "JSDOMExceptionHandling.h"
 #include "NodeValidator.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
-#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
+#include <JavaScriptCore/JSModuleEnvironment.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSSetIterator.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/BuiltinNames.h>
-#include <JavaScriptCore/IdentifierInlines.h>
-#include <JavaScriptCore/StackVisitor.h>
-#include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/JSWeakMap.h>
-#include <JavaScriptCore/JSBoundFunction.h>
-#include <JavaScriptCore/JSWeakMapInlines.h>
-#include <JavaScriptCore/JSLexicalEnvironment.h>
-#include <JavaScriptCore/JSMapInlines.h>
-#include <JavaScriptCore/JSModuleEnvironment.h>
-#include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
-#include <JavaScriptCore/SymbolTable.h>
-#include <wtf/text/StringBuilder.h>
+#include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include <wtf/SetForScope.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace Bun {
 using namespace JSC;
 
-extern "C" JSC::EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject*);
+static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import);
+static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose);
+static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphImportFulfilled);
+static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphImportRejected);
+static JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule);
+
+static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
+{
+    auto& state = globalObject->m_moduleGraphs;
+    if (!state)
+        state = makeUnique<ModuleGraphState>(globalObject->vm());
+    return *state;
+}
 
 // Graphs are registered by their overlay (a WeakMap, so a graph object stays
 // alive while any code scoped to it does): the overlay is the module scope of the
 // graph's loader and sits on the scope chain of all of the graph's code.
 static JSModuleGraph* moduleGraphForOverlay(Zig::GlobalObject* globalObject, JSObject* overlay)
 {
-    JSWeakMap* registry = globalObject->moduleGraphRegistryIfExists();
-    return registry ? dynamicDowncast<JSModuleGraph>(registry->get(overlay)) : nullptr;
+    return globalObject->hasModuleGraphs() ? dynamicDowncast<JSModuleGraph>(globalObject->moduleGraphRegistry()->get(overlay)) : nullptr;
 }
 
 JSModuleGraph* moduleGraphForLoader(JSGlobalObject* globalObject, JSModuleLoader* loader)
@@ -53,223 +63,196 @@ JSModuleGraph* moduleGraphForLoader(JSGlobalObject* globalObject, JSModuleLoader
     return moduleGraphForOverlay(defaultGlobalObject(globalObject), loader->moduleScope());
 }
 
-void throwModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope)
+static JSObject* createModuleGraphDisposedError(JSGlobalObject* globalObject)
 {
-    throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
+    return createError(globalObject, ErrorCode::ERR_INVALID_STATE, "ModuleGraph has been disposed"_s);
 }
 
-// A frame of the global loader's CommonJS module code (its scope chain has no
-// module environment, unlike ES module code, but it is host module code all the same).
+bool throwIfModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope, JSModuleLoader* loader)
+{
+    JSModuleGraph* graph = moduleGraphForLoader(globalObject, loader);
+    if (!graph || !graph->disposed())
+        return false;
+    throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
+    return true;
+}
+
+// ─── Attribution: which graph's code an error / rejection belongs to ────────────────
+//
+// std::optional<JSModuleGraph*>: nullopt = this frame / stack does not say (plain
+// global-scope code, natives), nullptr = the global object's own module code, else
+// the graph.
+
+// A frame of the global loader's CommonJS module code: no module environment on its
+// scope chain, unlike ES module code, but host module code all the same. (Function()
+// and eval code carry their creator's origin but no source URL of their own.)
 static bool isHostCommonJSModuleCode(JSFunction* function)
 {
     if (function->isHostOrBuiltinFunction())
         return false;
     JSC::SourceProvider* provider = function->jsExecutable()->source().provider();
-    return provider && provider->sourceType() == JSC::SourceProviderSourceType::Program && provider->sourceOrigin().url().protocolIsFile();
+    return provider && provider->sourceType() == SourceProviderSourceType::Program && !provider->sourceURL().isEmpty() && provider->sourceOrigin().url().protocolIsFile();
 }
 
-// The graph whose code created `scope`, and whether the scope belongs to module
-// code at all (`decisive`): a chain with a module environment or a graph overlay
-// on it is module code of SOME loader (a graph's or the global object's) and
-// settles attribution; plain global-scope functions do not.
-static JSModuleGraph* moduleGraphOwningScope(Zig::GlobalObject* globalObject, JSScope* scope, bool& decisive)
+static std::optional<JSModuleGraph*> moduleGraphOwningScope(Zig::GlobalObject* globalObject, JSScope* scope)
 {
-    decisive = false;
     JSScope* globalLexicalEnvironment = globalObject->globalLexicalEnvironment();
     for (JSScope* cursor = scope; cursor && cursor != globalLexicalEnvironment; cursor = cursor->next()) {
-        // An overlay sits directly on the global lexical environment.
-        if (cursor->next() == globalLexicalEnvironment) {
-            if (JSModuleGraph* graph = moduleGraphForOverlay(globalObject, cursor)) {
-                decisive = true;
-                return graph;
-            }
+        if (cursor->type() == ModuleEnvironmentType) {
+            // A graph's module environments sit on its overlay; the global loader's on
+            // the global lexical environment.
+            JSScope* parent = cursor->next();
+            return parent == globalLexicalEnvironment ? nullptr : moduleGraphForOverlay(globalObject, parent);
         }
-        if (cursor->type() == ModuleEnvironmentType)
-            decisive = true;
     }
-    return nullptr;
+    return std::nullopt;
 }
 
-// Whether the frame of `calleeCell` settles which loader's code is running (module
-// code of a graph, or module / CommonJS code of the global object), and if so which
-// graph (or null).
-static bool frameDecidesModuleGraph(Zig::GlobalObject* globalObject, JSCell* calleeCell, JSModuleGraph*& graph)
+static std::optional<JSModuleGraph*> moduleGraphForFrame(Zig::GlobalObject* globalObject, JSCell* calleeCell)
 {
-    graph = nullptr;
-    JSScope* scope = nullptr;
-    auto* function = dynamicDowncast<JSFunction>(calleeCell);
-    if (function) {
+    if (auto* function = dynamicDowncast<JSFunction>(calleeCell)) {
         if (function->isHostFunction())
-            return false;
-        scope = function->scope();
-    } else if (auto* callee = dynamicDowncast<JSCallee>(calleeCell))
-        scope = callee->scope();
-    if (!scope)
-        return false;
-    bool decisive = false;
-    graph = moduleGraphOwningScope(globalObject, scope, decisive);
-    return decisive || (function && isHostCommonJSModuleCode(function));
+            return std::nullopt;
+        auto owner = moduleGraphOwningScope(globalObject, function->scope());
+        if (!owner && isHostCommonJSModuleCode(function))
+            return nullptr;
+        return owner;
+    }
+    if (auto* callee = dynamicDowncast<JSCallee>(calleeCell)) // module / program / eval code
+        return moduleGraphOwningScope(globalObject, callee->scope());
+    return std::nullopt;
 }
 
-// The Bun.unsafe.ModuleGraph whose code is running: the innermost JS frame of
-// module / CommonJS code on the current stack (vm.topCallFrame) decides. Used to
-// attribute promise rejections (moduleGraphNoteRejection).
-static JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
+// The code running now: the innermost frame on the stack (vm.topCallFrame) that says.
+static std::optional<JSModuleGraph*> moduleGraphForCurrentStack(Zig::GlobalObject* globalObject)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!globalObject->moduleGraphRegistryIfExists() || !vm.topCallFrame)
-        return nullptr;
-    JSModuleGraph* found = nullptr;
+    VM& vm = globalObject->vm();
+    std::optional<JSModuleGraph*> found;
+    if (!vm.topCallFrame)
+        return found;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (visitor->codeType() == StackVisitor::Frame::CodeType::Native || visitor->codeType() == StackVisitor::Frame::CodeType::Wasm)
             return IterationStatus::Continue;
-        JSCell* calleeCell = visitor->callee().isCell() ? visitor->callee().asCell() : nullptr;
-        // The innermost frame of module / CommonJS code decides, whichever loader's it is.
-        return frameDecidesModuleGraph(globalObject, calleeCell, found) ? IterationStatus::Done : IterationStatus::Continue;
+        found = moduleGraphForFrame(globalObject, visitor->callee().isCell() ? visitor->callee().asCell() : nullptr);
+        return found ? IterationStatus::Done : IterationStatus::Continue;
     });
     return found;
 }
 
-// The ModuleGraph whose code produced `error`, if any: the innermost frame of the
-// captured stack whose callee is module / CommonJS code decides. Works for
-// JSC::Exception (sync throws, any value) and ErrorInstance reasons. An
-// ErrorInstance drops its frames once its stack string is materialized (or their
-// code is collected); moduleGraphNoteErrorFrames records the answer before that.
-static JSModuleGraph* moduleGraphForFrames(Zig::GlobalObject* globalObject, const Vector<StackFrame>& frames, bool& decided)
+// The code that captured `frames` (a throw site, or where an Error was created).
+static std::optional<JSModuleGraph*> moduleGraphForFrames(Zig::GlobalObject* globalObject, const Vector<StackFrame>& frames)
 {
-    decided = false;
     for (const StackFrame& frame : frames) {
-        JSModuleGraph* graph = nullptr;
-        if (frameDecidesModuleGraph(globalObject, frame.callee(), graph)) {
-            decided = true;
-            return graph;
-        }
+        if (auto found = moduleGraphForFrame(globalObject, frame.callee()))
+            return found;
     }
-    return nullptr;
+    return std::nullopt;
 }
 
-static JSModuleGraph* moduleGraphForError(Zig::GlobalObject* globalObject, JSValue error, bool& decided)
-{
-    decided = false;
-    if (!globalObject->moduleGraphRegistryIfExists() || !error.isCell())
-        return nullptr;
-    if (auto* exception = dynamicDowncast<JSC::Exception>(error.asCell()))
-        return moduleGraphForFrames(globalObject, exception->stack(), decided);
-    auto* instance = dynamicDowncast<ErrorInstance>(error.asCell());
-    if (!instance)
-        return nullptr;
-    if (const Vector<StackFrame>* frames = instance->stackTrace())
-        return moduleGraphForFrames(globalObject, *frames, decided);
-    if (JSWeakMap* noted = globalObject->moduleGraphAttributionsIfExists()) {
-        JSValue graph = noted->get(instance);
-        if (!graph.isUndefined()) {
-            decided = true;
-            return dynamicDowncast<JSModuleGraph>(graph);
-        }
-    }
-    return nullptr;
-}
-
-// ErrorInstance::computeErrorInfo is about to drop `frames` (Bun's
-// computeErrorInfo hook): keep what they said about the graph.
-void moduleGraphNoteErrorFrames(Zig::GlobalObject* globalObject, ErrorInstance* instance, const Vector<StackFrame>& frames)
-{
-    if (!instance || !globalObject->moduleGraphRegistryIfExists())
-        return;
-    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
-    if (!attributions->get(instance).isUndefined())
-        return; // already noted, or already delivered to an onError
-    bool decided = false;
-    JSModuleGraph* graph = moduleGraphForFrames(globalObject, frames, decided);
-    if (!decided)
-        return;
-    attributions->set(globalObject->vm(), instance, graph ? JSValue(graph) : jsNull());
-}
-
-// A rejection belongs to the code that rejects: noted at rejection time, while that code
-// is on the stack (promise -> graph, weakly), consulted first when the rejection turns out
-// unhandled. The reason's own frames say where it was created, which can be somewhere
-// else (a host helper, an earlier turn) or nowhere (a plain value).
+// promiseRejectionTracker, for a promise rejected with no handler: the code rejecting it
+// is on the stack now — or, for an async function or a promise reaction whose handler
+// threw, nothing is (the runtime rejects after unwinding) and the exception it caught,
+// still the VM's last, carries the throw site. promise -> graph, or -> null for the
+// global object's module code.
 void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
-    if (!globalObject->moduleGraphRegistryIfExists())
+    if (!globalObject->hasModuleGraphs())
         return;
-    if (JSModuleGraph* graph = ambientModuleGraph(globalObject))
-        globalObject->moduleGraphAttributions()->set(globalObject->vm(), promise, graph);
+    VM& vm = globalObject->vm();
+    auto owner = moduleGraphForCurrentStack(globalObject);
+    if (!owner) {
+        JSC::Exception* last = vm.lastException();
+        if (last && last->value() == promise->result())
+            owner = moduleGraphForFrames(globalObject, last->stack());
+    }
+    if (owner)
+        globalObject->moduleGraphAttributions()->set(vm, promise, *owner ? JSValue(*owner) : jsNull());
 }
 
-static JSModuleGraph* moduleGraphForRejectedPromise(Zig::GlobalObject* globalObject, JSValue promise)
+// An ErrorInstance drops its frames when its stack string is materialized (e.stack,
+// console.error, Error.captureStackTrace): keep the graph they point at, for an error
+// that escapes later. error -> graph; the same map holds error -> true once an error
+// object has been delivered to an onError.
+void moduleGraphNoteErrorFrames(Zig::GlobalObject* globalObject, ErrorInstance* instance, const Vector<StackFrame>& frames)
 {
-    JSWeakMap* noted = globalObject->moduleGraphAttributionsIfExists();
-    if (!noted || !promise || !promise.isObject())
-        return nullptr;
-    return dynamicDowncast<JSModuleGraph>(noted->get(asObject(promise)));
+    if (!instance || !globalObject->hasModuleGraphs())
+        return;
+    auto owner = moduleGraphForFrames(globalObject, frames);
+    if (!owner || !*owner)
+        return;
+    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
+    if (attributions->get(instance).isUndefined())
+        attributions->set(globalObject->vm(), instance, *owner);
 }
 
-static bool moduleGraphReportUnhandled(Zig::GlobalObject* globalObject, JSValue rawError, JSValue error, ASCIILiteral kind, JSValue promise = JSValue())
+// Called first for every uncaught exception / unhandled rejection on this thread
+// (VirtualMachine.rs). The code that threw (the Exception's stack) or rejected (noted
+// on the promise) decides; failing that, the code that created the error. Returns
+// whether a graph's onError took it; anything else takes the normal path.
+extern "C" bool Bun__ModuleGraph__handleUnhandled(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError, EncodedJSValue encodedPromise, bool isRejection)
 {
-    // What an onError throws synchronously (the error it was given, say) is the host's.
-    if (globalObject->m_inModuleGraphOnError)
-        return false;
-    // The code that threw (the Exception's stack) or rejected (noted on the promise)
-    // decides; failing that, the code that created the error.
-    bool decided = false;
-    JSModuleGraph* graph = moduleGraphForRejectedPromise(globalObject, promise);
-    if (graph)
-        decided = true;
-    if (!decided)
-        graph = moduleGraphForError(globalObject, rawError, decided);
-    if (!decided)
-        graph = moduleGraphForError(globalObject, error, decided);
-    if (!graph || !graph->onError())
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!globalObject->hasModuleGraphs() || moduleGraphState(globalObject).inOnError)
         return false;
     VM& vm = globalObject->vm();
-    // Each error object goes to a graph's onError once: an onError that lets it escape
-    // again later (rethrows it from a callback, rejects with it) hands it to the host.
-    if (error.isObject()) {
-        JSWeakMap* delivered = globalObject->moduleGraphAttributions();
-        JSObject* errorObject = asObject(error);
-        if (delivered->get(errorObject).isNull())
-            return false;
-        delivered->set(vm, errorObject, jsNull());
+    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
+    JSValue error = JSValue::decode(encodedError);
+    JSValue promise = JSValue::decode(encodedPromise);
+    auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr;
+    if (exception)
+        error = exception->value();
+    auto* errorInstance = error.isCell() ? dynamicDowncast<ErrorInstance>(error.asCell()) : nullptr;
+
+    std::optional<JSModuleGraph*> owner;
+    if (promise && promise.isObject()) { // empty for an uncaught exception
+        JSValue noted = attributions->get(asObject(promise));
+        if (auto* graph = dynamicDowncast<JSModuleGraph>(noted))
+            owner = graph;
+        else if (noted.isNull())
+            owner = nullptr;
     }
+    if (!owner && exception)
+        owner = moduleGraphForFrames(globalObject, exception->stack());
+    bool byOrigin = false;
+    if (!owner && errorInstance) {
+        byOrigin = true;
+        if (const Vector<StackFrame>* frames = errorInstance->stackTrace())
+            owner = moduleGraphForFrames(globalObject, *frames);
+        else if (auto* graph = dynamicDowncast<JSModuleGraph>(attributions->get(errorInstance)))
+            owner = graph;
+    }
+    JSModuleGraph* graph = owner.value_or(nullptr);
+    if (!graph || !graph->onError())
+        return false;
+    if (error.isObject()) {
+        // An error object attributed only by where it was created goes to that graph's
+        // onError once: an onError that lets it escape again where no code claims it
+        // (a bare promise chain, say) hands it to the host instead of looping.
+        JSObject* errorObject = asObject(error);
+        if (byOrigin && attributions->get(errorObject).isTrue())
+            return false;
+        attributions->set(vm, errorObject, jsBoolean(true));
+    }
+
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* onError = graph->onError();
     MarkedArgumentBuffer args;
     args.append(error);
-    args.append(jsString(vm, String(kind)));
-    SetForScope inOnError(globalObject->m_inModuleGraphOnError, true);
-    JSC::call(globalObject, onError, JSC::getCallData(onError), jsUndefined(), args);
+    args.append(jsString(vm, isRejection ? String("unhandledRejection"_s) : String("uncaughtException"_s)));
+    SetForScope inOnError(moduleGraphState(globalObject).inOnError, true);
+    JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
             return true;
         // onError itself threw: that is the host's error.
-        auto* exception = scope.exception();
+        auto* thrown = scope.exception();
         (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
     return true;
 }
 
-// Called first on every uncaught exception / unhandled rejection on this thread
-// (VirtualMachine::uncaught_exception / unhandled_rejection): an error thrown by a
-// graph's code, or a rejection by it, goes to that graph's onError. Returns false
-// for anything else, which then takes the normal path.
-extern "C" bool Bun__ModuleGraph__handleUnhandled(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encodedError, JSC::EncodedJSValue encodedPromise, int isRejection)
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!globalObject->moduleGraphRegistryIfExists())
-        return false;
-    JSValue rawError = JSValue::decode(encodedError);
-    JSValue error = rawError;
-    JSValue promise = JSValue::decode(encodedPromise);
-    if (error.isCell()) {
-        if (auto* wrapped = dynamicDowncast<JSC::Exception>(error.asCell()))
-            error = wrapped->value();
-    }
-    return moduleGraphReportUnhandled(globalObject, rawError, error, isRejection ? "unhandledRejection"_s : "uncaughtException"_s, promise);
-}
+// ─── JSModuleGraph ───────────────────────────────────────────────────────────────────
 
 const ClassInfo JSModuleGraph::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraph) };
 
@@ -283,7 +266,7 @@ GCClient::IsoSubspace* JSModuleGraph::subspaceFor(VM& vm)
 
 Structure* JSModuleGraph::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSObject* onError)
@@ -307,6 +290,12 @@ void JSModuleGraph::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+void JSModuleGraph::setImportSettledHandlers(VM& vm, JSFunction* fulfilled, JSFunction* rejected)
+{
+    m_importFulfilled.set(vm, this, fulfilled);
+    m_importRejected.set(vm, this, rejected);
+}
+
 template<typename Visitor>
 void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -318,6 +307,8 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_mainPath);
     visitor.append(thisObject->m_pendingImports);
+    visitor.append(thisObject->m_importFulfilled);
+    visitor.append(thisObject->m_importRejected);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
@@ -325,133 +316,125 @@ static JSModuleGraph* thisModuleGraph(JSGlobalObject* globalObject, ThrowScope& 
 {
     auto* graph = dynamicDowncast<JSModuleGraph>(thisValue);
     if (!graph) [[unlikely]]
-        throwTypeError(globalObject, scope, makeString("ModuleGraph.prototype."_s, method, " called on an incompatible receiver"_s));
+        WebCore::throwThisTypeError(*globalObject, scope, "ModuleGraph"_s, method);
     return graph;
 }
 
-JSC_DECLARE_HOST_FUNCTION(jsModuleGraphProtoFuncImport);
-JSC_DECLARE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose);
-
-// The promise import() returned settles like the loader's, unless the graph was
-// disposed first (dispose() rejects it). Bound: this = graph, argument 0 = that
-// promise, argument 1 = the module key; the loader's result / error follows.
-JSC_DECLARE_HOST_FUNCTION(moduleGraphImportFulfilled);
-JSC_DECLARE_HOST_FUNCTION(moduleGraphImportRejected);
-static JSPromise* takePendingImport(JSGlobalObject* globalObject, JSModuleGraph* graph, JSValue promiseValue)
+// The promise import() returned settles like the loader's unless dispose() rejected it
+// first. Called with (the loader's result / error, [that promise, the module key]).
+static JSPromise* settlingImport(JSGlobalObject* globalObject, JSModuleGraph* graph, JSValue context, JSString*& key)
 {
-    auto* promise = dynamicDowncast<JSPromise>(promiseValue);
-    // Settled now: the graph need not keep it (or its value) for dispose().
-    JSArray* pending = graph->pendingImports();
-    for (unsigned i = 0, length = pending ? pending->length() : 0; i < length; ++i) {
-        if (pending->canGetIndexQuickly(i) && pending->getIndexQuickly(i) == promiseValue) {
-            pending->putDirectIndex(globalObject, i, jsUndefined());
-            break;
-        }
-    }
-    return promise && promise->status() == JSPromise::Status::Pending ? promise : nullptr;
+    JSValue promise = context.get(globalObject, 0u);
+    key = context.get(globalObject, 1u).toStringOrNull(globalObject);
+    if (JSSet* pending = graph->pendingImports())
+        pending->remove(globalObject, promise);
+    auto* result = dynamicDowncast<JSPromise>(promise);
+    return result && result->status() == JSPromise::Status::Pending ? result : nullptr;
 }
-JSC_DEFINE_HOST_FUNCTION(moduleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* graph = uncheckedDowncast<JSModuleGraph>(callFrame->thisValue());
-    JSPromise* promise = takePendingImport(globalObject, graph, callFrame->argument(0));
+    JSString* key = nullptr;
+    JSPromise* promise = settlingImport(globalObject, uncheckedDowncast<JSModuleGraph>(callFrame->jsCallee()->getDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName())), callFrame->argument(1), key);
     RETURN_IF_EXCEPTION(scope, {});
     if (promise)
-        promise->resolve(globalObject, vm, callFrame->argument(2));
+        promise->resolve(globalObject, vm, callFrame->argument(0));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
-JSC_DEFINE_HOST_FUNCTION(moduleGraphImportRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
+
+JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* graph = uncheckedDowncast<JSModuleGraph>(callFrame->thisValue());
-    JSPromise* promise = takePendingImport(globalObject, graph, callFrame->argument(0));
+    JSString* key = nullptr;
+    auto* graph = uncheckedDowncast<JSModuleGraph>(callFrame->jsCallee()->getDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName()));
+    JSPromise* promise = settlingImport(globalObject, graph, callFrame->argument(1), key);
     RETURN_IF_EXCEPTION(scope, {});
     // A first import that failed leaves the graph without a main module rather than
     // with one that never loaded.
-    if (graph->mainPath() == callFrame->argument(1))
+    if (key && graph->mainPath() == JSValue(key))
         graph->clearMainPath();
-    if (promise)
-        promise->reject(vm, callFrame->argument(2));
+    if (promise) {
+        promise->reject(vm, callFrame->argument(0));
+        // graph.import()'s promise is its caller's to handle, not the graph's (whose code threw).
+        defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 // import(): like dynamic import(), every failure past the receiver check is a
 // rejection of the returned promise, never a synchronous throw.
-static EncodedJSValue moduleGraphImport(JSGlobalObject* globalObject, JSModuleGraph* graph, JSValue specifierValue)
+static JSPromise* moduleGraphImport(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue specifierValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleLoader* loader = graph->loader();
     if (!loader) {
-        throwModuleGraphDisposed(globalObject, scope);
-        return {};
+        throwException(globalObject, scope, createModuleGraphDisposedError(globalObject));
+        return nullptr;
     }
-    if (!specifierValue.isString())
-        return throwVMTypeError(globalObject, scope, "ModuleGraph.prototype.import: specifier must be a string"_s);
+    V::validateString(scope, globalObject, specifierValue, "specifier"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     String specifier = specifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     // Bare/relative specifiers resolve against process.cwd().
-    JSValue cwd = JSValue::decode(Process__getCachedCwd(globalObject));
-    RETURN_IF_EXCEPTION(scope, {});
-    String cwdString = cwd.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto referrer = Identifier::fromString(vm, makeString(cwdString, PLATFORM_SEP, "[module-graph]"_s));
+    String cwd = getCachedCwd(globalObject).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSString* keyString = identifierToJSValue(vm, key).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (graph->mainPath().isUndefined())
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSString* keyString = jsString(vm, key.string());
+    bool becameMain = graph->mainPath().isUndefined();
+    if (becameMain)
         graph->setMainPath(vm, keyString);
     JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        if (becameMain)
+            graph->clearMainPath();
+        return nullptr;
+    }
+
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    {
-        // Remember it for dispose(); drop the ones that settled since.
-        JSArray* previous = graph->pendingImports();
-        MarkedArgumentBuffer stillPending;
-        for (unsigned i = 0, length = previous ? previous->length() : 0; i < length; ++i) {
-            JSValue value = previous->getIndex(globalObject, i);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (auto* promise = dynamicDowncast<JSPromise>(value); promise && promise->status() == JSPromise::Status::Pending)
-                stillPending.append(promise);
-        }
-        stillPending.append(result);
-        JSArray* pending = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), stillPending);
-        RETURN_IF_EXCEPTION(scope, {});
+    JSSet* pending = graph->pendingImports();
+    if (!pending) {
+        pending = JSSet::create(vm, globalObject->setStructure());
         graph->setPendingImports(vm, pending);
     }
-    MarkedArgumentBuffer boundArguments;
-    boundArguments.append(result);
-    boundArguments.append(keyString);
-    auto bind = [&](ASCIILiteral name, NativeFunction function) -> JSValue {
-        JSFunction* handler = JSFunction::create(vm, globalObject, 3, name, function, ImplementationVisibility::Private);
-        return JSBoundFunction::create(vm, globalObject, handler, graph, ArgList(boundArguments), 1, jsEmptyString(vm), makeSource(name, SourceOrigin(), SourceTaintedOrigin::Untainted));
-    };
-    JSValue onFulfilled = bind("importFulfilled"_s, moduleGraphImportFulfilled);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue onRejected = bind("importRejected"_s, moduleGraphImportRejected);
-    RETURN_IF_EXCEPTION(scope, {});
-    loaded->performPromiseThenExported(vm, globalObject, onFulfilled, onRejected, jsUndefined());
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    pending->add(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!graph->importSettledHandler(false)) {
+        auto* fulfilled = JSFunction::create(vm, globalObject, 2, "importFulfilled"_s, jsModuleGraphImportFulfilled, ImplementationVisibility::Private);
+        auto* rejected = JSFunction::create(vm, globalObject, 2, "importRejected"_s, jsModuleGraphImportRejected, ImplementationVisibility::Private);
+        fulfilled->putDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName(), graph);
+        rejected->putDirect(vm, WebCore::clientData(vm)->builtinNames().selfPrivateName(), graph);
+        graph->setImportSettledHandlers(vm, fulfilled, rejected);
+    }
+    MarkedArgumentBuffer contextValues;
+    contextValues.append(result);
+    contextValues.append(keyString);
+    JSArray* context = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), contextValues);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    loaded->performPromiseThenWithContext(vm, globalObject, graph->importSettledHandler(false), graph->importSettledHandler(true), jsUndefined(), context);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncImport, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleGraph* graph = thisModuleGraph(globalObject, scope, callFrame->thisValue(), "import"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    EncodedJSValue result = moduleGraphImport(globalObject, graph, callFrame->argument(0));
-    if (scope.exception()) [[unlikely]] {
-        JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        return JSValue::encode(promise->rejectWithCaughtException(vm, scope));
-    }
-    return result;
+    JSPromise* result = moduleGraphImport(globalObject, graph, callFrame->argument(0));
+    if (scope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+    return JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -464,19 +447,22 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose, (JSGlobalObject * global
     if (JSModuleLoader* loader = graph->loader())
         loader->clearAll();
     graph->clearLoader();
-    if (JSArray* pending = graph->pendingImports()) {
+    if (JSSet* pending = graph->pendingImports()) {
         graph->setPendingImports(vm, nullptr);
-        for (unsigned i = 0, length = pending->length(); i < length; ++i) {
-            JSValue value = pending->getIndex(globalObject, i);
+        auto* iterator = JSSetIterator::create(vm, globalObject->setIteratorStructure(), pending, IterationKind::Keys);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue value;
+        while (iterator->next(globalObject, value)) {
+            if (auto* promise = dynamicDowncast<JSPromise>(value); promise && promise->status() == JSPromise::Status::Pending) {
+                promise->reject(vm, createModuleGraphDisposedError(globalObject));
+                defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
+            }
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto* promise = dynamicDowncast<JSPromise>(value); promise && promise->status() == JSPromise::Status::Pending)
-                promise->reject(vm, createTypeError(globalObject, "ModuleGraph has been disposed"_s));
         }
     }
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule);
 JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
@@ -492,9 +478,9 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static JSModuleGraphPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        auto* ptr = new (NotNull, allocateCell<JSModuleGraphPrototype>(vm)) JSModuleGraphPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
+        auto* prototype = new (NotNull, allocatePlainObjectCell(vm, sizeof(JSModuleGraphPrototype))) JSModuleGraphPrototype(vm, structure);
+        prototype->finishCreation(vm, globalObject);
+        return prototype;
     }
     DECLARE_INFO;
     template<typename CellType, SubspaceAccess>
@@ -505,7 +491,7 @@ public:
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        auto* structure = createClassStructure(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -519,30 +505,29 @@ private:
 };
 
 static const HashTableValue JSModuleGraphPrototypeTableValues[] = {
-    { "import"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphProtoFuncImport, 1 } },
-    { "dispose"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphProtoFuncDispose, 0 } },
+    { "import"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_import, 1 } },
+    { "dispose"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsModuleGraphPrototypeFunction_dispose, 0 } },
     { "mainModule"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsModuleGraphGetter_mainModule, 0 } },
 };
 
 const ClassInfo JSModuleGraphPrototype::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphPrototype) };
 
-void JSModuleGraphPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSModuleGraphPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSModuleGraph::info(), JSModuleGraphPrototypeTableValues, *this);
+    reifyStaticPropertyTable(vm, JSModuleGraph::info(), JSModuleGraphPrototypeTableValues, *this);
     putDirectWithoutTransition(vm, vm.propertyNames->disposeSymbol, getDirect(vm, Identifier::fromString(vm, "dispose"_s)), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    putToStringTagWithoutTransition(vm, this, info());
 }
 
-// The overlay's names are the host's `globals` keys. Graphs made with the same set of
-// names get overlays of one symbol table, so the modules they load share executables
-// (moduleGraphOverlaySymbolTables: sorted names → SymbolTable). Every overlay also
-// binds @moduleLoader (what import() compiles to a lookup of) to the graph's loader.
-static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObject, JSObject* globals, JSModuleLoader*& loader)
+// The overlay: a lexical environment over the global lexical environment holding the
+// host's `globals` and @moduleLoader (what import() compiles to a lookup of), bound to
+// the new loader. Graphs whose `globals` have the same names share one SymbolTable, so
+// the modules they load share executables.
+static JSLexicalEnvironment* createModuleGraphOverlay(Zig::GlobalObject* globalObject, JSObject* globals)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* zigGlobal = defaultGlobalObject(globalObject);
 
     Vector<Identifier> names;
     if (globals) {
@@ -553,26 +538,23 @@ static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObje
             names.append(name);
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
-    // One text per name set: each name as <length>:<name>, so no two sets share a key.
+    // One key per name set: each name as <length>:<name>, so no two sets share a key.
     StringBuilder joined;
     for (auto& name : names)
         joined.append(name.length(), ':', name.string());
-    JSMap* symbolTables = zigGlobal->moduleGraphOverlaySymbolTables();
-    JSString* namesKey = jsString(vm, joined.toString());
-    JSValue existing = symbolTables->get(globalObject, namesKey);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    SymbolTable* symbolTable = existing ? dynamicDowncast<SymbolTable>(existing) : nullptr;
+    String namesKey = joined.toString();
+    auto& symbolTables = moduleGraphState(globalObject).overlaySymbolTables;
+    SymbolTable* symbolTable = symbolTables.get(namesKey);
     if (!symbolTable) {
         symbolTable = SymbolTable::create(vm);
         for (auto& name : names)
             symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
         symbolTable->add(NoLockingNecessary, vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
-        symbolTables->set(globalObject, namesKey, symbolTable);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        symbolTables.set(namesKey, symbolTable);
     }
 
     JSLexicalEnvironment* overlay = JSLexicalEnvironment::create(vm, globalObject, globalObject->globalLexicalEnvironment(), symbolTable, jsUndefined());
-    loader = JSModuleLoader::create(globalObject, vm, overlay);
+    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, overlay);
     overlay->variableAt(symbolTable->get(vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl()).scopeOffset()).set(vm, overlay, loader);
     for (auto& name : names) {
         JSValue value = globals->get(globalObject, name);
@@ -582,6 +564,11 @@ static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObje
     return overlay;
 }
 
+static JSModuleLoader* moduleLoaderOfOverlay(VM& vm, JSLexicalEnvironment* overlay)
+{
+    return uncheckedDowncast<JSModuleLoader>(overlay->variableAt(overlay->symbolTable()->get(vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl()).scopeOffset()).get());
+}
+
 class JSModuleGraphConstructor final : public InternalFunction {
 public:
     using Base = InternalFunction;
@@ -589,13 +576,13 @@ public:
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
     static JSModuleGraphConstructor* create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
     {
-        auto* ctor = new (NotNull, allocateCell<JSModuleGraphConstructor>(vm)) JSModuleGraphConstructor(vm, structure);
-        ctor->finishCreation(vm, globalObject, prototype);
-        return ctor;
+        auto* constructor = new (NotNull, allocateCell<JSModuleGraphConstructor>(vm)) JSModuleGraphConstructor(vm, structure);
+        constructor->finishCreation(vm, globalObject, prototype);
+        return constructor;
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+        return createClassStructure(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
     }
     DECLARE_INFO;
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue construct(JSGlobalObject*, CallFrame*);
@@ -621,46 +608,44 @@ private:
 const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphConstructor) };
 
 // new Bun.unsafe.ModuleGraph({ globals?, onError? })
-JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* globalObject, CallFrame* callFrame)
+JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* zigGlobal = defaultGlobalObject(globalObject);
 
     JSObject* globals = nullptr;
     JSValue onError = jsUndefined();
     JSValue optionsValue = callFrame->argument(0);
-    if (!optionsValue.isUndefinedOrNull()) {
-        Bun::V::validateObject(scope, globalObject, optionsValue, "options"_s);
+    if (!optionsValue.isUndefined()) {
+        V::validateObject(scope, globalObject, optionsValue, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
         JSObject* options = optionsValue.getObject();
         JSValue globalsValue = options->get(globalObject, Identifier::fromString(vm, "globals"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!globalsValue.isUndefined()) {
-            Bun::V::validateObject(scope, globalObject, globalsValue, "options.globals"_s);
+            V::validateObject(scope, globalObject, globalsValue, "options.globals"_s);
             RETURN_IF_EXCEPTION(scope, {});
             globals = globalsValue.getObject();
         }
         onError = options->get(globalObject, Identifier::fromString(vm, "onError"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!onError.isUndefined()) {
-            Bun::V::validateFunction(scope, globalObject, onError, "options.onError"_s);
+            V::validateFunction(scope, globalObject, onError, "options.onError"_s);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
-    Structure* structure = zigGlobal->JSModuleGraphStructure();
+    Structure* structure = globalObject->JSModuleGraphStructure();
     JSObject* newTarget = asObject(callFrame->newTarget());
     if (newTarget != callFrame->jsCallee()) {
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget, structure);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSModuleLoader* loader = nullptr;
-    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, loader);
+    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals);
     RETURN_IF_EXCEPTION(scope, {});
-    JSModuleGraph* graph = JSModuleGraph::create(vm, structure, loader, overlay, onError.isUndefined() ? nullptr : asObject(onError));
-    // overlay → graph, for attributing errors / scopes / loaders to it.
-    zigGlobal->moduleGraphRegistry()->set(vm, overlay, graph);
+    JSModuleGraph* graph = JSModuleGraph::create(vm, structure, moduleLoaderOfOverlay(vm, overlay), overlay, onError.isUndefined() ? nullptr : asObject(onError));
+    globalObject->moduleGraphRegistry()->set(vm, overlay, graph);
     return JSValue::encode(graph);
 }
 
@@ -674,16 +659,10 @@ void initJSModuleGraphClassStructure(LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 
-// Bun.unsafe.ModuleGraph (UnsafeObject.rs): the class is created on first access.
-JSC_DECLARE_CUSTOM_GETTER(moduleGraphConstructorGetter);
-JSC_DEFINE_CUSTOM_GETTER(moduleGraphConstructorGetter, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+// UnsafeObject.rs: Bun.unsafe.ModuleGraph
+extern "C" EncodedJSValue Bun__ModuleGraph__constructor(JSGlobalObject* globalObject)
 {
     return JSValue::encode(defaultGlobalObject(globalObject)->JSModuleGraphConstructor());
-}
-extern "C" void Bun__ModuleGraph__installConstructor(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue target)
-{
-    VM& vm = globalObject->vm();
-    asObject(JSValue::decode(target))->putDirectCustomAccessor(vm, Identifier::fromString(vm, "ModuleGraph"_s), CustomGetterSetter::create(vm, moduleGraphConstructorGetter, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
 } // namespace Bun

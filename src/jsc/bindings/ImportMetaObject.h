@@ -42,8 +42,8 @@ public:
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    /// `moduleGraph`: the Bun.unsafe.ModuleGraph the module belongs to (its import.meta.main /
-    /// import.meta.require are the graph's), or null.
+    /// `moduleGraph`: the Bun.unsafe.ModuleGraph the module belongs to (import.meta.main is
+    /// the graph's first import), or null.
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, Bun::JSModuleGraph* = nullptr);
 
     /// TODO:

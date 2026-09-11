@@ -14,8 +14,7 @@ import { join } from "path";
 
 type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.unsafe.ModuleGraph>[0]>;
 type Graph = InstanceType<typeof Bun.unsafe.ModuleGraph>;
-const ModuleGraphClass: typeof Bun.unsafe.ModuleGraph | undefined = Bun.unsafe?.ModuleGraph;
-const enabled = typeof ModuleGraphClass === "function";
+const ModuleGraphClass = Bun.unsafe.ModuleGraph;
 
 /** A temporary directory with `files` (harness tempDir), as a plain path. */
 function fixture(files: Record<string, string>): string {
@@ -28,7 +27,7 @@ function graph(who: string, log: string[], extra: ModuleGraphOptions = {}): Grap
   const proc = Object.create(process, {
     env: { value: { ...process.env, WHO: who }, enumerable: true, writable: true },
   });
-  return new ModuleGraphClass!({ ...extra, globals: { process: proc, __log: log, ...extra.globals } });
+  return new ModuleGraphClass({ ...extra, globals: { process: proc, __log: log, ...extra.globals } });
 }
 
 const errorName = (e: unknown) => (e instanceof Error ? e.constructor.name : typeof e);
@@ -142,7 +141,7 @@ const orderings = [
 ] as const;
 type Ordering = (typeof orderings)[number];
 
-describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target × ordering", () => {
+describe("ModuleGraph matrix: dynamic import() site × target × ordering", () => {
   const dir = fixture({
     "t-inner.mjs": TARGET_BODY("inner"),
     "dyn-helper.cjs": `module.exports.load = (p) => import(p);`,
@@ -287,14 +286,14 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
           const expected = {
             results: whos.map((w, i) => {
               if (skipped(i)) return "unset";
-              if (disposed(i)) return { rejected: "TypeError" };
+              if (disposed(i)) return { rejected: "Error" }; // ERR_INVALID_STATE: ModuleGraph has been disposed
               if (rejection) return { rejected: rejection };
               const who = site.hostScope ? target.who(process.env.WHO) : target.who(w);
               const sameAsStatic = site.eager ? "n/a" : !site.hostScope;
               return { who, sameAsStatic };
             }),
             repeat: whos.map((_, i) =>
-              skipped(i) ? "skipped" : disposed(i) ? "rejected:TypeError" : rejection ? `rejected:${rejection}` : true,
+              skipped(i) ? "skipped" : disposed(i) ? "rejected:Error" : rejection ? `rejected:${rejection}` : true,
             ),
             distinctNamespaces: rejection ? 0 : site.hostScope ? 1 : liveWhos.length,
             isolation:
@@ -321,7 +320,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
 // 2. Dynamic import into a module that is part of a cycle with the importer, and self-import,
 //    before/after the cycle has been evaluated in each instance
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() of cycle members and self", () => {
+describe("ModuleGraph matrix: dynamic import() of cycle members and self", () => {
   const dir = fixture({
     "a.mjs": `import { bTag } from "./b.mjs"; __log.push("a@" + process.env.WHO); export const aTag = "a:" + process.env.WHO; export const readB = () => bTag; export const dynB = () => import("./b.mjs"); export const dynSelf = () => import("./a.mjs"); export let n = 0; export const inc = () => ++n;`,
     "b.mjs": `import { aTag, inc } from "./a.mjs"; __log.push("b@" + process.env.WHO); export const bTag = "b:" + process.env.WHO; export const readA = () => aTag; export const dynA = () => import("./a.mjs"); export const bump = () => inc();`,
@@ -383,7 +382,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() of cycle members
 // 3. Code shared between instances stays correct once JIT-compiled: imported bindings, module state,
 //    closures, classes, namespace property access, at scope depths 0–3, in every instance order
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () => {
+describe("ModuleGraph matrix: hot code across instances", () => {
   const dir = fixture({
     "k.mjs": `export let v = process.env.WHO + ":0"; export const K = "K:" + process.env.WHO; export function set(x) { v = process.env.WHO + ":" + x } export const obj = { who: process.env.WHO };`,
     "hot.mjs": `import { v, K, set, obj } from "./k.mjs"; import * as ns from "./k.mjs";
@@ -542,7 +541,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
 // 4. Static graph shapes instantiated repeatedly (sequential and concurrent): isolation, identity,
 //    exactly one evaluation per module per instance, link errors confined to the instance
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: graph shapes × instantiation order", () => {
+describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
   const leaf = (name: string) =>
     `__log.push(${JSON.stringify(name)} + "@" + process.env.WHO); export const ${name} = ${JSON.stringify(name)} + ":" + process.env.WHO; export let n_${name} = 0; export const inc_${name} = () => ++n_${name};`;
   const dir = fixture({
@@ -695,7 +694,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: graph shapes × instantiation ord
 // 5. Lifecycle × timing: dispose and errors at every stage, other instances unaffected, fresh
 //    instances afterwards work
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () => {
+describe("ModuleGraph matrix: lifecycle and error timing", () => {
   const dir = fixture({
     "slow.mjs": `__log.push("slow-start@" + process.env.WHO); await new Promise(r => setTimeout(r, 20)); __log.push("slow-end@" + process.env.WHO); export const who = process.env.WHO; export const later = () => import("./late.mjs").then(m => m.who);`,
     "late.mjs": `__log.push("late@" + process.env.WHO); export const who = process.env.WHO;`,
@@ -747,7 +746,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () =
         bLog: log.filter(l => l.endsWith("@b")),
         cLog: log.filter(l => l.endsWith("@c")),
       }).toEqual({
-        aOutcome: "TypeError",
+        aOutcome: "Error",
         bResult: { who: "b", late: "b" },
         cResult: { who: "c", late: "c" },
         bLog: ["slow-start@b", "slow-end@b", "late@b"],
@@ -814,7 +813,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () =
 //     code deleted (Bun.shrink). Instances created afterwards must see the files as they are and work;
 //     earlier instances keep what they loaded.
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletion between instances", () => {
+describe("ModuleGraph matrix: dependency edits and code deletion between instances", () => {
   const importer = `import { x, shape } from "./dep.mjs"; import * as ns from "./dep.mjs";
     export function read(n) { let r; for (let i = 0; i < n; i++) r = x + ":" + shape; return r; }
     export function viaNamespace(n) { let r; for (let i = 0; i < n; i++) r = ns.x + ":" + ns.shape; return r; }
@@ -907,7 +906,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
 // 6. Many instances at once: N graphs importing the same entry concurrently, each with dynamic
 //    imports resolved at different times, all isolated; then all disposed and collectable
 // ───────────────────────────────────────────────────────────────────────────────────────────────
-describe.skipIf(!enabled)("ModuleGraph matrix: many concurrent instances", () => {
+describe("ModuleGraph matrix: many concurrent instances", () => {
   const dir = fixture({
     "entry.mjs": `import { tag } from "./dep.mjs"; export const who = process.env.WHO; export const staticTag = tag; export const dyn = (delay) => new Promise(r => setTimeout(r, delay)).then(() => import("./lazy.mjs")).then(m => m.tag); export const big = new Uint8Array(64 * 1024);`,
     "dep.mjs": `export const tag = "dep:" + process.env.WHO;`,

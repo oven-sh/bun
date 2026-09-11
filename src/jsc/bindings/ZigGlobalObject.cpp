@@ -2651,10 +2651,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
-    m_moduleGraphOverlaySymbolTables.initLater(
-        [](const Initializer<JSMap>& init) {
-            init.set(JSMap::create(init.vm, init.owner->mapStructure()));
-        });
 
     this->initGeneratedLazyClasses();
 
@@ -3563,10 +3559,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     // import() from code of a disposed Bun.unsafe.ModuleGraph rejects rather than
     // loading into the graph's (dropped) registry.
-    if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(globalObject, loader); graph && graph->disposed()) {
-        Bun::throwModuleGraphDisposed(globalObject, scope);
+    if (Bun::throwIfModuleGraphDisposed(globalObject, scope, loader))
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-    }
 
     JSC::Identifier resolvedIdentifier;
 
@@ -4218,11 +4212,10 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 {
     // Nothing evaluates in a disposed Bun.unsafe.ModuleGraph (a late top-level-await
     // completion, a deferred namespace touched later): its modules throw instead.
-    if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) {
-        auto& vm = JSC::getVM(lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        Bun::throwModuleGraphDisposed(lexicalGlobalObject, scope);
-        return {};
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+        if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
+            return {};
     }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     return moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
@@ -4242,10 +4235,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.unsafe.ModuleGraph.
-    if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) {
-        Bun::throwModuleGraphDisposed(lexicalGlobalObject, scope);
+    if (Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, moduleLoader))
         return {};
-    }
     noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);

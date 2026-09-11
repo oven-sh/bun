@@ -301,12 +301,10 @@ function generatePrototype(typeName, obj) {
     if (obj.constructNeedsThis) {
       externs += `
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue);
-JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
     } else {
       externs += `
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "construct")}(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
     }
   }
@@ -797,27 +795,6 @@ function renderFieldsImpl(
   cachedValues: string[],
 ) {
   const rows: string[] = [];
-
-  if (obj.construct) {
-    rows.push(
-      `
-
-JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = dynamicDowncast<${prototypeName(typeName)}>(JSValue::decode(thisValue));
-
-    if (!prototype) [[unlikely]] {
-        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
-    }
-    return JSValue::encode(globalObject->${className(typeName)}Constructor());
-}
-
-`.trim(),
-    );
-  }
 
   for (const name in proto) {
     if ("cache" in proto[name] || proto[name]?.internal) {

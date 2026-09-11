@@ -101,7 +101,7 @@ use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JsCell};
+use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
@@ -138,8 +138,6 @@ pub struct MultiPartUpload {
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) vm: &'static VirtualMachine,
-    // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
-    pub global_this: GlobalRef,
 
     pub(crate) buffered: JsCell<StreamBuffer>,
     /// Bytes accepted by `write*` (after encoding): what a streamed `Bun.write`/`writer.end()`

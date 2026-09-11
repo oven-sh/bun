@@ -810,7 +810,7 @@ const JSC::ClassInfo NodeVMModuleConstructor::s_info = { "Module"_s, &Base::s_in
 JSC::JSModuleLoader* NodeVMModule::moduleLoader(JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    NodeVMGlobalObject* contextGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    NodeVMGlobalObject* contextGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return (contextGlobalObject ? contextGlobalObject : globalObject)->moduleLoader();
 }

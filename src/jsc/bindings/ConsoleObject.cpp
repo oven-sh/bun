@@ -6,6 +6,7 @@
 
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
@@ -128,4 +129,75 @@ void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& 
     }
 }
 
+}
+
+// A bounded `JSC::forEachInIterable` for the console formatter. That function
+// ends only when the iterator reports `done`, and a replaced `Symbol.iterator`
+// or `next` can withhold it forever. Here a Map or a Set is read from its own
+// storage, which user code cannot redirect. Any other iterable gets at most
+// `limit` protocol steps and is then closed, like `break` closes a for-of loop.
+// `truncated` says whether an element past `limit` exists. Returns the number
+// of elements passed to `callback`.
+extern "C" uint32_t Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIterable, JSC::JSGlobalObject* globalObject, uint32_t limit, bool* truncated, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void* ctx, JSC::EncodedJSValue))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue iterable = JSC::JSValue::decode(encodedIterable);
+    uint32_t visited = 0;
+    *truncated = false;
+
+    auto visitStorageEntry = [&](JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue value) -> WTF::IterationStatus {
+        if (visited >= limit) {
+            *truncated = true;
+            return WTF::IterationStatus::Done;
+        }
+        visited++;
+        callback(&vm, globalObject, ctx, JSC::JSValue::encode(value));
+        return WTF::IterationStatus::Continue;
+    };
+
+    if (auto* map = dynamicDowncast<JSC::JSMap>(iterable)) {
+        JSC::JSCell* storage = map->storageOrSentinel(vm);
+        if (storage != vm.orderedHashTableSentinel()) {
+            JSC::forEachInMapStorage(vm, globalObject, storage, 0, JSC::IterationKind::Entries, visitStorageEntry);
+            RETURN_IF_EXCEPTION(scope, visited);
+        }
+        return visited;
+    }
+
+    if (auto* set = dynamicDowncast<JSC::JSSet>(iterable)) {
+        JSC::JSCell* storage = set->storageOrSentinel(vm);
+        if (storage != vm.orderedHashTableSentinel()) {
+            JSC::forEachInSetStorage(vm, globalObject, storage, 0, visitStorageEntry);
+            RETURN_IF_EXCEPTION(scope, visited);
+        }
+        return visited;
+    }
+
+    JSC::IterationRecord iterationRecord = JSC::iteratorForIterable(globalObject, iterable);
+    RETURN_IF_EXCEPTION(scope, visited);
+
+    while (true) {
+        JSC::JSValue next = JSC::iteratorStep(globalObject, iterationRecord);
+        RETURN_IF_EXCEPTION(scope, visited);
+        if (next.isFalse())
+            return visited;
+
+        if (visited >= limit) {
+            *truncated = true;
+            break;
+        }
+
+        JSC::JSValue nextValue = JSC::iteratorValue(globalObject, next);
+        RETURN_IF_EXCEPTION(scope, visited);
+
+        visited++;
+        callback(&vm, globalObject, ctx, JSC::JSValue::encode(nextValue));
+        if (scope.exception()) [[unlikely]]
+            break;
+    }
+
+    scope.release();
+    JSC::iteratorClose(globalObject, iterationRecord.iterator);
+    return visited;
 }

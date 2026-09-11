@@ -5439,11 +5439,26 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
-                global_ref.clear_exception();
+            // `errors` is whatever the user put on the property, so it can be
+            // an iterable that never ends.
+            const MAX_MEMBERS_PRINTED: u32 = 100;
+            match crate::console_object::for_each_limited(
+                errors,
+                global_ref,
+                MAX_MEMBERS_PRINTED,
+                (&raw mut ctx).cast(),
+                agg_iter,
+            ) {
+                Ok(printed) if printed.truncated => {
+                    let marker = if allow_ansi_color {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", true)
+                    } else {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", false)
+                    };
+                    let _ = writer.write_all(marker.as_bytes());
+                }
+                Ok(_) => {}
+                Err(_) => global_ref.clear_exception(),
             }
             if ctx.printed_member {
                 return;

@@ -1082,3 +1082,148 @@ it("object property enumeration scales linearly with property count", () => {
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });
+
+describe("collection previews stop at the display limit", () => {
+  const entries = length => Array.from({ length }, (_, i) => [i, i]);
+  const values = length => Array.from({ length }, (_, i) => i);
+  const lastLines = (text, count) => text.split("\n").slice(-count);
+
+  it("a Map prints 100 entries and the remainder count", () => {
+    expect(lastLines(Bun.inspect(new Map(entries(150))), 3)).toEqual(["  99: 99,", "  ... 50 more items", "}"]);
+  });
+
+  it("a Set prints 100 values and the remainder count", () => {
+    expect(lastLines(Bun.inspect(new Set(values(150))), 3)).toEqual(["  99,", "  ... 50 more items", "}"]);
+  });
+
+  it("one hidden entry reads as a single item", () => {
+    expect(lastLines(Bun.inspect(new Map(entries(101))), 2)).toEqual(["  ... 1 more item", "}"]);
+    expect(lastLines(Bun.inspect(new Set(values(101))), 2)).toEqual(["  ... 1 more item", "}"]);
+  });
+
+  it("an iterator preview says it is cut short", () => {
+    expect(lastLines(Bun.inspect(new Map(entries(150)).entries()), 3)).toEqual([
+      "  [ 99, 99 ],",
+      "  ... more items",
+      "}",
+    ]);
+    expect(lastLines(Bun.inspect(new Set(values(150)).values()), 3)).toEqual(["  99,", "  ... more items", "}"]);
+  });
+
+  it("compact mode keeps the marker on one line", () => {
+    expect(Bun.inspect(new Map(entries(150)), { compact: true })).toEndWith(" 99: 99, ... 50 more items }");
+    expect(Bun.inspect(new Set(values(150)), { compact: true })).toEndWith(" 99, ... 50 more items }");
+    expect(Bun.inspect(new Map(entries(150)).entries(), { compact: true })).toEndWith(" [ 99, 99 ], ... more items }");
+    expect(Bun.inspect(new Set(values(150)).values(), { compact: true })).toEndWith(" 99, ... more items}");
+  });
+
+  it("a collection that fits prints in full", () => {
+    expect(Bun.inspect(new Map(entries(100)))).toEndWith("  99: 99,\n}");
+    expect(Bun.inspect(new Set(values(100)))).toEndWith("  99,\n}");
+    expect(Bun.inspect(new Map(entries(100)).entries())).toEndWith("  [ 99, 99 ],\n}");
+  });
+});
+
+// The formatter used to drive `Symbol.iterator`, so user code decided when the
+// walk ended. An iterator that never reports `done` printed forever at 100%
+// CPU. A Map or a Set is now read from its own storage, and every other
+// iterable is cut at the display limit.
+describe.concurrent("inspect survives an iterator that never ends", () => {
+  // The unfixed formatter prints without end. Stop the read at `limit` bytes
+  // and kill the child, so that failure reports `runaway` at once.
+  async function run(source, stream) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: stream === "stdout" ? "pipe" : "ignore",
+      stderr: stream === "stderr" ? "pipe" : "ignore",
+    });
+
+    const limit = 1024 * 1024;
+    const decoder = new TextDecoder();
+    let output = "";
+    let runaway = false;
+    for await (const chunk of proc[stream]) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.length > limit) {
+        runaway = true;
+        // Keep the assertion diff readable.
+        output = output.slice(0, 256);
+        proc.kill();
+        break;
+      }
+    }
+    return { output, runaway, exitCode: await proc.exited };
+  }
+
+  const count = (text, needle) => text.split(needle).length - 1;
+
+  it("Map.prototype[Symbol.iterator]", async () => {
+    const { output, runaway, exitCode } = await run(
+      `Map.prototype[Symbol.iterator] = function* () { for (;;) yield ["k", "v"]; };
+       console.log(new Map([["a", 1]]));`,
+      "stdout",
+    );
+    expect({ output, runaway }).toEqual({ output: 'Map(1) {\n  "a": 1,\n}\n', runaway: false });
+    expect(exitCode).toBe(0);
+  });
+
+  it("Set.prototype[Symbol.iterator]", async () => {
+    const { output, runaway, exitCode } = await run(
+      `Set.prototype[Symbol.iterator] = function* () { for (;;) yield "x"; };
+       console.log(new Set(["a"]));`,
+      "stdout",
+    );
+    expect({ output, runaway }).toEqual({ output: 'Set(1) {\n  "a",\n}\n', runaway: false });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a replaced next() on the Map iterator prototype", async () => {
+    const { output, runaway, exitCode } = await run(
+      `const map = new Map([["a", 1]]);
+       Object.getPrototypeOf(map.entries()).next = () => ({ value: ["k", "v"], done: false });
+       console.log(map.entries());`,
+      "stdout",
+    );
+    expect({ entries: count(output, '"k"'), runaway }).toEqual({ entries: 100, runaway: false });
+    expect(output).toEndWith("  ... more items\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a replaced next() on the Set iterator prototype", async () => {
+    const { output, runaway, exitCode } = await run(
+      `const set = new Set(["a"]);
+       Object.getPrototypeOf(set.values()).next = () => ({ value: "k", done: false });
+       console.log(set.values());`,
+      "stdout",
+    );
+    expect({ values: count(output, '"k"'), runaway }).toEqual({ values: 100, runaway: false });
+    expect(output).toEndWith("  ... more items\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("an uncaught error that carries such a Map", async () => {
+    const { output, runaway, exitCode } = await run(
+      `Map.prototype[Symbol.iterator] = function* () { for (;;) yield ["k", "v"]; };
+       const err = new Error("boom");
+       err.ctx = new Map([["a", 1]]);
+       throw err;`,
+      "stderr",
+    );
+    expect(runaway).toBe(false);
+    expect(output).toContain('ctx: Map(1) {\n  "a": 1,\n}');
+    expect(exitCode).toBe(1);
+  });
+
+  it("an uncaught AggregateError whose errors list never ends", async () => {
+    const { output, runaway, exitCode } = await run(
+      `const err = new AggregateError([], "boom");
+       err.errors = { [Symbol.iterator]: function* () { for (;;) yield new Error("inner"); } };
+       throw err;`,
+      "stderr",
+    );
+    expect({ members: count(output, "error: inner"), runaway }).toEqual({ members: 100, runaway: false });
+    expect(output).toContain("... more errors\n");
+    expect(exitCode).toBe(1);
+  });
+});

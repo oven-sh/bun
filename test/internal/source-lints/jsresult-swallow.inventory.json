@@ -1,6 +1,5 @@
 {
   "src/jsc/VirtualMachine.rs": {
-    "JsResult collapsed on the spot": 1,
     "discarded result of a call that enters script": 1
   },
   "src/jsc/web_worker.rs": {
@@ -10,16 +9,12 @@
     "discarded result of a call that enters script": 4
   },
   "src/runtime/ipc.rs": {
-    "discarded result of a call that enters script": 4,
-    "taken exception discarded": 1
+    "discarded result of a call that enters script": 4
   },
   "src/runtime/napi/napi_body.rs": {
     "discarded result of a call that enters script": 2
   },
   "src/runtime/node/node_fs.rs": {
-    "discarded result of a call that enters script": 1
-  },
-  "src/runtime/test_runner/timers/FakeTimers.rs": {
     "discarded result of a call that enters script": 1
   },
   "src/runtime/webcore/Request.rs": {

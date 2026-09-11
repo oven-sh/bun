@@ -2,9 +2,7 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
-use bun_core::{OwnedString, String as BunString};
-#[cfg(windows)]
-use bun_paths::OSPathBuffer;
+use bun_core::String as BunString;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
@@ -58,8 +56,8 @@ pub(crate) fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {
-    let mut json_string = BunString::empty();
-    let mut text_string = BunString::empty();
+    let mut json_string = BunString::EMPTY;
+    let mut text_string = BunString::EMPTY;
 
     // Call the unified C++ function with optional out-params for requested formats.
     Bun__stopCPUProfiler(
@@ -67,11 +65,6 @@ pub(crate) fn stop_and_write_profile(
         config.json_format.then_some(&mut json_string),
         config.md_format.then_some(&mut text_string),
     );
-    // C++ handed back +1 refs into json_string/text_string. `bun_core::String`
-    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()`.
-    let json_string = OwnedString::new(json_string);
-    let text_string = OwnedString::new(text_string);
-
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {
         write_profile_to_file(&json_string, config, false)?;
@@ -91,7 +84,6 @@ fn write_profile_to_file(
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
-    // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
     // dir/name are unbounded CLI input, so use the length-checked variant.
     let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
@@ -101,7 +93,7 @@ fn write_profile_to_file(
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
-    let mut path_buf_os = OSPathBuffer::uninit();
+    let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
     #[cfg(windows)]
     let output_path_os =
         bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
@@ -143,7 +135,7 @@ fn build_output_path(
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
     // Generate filename
-    let mut filename_buf = PathBuffer::uninit();
+    let mut filename_buf = bun_paths::path_buffer_pool::get();
 
     // If both formats are being written and a custom name was specified,
     // we need to add the appropriate extension to disambiguate

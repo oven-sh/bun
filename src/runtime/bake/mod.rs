@@ -602,9 +602,8 @@ pub mod framework_router {
     /// the associated-fn path resolves.
     pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
     pub use super::framework_router_body::{
-        DynamicRouteMap, EncodedPattern, FileKind, FrameworkRouter, InsertionHandler,
-        JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
-        RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
+        FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
+        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type, TypeIndex,
     };
 
     /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
@@ -618,13 +617,12 @@ pub mod framework_router {
         }
     }
 }
-pub use framework_router as FrameworkRouter;
 
 // ══════════════════════════════════════════════════════════════════════════
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::{EntryPointMap, PerThread, TypeAndFlags, build_command};
+    pub use super::production_body::{PerThread, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

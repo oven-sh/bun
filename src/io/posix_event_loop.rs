@@ -903,22 +903,23 @@ impl FilePoll {
     ) -> sys::Result<()> {
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        if !(self.flags.contains(Flags::PollReadable)
+        let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure))
-        {
-            // no-op
+            || self.flags.contains(Flags::PollMemoryPressure);
+        // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
+        let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
+        if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());
         }
 
-        debug_assert!(fd != INVALID_FD);
         let watcher_fd = loop_.fd;
-        let both_directions =
-            self.flags.contains(Flags::PollReadable) && self.flags.contains(Flags::PollWritable);
+        let both_directions = disarmed_only
+            || (self.flags.contains(Flags::PollReadable)
+                && self.flags.contains(Flags::PollWritable));
         let flag: Flags = 'brk: {
-            if self.flags.contains(Flags::PollReadable) {
+            if disarmed_only || self.flags.contains(Flags::PollReadable) {
                 break 'brk Flags::Readable;
             }
             if self.flags.contains(Flags::PollWritable) {
@@ -1516,21 +1517,6 @@ pub enum OneShotFlag {
 
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::closer::Closer;
-#[cfg(target_os = "macos")]
-pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::Waker;
 
 #[cfg(all(test, not(windows)))]
 mod tests {

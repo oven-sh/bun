@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
@@ -592,14 +593,14 @@ impl QuicSession {
             .filter(|v| v.is_string())
         {
             self.datagram_drop_newest
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() == b"drop-newest");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
         }
         if let Some(v) = options.get(global, "qlog")? {
             self.qlog_enabled.set(v.to_boolean());
         }
         if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
             self.reject_unverified_peer
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() != b"manual");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
         }
         if let Some(app) = options
             .get(global, "application")?
@@ -1051,7 +1052,7 @@ impl QuicSession {
                 }
             }
             SessionEvent::Keylog(line) => {
-                let s = bun_core::String::clone_utf8(&line).to_js(global)?;
+                let s = bun_string_jsc::create_utf8_for_js(global, &line)?;
                 if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref()
@@ -1124,7 +1125,7 @@ impl QuicSession {
                 // the closure: a collected `Vec<JSValue>` is not GC-scanned,
                 // so early strings would be collectible.
                 let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
-                    bun_core::String::clone_latin1(s).to_js(global)
+                    bun_core::String::clone_latin1(s).into_js(global)
                 });
                 let js_arr = js_arr?;
                 {
@@ -1198,7 +1199,7 @@ impl QuicSession {
                     return Ok(());
                 }
                 let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                let status_js = bun_core::String::static_(b"abandoned").to_js(global)?;
+                let status_js = global.common_strings().quic_datagram_abandoned();
                 if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
@@ -1227,10 +1228,10 @@ impl QuicSession {
                 }
             }
             SessionEvent::DatagramAckStatus { count, acked } => {
-                let status = if acked {
-                    b"acknowledged".as_slice()
+                let status_js = if acked {
+                    global.common_strings().quic_datagram_acknowledged()
                 } else {
-                    b"lost".as_slice()
+                    global.common_strings().quic_datagram_lost()
                 };
                 // Every acknowledged/lost datagram is popped and counted even
                 // when its status cannot be delivered.
@@ -1247,11 +1248,8 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
                     }
-                    let args = JSValue::from_uint64_no_truncate(global, id).and_then(|id_js| {
-                        Ok([id_js, bun_core::String::static_(status).to_js(global)?])
-                    });
-                    let [id_js, status_js] = match args {
-                        Ok(args) => args,
+                    let id_js = match JSValue::from_uint64_no_truncate(global, id) {
+                        Ok(id_js) => id_js,
                         Err(err) => {
                             undelivered = Err(err);
                             continue;
@@ -1318,7 +1316,7 @@ impl QuicSession {
                 }
                 let array =
                     JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
-                        bun_core::String::clone_utf8(&payload[o..o + n]).to_js(global)
+                        bun_string_jsc::create_utf8_for_js(global, &payload[o..o + n])
                     })?;
                 if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
                     let vm = global.bun_vm().as_mut();
@@ -1516,9 +1514,9 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .map(|b| bun_core::String::clone_utf8(&b).to_js(global).or_report())
+            .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
-        let cipher_version = bun_core::String::static_(b"TLSv1.3")
+        let cipher_version = bun_core::String::static_("TLSv1.3")
             .to_js(global)
             .or_report();
         // Node reports both fields only on failure -- the JS 'auto' rejection
@@ -1655,9 +1653,7 @@ impl QuicSession {
         // `qlog_fin_sent` is latched above and also gates the guard at the top,
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
-        let data_js = bun_core::String::clone_utf8(data.as_bytes())
-            .to_js(global)
-            .or_report();
+        let data_js = bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -1720,7 +1716,7 @@ impl QuicSession {
         let code_js = JSValue::from_uint64_no_truncate(global, code).or_report();
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .map(|r| bun_core::String::clone_utf8(&r).to_js(global).or_report())
+            .map(|r| bun_string_jsc::create_utf8_for_js(global, &r).or_report())
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -1812,7 +1808,7 @@ impl QuicSession {
                 .get(global, "type")?
                 .map(|v| {
                     bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
+                        .map(|s| s.to_owned_slice() == b"application")
                 })
                 .transpose()?
                 .unwrap_or(false);
@@ -1820,7 +1816,7 @@ impl QuicSession {
             reason = options
                 .get(global, "reason")?
                 .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes()))
+                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
                 .transpose()?
                 .unwrap_or_default();
             self.self_close.with_mut(|s| {
@@ -2101,7 +2097,7 @@ impl QuicSession {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        let status_js = bun_core::String::static_(b"abandoned").to_js(global)?;
+        let status_js = global.common_strings().quic_datagram_abandoned();
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()
@@ -2263,7 +2259,7 @@ impl QuicSession {
             let v = if s.is_empty() {
                 JSValue::UNDEFINED
             } else {
-                bun_core::String::clone_utf8(s.as_bytes()).to_js(global)?
+                bun_string_jsc::create_utf8_for_js(global, s.as_bytes())?
             };
             obj.put(global, name, v);
             Ok(())
@@ -2277,13 +2273,13 @@ impl QuicSession {
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
-        Some(b) => bun_core::String::clone_utf8(b).to_js(global).or_report(),
+        Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
         None => JSValue::UNDEFINED,
     }
 }
 
 fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValue> {
-    let kind = bun_core::String::static_(b"application").to_js(global)?;
+    let kind = bun_core::String::static_("application").to_js(global)?;
     let code = JSValue::from_uint64_no_truncate(global, code)?;
     JSValue::create_array_from_slice(
         global,
@@ -2324,12 +2320,6 @@ impl QuicSession {
         };
         Self::transport_params_to_js(global, &tp)
     }
-
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {

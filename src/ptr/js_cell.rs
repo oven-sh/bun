@@ -86,12 +86,12 @@ impl<T> JsCell<T> {
         f(unsafe { &mut *self.0.get() })
     }
 
-    /// Overwrite the contained value.
+    /// Overwrite the contained value. Like `Cell::set`, the old value is
+    /// dropped *after* the write, with no borrow of the cell live — so a `Drop`
+    /// that re-enters (or frees the struct holding this cell) is sound.
     #[inline(always)]
     pub fn set(&self, value: T) {
-        // Route through the single audited `with_mut` site rather than
-        // open-coding a second raw `*self.0.get() = …` write here.
-        self.with_mut(|slot| *slot = value);
+        drop(self.replace(value));
     }
 
     /// Replace the contained value, returning the old one.
@@ -110,10 +110,25 @@ impl<T> JsCell<T> {
     }
 }
 
+impl<T: Default> JsCell<T> {
+    /// Move the value out, leaving `T::default()` behind.
+    #[inline(always)]
+    pub fn take(&self) -> T {
+        self.replace(T::default())
+    }
+}
+
 impl<T: Default> Default for JsCell<T> {
     #[inline(always)]
     fn default() -> Self {
         Self::new(T::default())
+    }
+}
+
+impl<T: Clone> Clone for JsCell<T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self::new(self.get().clone())
     }
 }
 

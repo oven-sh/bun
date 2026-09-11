@@ -198,6 +198,60 @@ test.concurrent("import() namespace: same export list as before, enumerating it 
   });
 });
 
+// Object.seal / Object.freeze on the exports object (a lockdown helper, or a library freezing what it re-exports) makes
+// the accessors non-configurable, so they can never be replaced by the value they load. They still have to hand it
+// out: to require() callers, to every module that links one of these names, and to whatever enumerates a namespace.
+// The replacement used to be an Object.defineProperty that threw "Attempting to change configurable attribute of
+// unconfigurable property" out of every one of those reads.
+for (const lock of ["seal", "freeze"] as const) {
+  test.concurrent(`the accessors keep working after Object.${lock} of the exports object`, async () => {
+    const result = await runEntry(
+      `
+        const fs = require("node:fs");
+        Object.${lock}(fs);
+        // helper.mjs imports node:fs, so every ES module import of the builtin below happens after the ${lock}.
+        const { STREAMS, kinds, print } = await import("./helper.mjs");
+        const names = Object.fromEntries(STREAMS.map(name => [name, fs[name].name]));
+        // Linking streams.mjs is what reads ReadStream and FileWriteStream on its behalf.
+        const { ReadStream, FileWriteStream } = await import("./streams.mjs");
+        const ns = await import("node:fs");
+        const namespaceKeys = Object.keys(ns);
+        fs.WriteStream = "assigned";
+        print({
+          names,
+          secondReadIsStable: fs.ReadStream === fs.ReadStream && fs.FileReadStream === fs.ReadStream,
+          linked: ReadStream === fs.ReadStream && FileWriteStream === fs.FileWriteStream,
+          keysMatch: namespaceKeys.sort().join() === [...Object.keys(fs), "default"].sort().join(),
+          namespaceHasTheClasses: STREAMS.every(name => typeof ns[name] === "function" && ns[name] === fs[name]),
+          assignmentIsIgnored: fs.WriteStream === FileWriteStream,
+          stillAccessors: kinds(),
+        });
+      `,
+      {
+        "streams.mjs": `
+          import { ReadStream, FileWriteStream } from "node:fs";
+          export { ReadStream, FileWriteStream };
+        `,
+      },
+    );
+    expect(result).toEqual({
+      names: {
+        ReadStream: "ReadStream",
+        WriteStream: "WriteStream",
+        FileReadStream: "ReadStream",
+        FileWriteStream: "WriteStream",
+        Utf8Stream: "Utf8Stream",
+      },
+      secondReadIsStable: true,
+      linked: true,
+      keysMatch: true,
+      namespaceHasTheClasses: true,
+      assignmentIsIgnored: true,
+      stillAccessors: kinds(),
+    });
+  });
+}
+
 test.concurrent("re-exports bind through to the builtin's own binding", async () => {
   const result = await runEntry(
     `

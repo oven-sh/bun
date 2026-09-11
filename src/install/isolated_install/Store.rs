@@ -517,7 +517,6 @@ pub mod entry {
         let entry_parents = store.entries.items_parents();
 
         let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
 
         for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
             if parent_id == Id::INVALID {

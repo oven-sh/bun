@@ -16,11 +16,33 @@ const screenshot = Buffer.alloc(100_000);
 for (let i = 0; i < screenshot.length; i++) screenshot[i] = (i * 7) & 0xff;
 const screenshotBase64 = screenshot.toString("base64");
 
+// `--exit-delay=<ms>`: how long the process outlives the command pipe, the way
+// a real browser takes a moment to shut down after the pipe closes. Default 0.
+const exitDelay = Number(process.argv.find(a => a.startsWith("--exit-delay="))?.slice("--exit-delay=".length) ?? 0);
+
+// `--no-title-reply`: never answer the document.title fetch that follows
+// Page.loadEventFired, so the runtime's Navigate slot stays pending forever.
+const noTitleReply = process.argv.includes("--no-title-reply");
+
+// `--navigate-error=<errorText>`: Page.navigate answers with errorText, the
+// way real Chrome reports e.g. net::ERR_NAME_NOT_RESOLVED, instead of
+// navigating.
+const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
+
+// `--cdp-error-on=<method>`: that method's reply is a CDP protocol error
+// ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
+// Page.navigate for a URL it cannot parse.
+const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
+  },
+  // The command gets no reply, ever.
+  __fake_no_reply() {
+    return NO_REPLY;
   },
   // The process stays alive; only the reply pipe goes away.
   __fake_close_replies() {
@@ -50,12 +72,18 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
+  if (method === cdpErrorOn) {
+    const error = { code: -32000, message: "Cannot navigate to invalid URL" };
+    return send(sessionId ? { id, error, sessionId } : { id, error });
+  }
+
   switch (method) {
     case "Target.createTarget":
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });
     case "Page.navigate": {
+      if (navigateError) return reply({ frameId: "F", errorText: navigateError });
       const loaderId = "L" + ++loads;
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
@@ -65,7 +93,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
-      if (params.expression === "document.title") return reply({ result: { type: "string", value: "fake chrome" } });
+      if (params.expression === "document.title") {
+        if (noTitleReply) return;
+        return reply({ result: { type: "string", value: "fake chrome" } });
+      }
       let value: unknown;
       try {
         value = await (0, eval)(params.expression);
@@ -94,7 +125,11 @@ while (!commandsClosed) {
   } catch {
     break;
   }
-  if (n === 0) process.exit(0); // the parent closed its end: it is gone or shutting down
+  if (n === 0) {
+    // The parent closed its end: it is gone or shutting down.
+    if (exitDelay > 0) await Bun.sleep(exitDelay);
+    process.exit(0);
+  }
   pending = Buffer.concat([pending, chunk.subarray(0, n)]);
   let nul: number;
   while ((nul = pending.indexOf(0)) !== -1) {

@@ -59,8 +59,6 @@ impl PollOrFd {
     ) where
         F: FnOnce(*mut c_void),
     {
-        #[cfg(windows)]
-        let _ = close_fd;
         let fd = self.get_fd();
         #[cfg(target_os = "macos")]
         let mut close_async = true;
@@ -100,7 +98,9 @@ impl PollOrFd {
             // TODO: We should make this call compatible using bun.FD
             #[cfg(windows)]
             {
-                crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                if close_fd {
+                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                }
             }
             #[cfg(not(windows))]
             {
@@ -127,6 +127,11 @@ impl PollOrFd {
         F: FnOnce(*mut c_void),
     {
         self.close_impl(ctx, on_close_fn, true);
+    }
+
+    /// Unregisters and releases the poll; the fd stays open for its owner to close.
+    pub fn close_without_closing_fd(&mut self) {
+        self.close_impl(None, None::<fn(*mut c_void)>, false);
     }
 }
 

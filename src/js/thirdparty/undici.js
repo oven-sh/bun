@@ -1,6 +1,4 @@
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -194,16 +192,6 @@ async function request(
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
-  }
-
-  if (inputBody && inputBody.read && inputBody instanceof Readable) {
-    // TODO: Streaming via ReadableStream?
-    let data = "";
-    inputBody.setEncoding("utf8");
-    for await (const chunk of stream) {
-      data += chunk;
-    }
-    inputBody = new TextEncoder().encode(data);
   }
 
   if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {

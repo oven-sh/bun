@@ -614,6 +614,18 @@ it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and ex
   a = args(1, 2, 3);
   delete a[2];
   expect(Bun.inspect(a)).toBe("[ 1, 2, empty item ]");
+  // Runs of more than one deleted argument, each followed by an argument that is still there.
+  a = args(1, 2, 3, 4, 5, 6, 7);
+  for (const i of [1, 2, 4, 5]) delete a[i];
+  a.length = 9;
+  expect(Bun.inspect(a)).toBe("[ 1, 2 x empty items, 4, 2 x empty items, 7, 2 x empty items ]");
+  // A deleted argument that is assigned again lives in the regular indexed storage. Here it
+  // comes after a hole and before an argument that was never deleted.
+  a = args(1, 2, 3, 4);
+  delete a[1];
+  delete a[2];
+  a[2] = "x";
+  expect(Bun.inspect(a)).toBe('[ 1, empty item, "x", 4 ]');
   a = args(1, 2, 3);
   Object.defineProperty(a, 1, { value: "x", enumerable: false });
   expect(Bun.inspect(a)).toBe('[ 1, "x", 3 ]');

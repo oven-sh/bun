@@ -2555,7 +2555,7 @@ impl JSValue {
         }
         crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
-    /// Smallest own index `>= start` that holds an element, read off the object's indexed storage.
+    /// Smallest own present index `>= start`. Can scan the whole sparse map: bound the calls.
     pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
         debug_assert!(self.is_object());
         unsafe extern "C" {

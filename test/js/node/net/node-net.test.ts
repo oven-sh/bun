@@ -1317,6 +1317,35 @@ it("a client dialed with readable: false never reads and keeps writing", async (
   }
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
+it("an onread client dialed with readable: false still reads into its buffer", async () => {
+  const server = createServer(socket => socket.end("banner"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const done = Promise.withResolvers<string>();
+    let got = "";
+    const client = connect({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      readable: false,
+      onread: {
+        buffer: Buffer.alloc(64),
+        callback(n: number, buf: Buffer) {
+          got += buf.toString("latin1", 0, n);
+          if (got === "banner") done.resolve(got);
+        },
+      },
+    });
+    const closed = once(client, "close");
+    client.on("error", done.reject);
+    expect(await done.promise).toBe("banner");
+    client.destroy();
+    await closed;
+  } finally {
+    server.close();
+  }
+});
+
 it("passes readable / writable through to the Duplex like node (a TLSSocket is always a full duplex)", () => {
   // Values observed under node v26.3.0.
   const a = new Socket({ readable: false });

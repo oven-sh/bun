@@ -1546,15 +1546,16 @@ function Socket(options?) {
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
   }
 
-  if (options?.fd !== undefined) {
-    validateInt32(options.fd, "options.fd", 0);
+  // Own properties only, as after node's `options = { ...options }`: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L410-L419
+  const fd = opts.fd;
+  if (fd !== undefined) {
+    validateInt32(fd, "options.fd", 0);
   }
 
+  // `opts` carries the caller's readable / writable like node: a `readable: false` side starts ended and never emits 'end'.
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -1600,10 +1601,8 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
-    const { fd } = options;
-    validateInt32(fd, "fd", 0);
-    // Adopt pipe/character-device/file fds with synchronous writes. Matches
+  if (fd !== undefined) {
+    // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
     // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
@@ -1613,7 +1612,7 @@ function Socket(options?) {
     // here would end its readable side and stomp its write path.
     // Network-socket fds are not supported (handle adoption needs native
     // support); those keep the previous validated-but-inert behavior.
-    if (options.writable === true) {
+    if (opts.writable === true) {
       let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
@@ -1622,20 +1621,20 @@ function Socket(options?) {
         // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
         throw $ERR_INVALID_FD_TYPE("UNKNOWN");
       }
+      // Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
+      if (stats.isFile()) {
+        throw $ERR_INVALID_FD_TYPE("FILE");
+      }
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
-      const optionsReadable = options.readable;
-      if (
-        stats.isFIFO() ||
-        stats.isCharacterDevice() ||
-        stats.isFile() ||
-        (stats.isSocket() && optionsReadable !== true)
-      ) {
+      const optionsReadable = opts.readable;
+      if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
-        if (optionsReadable !== true) {
+        // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
+        if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
           this.read(0);
         }
@@ -2319,6 +2318,8 @@ Socket.prototype.resume = function resume() {
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
+  // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
+  if (this.readableEnded) return ret;
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
@@ -2418,7 +2419,8 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 };
 
 Socket.prototype.read = function read(size) {
-  if (!this.connecting && !drainOnreadTail(this, true)) {
+  // See resume(): an ended readable side never restarts the handle.
+  if (!this.readableEnded && !this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
     restorePausedHold(this, this._handle);
   }
@@ -2515,6 +2517,8 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 
 function fdSyncWrite(chunk, encoding, callback) {
   const fs = require("node:fs");
+  // node's _writeGeneric restarts the idle timer on every write.
+  this._unrefTimer();
   try {
     const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     let offset = 0;
@@ -2532,6 +2536,7 @@ function fdSyncWrite(chunk, encoding, callback) {
 
 function fdSyncWritev(data, callback) {
   const fs = require("node:fs");
+  this._unrefTimer();
   try {
     let total = 0;
     for (let i = 0; i < data.length; i++) {
@@ -3363,7 +3368,8 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
-    const pausedBeforeConnect = self.isPaused();
+    // A socket built with `readable: false` never reads: read() cannot reach _read once the readable side has ended.
+    const pausedBeforeConnect = self.isPaused() || self.readableEnded;
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
     self.emit("connect");

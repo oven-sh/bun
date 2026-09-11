@@ -1220,6 +1220,8 @@ pub mod O {
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
+    #[cfg(unix)]
+    pub const ACCMODE: i32 = libc::O_ACCMODE;
     #[cfg(windows)]
     pub const ACCMODE: i32 = 3;
     #[cfg(target_os = "macos")]

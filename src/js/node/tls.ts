@@ -708,6 +708,11 @@ const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // the unwrapped native context).
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 
+// One tick after the transport's 'close', so a 'finish' that is already queued is emitted first.
+function destroyWithTransportNT(self, transport) {
+  if (self._handle === transport) self.destroy();
+}
+
 function TLSSocket(socket?, options?) {
   this[ksecureContext] = undefined;
   this.ALPNProtocols = undefined;
@@ -809,6 +814,8 @@ function TLSSocket(socket?, options?) {
       this._handle = socket;
       // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
       this._handle._parentWrap = this;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+      socket.once("close", () => process.nextTick(destroyWithTransportNT, this, socket));
     }
     // For the server wrap, _handle is assigned the upgraded TLS handle by the
     // server-upgrade method below; leaving it unset until then means a synchronous

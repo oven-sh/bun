@@ -2034,4 +2034,27 @@ describe.each([
       });
     });
   });
+
+  // The wrap closes when the stream under it does:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+  describe.concurrent("a client-side wrap whose stream closes under it", () => {
+    const closed = { readyState: "closed", destroyed: true, transportDestroyed: true };
+
+    it.skipIf(!exe)("a peer that closes on the FIN closes the wrap after end()", async () => {
+      expect(await run("wrap", "peer-closes")).toEqual({
+        end: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
+        destroySoon: { log: ["finish", "close"], peerSawFin: true, writableFinished: true, ...closed },
+        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+      });
+    });
+
+    it.skipIf(!exe)("a refused connection closes a wrap whose end() waits for 'connect'", async () => {
+      const refused = ["transport error:ECONNREFUSED", "close"];
+      expect(await run("wrap", "refused")).toEqual({
+        end: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
+        destroySoon: { log: refused, peerSawFin: false, writableFinished: false, ...closed },
+        destroy: { log: ["close"], peerSawFin: false, writableFinished: false, ...closed },
+      });
+    });
+  });
 });

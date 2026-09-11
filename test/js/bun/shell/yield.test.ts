@@ -109,7 +109,7 @@ describe("yield", async () => {
   // `.run()` host call. The promise must still reject with the error, nothing
   // may stay pending on the VM, and the process must exit on its own.
   describe("a state that throws a JS error rejects the shell promise", () => {
-    async function run(shell: string) {
+    async function expectRejection(shell: string, rejection: string) {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -129,48 +129,42 @@ describe("yield", async () => {
         stdout: "pipe",
         stderr: "pipe",
       });
+
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { out: stdout.trim() === "" ? stderr : JSON.parse(stdout.trim()), exitCode };
+
+      expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+        result: JSON.stringify([rejection, "resolved 0"]),
+        stderr: "",
+        exitCode: 0,
+      });
     }
 
     const external = "rejected TypeError: Blobs are immutable, and cannot be used for stdout/stderr";
     const builtin = "rejected Error: Cannot redirect stdout/stderr to an immutable blob. Expected a file";
 
     test.concurrent("external command after another command", async () => {
-      expect(await run("$`${bun} --version; ${bun} --version > ${new Response('r')}`.quiet().nothrow()")).toEqual({
-        out: [external, "resolved 0"],
-        exitCode: 0,
-      });
+      await expectRejection("$`${bun} --version; ${bun} --version > ${new Response('r')}`.quiet().nothrow()", external);
     });
 
     test.concurrent("builtin after another command", async () => {
-      expect(await run("$`${bun} --version; echo hi > ${new Blob(['x'])}`.quiet().nothrow()")).toEqual({
-        out: [builtin, "resolved 0"],
-        exitCode: 0,
-      });
+      await expectRejection("$`${bun} --version; echo hi > ${new Blob(['x'])}`.quiet().nothrow()", builtin);
     });
 
     test.concurrent("in an && chain after another command", async () => {
-      expect(await run("$`${bun} --version && echo hi > ${new Blob(['x'])} && echo no`.quiet()")).toEqual({
-        out: [builtin, "resolved 0"],
-        exitCode: 0,
-      });
+      await expectRejection("$`${bun} --version && echo hi > ${new Blob(['x'])} && echo no`.quiet()", builtin);
     });
 
     test.concurrent("last member of a pipeline", async () => {
-      expect(await run("$`${bun} --version | ${bun} --version > ${new Response('r')}`.quiet().nothrow()")).toEqual({
-        out: [external, "resolved 0"],
-        exitCode: 0,
-      });
+      await expectRejection(
+        "$`${bun} --version | ${bun} --version > ${new Response('r')}`.quiet().nothrow()",
+        external,
+      );
     });
 
     // This one always rejected (the error comes straight out of `.run()`), but
     // the interpreter was never finished and kept the event loop alive forever.
     test.concurrent("first command, and the process still exits", async () => {
-      expect(await run("$`echo hi > ${new Blob(['x'])}; echo no`.quiet().nothrow()")).toEqual({
-        out: [builtin, "resolved 0"],
-        exitCode: 0,
-      });
+      await expectRejection("$`echo hi > ${new Blob(['x'])}; echo no`.quiet().nothrow()", builtin);
     });
   });
 });

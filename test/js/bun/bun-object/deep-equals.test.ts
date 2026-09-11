@@ -205,24 +205,26 @@ describe("sparse arrays that only claim a length", () => {
 
   // An index that a sparse array does hold lives in its sparse map, which the
   // walk reads instead of probing the gaps around it.
-  it.each([true, false])("still see the indices a sparse map holds (strict: %p)", strict => {
-    const sparse = (...indices: number[]) => {
-      const a: unknown[] = [];
-      a.length = 200_000;
-      for (const index of indices) a[index] = index;
-      return a;
-    };
-    const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
+  describe.each([true, false])("strict: %p", strict => {
+    it("still see the indices a sparse map holds", () => {
+      const sparse = (...indices: number[]) => {
+        const a: unknown[] = [];
+        a.length = 200_000;
+        for (const index of indices) a[index] = index;
+        return a;
+      };
+      const deepEquals = (a: unknown, b: unknown) => Bun.deepEquals(a, b, strict);
 
-    expect(deepEquals(sparse(199_999), sparse(199_999))).toBe(true);
-    expect(deepEquals(sparse(199_999), sparse(199_998))).toBe(false);
-    expect(deepEquals(sparse(199_999), sparse())).toBe(false);
-    expect(deepEquals(sparse(), sparse(199_999))).toBe(false);
-    expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_999))).toBe(true);
-    expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_998))).toBe(false);
-    expect(deepEquals(sparse(0, 199_999), sparse(0))).toBe(false);
-    expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_999)))).toBe(true);
-    expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
+      expect(deepEquals(sparse(199_999), sparse(199_999))).toBe(true);
+      expect(deepEquals(sparse(199_999), sparse(199_998))).toBe(false);
+      expect(deepEquals(sparse(199_999), sparse())).toBe(false);
+      expect(deepEquals(sparse(), sparse(199_999))).toBe(false);
+      expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_999))).toBe(true);
+      expect(deepEquals(sparse(0, 100, 199_999), sparse(0, 100, 199_998))).toBe(false);
+      expect(deepEquals(sparse(0, 199_999), sparse(0))).toBe(false);
+      expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_999)))).toBe(true);
+      expect(deepEquals(Object.freeze(sparse(199_999)), Object.freeze(sparse(199_998)))).toBe(false);
+    });
   });
 });
 

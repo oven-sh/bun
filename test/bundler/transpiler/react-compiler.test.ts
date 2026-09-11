@@ -89,6 +89,46 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/42224
+  itBundled("react-compiler/UnderscoreAndDollarComponentTags", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { _Imported } from "./components";
+        const Plain = () => <span>a</span>;
+        const _Underscore = () => <span>b</span>;
+        const $Dollar = () => <span>c</span>;
+
+        export const App = () => (
+          <p>
+            <Plain />
+            <_Underscore />
+            <$Dollar />
+            <_Imported />
+          </p>
+        );
+      `,
+      "/components.tsx": /* tsx */ `
+        export const _Imported = () => <span>d</span>;
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      // Only a tag that starts with a lowercase letter is a host element. An
+      // identifier that starts with `_` or `$` is a component reference.
+      expect(out).toMatch(/jsx\w*\(Plain,/);
+      expect(out).toMatch(/jsx\w*\(_Underscore,/);
+      expect(out).toMatch(/jsx\w*\(\$Dollar,/);
+      expect(out).toMatch(/jsx\w*\(_Imported,/);
+      expect(out).not.toContain('"_Underscore"');
+      expect(out).not.toContain('"$Dollar"');
+      expect(out).not.toContain('"_Imported"');
+    },
+  });
+
   itBundled("react-compiler/OutputModeDefaultsByTarget-Browser", {
     files: {
       "/entry.jsx": /* jsx */ `

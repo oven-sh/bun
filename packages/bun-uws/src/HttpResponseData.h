@@ -267,6 +267,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
+    /* Timeout sweep already reported this message; reset when it completes. */
+    bool requestTimeoutReported = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

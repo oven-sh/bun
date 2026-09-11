@@ -1,7 +1,19 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  expectMaxObjectTypeCount,
+  gc,
+  isASAN,
+  isDebug,
+  isWindows,
+  tls as tlsCert,
+  tmpdirSync,
+} from "harness";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -18,6 +30,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
+import { TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1252,22 +1265,219 @@ it.skipIf(isWindows)(
   60_000,
 );
 
-describe("Socket fd adoption", () => {
-  it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
-    const path = join(tmpdirSync(), "adopted-fd.txt");
-    const fd = fs.openSync(path, "w");
-    const socket = new Socket({ fd, readable: false, writable: true });
-    await new Promise<void>((resolve, reject) => {
-      socket.on("close", () => resolve());
-      socket.on("error", reject);
-      socket.end("hello");
+// node only reaches readStart() from _read(), and read(0) never calls _read once
+// the readable side has ended, so a `readable: false` client leaves the peer's
+// bytes unread. Bun's handle reads unless stopped, and pushing those bytes into
+// the ended Readable raised ERR_STREAM_PUSH_AFTER_EOF.
+it("a client dialed with readable: false never reads and keeps writing", async () => {
+  const done = Promise.withResolvers<string>();
+  const server = createServer(socket => {
+    socket.on("error", done.reject);
+    socket.setEncoding("utf8");
+    let got = "";
+    socket.on("data", chunk => {
+      got += chunk;
+      if (got.endsWith("second\n")) done.resolve(got);
     });
-    expect(fs.readFileSync(path, "utf8")).toBe("hello");
-    // Sync fd writes must feed the byte counters (no native handle to do it).
-    expect(socket._bytesDispatched).toBe(5);
-    // The adopted fd must be released on destroy (node closes the wrapping
-    // libuv handle in the equivalent path).
-    expect(() => fs.fstatSync(fd)).toThrow();
+    socket.write("banner\n");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = connect({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      readable: false,
+    });
+    client.on("error", done.reject);
+    const events: string[] = [];
+    for (const name of ["data", "end", "close"]) client.on(name, () => events.push(name));
+    await once(client, "connect");
+    client.write("first\n");
+    // The banner is in flight the whole time; give the loop several turns to
+    // (wrongly) read it before the second write proves the socket still works.
+    for (let i = 0; i < 5; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    client.resume();
+    client.write("second\n");
+    expect(await done.promise).toBe("first\nsecond\n");
+    expect({
+      events,
+      destroyed: client.destroyed,
+      readable: client.readable,
+      readableEnded: client.readableEnded,
+    }).toEqual({
+      events: [],
+      destroyed: false,
+      readable: false,
+      readableEnded: true,
+    });
+    client.destroy();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
+it("passes readable / writable through to the Duplex like node (a TLSSocket is always a full duplex)", () => {
+  // Values observed under node v26.3.0.
+  const a = new Socket({ readable: false });
+  const b = new Socket({ writable: false });
+  const c = new TLSSocket(undefined, { readable: false, writable: false });
+  expect({
+    a: [a.readable, a.writable, a.readableEnded],
+    b: [b.readable, b.writable, b.writableEnded, b.writableFinished],
+    c: [c.readable, c.writable],
+  }).toEqual({
+    a: [false, true, true],
+    b: [true, false, true, true],
+    c: [true, true],
+  });
+});
+
+describe("Socket fd adoption", () => {
+  // A named pipe with both ends open in this process: the non-blocking read end
+  // is opened first so opening the write end does not block. The other fd kind
+  // node's `new Socket({ fd })` accepts besides TCP sockets is a pipe.
+  function openFifo(name: string) {
+    const path = join(tmpdirSync(), name);
+    execFileSync("mkfifo", [path]);
+    const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const wfd = fs.openSync(path, "w");
+    return { rfd, wfd };
+  }
+  // Everything the (non-blocking) read end has right now; "" at EOF or when empty.
+  function drain(rfd: number) {
+    const chunk = Buffer.alloc(256);
+    let out = "";
+    for (;;) {
+      let n: number;
+      try {
+        n = fs.readSync(rfd, chunk);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EAGAIN") break;
+        throw e;
+      }
+      if (n === 0) break;
+      out += chunk.toString("utf8", 0, n);
+    }
+    return out;
+  }
+  function fstatCode(fd: number) {
+    try {
+      fs.fstatSync(fd);
+      return "open";
+    } catch (e) {
+      return (e as NodeJS.ErrnoException).code;
+    }
+  }
+
+  it.skipIf(isWindows)("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
+    const { rfd, wfd } = openFifo("adopted.fifo");
+    try {
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      await new Promise<void>((resolve, reject) => {
+        socket.on("close", () => resolve());
+        socket.on("error", reject);
+        socket.end("hello");
+      });
+      expect(drain(rfd)).toBe("hello");
+      // Sync fd writes must feed the byte counters (no native handle to do it).
+      expect(socket._bytesDispatched).toBe(5);
+      // The adopted fd must be released on destroy (node closes the wrapping
+      // libuv handle in the equivalent path).
+      expect(fstatCode(wfd)).toBe("EBADF");
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  // Node's createHandle() wraps PIPE and TCP fds only; a regular file is
+  // ERR_INVALID_FD_TYPE there (process.stdout over a file is a SyncWriteStream,
+  // not a net.Socket).
+  it("rejects a regular-file fd with ERR_INVALID_FD_TYPE, like node", () => {
+    const fd = fs.openSync(join(tmpdirSync(), "not-a-pipe.txt"), "w");
+    try {
+      let error: any;
+      try {
+        new Socket({ fd, readable: false, writable: true });
+      } catch (e) {
+        error = e;
+      }
+      expect({ code: error?.code, message: error?.message }).toEqual({
+        code: "ERR_INVALID_FD_TYPE",
+        message: "Unsupported fd type: FILE",
+      });
+      expect(fstatCode(fd)).toBe("open");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // node wraps a piped stdout/stderr exactly this way (new Socket({ fd, readable:
+  // false, writable: true })). The readable side must start out finished without
+  // an 'end' event; emitting one let allowHalfOpen=false end the writable side,
+  // destroy the socket and close the fd one tick after construction.
+  it.skipIf(isWindows)("readable: false leaves the writable side and the adopted fd open", async () => {
+    const { rfd, wfd } = openFifo("write-only.fifo");
+    try {
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      for (const name of ["end", "finish", "close"]) socket.on(name, () => events.push(name));
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+
+      // The teardown being guarded against ran purely on process.nextTick
+      // (end -> finish -> destroy -> close), so two immediate turns are past it.
+      await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+      expect({
+        events,
+        destroyed: socket.destroyed,
+        fd: fstatCode(wfd),
+        flags: [socket.readable, socket.readableEnded, socket.writable],
+      }).toEqual({ events: [], destroyed: false, fd: "open", flags: [false, true, true] });
+
+      await new Promise<void>((resolve, reject) => socket.write("late", err => (err ? reject(err) : resolve())));
+      expect(drain(rfd)).toBe("late");
+      const closed = once(socket, "close");
+      socket.end();
+      await closed;
+      expect({ events, fd: fstatCode(wfd), eof: drain(rfd) }).toEqual({
+        events: ["finish", "close"],
+        fd: "EBADF",
+        eof: "",
+      });
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
+
+  it("a write-only socket over the process's piped stdout keeps delivering later writes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+          const s = new net.Socket({ fd: 1, readable: false, writable: true });
+          const events = [];
+          for (const n of ["end", "finish", "close"]) s.on(n, () => events.push(n));
+          s.on("error", e => events.push("error:" + e.code));
+          s.write("now\\n");
+          setImmediate(() => setImmediate(() => {
+            s.write("late\\n", err => {
+              console.error(JSON.stringify({ events, destroyed: s.destroyed, cb: err ? err.code : null }));
+            });
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, report: JSON.parse(stderr.trim().split("\n").pop()!), exitCode }).toEqual({
+      stdout: "now\nlate\n",
+      report: { events: [], destroyed: false, cb: null },
+      exitCode: 0,
+    });
   });
 
   it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {
@@ -1285,6 +1495,63 @@ describe("Socket fd adoption", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
     expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+
+  // node's _writeGeneric restarts the idle timer before every write; the
+  // synchronous fd write path has no handle doing that for it.
+  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+    const { rfd, wfd } = openFifo("timeout.fifo");
+    const socket = new Socket({ fd: wfd, readable: false, writable: true });
+    try {
+      const idle = 500;
+      const writes: number[] = [];
+      const timeouts: number[] = [];
+      socket.on("timeout", () => timeouts.push(performance.now()));
+      socket.setTimeout(idle);
+      // Two full timeout periods of steady writes, then let it go idle.
+      for (let i = 0; i < 20; i++) {
+        writes.push(performance.now());
+        socket.write("x");
+        await Bun.sleep(50);
+      }
+      if (timeouts.length === 0) await once(socket, "timeout");
+      // Whenever 'timeout' fired, a full idle period had passed since the last
+      // write before it: each write restarted the timer. (A scheduler stall
+      // longer than `idle` between two writes is then a legitimate timeout, not
+      // a failure.) Without the restart the first one lands ~50ms after a write.
+      const gaps = timeouts.map(at => at - Math.max(...writes.filter(w => w <= at)));
+      expect(gaps.filter(gap => gap < idle * 0.9)).toEqual([]);
+      expect(drain(rfd)).toBe(Buffer.alloc(20, "x").toString());
+    } finally {
+      socket.destroy();
+      fs.closeSync(rfd);
+    }
+  });
+
+  // node copies the options ({ ...options }) before reading fd / readable /
+  // writable, so inherited properties never adopt anything (an own file fd
+  // would throw ERR_INVALID_FD_TYPE); the Duplex flags and the adoption
+  // decision must come from the same view.
+  it("ignores fd / readable / writable that are not own properties of the options", async () => {
+    const path = join(tmpdirSync(), "inherited-fd.txt");
+    const fd = fs.openSync(path, "w");
+    try {
+      const socket = new Socket(Object.create({ fd, readable: false, writable: true }));
+      const readableAfterConstruct = socket.readable;
+      socket.on("error", () => {});
+      const writeError = await new Promise<string | undefined>(resolve =>
+        socket.write("x", err => resolve((err as NodeJS.ErrnoException | null)?.code)),
+      );
+      // No handle and nothing adopted: the write fails the way node's does.
+      expect({ writeError, readableAfterConstruct, file: fs.readFileSync(path, "utf8") }).toEqual({
+        writeError: "ERR_SOCKET_CLOSED",
+        readableAfterConstruct: true,
+        file: "",
+      });
+      expect(fs.fstatSync(fd).isFile()).toBe(true);
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 });
 
@@ -2767,5 +3034,69 @@ describe("net.Server.listen({ fd })", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A throw from a user listener invoked synchronously from a native socket
+// dispatch must reach process.on('uncaughtException') the way Node reports it,
+// not be routed to the socket's 'error' event or silently dropped, and the
+// connection must stay alive so subsequent bytes are still delivered. The
+// listener-throw-*-fixture.js files run unchanged under node; the expected
+// event logs below are what Node v26.3.0 prints for them.
+describe.concurrent("uncaughtException from socket listeners", () => {
+  async function runFixture(name: string, env?: Record<string, string>) {
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, `listener-throw-${name}-fixture.js`), env);
+    return { stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) };
+  }
+  const tlsEnv = { TLS_FIXTURE: JSON.stringify(tlsCert) };
+
+  it("server-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("server-data")).toEqual({
+      stdout: JSON.stringify(["connection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("client-data")).toEqual({
+      stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("'connection' listener throw reaches uncaughtException and the accepted socket keeps reading", async () => {
+    expect(await runFixture("connection")).toEqual({
+      stdout: JSON.stringify(["connection", "uncaught:conn-boom", "data:A", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/34064: the pg pool shape.
+  it("an unhandled 'error' emitted on another emitter from a 'data' listener reaches uncaughtException", async () => {
+    expect(await runFixture("foreign-emitter")).toEqual({
+      stdout: JSON.stringify(["uncaught:pool error", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("server-side TLS 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("tls-server-data", tlsEnv)).toEqual({
+      stdout: JSON.stringify(["secureConnection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client-side TLS 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("tls-client-data", tlsEnv)).toEqual({
+      stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("without an uncaughtException handler a throwing 'data' listener crashes the process", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "listener-throw-no-handler-fixture.js"));
+    expect(stdout).not.toContain("socket-error:");
+    expect(stderr).toContain("fatal-boom");
+    expect(exitCode).toBe(1);
   });
 });

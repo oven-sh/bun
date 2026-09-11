@@ -23,14 +23,6 @@
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
-#if OS(WINDOWS)
-#include <uv.h>
-#else
-#include <sys/resource.h>
-#if defined(__APPLE__)
-#include <mach/mach.h>
-#endif
-#endif
 
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -74,6 +66,9 @@
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
+
+// The calling thread's CPU times in microseconds (src/jsc/web_worker.rs). False leaves them alone.
+extern "C" bool WebWorker__currentThreadCpuUsage(double* user, double* system);
 
 namespace WebCore {
 using namespace JSC;
@@ -904,40 +899,12 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext&) mutable {
-        double user = 0;
-        double sys = 0;
-#if OS(WINDOWS)
-        uv_rusage_t ru;
-        if (uv_getrusage_thread(&ru) == 0) {
-            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
-        }
-#elif defined(__APPLE__)
-        // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
-        // CPU for every worker. Use mach thread_info for this thread only.
-        mach_port_t machThread = mach_thread_self();
-        thread_basic_info_data_t tinfo;
-        mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
-        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
-            user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
-            sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
-        }
-        mach_port_deallocate(mach_task_self(), machThread);
-#else
-        struct rusage ru;
-        memset(&ru, 0, sizeof(ru));
-#if defined(RUSAGE_THREAD)
-        getrusage(RUSAGE_THREAD, &ru);
-#else
-        getrusage(RUSAGE_SELF, &ru);
-#endif
-        user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
-        sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
-#endif
-        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), user, sys](ScriptExecutionContext& parentCtx) {
+        WorkerMessagingProxy::CpuUsage measured;
+        WebWorker__currentThreadCpuUsage(&measured.userMicroseconds, &measured.systemMicroseconds);
+        ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), measured](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
                 // One source for every answer, where there is one, so that no answer is below an earlier one.
-                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage().value_or(WorkerMessagingProxy::CpuUsage { user, sys }));
+                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage().value_or(measured));
             });
         });
     });

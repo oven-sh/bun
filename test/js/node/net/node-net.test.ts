@@ -30,7 +30,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -3135,8 +3135,8 @@ describe.concurrent("uncaughtException from socket listeners", () => {
 // reads even when a JS 'data' handler never runs (the onread path, an h2
 // session), and the count is kept once the handle is gone.
 describe("net.Socket bytesRead", () => {
-  async function listen(onConnection: (c: Socket) => void) {
-    const server = createServer(onConnection);
+  async function listen(onConnection: (c: Socket) => void, kind: "net" | "tls" = "net") {
+    const server = kind === "tls" ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
     await once(server.listen(0, "127.0.0.1"), "listening");
     return { server, port: (server.address() as import("node:net").AddressInfo).port };
   }
@@ -3335,6 +3335,69 @@ describe("net.Socket bytesRead", () => {
       await done.promise;
       await once(client, "close");
       expect({ seen, afterClose: client.bytesRead }).toEqual({ seen: [256, 512, 768, 1024, 1040], afterClose: 1040 });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  // Expected values observed under node v26.3.0. A TLS count is of decrypted bytes.
+  it.each(["net", "tls"] as const)("onread over %s: counts each slice as it reaches the callback", async kind => {
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.end("abcdefghij");
+    }, kind);
+    let client: Socket | undefined;
+    try {
+      const seen: number[][] = [];
+      let delivered = 0;
+      const options = {
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number) {
+            delivered += n;
+            seen.push([delivered, client!.bytesRead]);
+          },
+        },
+      };
+      client =
+        kind === "tls" ? tlsConnect({ ...options, ca: tlsCert.cert, servername: "localhost" }) : connect(options);
+      await once(client, "close");
+      // The last slice is shorter than the buffer.
+      expect({ seen, afterClose: client.bytesRead }).toEqual({
+        seen: [
+          [4, 4],
+          [8, 8],
+          [10, 10],
+        ],
+        afterClose: 10,
+      });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: counts a read that reaches the callback as the `true` sentinel", async () => {
+    const { server, port } = await listen(c => c.end("hello"));
+    let client: Socket | undefined;
+    try {
+      const seen: unknown[][] = [];
+      client = connect({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          // A factory that never returns a Uint8Array leaves no buffer to copy into.
+          buffer: () => null as any,
+          callback(n: number, buf: unknown) {
+            seen.push([n, buf, client!.bytesRead]);
+          },
+        },
+      });
+      await once(client, "close");
+      expect({ seen, afterClose: client.bytesRead }).toEqual({ seen: [[5, true, 5]], afterClose: 5 });
     } finally {
       client?.destroy();
       server.close();

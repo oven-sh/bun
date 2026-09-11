@@ -19,8 +19,9 @@
 #include <limits>
 #include <memory>
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm, bool collectMarkdown);
 extern "C" void Bun__drainCPUProfilerIfNeeded(JSC::VM* vm);
+extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
 
@@ -252,12 +253,7 @@ static WTF::String generateEmptyProfileJSON()
     return sb.toString();
 }
 
-// Everything the .cpuprofile JSON and the markdown report need, folded in one
-// batch of samples at a time. Samples are drained from the SamplingProfiler
-// while it runs (see drainCPUProfilerIfNeeded) so that its StackFrame objects,
-// whose `callee` and `executable` pointers the profiler marks as GC roots,
-// are released long before the profile is written. Only names, URLs, line
-// numbers and counts live here, never JS objects.
+// Profile output folded in one batch of samples at a time. Holds no JS objects.
 struct ProfileData {
     // Chrome DevTools format: call tree keyed by parent id + function identity.
     WTF::HashMap<WTF::String, int> nodeMap;
@@ -266,17 +262,16 @@ struct ProfileData {
     WTF::Vector<int> samples;
     WTF::Vector<long long> timeDeltas;
 
-    // Markdown format: per-function aggregates.
+    // Markdown format: per-function aggregates. Only built when requested.
+    bool collectMarkdown { false };
     WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
     long long totalTimeUs { 0 };
     int totalSamples { 0 };
 
-    // Wall clock time (microseconds since the Unix epoch) of the last sample
-    // folded in. Both formats measure deltas from it.
+    // Wall clock microseconds of the last sample folded in.
     double lastTime { 0.0 };
 
-    // URL parsing dominates the per-frame cost. A profile sees few distinct
-    // URLs, so memoize the two conversions by input string.
+    // URL parsing dominates the per-frame cost, so both conversions are memoized.
     WTF::HashMap<WTF::String, WTF::String> normalizedURLs;
     WTF::HashMap<WTF::String, WTF::String> fileSystemPaths;
 };
@@ -285,14 +280,14 @@ static thread_local ProfileData* s_profileData = nullptr;
 static thread_local WTF::MonotonicTime s_lastDrainTime;
 static constexpr WTF::Seconds kDrainInterval = WTF::Seconds::fromMilliseconds(100);
 
-void startCPUProfiler(JSC::VM& vm)
+void startCPUProfiler(JSC::VM& vm, bool collectMarkdown)
 {
-    // Capture the wall clock time when profiling starts (before creating stopwatch)
-    // This will be used as the profile's startTime
+    // The profile's startTime.
     s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
     delete s_profileData;
     s_profileData = new ProfileData();
+    s_profileData->collectMarkdown = collectMarkdown;
     s_profileData->lastTime = s_profilingStartTime;
 
     ProfileNode rootNode;
@@ -342,9 +337,7 @@ static WTF::String formatLocation(ProfileData& data, const WTF::String& url, int
     return path;
 }
 
-// Absolute file path → `file://` URL. Chrome DevTools expects `callFrame.url`
-// to be a proper URL; leaving the raw path breaks source-view resolution.
-// See #29240.
+// Absolute file path to `file://` URL, as Chrome DevTools expects (#29240).
 static void normalizeURL(ProfileData& data, WTF::String& u)
 {
     if (u.isEmpty())
@@ -370,9 +363,7 @@ static void normalizeURL(ProfileData& data, WTF::String& u)
     data.normalizedURLs.add(input, u);
 }
 
-// Fold one batch of stack traces into `data`. The caller holds the JSLock
-// and defers GC: the frames carry raw pointers into the heap that nothing
-// marks once releaseStackTraces() has cleared the profiler's live cell set.
+// The caller holds the JSLock and defers GC: the frames carry raw heap pointers.
 static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::SamplingProfiler::StackTrace>&& stackTraces)
 {
     // Sort traces by timestamp once for both formats
@@ -401,15 +392,13 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
             continue;
         }
 
-        // displayName() looks up properties on the callee. Both walks below
-        // need it, so resolve it once per frame.
+        // displayName() reads properties on the callee, so resolve it once per frame.
         WTF::Vector<WTF::String> frameNames;
         frameNames.reserveInitialCapacity(stackTrace.frames.size());
         for (auto& frame : stackTrace.frames)
             frameNames.append(frame.displayName(vm));
 
-        // JSON format: walk the stack from the outermost frame and place each
-        // frame under its parent in the call tree.
+        // JSON format: call tree from the outermost frame.
         {
             int currentParentId = 1;
 
@@ -433,11 +422,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // normalizeURL runs AFTER the sourcemap callbacks below
-                    // because the callback (see FormatStackTraceForJS.cpp)
-                    // unconditionally rewrites its out-param back to the raw
-                    // provider URL when no sourcemap is found, which would
-                    // undo an earlier normalization. See #29240.
+                    // The sourcemap callback resets `url` to the raw provider URL, so normalizeURL runs after it (#29240).
 
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
@@ -561,7 +546,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
         }
 
         // Markdown format: per-function self/total time and caller/callee counts.
-        {
+        if (data.collectMarkdown) {
             WTF::String previousKey;
 
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
@@ -646,13 +631,14 @@ void drainCPUProfilerIfNeeded(JSC::VM& vm)
     JSC::JSLockHolder locker(vm);
     JSC::DeferGC deferGC(vm);
 
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    // and clears the profiler's live cell set, so the sampled callees and
-    // executables stop being GC roots here.
-    auto stackTraces = profiler->releaseStackTraces();
+    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
+    {
+        // The sampling thread takes the same lock, so hold it only for the release.
+        auto& lock = profiler->getLock();
+        WTF::Locker profilerLocker { lock };
+        // releaseStackTraces() clears the profiler's live cell set: the sampled callees stop being GC roots here.
+        stackTraces = profiler->releaseStackTraces();
+    }
     if (!stackTraces.isEmpty())
         appendStackTraces(vm, *s_profileData, WTF::move(stackTraces));
 }
@@ -996,9 +982,15 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
 } // namespace Bun
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm, bool collectMarkdown)
 {
-    Bun::startCPUProfiler(*vm);
+    Bun::startCPUProfiler(*vm, collectMarkdown);
+}
+
+extern "C" void Bun__stopCPUProfilerIfRunning(JSC::VM* vm)
+{
+    if (Bun::isCPUProfilerRunning())
+        Bun::stopCPUProfiler(*vm, nullptr, nullptr);
 }
 
 extern "C" void Bun__drainCPUProfilerIfNeeded(JSC::VM* vm)

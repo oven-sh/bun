@@ -1862,6 +1862,7 @@ impl VirtualMachine {
                 bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
             }
         }
+        crate::bun_cpu_profiler::stop_cpu_profiler_if_running(self.jsc_vm_mut());
         // Write heap profile if profiling was enabled - do this after CPU
         // profile but before shutdown.
         if let Some(config) = self.heap_profiler_config.take() {

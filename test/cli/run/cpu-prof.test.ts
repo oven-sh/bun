@@ -501,8 +501,8 @@ describe.concurrent("--cpu-prof", () => {
     const result = JSON.parse(stdout);
     expect(result.sink).toBe(true);
     // Without the fix, every frame that was sampled through its bound function
-    // stays alive: about 90 of 150 on a debug build.
-    expect(result.alive).toBeLessThan(4);
+    // stays alive: about 60 of 150.
+    expect(result.alive).toBe(0);
     expect(exitCode).toBe(0);
 
     // Draining must not lose samples: the profile still covers the workload.

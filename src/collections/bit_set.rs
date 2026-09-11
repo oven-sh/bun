@@ -376,15 +376,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         }
     }
 
-    /// Performs an intersection of two bit sets, and stores the
-    /// result in the first one.
-    pub(crate) fn set_intersection(&mut self, other: &Self) {
-        debug_assert_eq!(self.masks.len(), other.masks.len());
-        for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
-            *mask &= *alt;
-        }
-    }
-
     /// Returns true iff the first bit set is the subset of the second one.
     pub(crate) fn subset_of(&self, other: &Self) -> bool {
         self.masks
@@ -1103,15 +1094,6 @@ impl AutoBitSet {
         }
     }
 
-    /// `self &= other`. Both sets must have the same arm (same bit length).
-    pub fn set_intersection(&mut self, other: &AutoBitSet) {
-        match (self, other) {
-            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_intersection(b),
-            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_intersection(b),
-            _ => unreachable!("AutoBitSet::set_intersection: mismatched bit lengths"),
-        }
-    }
-
     /// Is every bit of `self` also set in `other`?
     pub fn subset_of(&self, other: &AutoBitSet) -> bool {
         match (self, other) {
@@ -1130,6 +1112,15 @@ impl AutoBitSet {
 
     pub fn bytes(&self, _: usize) -> &[u8] {
         self.raw_bytes()
+    }
+
+    /// The backing words (bit `i` is `words()[i / usize::BITS] >> (i % usize::BITS) & 1`);
+    /// bits past the length are zero.
+    pub fn words(&self) -> &[usize] {
+        match self {
+            AutoBitSet::Static(s) => &s.masks,
+            AutoBitSet::Dynamic(d) => d.masks_slice(),
+        }
     }
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {

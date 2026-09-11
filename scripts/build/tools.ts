@@ -80,8 +80,10 @@ export function satisfiesRange(version: string, range: string | undefined): bool
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface ToolSpec {
-  /** Names to try, in order. On Windows `.exe` is appended automatically. */
+  /** Names to try, in order. On Windows `windowsExt` is appended automatically. */
   names: string[];
+  /** The file extension on Windows. Default `.exe`. npm is `npm.cmd`. */
+  windowsExt?: string;
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
   /** Search only `paths`, never $PATH. */
@@ -132,6 +134,16 @@ export function findBun(os: OS): string {
     names: ["bun"],
     required: true,
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
+  })!.path;
+}
+
+/** Find npm for `--package-manager=npm`. npm ships with Node.js. */
+export function findNpm(): string {
+  return findTool({
+    names: ["npm"],
+    windowsExt: ".cmd",
+    required: true,
+    hint: "--package-manager=npm installs with npm. Install Node.js, which includes npm.",
   })!.path;
 }
 
@@ -212,7 +224,7 @@ export function clangTargetArch(clang: string): Arch | undefined {
  * Returns the absolute path or undefined (if not required).
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
-  const exeSuffix = process.platform === "win32" ? ".exe" : "";
+  const exeSuffix = process.platform === "win32" ? (spec.windowsExt ?? ".exe") : "";
   const searchPaths = spec.pathsOnly
     ? [...(spec.paths ?? [])]
     : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
@@ -656,12 +668,8 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
-  /** `rustc --print sysroot`. */
-  rustSysroot: string | undefined;
-  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
-  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -735,7 +743,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -745,7 +753,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

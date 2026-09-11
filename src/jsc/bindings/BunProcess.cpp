@@ -511,7 +511,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
-        if (resolved.tag != BunStringTag::Dead) {
+        if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
             // and restarts (#29587), so it is never deleted here.
@@ -1279,7 +1279,11 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     Process* process = globalObject->processObject();
 
     loadSignalNumberToNameMap();
-    String signalName = signalNumberToNameMap->get(signalNumber);
+    auto entry = signalNumberToNameMap->find(signalNumber);
+    // Identifier::fromString dereferences the null String of a missing key.
+    if (entry == signalNumberToNameMap->end()) [[unlikely]]
+        return false;
+    const String& signalName = entry->value;
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
@@ -1703,7 +1707,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     // --redirect-warnings, then NODE_REDIRECT_WARNINGS.
     JSValue redirectPath = jsUndefined();
     BunString redirect = Bun__Node__getRedirectWarnings();
-    if (redirect.tag != BunStringTag::Dead) {
+    if (!redirect.isDead()) {
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {
         EncodedSlice name = toEncodedSlice("NODE_REDIRECT_WARNINGS"_s);

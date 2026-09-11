@@ -30,6 +30,10 @@ extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
+namespace Zig {
+class NapiRef;
+}
+
 namespace Napi {
 
 static constexpr int DEFAULT_NAPI_VERSION = 10;
@@ -311,6 +315,20 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
+    // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
+    void enqueueRefFinalizer(Zig::NapiRef* ref)
+    {
+        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
+        m_pendingRefFinalizers.add(ref);
+        if (wasEmpty)
+            napi_internal_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+    }
+
+    void dequeueRefFinalizer(Zig::NapiRef* ref)
+    {
+        m_pendingRefFinalizers.remove(ref);
+    }
+
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
@@ -566,6 +584,8 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    static void drainOneRefFinalizer(napi_env, void*, void*);
+    WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
@@ -790,6 +810,7 @@ public:
         }
     }
 
+    // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
     void callFinalizer()
     {
         // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
@@ -799,9 +820,13 @@ public:
         saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
+    // For a ref the addon owns: napi_delete_reference before the queued finalizer runs cancels it (Node's ~ReferenceWithFinalizer).
+    void callFinalizerFromGC();
+
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;

@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
-};
+use crate::api::bun::process::{self as bun_process, Process, SignalCodeExt, SpawnOptions, Status};
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
 use crate::api::bun::subprocess as JscSubprocess;
@@ -225,15 +223,20 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
     const POLL_OWNER_TAG: bun_io::PollTag =
         bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
-        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_io(kind) }
+        // `Writable::init` only creates the writer for stdin.
+        debug_assert!(matches!(kind, StdioKind::Stdin));
+        // SAFETY: `StaticPipeWriter::on_close` passes its live process backref
+        // and does not touch it afterwards. Forwarded raw, not autoref'd: the
+        // callee may free `*this`.
+        unsafe { Self::on_stdin_writer_close(this) }
     }
 }
 
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, &status, rusage),
+        // Forwarded raw, not autoref'd: the callee may free `*this`.
+        on_process_exit(_process, status, _rusage) =>
+            ShellSubprocess::on_process_exit(this, &status),
     }
 }
 
@@ -246,15 +249,39 @@ impl ShellSubprocess {
         self.process.as_ref().expect("process closed").process_mut()
     }
 
-    pub(crate) fn on_static_pipe_writer_done(&mut self) {
+    /// The `< ${buffer}` stdin writer closed: release it and let the `Cmd`
+    /// finish.
+    ///
+    /// # Safety
+    /// `this` must be live and unborrowed; the Yield run here may free it.
+    unsafe fn on_stdin_writer_close(this: *mut Self) {
+        {
+            // SAFETY: caller contract; the borrow ends before the Yield runs.
+            let slot = unsafe { &mut (*this).stdin };
+            match core::mem::replace(slot, Writable::Ignore) {
+                // Drops `create()`'s ref; `start()`'s ref outlives this call.
+                Writable::Buffer(buffer) => {
+                    // SAFETY: single-threaded; sole borrow of the payload.
+                    unsafe { buffer_mut(&buffer) }.source.detach();
+                }
+                other => {
+                    *slot = other;
+                    return;
+                }
+            }
+        }
+        // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
+        let handle = unsafe { (*this).cmd_parent };
         log!(
-            "Subproc(0x{:x}) onStaticPipeWriterDone(cmd={})",
-            std::ptr::from_mut(self) as usize,
-            self.cmd_parent.id
+            "Subproc(0x{:x}) onStdinWriterClose(cmd={})",
+            this as usize,
+            handle.id
         );
-        // SAFETY: cmd_parent backref resolves to the owning Cmd which outlives
-        // the subprocess (freed only in `Cmd::deinit` after all stdio closes).
-        unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
+        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
+        // before the Yield runs.
+        let y = unsafe { handle.cmd_mut() }.buffered_input_close();
+        // May free `*this`.
+        y.run(&handle.interp);
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -327,56 +354,38 @@ impl ShellSubprocess {
         self.close_io(StdioKind::Stderr);
     }
 
+    /// A stdout/stderr `PipeReader` finished: swap it out of its slot for its
+    /// buffered bytes.
     pub(crate) fn on_close_io(&mut self, kind: StdioKind) {
-        match kind {
-            StdioKind::Stdin => match &mut self.stdin {
-                Writable::Pipe(pipe) => {
-                    pipe.source.with_mut(|s| s.clear());
-                    self.stdin = Writable::Ignore;
+        let out: &mut Readable = match kind {
+            StdioKind::Stdout => &mut self.stdout,
+            StdioKind::Stderr => &mut self.stderr,
+            StdioKind::Stdin => unreachable!("stdin closes through on_stdin_writer_close"),
+        };
+        if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
+            // The only callers reach here from inside
+            // `PipeReader::on_reader_done`/`on_reader_error`, which still
+            // hold a raw `*mut PipeReader` to this same allocation.
+            // Route every read/write through `Arc::as_ptr` (no `Deref`)
+            // so we never materialise a `&PipeReader` that would alias
+            // those callers' access; see `PipeReader::take_done_buffer`.
+            let pp = Arc::as_ptr(&pipe).cast_mut();
+            // SAFETY: `pp` projects from the Arc allocation's NonNull;
+            // raw place read of the discriminant + raw-ptr write
+            // through `take_done_buffer` (see its doc).
+            let buf = unsafe {
+                if matches!(&(*pp).state, PipeReaderState::Done(_)) {
+                    Some(PipeReader::take_done_buffer(pp))
+                } else {
+                    None
                 }
-                Writable::Buffer(_) => {
-                    self.on_static_pipe_writer_done();
-                    if let Writable::Buffer(buffer) =
-                        core::mem::replace(&mut self.stdin, Writable::Ignore)
-                    {
-                        // SAFETY: single-threaded; sole borrow of the payload.
-                        unsafe { buffer_mut(&buffer) }.source.detach();
-                    }
-                }
-                _ => {}
-            },
-            StdioKind::Stdout | StdioKind::Stderr => {
-                let out: &mut Readable = match kind {
-                    StdioKind::Stdout => &mut self.stdout,
-                    StdioKind::Stderr => &mut self.stderr,
-                    StdioKind::Stdin => unreachable!(),
-                };
-                if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-                    // The only callers reach here from inside
-                    // `PipeReader::on_reader_done`/`on_reader_error`, which still
-                    // hold a raw `*mut PipeReader` to this same allocation.
-                    // Route every read/write through `Arc::as_ptr` (no `Deref`)
-                    // so we never materialise a `&PipeReader` that would alias
-                    // those callers' access; see `PipeReader::take_done_buffer`.
-                    let pp = Arc::as_ptr(&pipe).cast_mut();
-                    // SAFETY: `pp` projects from the Arc allocation's NonNull;
-                    // raw place read of the discriminant + raw-ptr write
-                    // through `take_done_buffer` (see its doc).
-                    let buf = unsafe {
-                        if matches!(&(*pp).state, PipeReaderState::Done(_)) {
-                            Some(PipeReader::take_done_buffer(pp))
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(buf) = buf {
-                        *out = Readable::Buffer(buf);
-                    } else {
-                        *out = Readable::Ignore;
-                    }
-                    drop(pipe); // deref
-                }
+            };
+            if let Some(buf) = buf {
+                *out = Readable::Buffer(buf);
+            } else {
+                *out = Readable::Ignore;
             }
+            drop(pipe); // deref
         }
     }
 
@@ -434,11 +443,11 @@ impl ShellSubprocess {
     /// # Safety
     /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
     /// borrows; single-threaded shell. Raw (not `&mut self`) because the
-    /// stdin close re-enters `on_close_io(&mut Self)` through the writer's
+    /// stdin close re-enters `on_stdin_writer_close` through the writer's
     /// process backref.
     #[cfg(not(windows))]
     pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
-        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_close_io`:
+        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_stdin_writer_close`:
         // slot → `Ignore`, `create()`'s ref released), release the claimed
         // ref — the JS `Subprocess::close_io` stdin shape.
         // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
@@ -894,10 +903,13 @@ impl ShellSubprocess {
         Ok(())
     }
 
-    pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
-        log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
-        let interrupted =
-            self.ctrl_c_child.take().is_some() && bun_spawn::ctrl_c::child_died_of_it(status);
+    /// # Safety
+    /// `this` must be live and unborrowed; the Yield run here may free it.
+    unsafe fn on_process_exit(this: *mut Self, status: &Status) {
+        log!("onProcessExit({:x})", this as usize);
+        // SAFETY: caller contract; the borrow ends at the `;`.
+        let interrupted = unsafe { (*this).ctrl_c_child.take() }.is_some()
+            && bun_spawn::ctrl_c::child_died_of_it(status);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 #[cfg(windows)]
@@ -920,17 +932,16 @@ impl ShellSubprocess {
             break 'brk None;
         };
 
-        if let Some(code) = exit_code {
-            let handle = self.cmd_parent;
-            // SAFETY: cmd_parent backref outlives subprocess; resolved
-            // through the node arena so it survives `Vec<Node>` reallocation.
-            // `&mut self` is dead by NLL before `on_exit` re-enters interp.
-            let cmd = unsafe { handle.cmd_mut() };
-            cmd.base.interrupted |= interrupted;
-            if cmd.exit_code.is_none() {
-                cmd.on_exit(code.into());
-            }
-        }
+        let Some(code) = exit_code else { return };
+        // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
+        let handle = unsafe { (*this).cmd_parent };
+        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
+        // before the Yield runs.
+        let cmd = unsafe { handle.cmd_mut() };
+        cmd.base.interrupted |= interrupted;
+        let y = cmd.on_exit(code.into());
+        // May free `*this`.
+        y.run(&handle.interp);
     }
 }
 
@@ -1121,7 +1132,7 @@ impl Writable {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
                 unsafe { buffer_mut(&buffer) }.update_ref(false);
                 // `buffer` drops here with the variant already `Ignore`, so a
-                // re-entrant `on_close_io` from the writer's drop is a no-op.
+                // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
             Writable::Memfd(fd) => {
                 fd.close();
@@ -1778,8 +1789,9 @@ impl PipeReader {
             return self.reader.start_with_current_pipe();
         }
 
+        // `reader` owns the fd from here; `Drop` closes an un-started one.
         #[cfg(not(windows))]
-        match self.reader.start(self.stdio_result.unwrap(), true) {
+        match self.reader.start(self.stdio_result.take().unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
                 // `reader.start` reports a poll-registration failure through
@@ -2116,6 +2128,10 @@ impl Drop for PipeReader {
         #[cfg(unix)]
         {
             debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
+            // Never started: the parent end is still ours to close.
+            if let Some(fd) = self.stdio_result.take() {
+                fd.close();
+            }
         }
 
         #[cfg(windows)]

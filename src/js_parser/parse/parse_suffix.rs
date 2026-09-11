@@ -87,6 +87,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target,
                     index,
                     optional_chain: old_optional_chain,
+                    is_import_property_use: false,
                 },
                 loc,
             );
@@ -158,6 +159,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         target,
                         index,
                         optional_chain: optional_start,
+                        is_import_property_use: false,
                     },
                     loc,
                 );
@@ -228,6 +230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             target,
                             index,
                             optional_chain: optional_start,
+                            is_import_property_use: false,
                         },
                         loc,
                     );
@@ -363,6 +366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target,
                 index,
                 optional_chain: old_optional_chain,
+                is_import_property_use: false,
             },
             loc,
         );

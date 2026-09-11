@@ -420,6 +420,71 @@ test("log case 2", async () => {
   `);
 });
 
+describe.concurrent("summary size column alignment", () => {
+  async function buildSummary(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout.replace(/in \d+ms/g, "in {time}ms");
+  }
+
+  test("entry point outside --root", async () => {
+    using dir = tempDir("build-summary-outside-root", {
+      "src/x.js": `console.log(1);`,
+      "other/o.js": `console.log(2);`,
+    });
+
+    expect(await buildSummary(String(dir), ["--root=src", "./src/x.js", "./other/o.js"])).toMatchInlineSnapshot(`
+      "Bundled 2 modules in {time}ms
+
+        x.js             28 bytes  (entry point)
+        _.._/other/o.js  30 bytes  (entry point)
+
+      "
+    `);
+  });
+
+  test("outputs that share a directory under --root", async () => {
+    using dir = tempDir("build-summary-shared-dir", {
+      "sub/a.js": `console.log(1);`,
+      "sub/bbb.js": `console.log(2);`,
+    });
+
+    expect(await buildSummary(String(dir), ["--root=.", "./sub/a.js", "./sub/bbb.js"])).toMatchInlineSnapshot(`
+      "Bundled 2 modules in {time}ms
+
+        sub/a.js    28 bytes  (entry point)
+        sub/bbb.js  30 bytes  (entry point)
+
+      "
+    `);
+  });
+
+  test("outputs that share a directory from --entry-naming", async () => {
+    using dir = tempDir("build-summary-entry-naming-dir", {
+      "a.js": `console.log(1);`,
+      "bbb.js": `console.log(2);`,
+    });
+
+    expect(await buildSummary(String(dir), ["--entry-naming=js/[name].[ext]", "./a.js", "./bbb.js"]))
+      .toMatchInlineSnapshot(`
+      "Bundled 2 modules in {time}ms
+
+        js/a.js    24 bytes  (entry point)
+        js/bbb.js  26 bytes  (entry point)
+
+      "
+    `);
+  });
+});
+
 test("--outdir build succeeds when the output directory already exists with prior output", async () => {
   using dir = tempDir("build-outdir-reuse", {
     "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,

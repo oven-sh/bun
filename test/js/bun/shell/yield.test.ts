@@ -263,6 +263,12 @@ describe("yield", async () => {
         await expectRejection(`$\`${bad} | ${sleeper}\`.quiet().nothrow()`, external);
       });
 
+      // The glob runs on the thread pool. When it completes, the member must
+      // not spawn its command.
+      test.concurrent("a member whose glob expansion completes after the failure", async () => {
+        await expectRejection(`$\`${sleeper} * | ${bad}\`.quiet().nothrow()`, external);
+      });
+
       test.concurrent("a member inside a subshell is killed", async () => {
         await expectRejection(`$\`(${sleeper}; echo no) | ${bad}\`.quiet().nothrow()`, external);
       });

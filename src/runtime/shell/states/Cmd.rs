@@ -235,6 +235,19 @@ impl Cmd {
                 this,
                 <&'static str>::from(&interp.as_cmd(this).state)
             );
+            if interp.failed()
+                && !matches!(
+                    interp.as_cmd(this).state,
+                    CmdState::WaitingWriteErr | CmdState::Done
+                )
+            {
+                // The script failed while an expansion of this command was in
+                // flight: do not expand the rest or spawn the command.
+                let me = interp.as_cmd_mut(this);
+                me.exit_code = Some(1);
+                me.state = CmdState::Done;
+                continue;
+            }
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {

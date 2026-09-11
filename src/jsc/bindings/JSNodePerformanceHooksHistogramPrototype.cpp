@@ -119,7 +119,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncAdd, (JSGlobalO
     JSValue otherArg = callFrame->uncheckedArgument(0);
     JSNodePerformanceHooksHistogram* otherHistogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(otherArg);
     if (!otherHistogram) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "argument"_s, "Histogram"_s, otherArg);
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "other"_s, "RecordableHistogram"_s, otherArg);
         return {};
     }
 

@@ -99,6 +99,23 @@ describe("Histogram", () => {
     assert.strictEqual(h1.max, 4);
   });
 
+  // Messages verified against node v26.3.0.
+  test("add() rejects a non-histogram with Node's argument name and class name", () => {
+    const h = createHistogram();
+
+    assert.throws(() => h.add(1), {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "other" argument must be an instance of RecordableHistogram. Received type number (1)',
+    });
+    assert.throws(() => h.add({}), {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "other" argument must be an instance of RecordableHistogram. Received an instance of Object',
+    });
+    assert.strictEqual(h.count, 0);
+  });
+
   test("reset functionality", () => {
     const h = createHistogram();
 

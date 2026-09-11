@@ -96,15 +96,15 @@ test("duplicate declarations across merged rules minify in linear time instead o
 // re-minify did for merge runs that interact with the handler context or the
 // merge-with-previous cascade.
 test("deferred merge re-minify keeps per-merge output", () => {
-  // The merged-in rule stages dark-mode fallback vars; its re-minify stages
-  // them again, and both sets belong in this rule's @media extras. The
-  // deferred flush must run before the extras are collected (and must not
-  // assert or leak the re-staged entries into a later rule's extras).
-  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}", "", { chrome: 80 << 16 })).toBe(
+  // The merged-in rule stages dark-mode fallback vars, and its re-minify
+  // stages them again (deduplicated into the same entries). The deferred
+  // flush must run before the extras are collected, so the dark-mode rule is
+  // attached to this rule and the re-staged entries are neither leaked into
+  // the next rule's extras (.b must not get a dark-mode rule) nor asserted on.
+  // The re-minify must also not emit a second copy of the fallback vars.
+  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}.b{color:blue}", "", { chrome: 80 << 16 })).toBe(
     ".a {\n" +
       "  color: red;\n" +
-      "  --buncss-light: initial;\n" +
-      "  --buncss-dark: ;\n" +
       "  --buncss-light: initial;\n" +
       "  --buncss-dark: ;\n" +
       "  color-scheme: light dark;\n" +
@@ -114,9 +114,11 @@ test("deferred merge re-minify keeps per-merge output", () => {
       "  .a {\n" +
       "    --buncss-light: ;\n" +
       "    --buncss-dark: initial;\n" +
-      "    --buncss-light: ;\n" +
-      "    --buncss-dark: initial;\n" +
       "  }\n" +
+      "}\n" +
+      "\n" +
+      ".b {\n" +
+      "  color: #00f;\n" +
       "}\n",
   );
 

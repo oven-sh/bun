@@ -1442,7 +1442,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolved: true, answers: "1".repeat(connections) },
+      out: { resolved: true, answers: Buffer.alloc(connections, "1").toString() },
       exitCode: 0,
     });
   });

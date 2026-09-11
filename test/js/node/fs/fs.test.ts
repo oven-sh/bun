@@ -6868,6 +6868,78 @@ it("Bun.file keeps a path over a WebAssembly.Memory that grows after the call", 
   expect(exitCode).toBe(0);
 });
 
+// `fs.write` to a fifo whose reader drains it one pipe buffer at a time: the pool thread is still
+// inside `write(2)` when the memory grows, so it ships whatever takes the freed block's address.
+// The bytes the reader gets are the oracle, no crash needed.
+it.skipIf(isWindows)(
+  "fs.write sends the bytes the caller passed when a WebAssembly.Memory grows mid-write",
+  async () => {
+    using dir = tempDir("fs-write-wasm", {});
+    const fifoPath = join(String(dir), "w.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import fs from "node:fs";
+        const PAGES = 128;
+        const TOTAL = PAGES * 65536;
+        const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 8 });
+
+        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
+        const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
+        const mem = newMemory();
+        const view = new Uint8Array(mem.buffer).fill(0x41);
+
+        // O_RDWR keeps the open from blocking and lets this process drain the fifo itself.
+        const fd = fs.openSync(process.env.FIFO_PATH, fs.constants.O_RDWR);
+        const written = Promise.withResolvers();
+        fs.write(fd, view, 0, TOTAL, null, (err, n) => written.resolve(err ? err.code : n));
+
+        const chunk = Buffer.alloc(65536);
+        const expected = Buffer.alloc(65536, 0x41);
+        const read = () =>
+          new Promise((resolve, reject) =>
+            fs.read(fd, chunk, 0, chunk.length, null, (err, n) => (err ? reject(err) : resolve(n))),
+          );
+
+        // One pipe buffer: the pool thread is inside write(2) for the rest.
+        let drained = await read();
+        let foreignChunks = 0;
+        mem.grow(2);
+        // Claim the freed block, so that reading it cannot see the caller's bytes.
+        const claim = Array.from({ length: 4 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        });
+
+        while (drained < TOTAL) {
+          const n = await read();
+          if (!n) break;
+          if (Buffer.compare(chunk.subarray(0, n), expected.subarray(0, n)) !== 0) foreignChunks++;
+          drained += n;
+        }
+        console.log(JSON.stringify({ drained, foreignChunks, written: await written.promise }));
+        process.exit(0);
+      `,
+      ],
+      env: { ...bunEnv, FIFO_PATH: fifoPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ drained: 8388608, foreignChunks: 0, written: 8388608 }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // 8 MB through a 64 KB pipe on a debug build: the default 5 s is not enough.
+  },
+  30_000,
+);
+
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time
 // when a getter shrinks the buffer.
 it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {

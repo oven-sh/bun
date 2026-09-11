@@ -2487,8 +2487,9 @@ describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () =>
         console.log(JSON.stringify({ vs: keep.map(m => m.v), first: h1 - h0, perInstance: (h9 - h1) / 8 }));`;
       const dir = fixture(files);
       const r = await runBun(["./measure.mjs"], { cwd: dir });
+      expect({ stderr: r.stderr, exitCode: r.exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const m = JSON.parse(r.stdout);
-      expect({ vs: m.vs, exitCode: r.exitCode }).toEqual({ vs: Array(9).fill(modules), exitCode: 0 });
+      expect(m.vs).toEqual(Array(9).fill(modules));
       results[modules] = [m.first, m.perInstance];
       if (!stressMode) {
         expect(m.perInstance).toBeLessThan(m.first * 0.5); // sharing: an extra instance is well under half the first load

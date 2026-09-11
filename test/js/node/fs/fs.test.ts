@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, jest, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -1766,6 +1766,104 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
   expect(
     summarize((await promisify(fs.readdir)(String(dir), { encoding: "buffer" } as const)) as unknown as Buffer[]),
   ).toEqual(expected);
+});
+
+// readdir/readdirSync validate `options.recursive` only when it is not nullish
+// and never validate `withFileTypes` (they pass `!!options.withFileTypes`);
+// fs.promises.readdir only tests `recursive` for truthiness.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1546-L1557
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1601-L1608
+describe("readdir accepts the recursive/withFileTypes values node accepts", () => {
+  const tree = { "a.txt": "", "sub/b.txt": "" };
+  const flat = { names: ["a.txt", "sub"], dirents: false };
+  const flatDirents = { names: ["a.txt", "sub"], dirents: true };
+  const deep = { names: ["a.txt", "b.txt", "sub"], dirents: false };
+  const deepDirents = { names: ["a.txt", "b.txt", "sub"], dirents: true };
+
+  // Entry names only (the basename of a recursive path entry), so the summary
+  // is the same for string and Dirent results on every platform.
+  function summarize(entries: (string | Dirent)[]) {
+    const dirents = entries.every(entry => entry instanceof Dirent);
+    const names = entries.map(entry => (typeof entry === "string" ? entry.split(/[\\/]/).pop()! : entry.name)).sort();
+    return { names, dirents };
+  }
+
+  const readdirCallback = promisify(fs.readdir) as (path: string, options: any) => Promise<(string | Dirent)[]>;
+
+  const acceptedEverywhere: [options: Record<string, unknown>, expected: typeof flat][] = [
+    [{ recursive: undefined }, flat],
+    [{ recursive: null }, flat],
+    [{ recursive: true }, deep],
+    [{ withFileTypes: undefined }, flat],
+    [{ withFileTypes: null }, flat],
+    [{ withFileTypes: 0 }, flat],
+    [{ withFileTypes: "" }, flat],
+    [{ withFileTypes: 1 }, flatDirents],
+    [{ withFileTypes: "x" }, flatDirents],
+    [{ withFileTypes: {} }, flatDirents],
+    [{ withFileTypes: 1, recursive: true }, deepDirents],
+    [{ withFileTypes: null, recursive: null }, flat],
+  ];
+
+  it.each(acceptedEverywhere.map(([options, expected]) => [inspect(options), options, expected] as const))(
+    "readdirSync, readdir and promises.readdir accept %s",
+    async (_name, options, expected) => {
+      using dir = tempDir("readdir-option-values", tree);
+      expect(summarize(readdirSync(String(dir), options as any))).toEqual(expected);
+      expect(summarize(await readdirCallback(String(dir), options))).toEqual(expected);
+      expect(summarize(await promises.readdir(String(dir), options as any))).toEqual(expected);
+    },
+  );
+
+  // Non-nullish, non-boolean `recursive`: a type error in the sync and callback
+  // forms (thrown synchronously, before the callback is ever called), plain
+  // truthiness in the promise form.
+  const nonBooleanRecursive: [recursive: unknown, expected: typeof flat][] = [
+    [0, flat],
+    [1, deep],
+    ["", flat],
+    ["x", deep],
+    [{}, deep],
+    [[], deep],
+    [0n, flat],
+  ];
+
+  it.each(nonBooleanRecursive)("readdirSync and readdir reject { recursive: %p }", (recursive, _expected) => {
+    using dir = tempDir("readdir-option-values", tree);
+    const invalidArgType = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => readdirSync(String(dir), { recursive } as any)).toThrow(invalidArgType);
+    const callback = jest.fn();
+    expect(() => fs.readdir(String(dir), { recursive } as any, callback)).toThrow(invalidArgType);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each(nonBooleanRecursive)(
+    "promises.readdir treats { recursive: %p } as its truthiness",
+    async (recursive, expected) => {
+      using dir = tempDir("readdir-option-values", tree);
+      expect(summarize(await promises.readdir(String(dir), { recursive } as any))).toEqual(expected);
+      expect(summarize(await promises.readdir(String(dir), { recursive, withFileTypes: 1 } as any))).toEqual({
+        ...expected,
+        dirents: true,
+      });
+    },
+  );
+
+  it("promises.readdir does not mutate the caller's options", async () => {
+    using dir = tempDir("readdir-option-values", tree);
+    const options = { recursive: 1, withFileTypes: 0 };
+    expect(summarize(await promises.readdir(String(dir), options as any))).toEqual(deep);
+    expect(options).toEqual({ recursive: 1, withFileTypes: 0 });
+  });
+
+  it("promises.readdir still sees inherited options when it coerces recursive", async () => {
+    using dir = tempDir("readdir-option-values", tree);
+    const options = Object.create({ withFileTypes: true });
+    options.recursive = 1;
+    expect(summarize(await promises.readdir(String(dir), options))).toEqual(deepDirents);
+    options.recursive = true;
+    expect(summarize(await promises.readdir(String(dir), options))).toEqual(deepDirents);
+  });
 });
 
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on

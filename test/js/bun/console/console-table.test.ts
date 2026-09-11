@@ -364,9 +364,9 @@ console.log("calls=" + calls);`,
   });
 });
 
-// Rows that come from an iterator end when user code says so. A Map or a Set
-// is read from its own storage, an array has no more rows than its length, and
-// any other iterable gets a budget of 1000 rows.
+// Rows that come from an iterator end when user code says so. A collection
+// gives a replaced iterator as many steps as it reports elements. Any other
+// iterable gets a budget of 1000 rows.
 describe("console.table reads a bounded number of rows from an iterator", () => {
   function* rows(count: number) {
     for (let i = 0; i < count; i++) yield { n: i };
@@ -462,16 +462,20 @@ function* endless() {
 
   test.concurrent("a Map whose iterator was replaced", async () => {
     const { lines, stderr, exitCode } = await run(
-      `Map.prototype[Symbol.iterator] = endless;\nconsole.table(new Map([["a", 1]]));`,
+      `Map.prototype[Symbol.iterator] = function* () { for (const row of endless()) yield ["k", row.t]; };
+console.table(new Map([["a", 1], ["b", 2]]));`,
     );
     expect(stderr).toBe("");
+    // Two entries, so two steps, then one more to learn that the iterator had more.
     expect(lines).toEqual([
       "┌───┬─────┬────────┐",
       "│   │ Key │ Values │",
       "├───┼─────┼────────┤",
-      "│ 0 │ a   │ 1      │",
+      "│ 0 │ k   │ 1      │",
+      "│ 1 │ k   │ 1      │",
       "└───┴─────┴────────┘",
-      "yielded=0",
+      "... more rows",
+      "yielded=3",
       "",
     ]);
     expect(exitCode).toBe(0);

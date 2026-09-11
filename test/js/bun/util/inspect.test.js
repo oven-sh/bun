@@ -1083,70 +1083,94 @@ it("object property enumeration scales linearly with property count", () => {
   });
 });
 
-describe("collection previews stop at the display limit", () => {
+// The formatter drives `Symbol.iterator` for a Map, a Set and their iterators.
+// Once user code replaces it, user code decides when the walk ends, and an
+// iterator that never reports `done` printed forever at 100% CPU. The walk now
+// stops at the number of entries the collection reports, as in node.
+describe("inspect bounds a replaced Map or Set iterator", () => {
   const entries = length => Array.from({ length }, (_, i) => [i, i]);
   const values = length => Array.from({ length }, (_, i) => i);
-  const lastLines = (text, count) => text.split("\n").slice(-count);
 
-  it("a Map prints 100 entries and the remainder count", () => {
-    expect(lastLines(Bun.inspect(new Map(entries(150))), 3)).toEqual(["  99: 99,", "  ... 50 more items", "}"]);
+  it("a collection that user code did not touch prints every entry", () => {
+    expect(Bun.inspect(new Map(entries(150)))).toEndWith("  148: 148,\n  149: 149,\n}");
+    expect(Bun.inspect(new Set(values(150)))).toEndWith("  148,\n  149,\n}");
+    expect(Bun.inspect(new Map(entries(150)).keys())).toEndWith("  148,\n  149,\n}");
+    expect(Bun.inspect(new Set(values(150)).values())).toEndWith("  148,\n  149,\n}");
   });
 
-  it("a Set prints 100 values and the remainder count", () => {
-    expect(lastLines(Bun.inspect(new Set(values(150))), 3)).toEqual(["  99,", "  ... 50 more items", "}"]);
+  // quick-lru is a Map subclass of this shape: it never calls `super.set`, so
+  // the inherited storage stays empty.
+  class Elsewhere extends Map {
+    #items = [
+      ["a", 1],
+      ["b", 2],
+    ];
+    get size() {
+      return this.#items.length;
+    }
+    *[Symbol.iterator]() {
+      yield* this.#items;
+    }
+  }
+
+  it("a Map subclass that keeps its entries elsewhere prints them", () => {
+    expect(Bun.inspect(new Elsewhere())).toBe('Map(2) {\n  "a": 1,\n  "b": 2,\n}');
+    expect(Bun.inspect(new Elsewhere(), { compact: true })).toBe('Map(2) { "a": 1, "b": 2 }');
+    expect(Bun.inspect.table(new Elsewhere())).toBe(
+      [
+        "┌───┬─────┬────────┐",
+        "│   │ Key │ Values │",
+        "├───┼─────┼────────┤",
+        "│ 0 │ a   │ 1      │",
+        "│ 1 │ b   │ 2      │",
+        "└───┴─────┴────────┘",
+        "",
+      ].join("\n"),
+    );
   });
 
-  it("one hidden entry reads as a single item", () => {
-    expect(lastLines(Bun.inspect(new Map(entries(101))), 2)).toEqual(["  ... 1 more item", "}"]);
-    expect(lastLines(Bun.inspect(new Set(values(101))), 2)).toEqual(["  ... 1 more item", "}"]);
+  it("an iterator that yields more than `size` is cut there and marked", () => {
+    class Overflow extends Map {
+      get size() {
+        return 2;
+      }
+      *[Symbol.iterator]() {
+        for (let i = 0; i < 5; i++) yield [i, i];
+      }
+    }
+    class OverflowSet extends Set {
+      get size() {
+        return 2;
+      }
+      *[Symbol.iterator]() {
+        for (let i = 0; i < 5; i++) yield i;
+      }
+    }
+    expect(Bun.inspect(new Overflow())).toBe("Map(2) {\n  0: 0,\n  1: 1,\n  ... more items\n}");
+    expect(Bun.inspect(new Overflow(), { compact: true })).toBe("Map(2) { 0: 0, 1: 1, ... more items }");
+    expect(Bun.inspect(new OverflowSet())).toBe("Set(2) {\n  0,\n  1,\n  ... more items\n}");
+    expect(Bun.inspect(new OverflowSet(), { compact: true })).toBe("Set(2) { 0, 1, ... more items }");
   });
 
-  it("an iterator preview says it is cut short", () => {
-    expect(lastLines(Bun.inspect(new Map(entries(150)).entries()), 3)).toEqual([
-      "  [ 99, 99 ],",
-      "  ... more items",
-      "}",
-    ]);
-    expect(lastLines(Bun.inspect(new Set(values(150)).values()), 3)).toEqual(["  99,", "  ... more items", "}"]);
-  });
-
-  it("compact mode keeps the marker on one line", () => {
-    expect(Bun.inspect(new Map(entries(150)), { compact: true })).toEndWith(" 99: 99, ... 50 more items }");
-    expect(Bun.inspect(new Set(values(150)), { compact: true })).toEndWith(" 99, ... 50 more items }");
-    expect(Bun.inspect(new Map(entries(150)).entries(), { compact: true })).toEndWith(" [ 99, 99 ], ... more items }");
-    expect(Bun.inspect(new Set(values(150)).values(), { compact: true })).toEndWith(" 99, ... more items}");
-  });
-
-  it("a collection that fits prints in full", () => {
-    expect(Bun.inspect(new Map(entries(100)))).toEndWith("  99: 99,\n}");
-    expect(Bun.inspect(new Set(values(100)))).toEndWith("  99,\n}");
-    expect(Bun.inspect(new Map(entries(100)).entries())).toEndWith("  [ 99, 99 ],\n}");
-  });
-
-  it("the preview of a large Map stays small", () => {
-    const lines = Bun.inspect(new Map(entries(10_000))).split("\n");
-    // The header, 100 entries, the marker and the closing brace.
-    expect(lines.length).toBe(103);
-    expect(lines.slice(-3)).toEqual(["  99: 99,", "  ... 9900 more items", "}"]);
-  });
-
-  it("the limit counts stored entries, not what a size getter reports", () => {
-    class Undercount extends Map {
+  it("closes the iterator it cuts short", () => {
+    let returned = 0;
+    class Overflow extends Map {
       get size() {
         return 1;
       }
+      [Symbol.iterator]() {
+        let i = 0;
+        return {
+          next: () => (i < 5 ? { value: [i, i++], done: false } : { value: undefined, done: true }),
+          return: () => (returned++, {}),
+        };
+      }
     }
-    const lines = Bun.inspect(new Undercount(entries(500))).split("\n");
-    expect(lines.length).toBe(103);
-    // `size` is below the number of entries printed, so the marker has no count.
-    expect(lines.slice(-3)).toEqual(["  99: 99,", "  ... more items", "}"]);
+    expect(Bun.inspect(new Overflow())).toBe("Map(1) {\n  0: 0,\n  ... more items\n}");
+    expect(returned).toBe(1);
   });
 });
 
-// The formatter used to drive `Symbol.iterator`, so user code decided when the
-// walk ended. An iterator that never reports `done` printed forever at 100%
-// CPU. A Map or a Set is now read from its own storage, and every other
-// iterable is cut at the display limit.
 describe.concurrent("inspect survives an iterator that never ends", () => {
   // The unfixed formatter prints without end. Stop the read at `limit` bytes
   // and kill the child, so that failure reports `runaway` at once.
@@ -1180,43 +1204,46 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
   it("Map.prototype[Symbol.iterator]", async () => {
     const { output, runaway, exitCode } = await run(
       `Map.prototype[Symbol.iterator] = function* () { for (;;) yield ["k", "v"]; };
-       console.log(new Map([["a", 1]]));`,
+       console.log(new Map([["a", 1], ["b", 2]]));`,
       "stdout",
     );
-    expect({ output, runaway }).toEqual({ output: 'Map(1) {\n  "a": 1,\n}\n', runaway: false });
+    expect({ output, runaway }).toEqual({
+      output: 'Map(2) {\n  "k": "v",\n  "k": "v",\n  ... more items\n}\n',
+      runaway: false,
+    });
     expect(exitCode).toBe(0);
   });
 
   it("Set.prototype[Symbol.iterator]", async () => {
     const { output, runaway, exitCode } = await run(
       `Set.prototype[Symbol.iterator] = function* () { for (;;) yield "x"; };
-       console.log(new Set(["a"]));`,
+       console.log(new Set(["a", "b"]));`,
       "stdout",
     );
-    expect({ output, runaway }).toEqual({ output: 'Set(1) {\n  "a",\n}\n', runaway: false });
+    expect({ output, runaway }).toEqual({ output: 'Set(2) {\n  "x",\n  "x",\n  ... more items\n}\n', runaway: false });
     expect(exitCode).toBe(0);
   });
 
   it("a replaced next() on the Map iterator prototype", async () => {
     const { output, runaway, exitCode } = await run(
-      `const map = new Map([["a", 1]]);
+      `const map = new Map([["a", 1], ["b", 2]]);
        Object.getPrototypeOf(map.entries()).next = () => ({ value: ["k", "v"], done: false });
        console.log(map.entries());`,
       "stdout",
     );
-    expect({ entries: count(output, '"k"'), runaway }).toEqual({ entries: 100, runaway: false });
+    expect({ entries: count(output, '"k"'), runaway }).toEqual({ entries: 2, runaway: false });
     expect(output).toEndWith("  ... more items\n}\n");
     expect(exitCode).toBe(0);
   });
 
   it("a replaced next() on the Set iterator prototype", async () => {
     const { output, runaway, exitCode } = await run(
-      `const set = new Set(["a"]);
+      `const set = new Set(["a", "b"]);
        Object.getPrototypeOf(set.values()).next = () => ({ value: "k", done: false });
        console.log(set.values());`,
       "stdout",
     );
-    expect({ values: count(output, '"k"'), runaway }).toEqual({ values: 100, runaway: false });
+    expect({ values: count(output, '"k"'), runaway }).toEqual({ values: 2, runaway: false });
     expect(output).toEndWith("  ... more items\n}\n");
     expect(exitCode).toBe(0);
   });
@@ -1230,7 +1257,7 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
       "stderr",
     );
     expect(runaway).toBe(false);
-    expect(output).toContain('ctx: Map(1) {\n  "a": 1,\n}');
+    expect(output).toContain('ctx: Map(1) {\n  "k": "v",\n  ... more items\n}');
     expect(exitCode).toBe(1);
   });
 
@@ -1244,5 +1271,19 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
     expect({ members: count(output, "error: inner"), runaway }).toEqual({ members: 100, runaway: false });
     expect(output).toContain("... more errors\n");
     expect(exitCode).toBe(1);
+  });
+
+  it("an AggregateError whose errors is a long array prints every member", async () => {
+    const { output, runaway, exitCode } = await run(
+      `console.error(new AggregateError(Array.from({ length: 150 }, (_, i) => "member" + i + ";"), "boom"));`,
+      "stderr",
+    );
+    expect({
+      first: output.includes("member0;"),
+      last: output.includes("member149;"),
+      marker: output.includes("... more errors"),
+      runaway,
+    }).toEqual({ first: true, last: true, marker: false, runaway: false });
+    expect(exitCode).toBe(0);
   });
 });

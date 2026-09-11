@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
+import { ctx, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering basic Redis operations
@@ -10,11 +10,13 @@ import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../tes
  * - Deletion operations (DEL)
  */
 describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
+  // Every test below works on a fresh, uniquely-prefixed key, so there is no
+  // connection-visible state to reset between them. The suite-level beforeAll
+  // in test-utils already provides a connected `ctx.redis`; we only bump the
+  // key-prefix id here instead of rebuilding a RedisClient (and re-handshaking
+  // the TCP connection) per test.
   beforeEach(() => {
-    if (ctx.redis?.connected) {
-      ctx.redis.close?.();
-    }
-    ctx.redis = createClient(ConnectionType.TCP);
+    ctx.id++;
   });
   describe("String Commands", () => {
     test("SET and GET commands", async () => {
@@ -52,11 +54,14 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       const key = ctx.generateKey("expiry-set-test");
 
       // Set with expiry (PX option, in milliseconds so the test doesn't wait a full second)
-      await ctx.redis.send("SET", [key, "expires-soon", "PX", "500"]);
+      expect(await ctx.redis.send("SET", [key, "expires-soon", "PX", "200"])).toBe("OK");
 
-      // Key should exist immediately
-      const existsNow = await ctx.redis.exists(key);
-      expect(existsNow).toBe(true);
+      // PTTL > 0 proves the key exists and the expiry was attached; keeping
+      // this to a single round trip leaves the full 200ms window as margin
+      // for a slow ASAN runner.
+      const pttl = await ctx.redis.send("PTTL", [key]);
+      expect(pttl).toBeGreaterThan(0);
+      expect(pttl).toBeLessThanOrEqual(200);
 
       // Poll until key expires (max 2 seconds)
       let expired = false;
@@ -64,11 +69,12 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       while (!expired && Date.now() - startTime < 2000) {
         expired = !(await ctx.redis.exists(key));
         if (!expired) {
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 20));
         }
       }
 
       expect(expired).toBe(true);
+      expect(await ctx.redis.get(key)).toBeNull();
     });
 
     test("APPEND command", async () => {

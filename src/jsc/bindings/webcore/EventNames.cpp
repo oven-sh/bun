@@ -43,6 +43,15 @@ const EventNames& eventNames()
     return *eventNames_;
 }
 
+// Bun compiles with -fno-c++-static-destructors, so eventNames_ is never destroyed when its thread
+// exits. A worker thread frees its table on the way out (WebWorker::shutdown), while the thread's
+// AtomStringTable that holds these atoms is still alive; WebCore does the same in
+// ThreadGlobalData::destroy().
+extern "C" void Bun__destroyEventNamesForThreadExit()
+{
+    eventNames_.reset();
+}
+
 enum class DOMEventName : uint8_t {
     rename = 0,
     change = 1,

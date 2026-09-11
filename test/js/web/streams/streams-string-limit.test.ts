@@ -156,7 +156,9 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
 
 // The TypeError for an unknown underlying source `type` quotes the value. With a value
 // near 2^31-1 characters the message does not fit in a string, and building it used to
-// abort the process in WTF::makeString.
+// abort the process in WTF::makeString. The child builds the value with "t".repeat(n): JSC
+// fills a one-character repeat directly (1.4s in a debug build), and
+// Buffer.alloc(n, "t").toString() holds the buffer and the string at once (~4.4GB peak).
 test.skipIf(!enoughMemory)("an underlying source type too long to quote in the error message throws", async () => {
   const result = await run(`
     const type = "t".repeat(2 ** 31 - 40);

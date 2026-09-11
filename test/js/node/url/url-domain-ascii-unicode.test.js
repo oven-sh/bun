@@ -139,7 +139,9 @@ test("the host stops at the first path, query, fragment or backslash terminator"
 
 // Both functions parse the host as "ws://<host>/". With a host near 2^31-1 characters that
 // URL does not fit in a string, and building it used to abort the process in
-// WTF::makeString. The child commits ~2.2GB.
+// WTF::makeString. The child commits ~2.2GB. It builds the host with "a".repeat(n): JSC fills
+// a one-character repeat directly (1.4s in a debug build), and Buffer.alloc(n, "a").toString()
+// holds the buffer and the string at once, which doubles the peak to ~4.4GB.
 describe.skipIf(totalmem() < 8 * 1024 * 1024 * 1024)("a host too long for the URL parse throws", () => {
   for (const fn of ["domainToASCII", "domainToUnicode"]) {
     test(`url.${fn}`, async () => {

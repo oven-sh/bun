@@ -118,4 +118,42 @@ describe("url.parse", () => {
       });
     }
   });
+
+  test.each(["nope", 1, null, undefined, Symbol.for("nope")])(
+    "rethrows %p thrown while describing the argument",
+    thrown => {
+      const arg = {
+        get constructor() {
+          throw thrown;
+        },
+      };
+      for (const fn of [() => url.parse(arg), () => url.resolve(arg, "/a"), () => url.resolve("/a", arg)]) {
+        let caught;
+        let didThrow = false;
+        try {
+          fn();
+        } catch (e) {
+          didThrow = true;
+          caught = e;
+        }
+        assert.strictEqual(didThrow, true);
+        assert.strictEqual(caught, thrown);
+      }
+    },
+  );
+
+  test("only ERR_INVALID_URL carries the input", () => {
+    assert.throws(
+      () => url.parse(1),
+      e => e.code === "ERR_INVALID_ARG_TYPE" && !("input" in e),
+    );
+    assert.throws(
+      () => url.parse("http://%E0%A4%A@fail"),
+      e => e instanceof URIError && !("input" in e),
+    );
+    assert.throws(() => url.parse("http://[127.0.0.1\x00c8763]:8000/"), {
+      code: "ERR_INVALID_URL",
+      input: "http://[127.0.0.1\x00c8763]:8000/",
+    });
+  });
 });

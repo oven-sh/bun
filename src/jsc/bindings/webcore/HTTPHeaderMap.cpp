@@ -234,30 +234,6 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
     return index != notFound ? m_commonHeaders[index].value.string() : String();
 }
 
-HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(HTTPHeaderName name) const
-{
-    auto index = m_commonHeaders.findIf([&](auto& header) {
-        return header.key == name;
-    });
-    return (HeaderIndex) { .index = index, .isCommon = true };
-}
-
-HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(const String& name) const
-{
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    return (HeaderIndex) { .index = index, .isCommon = false };
-}
-
-String HTTPHeaderMap::getIndex(HTTPHeaderMap::HeaderIndex index) const
-{
-    if (index.index == notFound)
-        return String();
-    if (index.isCommon)
-        return m_commonHeaders[index.index].value.string();
-    return m_uncommonHeaders[index.index].value.string();
-}
 void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
@@ -273,19 +249,6 @@ void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
         m_commonHeaders.append(CommonHeader { name, value });
     else
         m_commonHeaders[index].value = value;
-}
-
-bool HTTPHeaderMap::setIndex(HTTPHeaderMap::HeaderIndex index, const String& value)
-{
-    if (!index.isValid())
-        return false;
-
-    if (index.isCommon) {
-        m_commonHeaders[index.index].value = value;
-    } else {
-        m_uncommonHeaders[index.index].value = value;
-    }
-    return true;
 }
 
 bool HTTPHeaderMap::contains(HTTPHeaderName name) const

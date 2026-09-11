@@ -1231,6 +1231,9 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
 // the frames. The length is what is under test, so the child needs a string of
 // about 2 GiB, and the test skips on small machines. The child touches about
 // 6 GB of pages, which takes longer than the default limit in a debug build.
+// `repeat` and not `Buffer.alloc(n, fill).toString()`: for one character at this
+// size it is faster in a debug build (1.6 s against 3.3 s), and it does not hold
+// a second 2 GiB.
 test.skipIf(totalmem() < 10 * 1024 ** 3)(
   "a stack trace past the string length limit drops its frames instead of aborting the process",
   async () => {

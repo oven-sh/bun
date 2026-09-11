@@ -96,6 +96,89 @@ describe("bundler", () => {
       stdout: '[{"config":{"@env":"test","name":"app"}},{"feed":{"entry":["1","2"]}}]',
     },
   });
+  // A `with { type }` import attribute picks the loader. onLoad reports it as
+  // args.loader, and contents returned without a loader are loaded with it,
+  // both for an unknown extension and for one that has its own loader.
+  itBundled("plugin/LoadImportAttributeLoader", {
+    files: {
+      "/index.ts": /* ts */ `
+        import page from "./page.htmlx" with { type: "text" };
+        import raw from "./data.json" with { type: "text" };
+        import config from "./config.cfgx" with { type: "json" };
+        const late = await import("./late.htmlx", { with: { type: "text" } });
+        console.log(JSON.stringify([page, raw, config, late.default]));
+      `,
+      "/page.htmlx": `<b>not js</b> <`,
+      "/data.json": `{"a":1}`,
+      "/config.cfgx": `{"k":[1,2]}`,
+      "/late.htmlx": `<i>late</i> <`,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.(htmlx|json|cfgx)$/ }, async args => {
+        const expected = args.path.endsWith(".cfgx") ? "json" : "text";
+        if (args.loader !== expected) throw new Error(`expected args.loader to be ${expected}, got ${args.loader}`);
+        return { contents: (await Bun.file(args.path).text()).toUpperCase() };
+      });
+    },
+    run: {
+      stdout: String.raw`["<B>NOT JS</B> <","{\"A\":1}",{"K":[1,2]},"<I>LATE</I> <"]`,
+    },
+  });
+  // The attribute belongs to the import. Its loader also applies when onResolve
+  // returned the path, for the same file or for another one, with or without an
+  // onLoad hook for that file.
+  for (const withLoad of [false, true]) {
+    itBundled(`plugin/ResolveImportAttributeLoader${withLoad ? "AndLoad" : ""}`, ({ root }) => ({
+      files: {
+        "/index.ts": /* ts */ `
+          import page from "./page.htmlx" with { type: "text" };
+          import raw from "alias:data" with { type: "text" };
+          console.log(JSON.stringify([page, raw]));
+        `,
+        "/page.htmlx": `<b>not js</b> <`,
+        "/data.json": `{"a":1}`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /\.htmlx$/ }, args => ({ path: resolve(dirname(args.importer), args.path) }));
+        builder.onResolve({ filter: /^alias:data$/ }, () => ({ path: join(root, "data.json") }));
+        if (withLoad) {
+          builder.onLoad({ filter: /\.(htmlx|json)$/ }, async args => {
+            if (args.loader !== "text") throw new Error("expected args.loader to be text, got " + args.loader);
+            return { contents: await Bun.file(args.path).text() };
+          });
+        }
+      },
+      run: {
+        stdout: String.raw`["<b>not js</b> <","{\"a\":1}"]`,
+      },
+    }));
+  }
+  // The same rule in a plugin's own namespace: the attribute's loader is the
+  // default for contents returned without a loader, and js is the default for
+  // an import that has no attribute.
+  itBundled("plugin/LoadImportAttributeLoaderInNamespace", {
+    files: {
+      "/index.ts": /* ts */ `
+        import page from "virtual:page" with { type: "text" };
+        import code from "virtual:code";
+        console.log(JSON.stringify([page, code]));
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:/ }, args => ({
+        path: args.path.slice("virtual:".length),
+        namespace: "virtual",
+      }));
+      builder.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+        const expected = args.path === "page" ? "text" : "js";
+        if (args.loader !== expected) throw new Error(`expected args.loader to be ${expected}, got ${args.loader}`);
+        return { contents: args.path === "page" ? "<b>virtual</b> <" : "export default 'code';" };
+      });
+    },
+    run: {
+      stdout: String.raw`["<b>virtual</b> <","code"]`,
+    },
+  });
 
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {

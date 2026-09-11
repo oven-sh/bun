@@ -291,6 +291,7 @@ impl Execution {
     pub(crate) fn load_from_order(&mut self, order: &mut Order::Order) {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
+        order.assert_skip_ranges_stay_in_scope();
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }

@@ -40,15 +40,18 @@ test("object keys get the same escapes in Latin-1 and UTF-16 strings", () => {
   const value = {
     [utf16(["ascii in utf16 ", special].join(""))]: 1,
     ["latin1 " + special]: 2,
-    ["日本 " + special]: 3,
-    ["😀 " + special]: 4,
+    // A Latin-1 string cannot hold these three characters.
+    ["utf16 only \u2028\u2029\ufeff"]: 3,
+    ["日本 " + special]: 4,
+    ["😀 " + special]: 5,
   };
   expect(value).toMatchInlineSnapshot(`
     {
       "ascii in utf16 \\"\\\\\\n\\u001B": 1,
       "latin1 \\"\\\\\\n\\u001B": 2,
-      "日本 \\"\\\\\\n\\u001B": 3,
-      "😀 \\"\\\\\\n\\u001B": 4,
+      "utf16 only \\u2028\\u2029\\uFEFF": 3,
+      "日本 \\"\\\\\\n\\u001B": 4,
+      "😀 \\"\\\\\\n\\u001B": 5,
     }
   `);
 
@@ -67,12 +70,13 @@ test("object keys get the same escapes in Latin-1 and UTF-16 strings", () => {
     + {
     +   "ascii in utf16 \\"\\\\\\n\\u001B": 1,
     +   "latin1 \\"\\\\\\n\\u001B": 2,
-    +   "日本 \\"\\\\\\n\\u001B": 3,
-    +   "😀 \\"\\\\\\n\\u001B": 4,
+    +   "utf16 only \\u2028\\u2029\\uFEFF": 3,
+    +   "日本 \\"\\\\\\n\\u001B": 4,
+    +   "😀 \\"\\\\\\n\\u001B": 5,
     + }
 
     - Expected  - 1
-    + Received  + 6
+    + Received  + 7
     "
   `);
   expect(failure(() => expect(value).toBe(0))).toMatchInlineSnapshot(`
@@ -82,8 +86,9 @@ test("object keys get the same escapes in Latin-1 and UTF-16 strings", () => {
     Received: {
       "ascii in utf16 \\"\\\\\\n\\u001B": 1,
       "latin1 \\"\\\\\\n\\u001B": 2,
-      "日本 \\"\\\\\\n\\u001B": 3,
-      "😀 \\"\\\\\\n\\u001B": 4,
+      "utf16 only \\u2028\\u2029\\uFEFF": 3,
+      "日本 \\"\\\\\\n\\u001B": 4,
+      "😀 \\"\\\\\\n\\u001B": 5,
     }
     "
   `);

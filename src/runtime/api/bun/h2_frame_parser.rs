@@ -3291,14 +3291,7 @@ pub(crate) trait NativeSocketWrite {
 }
 impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
-        // A TLS transport keeps a send the kernel rejected as backpressure. The
-        // parser's reaction to a fatal write is to close the transport on its
-        // deferred tick (`close_transport_after_fatal_write`), and over TLS
-        // that would discard what the peer sent before it went away: a
-        // complete response that is still in the receive buffer. The read side
-        // delivers it, and then its EOF or error ends the session, which is
-        // also what node does (its http2 session does not act on a failed
-        // write). UFCS to avoid resolving back to this trait impl.
+        // No fatal-send report: the parser's immediate close would drop unread peer data.
         TLSSocket::write_maybe_corked_without_fatal_report(*self, buf)
     }
 }

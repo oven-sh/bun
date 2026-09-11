@@ -2387,9 +2387,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                // `wrote < -1` is the errno of a fatal send, which only the
-                // node:net path (`write_buffered`) hands to JS. This API
-                // documents -1 for a socket that cannot be written to.
+                // A fatal send's errno (< -1) is for node:net only. This API documents -1.
                 WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
@@ -2542,12 +2540,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.write_maybe_corked_impl::<true>(buffer)
     }
 
-    /// `write_maybe_corked` that keeps a send the kernel rejected as
-    /// backpressure (0 bytes now, retried from the writable event) instead of
-    /// returning its errno. For a writer whose only reaction to the errno is
-    /// to close the transport at once, when the connection has to end through
-    /// its read side instead: that delivers what the peer sent before it went
-    /// away, and then reports the EOF or the error.
+    /// Like `write_maybe_corked`, but a send the kernel rejected stays backpressure (no errno).
     pub(crate) fn write_maybe_corked_without_fatal_report(&self, buffer: &[u8]) -> i32 {
         self.write_maybe_corked_impl::<false>(buffer)
     }

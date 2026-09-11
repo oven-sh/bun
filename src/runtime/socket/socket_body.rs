@@ -2209,7 +2209,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Counted before any consumer sees the bytes, so `bytesRead` is
         // right whether a native consumer (an h2 session) or the JS `data`
         // handler takes them.
-        this.bytes_read.set(this.bytes_read.get() + data.len() as u64);
+        this.bytes_read
+            .set(this.bytes_read.get() + data.len() as u64);
         if this.native_callback.get().on_data(data)? {
             return Ok(());
         }

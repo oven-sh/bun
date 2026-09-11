@@ -1120,7 +1120,8 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    this->setConsoleClient(new Bun::ConsoleObject(console));
+    m_consoleObject = makeUnique<Bun::ConsoleObject>(console);
+    this->setConsoleClient(*m_consoleObject);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,

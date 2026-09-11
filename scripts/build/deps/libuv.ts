@@ -62,7 +62,8 @@ export const libuv: Dependency = {
   // comment as the rationale.
   //
   // win-pipe-read-req-count-across-callback: interim, delete when #40023
-  // lands. uv__process_pipe_read_req decrements reqs_pending last, like every
+  // lands (workarounds.ts "libuv-win-pipe-read-req-count" fails configure
+  // then). uv__process_pipe_read_req decrements reqs_pending last, like every
   // other DECREASE_PENDING_REQ_COUNT user (libuv/libuv#1843 moved this one
   // up). JS that runs inside read_cb can still re-enter the loop (#33261, a
   // bug that #40023 removes). Until then a uv_close() from that JS plus the

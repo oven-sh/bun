@@ -29,7 +29,7 @@
  *     ambiguous case.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
@@ -176,6 +176,26 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "libuv-win-pipe-read-req-count",
+    issue: "https://github.com/oven-sh/bun/pull/40023",
+    description:
+      "libuv's uv__process_pipe_read_req drops reqs_pending before read_cb, so a uv_close() from JS " +
+      "inside read_cb plus a nested uv_run() (#33261) frees the uv_pipe_t under it. " +
+      "patches/libuv/win-pipe-read-req-count-across-callback.patch decrements last until JS stops " +
+      "running inside libuv callbacks.",
+    applies: cfg => cfg.windows,
+    expectedToBeFixed: cfg => {
+      // #40023 dispatches every libuv completion after uv_run returns, through
+      // src/libuv_sys/deferred.rs; with that, nothing closes a pipe from inside
+      // its own read_cb. If it lands in another shape, point this at whatever
+      // marks it.
+      return existsSync(join(cfg.cwd, "src", "libuv_sys", "deferred.rs"));
+    },
+    cleanup:
+      `Delete patches/libuv/win-pipe-read-req-count-across-callback.patch, its line and comment in the ` +
+      `patches list in scripts/build/deps/libuv.ts, and this entry.`,
   },
 ];
 

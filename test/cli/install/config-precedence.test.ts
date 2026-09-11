@@ -453,6 +453,33 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    { flag: 2, outcome: "beats", concurrentScripts: 1, events: ["Starting", "Starting", "Finished", "Finished"] },
+    { flag: 1, outcome: "beats", concurrentScripts: 2, events: ["Starting", "Finished", "Starting", "Finished"] },
+    // 0 is not a limit. The flag and bunfig both read it as "not set".
+    { flag: 0, outcome: "yields to", concurrentScripts: 1, events: ["Starting", "Finished", "Starting", "Finished"] },
+  ])(
+    "--concurrent-scripts=$flag $outcome bunfig concurrentScripts = $concurrentScripts",
+    async ({ concurrentScripts, flag, events }) => {
+      const dep = (name: string) => JSON.stringify({ name, version: "1.0.0", scripts: { postinstall: "echo hi" } });
+      using dir = tempDir("config-precedence", {
+        // Only the hoisted linker applies the limit.
+        "project/bunfig.toml": bunfig({ linker: "hoisted", concurrentScripts }),
+        "project/package.json": packageJson({ a: "file:./a", b: "file:./b" }, { trustedDependencies: ["a", "b"] }),
+        "project/a/package.json": dep("a"),
+        "project/b/package.json": dep("b"),
+      });
+      const { stderr, exitCode } = await install(String(dir), ["--verbose", `--concurrent-scripts=${flag}`]);
+      expect(stderr).not.toContain("error:");
+      // --verbose logs each spawn and each exit of a package's scripts. The installer spawns as many
+      // packages as the limit allows before it waits for an exit: both with a limit of 2, one with 1.
+      expect(Array.from(stderr.matchAll(/\[Scripts\] (Starting|Finished) scripts for/g), match => match[1])).toEqual(
+        events,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("~/.npmrc install-strategy applies when bunfig does not set a linker", async () => {
     using dir = tempDir("config-precedence", {
       "home/.npmrc": "install-strategy=linked\n",

@@ -153,8 +153,9 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
-            // Placeholder only — every constructor supplies the real value
-            // (`cli.concurrent_scripts` or `cpu_count * 2`).
+            // Placeholder only. Every constructor supplies the real default
+            // (`cpu_count * 2` for an install). `load()` then applies bunfig's
+            // `concurrentScripts`, then `--concurrent-scripts`.
             max_concurrent_lifecycle_scripts: 0,
             publish_config: PublishConfig::default(),
             ca: Box::default(),
@@ -795,6 +796,11 @@ impl Options {
 
             if let Some(save_text_lockfile) = cli.save_text_lockfile {
                 self.save_text_lockfile = Some(save_text_lockfile);
+            }
+
+            // 0 is "not set", like `concurrentScripts = 0` in bunfig. A limit of 0 never starts a script.
+            if let Some(concurrent_scripts) = cli.concurrent_scripts.filter(|&n| n != 0) {
+                self.max_concurrent_lifecycle_scripts = concurrent_scripts;
             }
 
             if let Some(min_age_ms) = cli.minimum_release_age_ms {

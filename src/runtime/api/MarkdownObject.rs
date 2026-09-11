@@ -1038,9 +1038,7 @@ impl<'a> ParseRenderer<'a> {
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.
-/// An element with a callback collects its children in its own buffer; on
-/// leave the callback gets them and its result goes to the enclosing buffer.
-/// An element without one writes straight into the enclosing buffer.
+/// Only an element with a callback buffers its children; the rest write to the enclosing buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
     // Note: #allocator field dropped — global mimalloc.

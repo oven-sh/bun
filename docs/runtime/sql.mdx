@@ -660,16 +660,13 @@ const sql = new SQL({
   //   cert: "path/to/cert.pem",
   // },
 
-  // Callbacks
-  onconnect: client => {
-    console.log("Connected to MySQL");
+  // Callbacks (see "Connection callbacks" below)
+  onconnect: err => {
+    if (!err) console.log("Connected to MySQL");
   },
-  onclose: (client, err) => {
-    if (err) {
-      console.error("MySQL connection error:", err);
-    } else {
-      console.log("MySQL connection closed");
-    }
+  onclose: err => {
+    // err.code is e.g. ERR_MYSQL_CONNECTION_CLOSED or ERR_MYSQL_IDLE_TIMEOUT
+    console.log("MySQL connection closed:", err);
   },
 });
 ```
@@ -709,12 +706,13 @@ const sql = new SQL({
   //   },
   // },
 
-  // Callbacks
-  onconnect: client => {
-    console.log("Connected to PostgreSQL");
+  // Callbacks (see "Connection callbacks" below)
+  onconnect: err => {
+    if (!err) console.log("Connected to PostgreSQL");
   },
-  onclose: client => {
-    console.log("PostgreSQL connection closed");
+  onclose: err => {
+    // err.code is e.g. ERR_POSTGRES_CONNECTION_CLOSED or ERR_POSTGRES_IDLE_TIMEOUT
+    console.log("PostgreSQL connection closed:", err);
   },
 });
 ```
@@ -738,12 +736,16 @@ const sql = new SQL({
   strict: true, // Enable strict mode for better type safety
   safeIntegers: false, // Use BigInt for integers exceeding JS number range
 
-  // Callbacks
-  onconnect: client => {
-    console.log("SQLite database opened");
+  // Callbacks (see "Connection callbacks" below)
+  onconnect: err => {
+    if (err) {
+      console.error("Failed to open SQLite database:", err);
+    } else {
+      console.log("SQLite database opened");
+    }
   },
-  onclose: client => {
-    console.log("SQLite database closed");
+  onclose: err => {
+    console.log("SQLite database closed:", err);
   },
 });
 ```
@@ -756,6 +758,13 @@ const sql = new SQL({
 - **Memory Databases**: Using `:memory:` creates a temporary database that exists only for the connection lifetime.
 
 </Accordion>
+
+### Connection callbacks
+
+`onconnect` and `onclose` each receive a single argument, `err`, which is an `Error` or `null`. Neither callback receives the connection.
+
+- `onconnect` is called once for each connection that is opened, with `null`. SQLite passes the error instead when the database could not be opened. PostgreSQL and MySQL report a failed connection attempt through `onclose`, not `onconnect`.
+- `onclose` is called once for each connection that closes, with the error describing why it closed. `err` is set even when you closed the connection yourself: `sql.close()` passes `ERR_POSTGRES_CONNECTION_CLOSED` / `ERR_MYSQL_CONNECTION_CLOSED` (for SQLite, an `Error` with the message `"Connection closed"`), `idleTimeout` passes `ERR_POSTGRES_IDLE_TIMEOUT` / `ERR_MYSQL_IDLE_TIMEOUT`, and a failed connection attempt passes the connection error, such as `ERR_POSTGRES_CONNECTION_REFUSED`.
 
 ---
 

@@ -1012,6 +1012,10 @@ impl<'a> Parser<'a> {
                         }
                         // An enum above can only see the constants declared before it.
                         js_ast::StmtData::SLocal(local) => p.record_ts_enum_constants(&local),
+                        // The enums inside are visited with the namespace's part, after this loop.
+                        js_ast::StmtData::SNamespace(namespace) => {
+                            p.compute_enum_values_inside_namespace(namespace.stmts.slice())
+                        }
                         _ => {}
                     }
                 }

@@ -58,7 +58,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
 /// Version 30: TypeScript enum initializers fold references to `const` variables.
-const EXPECTED_VERSION: u32 = 30;
+/// Version 31: TypeScript enum initializers fold members of enums nested in an earlier namespace.
+const EXPECTED_VERSION: u32 = 31;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

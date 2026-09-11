@@ -2589,4 +2589,48 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("ts/EnumReferencesEnumInsideEarlierNamespace", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace NS {
+          export enum Inner { X = 3, S = "s" }
+          export namespace Deep {
+            enum Hidden { H = 100 }
+            export enum Flags { A = 1 << 0, B = 1 << 4, AB = A | B, H = Hidden.H }
+          }
+          export enum Merged { P = 200 }
+          export enum Merged { Q = P + 1, R }
+        }
+        enum Outer { A = NS.Inner.X, B, C = NS.Deep.Flags.AB, D, E = NS["Deep"].Flags["H"], F = NS.Merged.R, G, S = NS.Inner.S }
+        namespace Later {
+          export namespace L { export enum Z { Q = 7 } }
+          export enum D { A = L.Z.Q, B }
+        }
+        console.log(JSON.stringify([Outer, Later.D]));
+        export { Outer };
+      `,
+      "/other.ts": /* ts */ `
+        import { Outer } from "./entry";
+        console.log(JSON.stringify([Outer.B, Outer.G, Outer.S]));
+      `,
+    },
+    entryPoints: ["/entry.ts", "/other.ts"],
+    run: [
+      {
+        file: "/out/entry.js",
+        stdout:
+          '[{"3":"A","4":"B","17":"C","18":"D","100":"E","202":"F","203":"G","A":3,"B":4,"C":17,"D":18,"E":100,"F":202,"G":203,"S":"s"},{"7":"A","8":"B","A":7,"B":8}]',
+      },
+      {
+        file: "/out/other.js",
+        stdout:
+          '[{"3":"A","4":"B","17":"C","18":"D","100":"E","202":"F","203":"G","A":3,"B":4,"C":17,"D":18,"E":100,"F":202,"G":203,"S":"s"},{"7":"A","8":"B","A":7,"B":8}]\n[4,203,"s"]',
+      },
+    ],
+    onAfterBundle(api) {
+      // The values are known at bundle time, so the uses in the other module are inlined.
+      const other = api.readFile("/out/other.js");
+      expect(other).not.toMatch(/Outer\.[BGS]/);
+    },
+  });
 });

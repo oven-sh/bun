@@ -2432,6 +2432,38 @@ impl JSValue {
     pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
+    /// True when the iterator of `self` reports done on its first step. Takes that one
+    /// step only. Closes an iterator that has more, like `break` in a for-of.
+    pub fn is_iterable_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isIterableEmpty(this: JSValue, global: &JSGlobalObject) -> bool;
+        }
+        host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterableEmpty(self, global))
+    }
+    /// [`for_each`](Self::for_each), except that an iterator user code can observe gives
+    /// at most `limit` elements and is closed when it has more. An Array, Map, or Set whose
+    /// iteration is not observable is still read from its own storage in full.
+    pub fn for_each_with_limit(
+        self,
+        global: &JSGlobalObject,
+        limit: u32,
+        ctx: *mut c_void,
+        callback: ForEachCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEach`.
+            safe fn JSC__JSValue__forEachWithLimit(
+                this: JSValue,
+                global: &JSGlobalObject,
+                limit: u32,
+                ctx: *mut c_void,
+                callback: ForEachCallback,
+            );
+        }
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__forEachWithLimit(self, global, limit, ctx, callback)
+        })
+    }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
     pub fn for_each(
         self,

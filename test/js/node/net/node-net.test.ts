@@ -745,6 +745,69 @@ it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily 
   }
 });
 
+// https://github.com/oven-sh/bun/issues/42307 — destroy() from a 'connectionAttempt' listener nulls _handle before the
+// connect is dispatched. The connect must not start on a fresh native socket that no net.Socket owns.
+describe.concurrent("destroy() inside 'connectionAttempt'", () => {
+  async function run(autoSelectFamily: boolean) {
+    const accepted: string[] = [];
+    const server = createServer(c => {
+      accepted.push(`${c.remoteAddress}:${c.remotePort}`);
+      c.on("error", () => {});
+      c.end();
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = server.address().port;
+      const lookup = (_host, opts, cb) =>
+        process.nextTick(
+          cb,
+          null,
+          opts.all
+            ? [
+                { address: "127.0.0.1", family: 4 },
+                { address: "127.0.0.1", family: 4 },
+              ]
+            : "127.0.0.1",
+          4,
+        );
+      const closed: Promise<void>[] = [];
+      let attempts = 0;
+      for (let i = 0; i < 10; i++) {
+        const s = connect({ host: "localhost", port, lookup, autoSelectFamily });
+        s.on("error", () => {});
+        s.on("connectionAttempt", () => {
+          attempts++;
+          s.destroy();
+        });
+        closed.push(new Promise<void>(resolve => s.on("close", () => resolve())));
+      }
+      await Promise.all(closed);
+
+      // The kernel completes loopback connects in the order they were issued, so once the control socket is accepted
+      // every connect dispatched before it has been accepted too. Only the control socket may show up.
+      const control = connect(port, "127.0.0.1");
+      control.on("error", () => {});
+      await once(control, "connect");
+      const controlKey = `${control.localAddress}:${control.localPort}`;
+      while (!accepted.includes(controlKey)) await once(server, "connection");
+      await once(control, "close");
+
+      expect(attempts).toBe(10);
+      expect(accepted).toEqual([controlKey]);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("does not open a connection (single address)", async () => {
+    await run(false);
+  });
+
+  it("does not open a connection (autoSelectFamily)", async () => {
+    await run(true);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/37086 — node's pending uv_connect_t keeps the loop alive even on an
 // unref'd/non-reading handle, so unref()/pause() issued before or while connecting only take effect once connected.
 describe.concurrent("unref()/pause() around connect()", () => {

@@ -60,7 +60,7 @@ if (mode === "end" || mode === "destroySoon") {
   client.destroy();
   peer.close();
   report({ peerSawFin: true, writableFinished, readyState, destroyed });
-} else if (mode === "server-end") {
+} else if (mode === "server-end" || mode === "server-end-same-tick") {
   const clientSawFin = Promise.withResolvers();
   let serverSocket;
   const server = net.createServer(raw => {
@@ -72,13 +72,15 @@ if (mode === "end" || mode === "destroySoon") {
     socket.on("error", () => {});
     raw.on("error", () => {});
     socket.on("finish", () => log.push("finish"));
-    // bun's wrap adopts the connection's handle on a later turn, so end() from
-    // the turn after the wrap is the reported shape: the engine runs and waits
-    // for a client flight that never arrives.
-    setImmediate(() => {
+    const end = () => {
       log.push(`end secureConnecting=${socket.secureConnecting}`);
       socket.end();
-    });
+    };
+    // bun's wrap adopts the connection's handle on a later turn. end() from the
+    // turn after the wrap finds the engine waiting for a client flight that
+    // never arrives. end() in the wrap's own tick finds no handle yet.
+    if (mode === "server-end") setImmediate(end);
+    else end();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
@@ -93,6 +95,31 @@ if (mode === "end" || mode === "destroySoon") {
   serverSocket?.destroy();
   server.close();
   report({ clientSawFin: true });
+} else if (mode === "end-over-connecting-socket") {
+  // The zero-length chunk is parked until the wrapped socket connects. It then
+  // reaches the engine ahead of the handshake, so the close_notify and the FIN
+  // follow the handshake and the server sees a clean end.
+  const serverSawEnd = Promise.withResolvers();
+  const server = tls.createServer({ key: process.env.TLS_KEY, cert: process.env.TLS_CERT }, socket => {
+    socket.on("error", () => {});
+    socket.on("data", () => {});
+    socket.on("end", () => serverSawEnd.resolve());
+  });
+  server.on("tlsClientError", serverSawEnd.reject);
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const raw = net.connect({ port: server.address().port, host: "127.0.0.1" });
+  const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+  for (const event of ["secureConnect", "finish", "close"]) client.on(event, () => log.push(event));
+  client.on("error", error => log.push(`error:${error.code}`));
+  client.on("data", () => {});
+  log.push(`end connecting=${client.connecting}`);
+  client.end("");
+
+  await Promise.all([once(client, "close"), serverSawEnd.promise]);
+
+  server.close();
+  report({ serverSawEnd: true });
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

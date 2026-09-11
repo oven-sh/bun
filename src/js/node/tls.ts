@@ -897,9 +897,11 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  if (!this._handle) return callback();
+  const handle = this._handle;
+  // A socket that wraps a connecting one emits no 'connect' for NetSocket.prototype._final to wait for.
+  if (!handle && this.connecting) return callback();
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
-  if (this.secureConnecting && this[kPreHandshakeWrite]) {
+  if (handle && this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213

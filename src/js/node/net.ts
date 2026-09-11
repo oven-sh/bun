@@ -1323,6 +1323,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      // A write parked while the socket this one wraps was connecting reaches the engine here, not through _write.
+      if (self.secureConnecting) self[kPreHandshakeWrite] = true;
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
@@ -2113,6 +2115,9 @@ Socket.prototype.connect = function connect(...args) {
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
+                  // The native open callback ran inside upgradeTLSDeferred: a write parked
+                  // for this connect completed there, before the handle was assigned.
+                  this.emit(kUpgradeAttached);
                 } else {
                   this._handle = null;
                   throw new Error("Invalid socket");
@@ -2280,6 +2285,12 @@ Socket.prototype._final = function _final(callback) {
     return this.once("connect", this._final.bind(this, callback));
   }
   const socket = this._handle;
+
+  // See _write: a TLS wrap attaches its native handle after the wrap itself.
+  // kclosed: that handle already closed and detached, nothing is left to attach.
+  if (!socket && this[kupgraded] && !this.destroyed && !this[kclosed]) {
+    return this.once(kUpgradeAttached, this._final.bind(this, callback));
+  }
 
   // already closed call destroy
   if (!socket) return callback();

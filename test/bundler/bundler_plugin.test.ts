@@ -1040,6 +1040,67 @@ describe("bundler", () => {
     },
   });
 
+  // An onLoad hook that matches an asset and returns nothing leaves the file to
+  // its own loader. The linker used to abort, because nothing recorded that the
+  // build has an asset to copy.
+  test.concurrent("plugin/onLoad that declines an asset leaves it to the file loader", async () => {
+    using dir = tempDir("plugin-onload-declines-asset", {
+      "index.ts": `
+        import asset from "./asset.bin";
+        import mod from "./mod.js" with { type: "file" };
+        console.log(JSON.stringify([asset, mod]));
+      `,
+      "asset.bin": "asset bytes",
+      "mod.js": "export default 1;",
+      "build.mjs": `
+        import { basename } from "node:path";
+        const declined = [];
+        const result = await Bun.build({
+          entrypoints: ["./index.ts"],
+          outdir: "./out",
+          naming: { asset: "[name].[ext]" },
+          throw: false,
+          plugins: [
+            {
+              name: "decline",
+              setup(build) {
+                build.onLoad({ filter: /\\.(bin|js)$/ }, args => {
+                  declined.push(basename(args.path));
+                });
+              },
+            },
+          ],
+        });
+        console.log(
+          JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => output.kind + " " + basename(output.path)).sort(),
+            declined: declined.sort(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: true,
+      logs: [],
+      outputs: ["asset asset.bin", "asset mod.js", "entry-point index.js"],
+      declined: ["asset.bin", "mod.js"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   itBundled("plugin/OnEndBasic", ({ root }) => {
     let onEndCalled = false;
 

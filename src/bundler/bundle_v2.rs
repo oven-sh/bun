@@ -4642,6 +4642,13 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
+                        // The enqueue site left the asset bookkeeping to the plugin's answer.
+                        let index = load.source_index.get() as usize;
+                        if this.graph.input_files.items_loader()[index].should_copy_for_bundling() {
+                            this.graph.input_files.items_side_effects_mut()[index] =
+                                bun_ast::SideEffects::NoSideEffectsPureData;
+                            this.graph.estimated_file_loader_count += 1;
+                        }
                         this.graph.pool().schedule(load.parse_task_mut());
                         return;
                     }

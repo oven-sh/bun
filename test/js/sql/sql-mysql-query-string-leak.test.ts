@@ -20,7 +20,7 @@ if (isDockerEnabled()) {
       using dir = tempDir("mysql-query-string-leak", {
         "fixture.js": /* js */ `
         const { SQL } = require("bun");
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
 
         const sql = new SQL({ url: process.env.MYSQL_URL, max: 1 });
 

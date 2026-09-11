@@ -1788,7 +1788,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1867,7 +1867,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).

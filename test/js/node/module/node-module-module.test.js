@@ -526,7 +526,7 @@ console.log("survived", require("./late.js"));`,
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);

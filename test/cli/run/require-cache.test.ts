@@ -64,7 +64,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const noChildren = module.children = { indexOf() { return 0; } }; // disable children tracking
           function bust() {
             const mod = require.cache[path];
@@ -123,7 +123,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -173,7 +173,7 @@ describe.concurrent("require.cache", () => {
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             delete require.cache[path];
           }
@@ -234,7 +234,7 @@ describe.concurrent("require.cache", () => {
           "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
-          const rss = process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           function bust() {
             const mod = require.cache[path];
             if (mod) {

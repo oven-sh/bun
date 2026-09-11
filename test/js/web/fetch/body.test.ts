@@ -1328,7 +1328,7 @@ describe.concurrent("string body consumption does not leak", () => {
           : `b => new Response(b)`;
       const src = `
         const SZ = 2_000_000, WARM = 50, BLOCK = 40;
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};

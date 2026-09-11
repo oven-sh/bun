@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "../expectBundled";
+import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
 // rewrites component bodies to call `_c(n)` to allocate a memo cache of `n` slots.
@@ -1480,6 +1480,128 @@ describe("bundler", () => {
       });
     }
   }
+
+  // The compiler lowers the call the visit pass made of each JSX element into
+  // HIR and builds a new call from that. Both steps have to use the call shape
+  // of the file's JSX runtime. The classic runtime, and `key` after a spread in
+  // the automatic one, calls `factory(type, props, ...children)`: the third
+  // argument is a child and not a key, `key` stays in `props`, and no
+  // `jsx`/`jsxDEV` is imported.
+  const jsxCallShapeEntry = (prelude: string, jsx: string) => /* jsx */ `
+    ${prelude}
+    export function App({ a, k, rest }) {
+      const o = { a };
+      return (${jsx});
+    }
+    console.log(JSON.stringify(App({ a: "A", k: "K", rest: { id: "r" } })));
+  `;
+  const jsxCallShapeRuntime = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      exports.Fragment = "React.Fragment";
+      exports.createElement = (type, props, ...children) => ({ createElement: type, props, children });
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      exports.Fragment = "Fragment";
+      exports.jsxDEV = (type, props, key) => ({ jsxDEV: type, props, key });
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      exports.c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+    `,
+  };
+  // `App` was compiled when its memo cache is in the bundle.
+  const expectCompiled = (api: { readFile(file: string): string }) =>
+    expect(api.readFile("/out.js")).toContain("// node_modules/react/compiler-runtime.js");
+
+  const classicRuntimes: Record<string, { prelude: string; tsconfig?: string; jsx?: BundlerTestInput["jsx"] }> = {
+    Pragma: { prelude: `/** @jsxRuntime classic */ import React from "react";` },
+    Tsconfig: { prelude: `import React from "react";`, tsconfig: `{ "compilerOptions": { "jsx": "react" } }` },
+    Flags: {
+      prelude: `import { createElement as h, Fragment as Frag } from "react";`,
+      jsx: { runtime: "classic", factory: "h", fragment: "Frag" },
+    },
+  };
+  for (const [name, { prelude, tsconfig, jsx }] of Object.entries(classicRuntimes)) {
+    itBundled(`react-compiler/ClassicRuntime-${name}`, {
+      files: {
+        "/entry.jsx": jsxCallShapeEntry(
+          prelude,
+          /* jsx */ `
+            <>
+              <div title={o.a}>hi</div>
+              <p key={k} {...rest}>{a}<b>x</b></p>
+              <ul id="u"><li>1</li><li>2</li><li>3</li><li>4</li></ul>
+              <span />
+            </>
+          `,
+        ),
+        ...(tsconfig && { "/tsconfig.json": tsconfig }),
+        ...jsxCallShapeRuntime,
+      },
+      jsx,
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      onAfterBundle: expectCompiled,
+      run: {
+        validate({ stdout }) {
+          expect(JSON.parse(stdout)).toEqual({
+            createElement: "React.Fragment",
+            props: null,
+            children: [
+              { createElement: "div", props: { title: "A" }, children: ["hi"] },
+              {
+                createElement: "p",
+                props: { key: "K", id: "r" },
+                children: ["A", { createElement: "b", props: null, children: ["x"] }],
+              },
+              {
+                createElement: "ul",
+                props: { id: "u" },
+                children: ["1", "2", "3", "4"].map(n => ({ createElement: "li", props: null, children: [n] })),
+              },
+              { createElement: "span", props: null, children: [] },
+            ],
+          });
+        },
+      },
+    });
+  }
+
+  itBundled("react-compiler/AutomaticRuntimeKeyAfterSpread", {
+    files: {
+      "/entry.jsx": jsxCallShapeEntry(
+        "",
+        /* jsx */ `
+          <div>
+            <p {...rest} key={k}>{a}</p>
+            <i key={k} {...rest}>{o.a}</i>
+          </div>
+        `,
+      ),
+      ...jsxCallShapeRuntime,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    bundleWarnings: {
+      "/entry.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    },
+    onAfterBundle: expectCompiled,
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout)).toEqual({
+          jsxDEV: "div",
+          props: {
+            children: [
+              { createElement: "p", props: { id: "r", key: "K" }, children: ["A"] },
+              { jsxDEV: "i", props: { id: "r", children: "A" }, key: "K" },
+            ],
+          },
+        });
+      },
+    },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

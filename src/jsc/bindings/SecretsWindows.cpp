@@ -3,6 +3,7 @@
 #if OS(WINDOWS)
 
 #include "Secrets.h"
+#include <wtf/Lock.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/NeverDestroyed.h>
 #include <windows.h>
@@ -61,6 +62,24 @@ static CredentialFramework* credentialFramework()
         }
     });
     return framework->loaded ? &framework.get() : nullptr;
+}
+
+// Credential Manager loses changes when calls overlap: CredWriteW and CredDeleteW
+// return TRUE, but the entry is absent (or still present) afterwards. An
+// overlapping CredReadW is enough to cause it, so reads take the lock too. Every
+// job runs on its own pool thread. The lock orders the calls of this process
+// only: a call from another process can still overlap.
+static Lock credentialManagerLock;
+
+template<typename Call>
+static bool callCredentialManager(DWORD& errorCode, const Call& call)
+{
+    Locker locker { credentialManagerLock };
+    if (call()) {
+        return true;
+    }
+    errorCode = GetLastError();
+    return false;
 }
 
 // Convert CString to Windows wide string
@@ -179,8 +198,9 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     cred.CredentialBlob = (LPBYTE)password.data();
     cred.Persist = CRED_PERSIST_ENTERPRISE;
 
-    if (!framework->CredWriteW(&cred, 0)) {
-        updateError(err, GetLastError());
+    DWORD errorCode = ERROR_SUCCESS;
+    if (!callCredentialManager(errorCode, [&] { return framework->CredWriteW(&cred, 0); })) {
+        updateError(err, errorCode);
     }
 
     // Best-effort scrub of plaintext from memory.
@@ -206,8 +226,8 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
     PCREDENTIALW cred = nullptr;
-    if (!framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, &cred)) {
-        DWORD errorCode = GetLastError();
+    DWORD errorCode = ERROR_SUCCESS;
+    if (!callCredentialManager(errorCode, [&] { return framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, &cred); })) {
         updateError(err, errorCode);
         return std::nullopt;
     }
@@ -242,14 +262,9 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
-    if (!framework->CredDeleteW(targetNameWide.data(), CRED_TYPE_GENERIC, 0)) {
-        DWORD errorCode = GetLastError();
+    DWORD errorCode = ERROR_SUCCESS;
+    if (!callCredentialManager(errorCode, [&] { return framework->CredDeleteW(targetNameWide.data(), CRED_TYPE_GENERIC, 0); })) {
         updateError(err, errorCode);
-
-        if (errorCode == ERROR_NOT_FOUND) {
-            return false;
-        }
-
         return false;
     }
 

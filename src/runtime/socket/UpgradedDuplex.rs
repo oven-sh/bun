@@ -64,7 +64,7 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// [`Self::pause_stream`] paused `origin`; [`Self::on_close`] undoes it.
+    /// [`Self::pause_stream`] called `origin.pause()`; [`Self::on_close`] undoes it.
     pub reads_paused: Cell<bool>,
 }
 
@@ -224,11 +224,12 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__pause_stream")]
     pub(crate) fn pause_stream(&self) -> bool {
         // Before `start_tls` the handshake still needs the reads, and `on_open` clears the owner's paused flag.
-        if self.wrapper_ref().is_none() || !self.call_origin("pause") {
+        if self.wrapper_ref().is_none() {
             return false;
         }
+        // Set first and kept on failure: `pause()` is user code that can close this socket, or throw after it paused.
         self.reads_paused.set(true);
-        true
+        self.call_origin("pause")
     }
 
     #[uws_callback(export = "UpgradedDuplex__resume_stream")]

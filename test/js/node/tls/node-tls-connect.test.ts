@@ -1024,48 +1024,85 @@ describe("a TLS socket over a Duplex transport reads it with backpressure", () =
     });
   });
 
-  it("destroying a paused socket lets a net.Socket transport read its peer's close", async () => {
-    // A server wrap over a net.Socket with unflushed plain writes cannot take
-    // the fd over, so it reads the net.Socket like any other Duplex. Nothing
-    // destroys that net.Socket along with the TLS socket, so one left paused
-    // would never read the client's FIN and would stay open for good.
-    const sockets: { destroy(): unknown }[] = [];
-    const accepted = Promise.withResolvers<{ transport: net.Socket; wrapped: TLSSocket }>();
-    await using listener = net.createServer(transport => {
-      transport.cork();
-      transport.write("!");
-      const wrapped = new TLSSocket(transport, serverContext());
-      transport.uncork();
-      sockets.push(wrapped, transport);
-      accepted.resolve({ transport, wrapped });
+  describe("a server wrap over a net.Socket with unflushed plain writes", () => {
+    // Such a wrap cannot take the fd over, so it reads the net.Socket like any
+    // other Duplex. Nothing destroys that net.Socket along with the TLS
+    // socket, so one left paused would never read the client's FIN and would
+    // stay open for good.
+    async function connectedWrap() {
+      const sockets: { destroy(): unknown }[] = [];
+      const accepted = Promise.withResolvers<{ transport: net.Socket; wrapped: TLSSocket }>();
+      const listener = net.createServer(transport => {
+        transport.cork();
+        transport.write("!");
+        const wrapped = new TLSSocket(transport, serverContext());
+        transport.uncork();
+        sockets.push(wrapped, transport);
+        accepted.resolve({ transport, wrapped });
+      });
+      // close() waits for the connections, so they go first.
+      const dispose = async () => {
+        for (const socket of sockets) socket.destroy();
+        await listener[Symbol.asyncDispose]();
+      };
+      try {
+        await once(listener.listen(0, "127.0.0.1"), "listening");
+        const clientTransport = net.connect((listener.address() as AddressInfo).port, "127.0.0.1");
+        sockets.push(clientTransport);
+        const [{ transport, wrapped }, [greeting]] = await Promise.all([
+          accepted.promise,
+          once(clientTransport, "data"),
+        ]);
+        expect(String(greeting)).toBe("!");
+        const client = tls.connect({ socket: clientTransport, rejectUnauthorized: false });
+        sockets.push(client);
+        const failed = firstErrorOf(wrapped, client);
+        await Promise.race([Promise.all([once(wrapped, "secure"), once(client, "secureConnect")]), failed]);
+        return { transport, wrapped, client, failed, [Symbol.asyncDispose]: dispose };
+      } catch (err) {
+        await dispose();
+        throw err;
+      }
+    }
+
+    it("destroying the paused socket lets the transport read its peer's close", async () => {
+      await using wrap = await connectedWrap();
+      const { transport, wrapped, client, failed } = wrap;
+      wrapped.pause();
+      // Without backpressure the engine takes the whole payload and the
+      // client's close_notify, answers it, and the client closes.
+      const outcome = Promise.race([
+        once(transport, "pause").then(() => "transport paused"),
+        once(client, "close").then(() => "client closed"),
+        failed,
+      ]);
+      client.end(payload);
+      expect(await outcome).toBe("transport paused");
+
+      const closed = once(transport, "close");
+      wrapped.destroy();
+      await Promise.race([closed, failed]);
+      expect(transport.destroyed).toBe(true);
     });
-    // Declared after the listener, so it runs first: close() waits for them.
-    using _ = destroyedOnExit(sockets);
-    await once(listener.listen(0, "127.0.0.1"), "listening");
-    const clientTransport = net.connect((listener.address() as AddressInfo).port, "127.0.0.1");
-    sockets.push(clientTransport);
-    const [{ transport, wrapped }, [greeting]] = await Promise.all([accepted.promise, once(clientTransport, "data")]);
-    expect(String(greeting)).toBe("!");
-    const client = tls.connect({ socket: clientTransport, rejectUnauthorized: false });
-    sockets.push(client);
-    const failed = firstErrorOf(wrapped, client);
-    await Promise.race([Promise.all([once(wrapped, "secure"), once(client, "secureConnect")]), failed]);
 
-    wrapped.pause();
-    // Without backpressure the engine takes the whole payload and the client's
-    // close_notify, answers it, and the client closes.
-    const outcome = Promise.race([
-      once(transport, "pause").then(() => "transport paused"),
-      once(client, "close").then(() => "client closed"),
-      failed,
-    ]);
-    client.end(payload);
-    expect(await outcome).toBe("transport paused");
-
-    const closed = once(transport, "close");
-    wrapped.destroy();
-    await closed;
-    expect(transport.destroyed).toBe(true);
+    it("a destroy from the transport's 'pause' listener does the same", async () => {
+      await using wrap = await connectedWrap();
+      const { transport, wrapped, client, failed } = wrap;
+      wrapped.pause();
+      // The engine is still inside the transport's pause() when the socket closes.
+      let destroyedFromPause = false;
+      transport.once("pause", () => {
+        destroyedFromPause = true;
+        wrapped.destroy();
+      });
+      const closed = once(transport, "close");
+      client.end(payload);
+      await Promise.race([closed, failed]);
+      expect({ destroyedFromPause, transportDestroyed: transport.destroyed }).toEqual({
+        destroyedFromPause: true,
+        transportDestroyed: true,
+      });
+    });
   });
 });
 

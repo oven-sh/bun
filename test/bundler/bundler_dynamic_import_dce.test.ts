@@ -4302,6 +4302,98 @@ describe("bundler", () => {
     run: { stdout: "0" },
   });
 
+  // ── An item the linker does not bind is still a property read ─────────
+  // `ns.a` off a `require()` / `import()` local prints as written when the
+  // importee is CommonJS or external, or when `ns` escapes. It then reads a
+  // property of an object: a call through it passes `ns` as `this`, and a
+  // getter can run.
+
+  const lazyExports = /* js */ `
+    let count = 0;
+    const log = [];
+    Object.defineProperty(exports, "boot", { enumerable: true, get() { return ++count; } });
+    Object.defineProperty(exports, "count", { enumerable: true, get() { return count; } });
+    Object.defineProperty(exports, "first", { enumerable: true, get() { log.push("first"); return 1; } });
+    Object.defineProperty(exports, "second", { enumerable: true, get() { log.push("second"); return 2; } });
+    exports.log = log;
+  `;
+
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "MinifySyntax" : "";
+
+    // TypeScript's CommonJS output calls an import as `(0, util_1.who)()`.
+    itBundled(`dynamic_import_dce/UnboundItemCallWithoutThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const util_1 = require("./util.cjs");
+          console.log(util_1.who(), (0, util_1.who)(), (0, util_1.who)?.());
+          console.log((true ? util_1.who : 0)(), (1 && util_1.who)(), (0 || util_1.who)(), (null ?? util_1.who)());
+          function viaLocal() {
+            const who = util_1.who;
+            return who();
+          }
+          console.log(viaLocal());
+          const ns = await import("./util.cjs");
+          console.log(ns.who(), (0, ns.who)());
+          await import("./util.cjs").then(m => console.log(m.who(), (0, m.who)()));
+          const escaped = require("./esm.js");
+          globalThis.escaped = escaped;
+          console.log(escaped.who(), (0, escaped.who)());
+        `,
+        "/util.cjs": /* js */ `
+          "use strict";
+          exports.tag = "exports";
+          exports.who = function () { return this === undefined ? "undefined" : this.tag; };
+        `,
+        "/esm.js": /* js */ `
+          export const tag = "namespace";
+          export function who() { return this === undefined ? "undefined" : this.tag; }
+        `,
+      },
+      minifySyntax,
+      run: {
+        stdout: [
+          "exports undefined undefined",
+          "undefined undefined undefined undefined",
+          "undefined",
+          "exports undefined",
+          "exports undefined",
+          "namespace undefined",
+        ].join("\n"),
+      },
+    });
+
+    // An unused read stays, and a read does not move past another read.
+    itBundled(`dynamic_import_dce/UnboundItemReadRunsGetter${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = require("./lazy.cjs");
+          ns.boot;
+          void ns.boot;
+          const unused = ns.boot;
+          if (ns.boot) {}
+          console.log(ns.count);
+          function order() {
+            const first = ns.first;
+            return ns.second + first;
+          }
+          order();
+          console.log(ns.log.join());
+          const ext = require("ext");
+          ext.boot;
+          void ext.boot;
+          console.log(ext.count);
+        `,
+        "/lazy.cjs": lazyExports,
+      },
+      runtimeFiles: { "/node_modules/ext/index.js": lazyExports },
+      external: ["ext"],
+      target: "bun",
+      minifySyntax,
+      run: { stdout: "4\nfirst,second\n2" },
+    });
+  }
+
   // ── Cases that keep the namespace object ──────────────────────────────
 
   function itKeepsNamespace(

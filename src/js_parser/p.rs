@@ -1182,6 +1182,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Is `expr` the import item that `maybe_rewrite_property_access` made of
+    /// `ns.a`, where `ns` is a local that holds an `import()` / `require()`
+    /// result? The linker binds it only to an export of a bundled ES module.
+    /// Otherwise it prints `ns.a`, a property read on an object: a getter can
+    /// run, and a call through it passes `ns` as `this`.
+    pub(crate) fn is_namespace_local_read(&self, expr: &Expr) -> bool {
+        matches!(
+            expr.data,
+            js_ast::ExprData::EImportIdentifier(id)
+                if self.symbols[id.ref_.inner_index() as usize]
+                    .namespace_alias
+                    .as_ref()
+                    .is_some_and(|alias| alias.was_originally_property_access)
+        )
+    }
+
+    /// Does a call through `expr` pass a `this`? If so, a wrapper that strips
+    /// it, such as `(0, expr)()`, has to stay.
+    pub(crate) fn has_value_for_this_in_call(&self, expr: &Expr) -> bool {
+        expr.has_value_for_this_in_call() || self.is_namespace_local_read(expr)
+    }
+
     /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
     /// import items. One already read (before its declaration, or from a
     /// function above it) stays a local, since that read must not see the
@@ -3112,14 +3134,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ECall(mut e) => {
                     // Don't substitute something into a call target that could change "this"
-                    match replacement.data {
-                        js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
-                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                            {
-                                break 'outer;
-                            }
-                        }
-                        _ => {}
+                    if self.has_value_for_this_in_call(&replacement)
+                        && matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                    {
+                        break 'outer;
                     }
 
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
@@ -6295,7 +6313,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // So we deliberately ignore this edge case and always treat import item
                 // references as being side-effect free.
-                return true;
+                //
+                // `ns.a` off a `require()` / `import()` local is not an ES6 import in
+                // the source. It stays a property read unless the linker binds it.
+                return !self.is_namespace_local_read(expr);
             }
             js_ast::ExprData::EIf(ex) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test)

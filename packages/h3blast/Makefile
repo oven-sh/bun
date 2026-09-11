@@ -19,6 +19,11 @@ DEP_DIRS  := $(addprefix $(OBJ)/,$(DEPS))
 LIBDEPS   := build/libdeps.a
 
 BIN := h3blast
+SRCS := src/h3blast.c src/boringssl_hooks.c
+
+# Bun's debug profile compiles its deps with ASan, so the runtime has to be
+# linked in too. Expanded in the recipe, once $(LIBDEPS) exists.
+ASAN = $(if $(shell nm -u $(LIBDEPS) | grep -m1 __asan_init),-fsanitize=address)
 
 all: $(BIN)
 
@@ -32,9 +37,9 @@ $(LIBDEPS):
 	@echo "  AR    $@"
 	@find $(DEP_DIRS) -name '*.o' | xargs ar rcs $@
 
-$(BIN): src/h3blast.c $(LIBDEPS)
+$(BIN): $(SRCS) $(LIBDEPS)
 	@echo "  CC    $@"
-	@$(CC) $(CFLAGS) -o $@ $< $(LIBDEPS) $(LDFLAGS)
+	@$(CC) $(CFLAGS) $(ASAN) -o $@ $(SRCS) $(LIBDEPS) $(LDFLAGS)
 
 clean:
 	rm -f $(BIN) $(LIBDEPS)

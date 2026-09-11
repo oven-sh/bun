@@ -46,7 +46,14 @@ cd packages/h3blast
 make                   # → ./h3blast
 ```
 
-`PROFILE=debug make` links against the debug objects instead.
+`PROFILE=debug make` links against the debug objects instead. Bun's debug
+profile builds them with ASan, so the Makefile links the ASan runtime too. Expect
+lower numbers than from a release h3blast.
+
+Bun compiles BoringSSL to call embedder hooks (allocator, PEM base64) that the
+`bun` binary defines. `src/boringssl_hooks.c` defines libc-backed ones for
+h3blast. If the link fails with an undefined `OPENSSL_*` symbol after a
+BoringSSL change, define the new hook there.
 
 ## Usage
 

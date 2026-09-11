@@ -6,8 +6,6 @@
 //!   * Recv window  — how much DATA the peer may still send us; replenished by emitting
 //!     WINDOW_UPDATE once enough has been consumed.
 
-#![allow(dead_code)]
-
 use super::wire::{DEFAULT_WINDOW_SIZE, ErrorCode, MAX_WINDOW_SIZE};
 
 /// Outbound (send) window. Signed because a SETTINGS-driven INITIAL_WINDOW_SIZE decrease can push

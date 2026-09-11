@@ -3,8 +3,6 @@
 //! This is part of the from-scratch rewrite of `node:http2` (replacing the ported
 //! `h2_frame_parser.rs`). Spec section numbers reference RFC 9113 unless noted.
 
-#![allow(dead_code)]
-
 /// RFC 9113 §3.4: the 24-octet client connection preface.
 pub const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 

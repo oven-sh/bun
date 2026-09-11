@@ -297,6 +297,82 @@ server.close();`,
   });
 });
 
+// --compile inlines process.platform / process.arch / process.versions.bun as
+// constants describing the target executable, so the version has to come from
+// the `-vX.Y.Z` segment of the target rather than from the bun running the build.
+// Using the running bun as the base executable avoids downloading a real v1.2.3
+// and keeps the non-inlined `Bun.version` visibly different from the inlined value.
+describe("compile inlines process.versions.bun of the --target version", () => {
+  const files = {
+    "app.js": `console.log(JSON.stringify({
+      inlined: process.versions.bun,
+      runtime: Bun.version,
+      platform: process.platform,
+      arch: process.arch,
+    }));`,
+  };
+  const expected = {
+    stdout:
+      JSON.stringify({
+        inlined: "1.2.3",
+        runtime: Bun.version,
+        platform: process.platform,
+        arch: process.arch,
+      }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  };
+
+  async function run(exe: string) {
+    await using proc = Bun.spawn({ cmd: [exe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("bun build --compile --target=bun-v1.2.3", async () => {
+    using dir = tempDir("build-compile-target-version-cli", files);
+    const cwd = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-v1.2.3",
+        `--compile-executable-path=${bunExe()}`,
+        "./app.js",
+        "--outfile=app",
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExitCode).toBe(0);
+
+    expect(await run(join(cwd, isWindows ? "app.exe" : "app"))).toEqual(expected);
+  });
+
+  test("Bun.build({ compile: { target: 'bun-v1.2.3' } })", async () => {
+    using dir = tempDir("build-compile-target-version-api", files);
+    const cwd = String(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(cwd, "app.js")],
+      compile: {
+        target: "bun-v1.2.3" as Bun.Build.CompileTarget,
+        executablePath: bunExe(),
+        outfile: join(cwd, "app"),
+      },
+    });
+    expect(result.success).toBe(true);
+
+    expect(await run(result.outputs[0].path)).toEqual(expected);
+  });
+});
+
 describe("compiled binary validity", () => {
   test("output binary has valid executable header", async () => {
     using dir = tempDir("build-compile-valid-header", {

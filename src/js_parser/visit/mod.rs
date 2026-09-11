@@ -1771,6 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
+            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending
@@ -1789,10 +1790,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             p.react_compiler = Some(rc);
             if let Some((new_body, result)) = compiled {
-                debug_assert!(
-                    p.react_compiler_may_replace_body,
-                    "ReactCompilerState::may_compile said no for a function that compiled"
-                );
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);

@@ -2030,6 +2030,370 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+  // A `let` that is declared before a memo block and reassigned inside it is an
+  // output of the block: the block stores it after the computation and restores
+  // it when the cache hits. Every component below renders several times against
+  // one memo cache, and has to render what the uncompiled component renders.
+  // `*` marks a render that got the same `list` array as the render before it,
+  // so each line also shows that the block still hits its cache.
+  const reassignedLocalOutput = `
+    ConditionalReassign [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]]
+    ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
+    UpdateExpression [2,["x"]] [3,["x"]] [3,["x"]]*
+    CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
+    NestedScope ["flagged",[[1],"x"]] ["flagged",[[1],"x"]]* ["none",[[1],"x"]]
+    PrunedNestedScope [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]]* ["k",[{"v":1,"w":1},{"v":2,"w":1}]]
+    LoopReassign ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[3]]
+    JoinBeforeScope ["a1",["x"]] ["a2",["x"]] ["base",["x"]] ["base",["x"]]*
+    ChainedScopes ["1two",[[0],[]]] ["2two",[[0],[]]] ["2two",[[0],[]]]* ["onetwo",[[],[]]]
+    DependencyPath ["b",["a","b"]] ["b",["b","b"]] ["b",["b","b"]]*
+    DestructuringSwap ["2:1",[0]] ["1:2",[0]] ["1:2",[0]]*
+    ForOfOnly ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]* ["none",null]
+    ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
+    useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
+    useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
+    NullableEntryThenProp ["anon",["anon"]] ["ann",["ann"]] ["ann",["ann"]]*
+    BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render } from "react";
+
+          // The else path leaves label with the value it had on entry, so that
+          // value is an input of the block although no instruction in it reads it.
+          function ConditionalReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = "flagged";
+            } else {
+              list.push(p.b);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          // The block reads label, so it is a dependency. Its cache slot has to
+          // hold the value on entry, not the value after the reassignment.
+          function ReadThenReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) label = label + 1;
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function UpdateExpression(p) {
+            let n = p.count;
+            const list = [];
+            if (p.flag) n++;
+            list.push(p.b);
+            return <div label={n} list={list} />;
+          }
+
+          function CounterInLoop(p) {
+            let count = 0;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) count++;
+              list.push(item.v);
+            }
+            return <div label={count} list={list} />;
+          }
+
+          // inner has its own memo block inside the block of outer. When the
+          // outer cache hits, the inner block does not run.
+          function NestedScope(p) {
+            let label = "none";
+            const outer = [];
+            const inner = [];
+            if (p.flag) label = "flagged";
+            inner.push(p.a);
+            outer.push(inner);
+            outer.push(p.b);
+            return <div label={label} list={outer} />;
+          }
+
+          // The block of copy is in a loop, so the compiler prunes it.
+          function PrunedNestedScope(p) {
+            let hasOk = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              const copy = { v: item.v };
+              if (item.ok) hasOk = true;
+              copy.w = p.w;
+              list.push(copy);
+            }
+            return <div label={hasOk} list={list} />;
+          }
+
+          function LoopReassign(p) {
+            let found = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={found} list={list} />;
+          }
+
+          // The value on entry is itself the join of two paths, and nothing reads
+          // it between that join and the block.
+          function JoinBeforeScope(p) {
+            let label = "base";
+            if (p.primary) label = p.a;
+            const list = [];
+            if (p.flag) label = "flagged";
+            else list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function ChainedScopes(p) {
+            let label = p.count;
+            const first = [];
+            if (p.f1) label = "one";
+            else first.push(p.x);
+            const second = [];
+            if (p.f2) label = label + "two";
+            else second.push(p.y);
+            return <div label={label} list={[first, second]} />;
+          }
+
+          function DependencyPath(p) {
+            let object = p.o;
+            const list = [];
+            list.push(object.x);
+            if (p.flag) object = p.o2;
+            list.push(object.x);
+            return <div label={object.x} list={list} />;
+          }
+
+          function DestructuringSwap(p) {
+            let a = p.a;
+            let b = p.b;
+            const list = [];
+            if (p.flag) [a, b] = [b, a];
+            list.push(p.x);
+            return <div label={a + ":" + b} list={list} />;
+          }
+
+          // The memo block belongs to the loop, not to another value.
+          function ForOfOnly(p) {
+            let derived = [p.value, ...p.items];
+            for (const item of p.items) {
+              if (item < 0) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          const check = () => false;
+          function ForWithContinue(p) {
+            let derived = [p.value, ...p.items];
+            for (let i = 0; i < 2; i++) {
+              if (i === 0) continue;
+              if (check()) derived = null;
+            }
+            return <div label={derived ? derived.join(",") : "none"} list={derived} />;
+          }
+
+          // facebook/react#37224. Each check has a memo block of its own, and both
+          // blocks restore hasErrors. "use memo" because the compiler only infers a
+          // hook from a call to another hook.
+          function useFormErrors(name, existingNames, settings) {
+            "use memo";
+            let hasErrors = false;
+
+            const nameErrors = [];
+            if (existingNames.includes(name)) {
+              hasErrors = true;
+              nameErrors.push("That name is already taken");
+            }
+
+            const settingsErrors = [];
+            if (settings.chartView === "histogram" && !settings.xVariableId) {
+              hasErrors = true;
+              settingsErrors.push("Pick an X variable");
+            }
+
+            return { label: hasErrors, list: [nameErrors, settingsErrors] };
+          }
+
+          // The value on entry is a parameter that nothing but the join reads.
+          function useBareParam(p, label) {
+            "use memo";
+            const list = [];
+            if (p.flag) label = p.x;
+            else list.push(p.b);
+            return { label, list };
+          }
+
+          // user.profile.name is read from the value after the join. The value on
+          // entry can be null, so nothing may read that path before the block.
+          function NullableEntryThenProp({ user, fallbackUser }) {
+            let u = user;
+            const list = [];
+            if (!u) u = fallbackUser;
+            list.push(u.profile.name);
+            return <div label={u.profile.name} list={list} />;
+          }
+
+          // Both arms assign, so the value on entry does not reach the read at all.
+          function BothArmsThenProp(p) {
+            let object = p.a;
+            const list = [];
+            if (p.kind) object = p.b;
+            else object = p.c;
+            list.push(object.v.w);
+            return <div label={object.v.w} list={list} />;
+          }
+
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(args => {
+              try {
+                const { label, list } = render(Component, ...(Array.isArray(args) ? args : [args]));
+                const hit = list === previous ? "*" : "";
+                previous = list;
+                return JSON.stringify([label, list]) + hit;
+              } catch (error) {
+                return "THROW(" + error.message + ")";
+              }
+            });
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          const none = [{ ok: false, v: 1 }, { ok: false, v: 2 }];
+          const some = [{ ok: true, v: 3 }];
+          const o1 = { x: "a" }, o2 = { x: "b" }, o3 = { x: "b" };
+
+          run(
+            ConditionalReassign,
+            { count: 1, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 2, flag: false, b: "x" },
+            { count: 3, flag: true, b: "x" },
+          );
+          run(
+            ReadThenReassign,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+          );
+          run(
+            UpdateExpression,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+          );
+          run(CounterInLoop, { items: some }, { items: some }, { items: none });
+          run(
+            NestedScope,
+            { flag: true, a: 1, b: "x" },
+            { flag: true, a: 1, b: "x" },
+            { flag: false, a: 1, b: "x" },
+          );
+          run(
+            PrunedNestedScope,
+            { initial: "i", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "j", items: some, w: 1 },
+            { initial: "k", items: none, w: 1 },
+          );
+          run(
+            LoopReassign,
+            { initial: "i", items: none },
+            { initial: "j", items: none },
+            { initial: "j", items: none },
+            { initial: "k", items: some },
+          );
+          run(
+            JoinBeforeScope,
+            { primary: true, a: "a1", flag: false, b: "x" },
+            { primary: true, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a2", flag: false, b: "x" },
+            { primary: false, a: "a3", flag: false, b: "x" },
+          );
+          run(
+            ChainedScopes,
+            { count: 1, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 2, f1: false, f2: true, x: 0, y: 0 },
+            { count: 3, f1: true, f2: true, x: 0, y: 0 },
+          );
+          run(DependencyPath, { o: o1, o2, flag: true }, { o: o3, o2, flag: true }, { o: o3, o2, flag: true });
+          run(
+            DestructuringSwap,
+            { a: 1, b: 2, flag: true, x: 0 },
+            { a: 2, b: 1, flag: true, x: 0 },
+            { a: 2, b: 1, flag: true, x: 0 },
+          );
+          const positive = [1, 2];
+          run(
+            ForOfOnly,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+            { value: 7, items: [1, -2] },
+          );
+          run(
+            ForWithContinue,
+            { value: 5, items: positive },
+            { value: 6, items: positive },
+            { value: 6, items: positive },
+          );
+          const names = ["taken"];
+          const bar = { chartView: "bar" };
+          const histogram = { chartView: "histogram" };
+          run(
+            useFormErrors,
+            ["free", names, bar],
+            ["taken", names, bar],
+            ["taken", names, bar],
+            ["free", names, histogram],
+            ["taken", names, histogram],
+          );
+          const flagOff = { flag: false, x: "X", b: "b" };
+          run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
+          const ann = { profile: { name: "ann" } };
+          run(
+            NullableEntryThenProp,
+            { user: null, fallbackUser: { profile: { name: "anon" } } },
+            { user: ann, fallbackUser: null },
+            { user: ann, fallbackUser: null },
+          );
+          const w = value => ({ v: { w: value } });
+          const b1 = w("b"), c1 = w("c");
+          run(
+            BothArmsThenProp,
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 0, b: null, c: c1 },
+          );
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, ...args) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(...args);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? reassignedLocalOutput : reassignedLocalOutput.replaceAll("*", "") },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

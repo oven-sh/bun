@@ -129,4 +129,9 @@ git -C "$tmp" grep -l '\breact_compiler_ast\b' -- 'compiler/crates/*/src/*.rs' \
   || echo "(none)"
 echo
 
+# See "Behaviour that differs from upstream" in src/react_compiler/DESIGN.md.
+echo "### sites that fix what upstream still gets wrong (keep them) ###"
+git grep -n 'Not in upstream' -- src/react_compiler ':!src/react_compiler/DESIGN.md' || echo "(none)"
+echo
+
 echo "When porting is done: echo $new > $ported_file"

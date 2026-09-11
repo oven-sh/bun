@@ -66,6 +66,32 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+### Behaviour that differs from upstream
+
+A few sites fix miscompiles that upstream still has. Each one carries a comment
+that starts with "Not in upstream" and says what upstream does instead:
+
+```sh
+git grep -n "Not in upstream" src/react_compiler
+```
+
+Keep them on a sync. `react-compiler-fixtures.test.ts` cannot tell whether they
+survived: it compiles the upstream fixtures in `infer` mode, which skips most
+of their functions, and none of these sites changes what Bun emits for one. The
+tests in `test/bundler/transpiler/react-compiler.test.ts` that run compiled
+components can.
+
+When upstream fixes the same case, run Bun's test for it against upstream's fix
+before you drop Bun's. Example: the sites for a `let` that is declared before a
+reactive scope and reassigned inside it (facebook/react#37224). The open
+upstream fix, facebook/react#37273, adds the same dependency. It differs in
+three ways: it tests `operand.reactive`, which `infer_reactive_places` leaves
+unset on the operands after the first reactive one, it stores the dependency
+before the computation, which breaks the rule that the cache never holds inputs
+without outputs, and it does not pass a reassignment to the enclosing scope.
+`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock` has a component for
+each.
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

@@ -401,6 +401,47 @@ impl<'a> LinkerContext<'a> {
         Some(other)
     }
 
+    /// Calls `each` with every other file that loading `source_index` loads first:
+    /// what the import records of its live parts load
+    /// (`file_loaded_by_import`) and the files declaring the bindings those
+    /// parts use. A CSS or HTML file has no parts; every record counts.
+    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        if self.graph.ast.items_css()[source_index as usize].is_some()
+            || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
+        {
+            for record in records.iter() {
+                if record.source_index.is_valid() && record.source_index.get() != source_index {
+                    each(record.source_index.get());
+                }
+            }
+            return;
+        }
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &record_index in part.import_record_indices.iter() {
+                if let Some(other) =
+                    self.file_loaded_by_import(&records[record_index as usize], source_index)
+                    && other != source_index
+                {
+                    each(other);
+                }
+            }
+            for dependency in part.dependencies.iter() {
+                if dependency.source_index.get() != source_index {
+                    each(dependency.source_index.get());
+                }
+            }
+        }
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -962,7 +1003,6 @@ impl<'a> LinkerContext<'a> {
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
-        let loaders: *const [Loader] = self.parse_graph().input_files.items_loader();
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
         // (no reallocation during tree-shaking). All column derefs share that
@@ -978,7 +1018,6 @@ impl<'a> LinkerContext<'a> {
             parts_live,
             distances,
             file_entry_bits,
-            loaders,
         ) = unsafe {
             (
                 &*entry_points,
@@ -989,7 +1028,6 @@ impl<'a> LinkerContext<'a> {
                 &mut *parts_live,
                 &mut *distances,
                 &mut *file_entry_bits,
-                &*loaders,
             )
         };
         let entry_points_len = entry_points.len();
@@ -1040,11 +1078,7 @@ impl<'a> LinkerContext<'a> {
 
             let mut ctx = CodeSplitCtx {
                 distances,
-                parts,
-                import_records,
                 file_entry_bits,
-                css_reprs,
-                loaders,
                 queue: std::collections::VecDeque::new(),
             };
 
@@ -2818,20 +2852,16 @@ pub enum TreeShakeWork {
     },
 }
 
-pub(crate) struct CodeSplitCtx<'a, 'r> {
+pub(crate) struct CodeSplitCtx<'r> {
     pub(crate) distances: &'r mut [u32],
-    pub(crate) parts: &'r [bun_ast::PartList<'a>],
-    pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
-    pub(crate) loaders: &'r [Loader],
     pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
 impl<'a> LinkerContext<'a> {
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
-        ctx: &mut CodeSplitCtx<'a, '_>,
+        ctx: &mut CodeSplitCtx<'_>,
         source_index: crate::IndexInt,
         entry_points_count: usize,
         distance: u32,
@@ -2866,55 +2896,12 @@ impl<'a> LinkerContext<'a> {
                 ctx.distances[source_index as usize] = distance;
             }
             let out_dist = distance + 1;
-
-            let records = &ctx.import_records[source_index as usize];
-
-            // CSS and HTML files have no parts: follow every import record.
-            if ctx.css_reprs[source_index as usize].is_some()
-                || ctx.loaders[source_index as usize] == Loader::Html
-            {
-                for record in records.iter() {
-                    if record.source_index.is_valid()
-                        && !ctx.file_entry_bits[record.source_index.get() as usize]
-                            .is_set(entry_points_count)
-                    {
-                        ctx.queue.push_back((record.source_index.get(), out_dist));
-                    }
+            let (file_entry_bits, queue) = (&ctx.file_entry_bits, &mut ctx.queue);
+            self.for_each_file_loaded_by(source_index, |other| {
+                if !file_entry_bits[other as usize].is_set(entry_points_count) {
+                    queue.push_back((other, out_dist));
                 }
-                continue;
-            }
-
-            // A dead part prints nothing, so only live parts reach other files.
-            let parts_live = &self.graph.parts_live[source_index as usize];
-            for (part_index, part) in ctx.parts[source_index as usize]
-                .as_slice()
-                .iter()
-                .enumerate()
-            {
-                if !parts_live.is_set(part_index) {
-                    continue;
-                }
-
-                for &import_index in part.import_record_indices.iter() {
-                    let Some(other) =
-                        self.file_loaded_by_import(&records[import_index as usize], source_index)
-                    else {
-                        continue;
-                    };
-                    if !ctx.file_entry_bits[other as usize].is_set(entry_points_count) {
-                        ctx.queue.push_back((other, out_dist));
-                    }
-                }
-
-                for dependency in part.dependencies.iter() {
-                    let dep = dependency.source_index.get();
-                    if dep != source_index
-                        && !ctx.file_entry_bits[dep as usize].is_set(entry_points_count)
-                    {
-                        ctx.queue.push_back((dep, out_dist));
-                    }
-                }
-            }
+            });
         }
     }
 

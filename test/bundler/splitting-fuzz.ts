@@ -81,9 +81,14 @@ function generateGraph(seed: number): Graph {
     }
   }
 
+  // Draws for shapes added after seeds were pinned come from a stream of their own, so old seeds keep their graphs.
+  const later = rng(seed ^ 0x5bd1e995);
+
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     let src = `import { note, read, attempt, later } from "./log.ts";\n`;
+    const importsItself = later() < 0.1 && !pure.has(i);
+    if (importsItself) src += `import * as self${i} from "./f${i}.ts";\n`;
     const uses: string[] = [];
     let base: number | undefined;
     for (const j of staticImports[i]) {
@@ -112,6 +117,8 @@ function generateGraph(seed: number): Graph {
         src += `export function load${i}_${l.target}() { return require("./f${l.target}.ts").get${l.target}(); }\n`;
     }
     if (!isPure) {
+      // An import nothing uses is dropped from a .ts file.
+      if (importsItself) uses.push(`read("f${i}<self", () => typeof self${i}.get${i})`);
       for (const j of staticImports[i]) {
         if (chance(0.5)) uses.push(`read("f${i}<f${j}", () => get${j}())`);
         if (chance(0.2)) uses.push(`read("f${i}<C${j}", () => new C${j}().tag())`);

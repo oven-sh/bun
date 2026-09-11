@@ -741,6 +741,7 @@ The renamed symbols are then used during final code generation to produce output
 - Computes, per `import()` entry point, which other entry points are guaranteed to be loaded already whenever it loads
 - Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
+- Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 
 #### `computeCrossChunkDependencies.rs`

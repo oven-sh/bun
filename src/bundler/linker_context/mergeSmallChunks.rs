@@ -167,6 +167,8 @@ struct Group {
     wants_inits: bool,
     /// Neither merged nor merged into.
     pinned: bool,
+    /// See `entries_loaded_mid_evaluation`.
+    loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
     pure: bool,
     /// Groups holding files that this group's live parts statically import
@@ -190,6 +192,12 @@ struct Group {
 }
 
 impl Group {
+    fn loads_entry_of(&self, entries: &AutoBitSet) -> bool {
+        self.loads_mid_evaluation
+            .as_ref()
+            .is_some_and(|loads| loads.has_intersection(entries))
+    }
+
     fn new(
         target: Target,
         bits: &AutoBitSet,
@@ -207,6 +215,7 @@ impl Group {
             recheck: false,
             wants_inits: false,
             pinned,
+            loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
             importers: Vec::new(),
@@ -253,6 +262,16 @@ fn fold(groups: &mut [Group], from: usize, into: usize) {
     }
     merge_sorted(&mut target.needs_init, &source.needs_init);
     merge_sorted(&mut target.provides_init, &source.provides_init);
+    if let Some(loads) = source.loads_mid_evaluation.take() {
+        union_into(&mut target.loads_mid_evaluation, loads);
+    }
+}
+
+fn union_into(slot: &mut Option<AutoBitSet>, bits: AutoBitSet) {
+    match slot {
+        Some(all) => all.set_union(&bits),
+        None => *slot = Some(bits),
+    }
 }
 
 /// Follow `merged_into` links to the group that now owns the files.
@@ -587,6 +606,104 @@ fn immediate_dominators<'a>(
     idom
 }
 
+/// Per group, the `require()`d entries that can start loading while the group is being evaluated (`None`: none).
+fn entries_loaded_mid_evaluation(
+    this: &LinkerContext,
+    sync_calls: &ArrayHashMap<u32, AutoBitSet>,
+    required_sync: &AutoBitSet,
+    file_entry_bits: &[AutoBitSet],
+    group_of_file: &[usize],
+    groups_len: usize,
+    entries: usize,
+) -> crate::Result<Vec<Option<AutoBitSet>>> {
+    let mut loads: Vec<Option<AutoBitSet>> = Vec::new();
+    loads.resize_with(groups_len, || None);
+    if sync_calls.count() == 0 {
+        return Ok(loads);
+    }
+    // `leads_to[x]`: what loading `x` can go on to `require()`.
+    let mut leads_to: Vec<Option<AutoBitSet>> = Vec::new();
+    leads_to.resize_with(entries, || None);
+    for (&file, calls) in sync_calls.keys().iter().zip(sync_calls.values()) {
+        let mut reached_by = file_entry_bits[file as usize].iterator::<true, true>();
+        while let Some(x) = reached_by.next() {
+            if required_sync.is_set(x) {
+                union_into(&mut leads_to[x], calls.clone()?);
+            }
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for x in 0..entries {
+            let Some(mut further) = leads_to[x].take() else {
+                continue;
+            };
+            let before = further.count();
+            let mut via = further.clone()?;
+            via.unset(x);
+            let mut via = via.iterator::<true, true>();
+            while let Some(y) = via.next() {
+                if let Some(next) = &leads_to[y] {
+                    further.set_union(next);
+                }
+            }
+            changed |= further.count() != before;
+            leads_to[x] = Some(further);
+        }
+    }
+    // A file is being evaluated while what it imports is, so what a file can
+    // start loading, every file that statically imports its way to it can.
+    let mut file_loads: Vec<Option<AutoBitSet>> = Vec::new();
+    file_loads.resize_with(group_of_file.len(), || None);
+    for (&file, calls) in sync_calls.keys().iter().zip(sync_calls.values()) {
+        let mut all = calls.clone()?;
+        let mut direct = calls.iterator::<true, true>();
+        while let Some(x) = direct.next() {
+            if let Some(further) = &leads_to[x] {
+                all.set_union(further);
+            }
+        }
+        file_loads[file as usize] = Some(all);
+    }
+    let mut importers: Vec<Vec<u32>> = vec![Vec::new(); group_of_file.len()];
+    for source_index in this.graph.reachable_files.iter() {
+        let file = source_index.get();
+        if group_of_file[file as usize] != usize::MAX {
+            this.for_each_file_loaded_by(file, |other| importers[other as usize].push(file));
+        }
+    }
+    let mut changed: Vec<u32> = sync_calls.keys().to_vec();
+    while let Some(file) = changed.pop() {
+        let Some(theirs) = file_loads[file as usize].take() else {
+            continue;
+        };
+        for &importer in &importers[file as usize] {
+            match &mut file_loads[importer as usize] {
+                Some(mine) if theirs.subset_of(mine) => {}
+                Some(mine) => {
+                    mine.set_union(&theirs);
+                    changed.push(importer);
+                }
+                slot => {
+                    *slot = Some(theirs.clone()?);
+                    changed.push(importer);
+                }
+            }
+        }
+        file_loads[file as usize] = Some(theirs);
+    }
+    for (file, file_loads) in file_loads.into_iter().enumerate() {
+        let Some(file_loads) = file_loads else {
+            continue;
+        };
+        // Only `sync_calls` keys and the importers filtered above have a set.
+        debug_assert!(group_of_file[file] != usize::MAX);
+        union_into(&mut loads[group_of_file[file]], file_loads);
+    }
+    Ok(loads)
+}
+
 /// Folds code-splitting chunks into other chunks where that is unobservable,
 /// so fewer modules are loaded at runtime.
 ///
@@ -606,7 +723,12 @@ fn immediate_dominators<'a>(
 ///    `x`'s chunk imports what it needs from the `main` chunk. Different
 ///    entries may cover different importers: with `import("./cmd")` in both
 ///    `main` and a lazy `repl`, the `{main, repl, cmd}` chunk loads iff `main`
-///    or `repl` does.
+///    or `repl` does. A chunk that can be in the middle of being evaluated
+///    when an entry of its class is loaded stays out of this: with
+///    `--target=bun` a `require()` of a split ES module loads that entry's
+///    chunk from inside the file making the call, and the other members must
+///    then be chunks that have finished or not started, not files further down
+///    the caller's own chunk.
 /// 2. A chunk whose live parts have no top-level side effects may join a chunk
 ///    loaded by a superset of its entries, as long as everything it imports is
 ///    already loaded wherever that target is (or is side-effect free too); the
@@ -616,7 +738,8 @@ fn immediate_dominators<'a>(
 ///    `init_x()` (a static import of a wrapped module, e.g. `react`) does not
 ///    count as a side effect when a chunk the target statically imports makes
 ///    the same call first, and no fold may close a static import cycle
-///    between chunks.
+///    between chunks or join a chunk to one that can be evaluating when an
+///    entry the other is needed by loads.
 ///
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
@@ -674,6 +797,8 @@ pub(crate) fn merge_small_chunks(
     // guaranteed to precede the target; folding shared code into the
     // importer's chunk could place it after the call site.
     let mut required_sync = AutoBitSet::init_empty(entry_points_len)?;
+    // ... and, per file making such calls, the entries it loads that way.
+    let mut sync_calls: ArrayHashMap<u32, AutoBitSet> = ArrayHashMap::new();
     for source_index in this.graph.reachable_files.iter() {
         let source_index = source_index.get();
         if !is_live_js(source_index) {
@@ -701,6 +826,14 @@ pub(crate) fn merge_small_chunks(
                     .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
                 {
                     required_sync.set(target_entry as usize);
+                    match sync_calls.entry(source_index) {
+                        MapEntry::Occupied(calls) => calls.into_mut().set(target_entry as usize),
+                        MapEntry::Vacant(calls) => {
+                            let mut called = AutoBitSet::init_empty(entry_points_len)?;
+                            called.set(target_entry as usize);
+                            calls.insert(called);
+                        }
+                    }
                 } else {
                     importer_bits[target_entry as usize]
                         .set_union(&file_entry_bits[source_index as usize]);
@@ -966,6 +1099,21 @@ pub(crate) fn merge_small_chunks(
         groups.put(key, group)?;
     }
 
+    for (group, loads) in entries_loaded_mid_evaluation(
+        this,
+        &sync_calls,
+        &required_sync,
+        file_entry_bits,
+        group_of_file,
+        groups.count(),
+        entry_points_len,
+    )?
+    .into_iter()
+    .enumerate()
+    {
+        groups.values_mut()[group].loads_mid_evaluation = loads;
+    }
+
     // Static dependencies between groups, along the edges that assigned
     // `File.entry_bits` (so a dependency's key is a superset of its
     // importer's) and symbol dependencies. Only rule 2 consults them.
@@ -976,22 +1124,10 @@ pub(crate) fn merge_small_chunks(
         if group_index == usize::MAX {
             continue;
         }
-        let parts_live = &this.graph.parts_live[source_index];
         let deps = &mut groups.values_mut()[group_index].deps;
-        for (part_index, part) in parts[source_index].as_slice().iter().enumerate() {
-            if !parts_live.is_set(part_index) {
-                continue;
-            }
-            for &record_index in part.import_record_indices.iter() {
-                let record = &import_records[source_index][record_index as usize];
-                if let Some(other) = this.file_loaded_by_import(record, source_index as u32) {
-                    deps.push(group_of_file[other as usize]);
-                }
-            }
-            for dependency in part.dependencies.iter() {
-                deps.push(group_of_file[dependency.source_index.get() as usize]);
-            }
-        }
+        this.for_each_file_loaded_by(source_index as u32, |other| {
+            deps.push(group_of_file[other as usize]);
+        });
     }
     // An entry point's chunk also imports every binding the entry re-exports
     // (`compute_cross_chunk_dependencies`).
@@ -1025,13 +1161,15 @@ pub(crate) fn merge_small_chunks(
     // parent loses bits its files had; it still runs before they do because
     // an entry that remains in the key precedes them and imports every chunk
     // with side effects carrying its bit (`compute_cross_chunk_dependencies`).
+    // A member that can be evaluating when an entry of the class loads stays
+    // out (rule 1 in the doc comment above).
     let mut folded_same = 0usize;
-    for (class_key, (_, members)) in classes.keys().iter().zip(classes.values()) {
+    for (class_key, (class, members)) in classes.keys().iter().zip(classes.values()) {
         let unpinned = || {
-            members
-                .iter()
-                .copied()
-                .filter(|&i| !groups.values()[i].pinned)
+            members.iter().copied().filter(|&i| {
+                let group = &groups.values()[i];
+                !group.pinned && !group.loads_entry_of(class)
+            })
         };
         let Some(target_index) = unpinned().max_by(|&a, &b| {
             (groups.keys()[a] == *class_key)
@@ -1047,6 +1185,13 @@ pub(crate) fn merge_small_chunks(
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index || group.pinned || group.target != Some(target_platform) {
+                continue;
+            }
+            if group.loads_entry_of(class) {
+                debug_merge!(
+                    "can be evaluating when an entry of its class loads: {}",
+                    bstr::BStr::new(sources[group.first_source as usize].path.pretty)
+                );
                 continue;
             }
             fold(groups.values_mut(), member, target_index);
@@ -1274,6 +1419,8 @@ pub(crate) fn merge_small_chunks(
                     || t.pinned
                     || t.target != c.target
                     || !c.loaded.subset_of(&t.loaded)
+                    || t.loads_entry_of(&c.loaded)
+                    || c.loads_entry_of(&t.loaded)
                 {
                     continue;
                 }

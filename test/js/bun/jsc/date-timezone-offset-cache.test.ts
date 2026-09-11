@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { isMacOS } from "harness";
 
 // JSC keeps the local time offset of the current zone in a small interval
 // cache (DateCache::DSTCache in vendor/WebKit/.../runtime/JSDateMath.cpp). It
@@ -21,7 +22,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 // The expectations come from Intl.DateTimeFormat, which asks ICU directly and
 // shares no state with Date, so they follow whatever tzdata this build has. A
 // scenario whose transitions the tzdata does not have fails, unless they are
-// predictions.
+// predictions or the tzdata is not ours.
+
+// The macOS build uses the operating system's ICU, and its tzdata can be years
+// old (the CI hosts do not have 2025a, which made -03 Paraguay's standard time
+// as of 2024-10-15). Every other build carries its own ICU.
+const tzdataIsOurs = !isMacOS;
 
 const originalTZ = process.env.TZ;
 afterAll(() => {
@@ -107,7 +113,7 @@ function makeScenario(
   const changesAt = (time: number) =>
     offsetOracle(time - msPerMinute) !== offsetOracle(time) || longName(time - msPerMinute) !== longName(time);
   if (!changesAt(first) || !changesAt(last)) {
-    if (!predicted)
+    if (!predicted && tzdataIsOurs)
       throw new Error(`${timeZone}: the tzdata in use has no transitions at ${firstTransition} and ${lastTransition}`);
     return null;
   }

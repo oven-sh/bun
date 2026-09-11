@@ -1031,6 +1031,154 @@ describe("application data written over a Duplex transport before the handshake 
   });
 });
 
+// A connected net.Socket that cannot hand its fd over (here another TLSSocket,
+// as in an HTTPS proxy tunnel) gets the same engine as a Duplex transport. It
+// starts on a later task and nothing emits 'connect' for it, so the wrapper
+// must not report `connecting` in between: whatever parks on 'connect' would
+// never resume. Node's rule is `connecting = socket.connecting || !socket._handle`:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+//
+// Each connection the server accepts gets a second, server-side TLS layer on top of it.
+async function listenTLSInTLS(onInner: (inner: TLSSocket) => void) {
+  const secureContext = tls.createSecureContext(COMMON_CERT_);
+  const server = tls.createServer(COMMON_CERT_, outer => {
+    outer.on("error", () => {});
+    const inner = new TLSSocket(outer, { isServer: true, secureContext });
+    inner.on("error", () => {});
+    onInner(inner);
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const outer = tls.connect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false });
+  await once(outer, "secureConnect");
+  return { server, outer };
+}
+
+describe("tls.connect({ socket }) over an established TLSSocket", () => {
+  it("is not connecting, and end() in the same tick emits 'finish'", async () => {
+    const { server, outer } = await listenTLSInTLS(inner => inner.resume());
+    let client: TLSSocket | undefined;
+    try {
+      client = tls.connect({ socket: outer, rejectUnauthorized: false });
+      const state = { connecting: client.connecting, pending: client.pending, readyState: client.readyState };
+      client.end();
+      expect(state).toEqual({ connecting: false, pending: false, readyState: "open" });
+      await once(client, "finish");
+      expect(client.writableFinished).toBe(true);
+    } finally {
+      client?.destroy();
+      outer.destroy();
+      server.close();
+    }
+  });
+
+  it("delivers end(data) issued in the same tick once the handshake completes", async () => {
+    // Several TLS records, and more than the stream buffers before it asks for 'drain'.
+    const payload = Buffer.alloc(100_000, "0123456789abcdef");
+    const received = Promise.withResolvers<Buffer>();
+    const { server, outer } = await listenTLSInTLS(inner => {
+      const chunks: Buffer[] = [];
+      inner.on("data", (chunk: Buffer) => chunks.push(chunk));
+      inner.on("end", () => {
+        received.resolve(Buffer.concat(chunks));
+        inner.end();
+      });
+    });
+    let client: TLSSocket | undefined;
+    try {
+      client = tls.connect({ socket: outer, rejectUnauthorized: false });
+      const log: string[] = [];
+      for (const event of ["connect", "secureConnect", "finish", "end", "close"]) {
+        client.on(event, () => log.push(event));
+      }
+      client.resume();
+      client.end(payload);
+      await once(client, "close");
+      const bytes = await received.promise;
+      expect({ log, bytes: bytes.length, intact: bytes.equals(payload) }).toEqual({
+        log: ["secureConnect", "finish", "end", "close"],
+        bytes: payload.length,
+        intact: true,
+      });
+    } finally {
+      client?.destroy();
+      outer.destroy();
+      server.close();
+    }
+  });
+});
+
+// The other half of node's rule: a socket that is still connecting keeps the flag until it connects.
+it("tls.connect({ socket }) stays connecting over a net.Socket that has yet to connect", async () => {
+  const server = tls.createServer(COMMON_CERT_, socket => {
+    socket.on("error", () => {});
+    socket.resume();
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const raw = net.connect((server.address() as AddressInfo).port);
+  const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+  try {
+    const whileConnecting = client.connecting;
+    await once(client, "secureConnect");
+    expect({ whileConnecting, afterHandshake: client.connecting }).toEqual({
+      whileConnecting: true,
+      afterHandshake: false,
+    });
+  } finally {
+    client.destroy();
+    raw.destroy();
+    server.close();
+  }
+});
+
+// The engine cannot take a string chunk, and a transport with a decoder hands
+// it one before the engine's start task runs. No connect is pending on such a
+// socket, so the failure must not depend on `connecting` to be reported.
+describe("a TLS engine over a wrapped stream that fails before it starts", () => {
+  function outcomeOf(client: TLSSocket) {
+    const { promise, resolve } = Promise.withResolvers<{ reported: boolean; hadError: boolean; destroyed: boolean }>();
+    let reported = false;
+    client.on("error", () => (reported = true));
+    client.on("close", hadError => resolve({ reported, hadError, destroyed: client.destroyed }));
+    return promise;
+  }
+  const failed = { reported: true, hadError: true, destroyed: true };
+
+  it("destroys a TLSSocket over an established TLSSocket with the error", async () => {
+    const { server, outer } = await listenTLSInTLS(inner => inner.resume());
+    let client: TLSSocket | undefined;
+    try {
+      outer.setEncoding("utf8");
+      outer.unshift("not a TLS record");
+      client = tls.connect({ socket: outer, rejectUnauthorized: false });
+      expect(await outcomeOf(client)).toEqual(failed);
+    } finally {
+      client?.destroy();
+      outer.destroy();
+      server.close();
+    }
+  });
+
+  it("destroys a TLSSocket over a Duplex with the error", async () => {
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    transport.setEncoding("utf8");
+    transport.push("not a TLS record");
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    try {
+      expect(await outcomeOf(client)).toEqual(failed);
+    } finally {
+      client.destroy();
+      transport.destroy();
+    }
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

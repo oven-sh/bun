@@ -3,7 +3,7 @@ import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
-import { connect, createServer } from "node:tls";
+import { connect, createServer, type TLSSocket } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 0);
@@ -175,4 +175,72 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   }
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
+});
+
+// Same contract as "tls.connect({ socket }) over an established TLSSocket" in
+// node-tls-connect.test.ts: the pipe is connected, so the TLSSocket is not
+// `connecting` while its engine starts, and nothing waits on a 'connect' event
+// that a socket wrapped after it connected never emits.
+describe("tls.connect({ socket }) over a named pipe that is already connected", () => {
+  async function connectedPipe(onConnection: (socket: TLSSocket) => void) {
+    const server = createServer(tls, socket => {
+      socket.on("error", () => {});
+      onConnection(socket);
+    });
+    server.on("tlsClientError", () => {});
+    const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    server.listen(pipeName);
+    await once(server, "listening");
+    const pipe = net.connect(pipeName);
+    await once(pipe, "connect");
+    return { server, pipe };
+  }
+
+  it.if(isWindows)("is not connecting, and end() in the same tick emits 'finish'", async () => {
+    const { server, pipe } = await connectedPipe(socket => socket.resume());
+    let client: TLSSocket | undefined;
+    try {
+      client = connect({ socket: pipe, rejectUnauthorized: false });
+      const state = { connecting: client.connecting, pending: client.pending, readyState: client.readyState };
+      client.end();
+      expect(state).toEqual({ connecting: false, pending: false, readyState: "open" });
+      await once(client, "finish");
+      expect(client.writableFinished).toBe(true);
+    } finally {
+      client?.destroy();
+      pipe.destroy();
+      server.close();
+    }
+  });
+
+  it.if(isWindows)("delivers end(data) issued in the same tick once the handshake completes", async () => {
+    const received = Promise.withResolvers<string>();
+    const { server, pipe } = await connectedPipe(socket => {
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      socket.on("end", () => {
+        received.resolve(Buffer.concat(chunks).toString());
+        socket.end();
+      });
+    });
+    let client: TLSSocket | undefined;
+    try {
+      client = connect({ socket: pipe, rejectUnauthorized: false });
+      const log: string[] = [];
+      for (const event of ["connect", "secureConnect", "finish", "end", "close"]) {
+        client.on(event, () => log.push(event));
+      }
+      client.resume();
+      client.end("hello");
+      await once(client, "close");
+      expect({ log, received: await received.promise }).toEqual({
+        log: ["secureConnect", "finish", "end", "close"],
+        received: "hello",
+      });
+    } finally {
+      client?.destroy();
+      pipe.destroy();
+      server.close();
+    }
+  });
 });

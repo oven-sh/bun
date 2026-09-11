@@ -639,16 +639,22 @@ pub(crate) fn tick_queue_with_count(
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
+/// Every frame above this (`Bun__internal_dispatch_ready_poll` ->
+/// `on_kqueue_event`/`on_epoll_event` -> `on_update`) holds the poll only as
+/// this raw pointer, and so does this one: the handlers re-arm or deinit the
+/// slot through the pointer their owner keeps, so no frame on the chain may
+/// hold a reference into it while they run. An arm that hands the poll to such
+/// a handler passes `poll` itself, not a `&mut` reborrow.
+///
 /// # Safety
-/// `poll` must point at a live [`FilePoll`] for the duration of the call
-/// (guaranteed by `FilePoll::on_update`, the only caller).
+/// `poll` must point at a live [`FilePoll`] on entry (guaranteed by
+/// `FilePoll::on_update`, the only caller). The handler may deinit it; nothing
+/// reads `*poll` after the handler returns, here or in the callers.
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
-    // SAFETY: contract above.
-    let poll_ref = unsafe { &mut *poll };
-    let owner = poll_ref.owner;
-    let hup = poll_ref.flags.contains(PollFlag::Hup);
+    // SAFETY: contract above; both reads end with the statement.
+    let (owner, hup) = unsafe { ((*poll).owner, (*poll).flags.contains(PollFlag::Hup)) };
 
     debug_assert!(!owner.is_null());
 
@@ -729,8 +735,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // `Channel::process` re-enters the resolver via c-ares callbacks.
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
             let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
-            // SAFETY: `poll` outlives this call (caller contract).
-            resolver.on_dns_poll(unsafe { &mut *poll });
+            // Passed raw: those same callbacks re-register or deinit this poll
+            // through the resolver's poll map (`on_dns_socket_state`).
+            // SAFETY: `poll` is live per the contract above.
+            unsafe { resolver.on_dns_poll(poll) };
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]

@@ -1892,6 +1892,12 @@ fn codegen_base_instruction_value(
                     loc,
                 ));
             }
+            if matches!(
+                callee_expr.data,
+                ExprData::ERequireString(_) | ExprData::ERequireResolveString(_)
+            ) {
+                return Ok(callee_expr);
+            }
             let call_expr = Expr::init(
                 E::Call {
                     target: callee_expr,

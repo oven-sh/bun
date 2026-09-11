@@ -1447,6 +1447,10 @@ pub enum NonLocalKind {
     /// constant. The original `Expr` is carried whole so codegen emits it
     /// unchanged and the bundler keeps any `import_record_index` / `Ref` /
     /// variant tag it holds.
+    ///
+    /// A node that is a whole call (`import()`, `require("x")`,
+    /// `require.resolve("x")`) is lowered as the callee of a `CallExpression`,
+    /// so the compiler keeps its side effects. Codegen rebuilds the node.
     BunOpaque(bun_ast::Expr),
 }
 

@@ -315,10 +315,28 @@ pub(crate) fn lower_expression(
             value: PrimitiveValue::Boolean(lit.value),
             loc,
         }),
+        // The node is a whole call: `require("x")` runs module `x`. Lowered as
+        // a call, no pass drops, copies or moves it. Codegen emits the callee
+        // node in place of the call.
+        Data::ERequireString(_) | Data::ERequireResolveString(_) => {
+            let callee = lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::BunOpaque(*expr),
+                    },
+                    loc,
+                },
+            )?;
+            Ok(InstructionValue::CallExpression {
+                callee,
+                args: AstAlloc::vec(),
+                loc,
+            })
+        }
         Data::ERequireCallTarget
         | Data::ERequireResolveCallTarget
-        | Data::ERequireString(_)
-        | Data::ERequireResolveString(_)
         | Data::EImportMetaMain(_)
         | Data::ERequireMain => Ok(InstructionValue::LoadGlobal {
             binding: NonLocalBinding {

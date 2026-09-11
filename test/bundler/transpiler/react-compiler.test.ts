@@ -1480,6 +1480,175 @@ describe("bundler", () => {
       });
     }
   }
+
+  // `require("x")` runs module `x` the first time it is called. So the
+  // compiler has to keep the call, and keep it where it is written, also when
+  // nothing reads the value. Each form below requires a module that no other
+  // form requires, and that module logs when it runs. The line for a form is
+  // what the render logged, in order.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/RequireKeepsItsSideEffects-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          import { events } from "./log";
+          const lines: string[] = [];
+          for (const [name, form] of Object.entries(forms)) {
+            events.length = 0;
+            let result;
+            try {
+              result = form({ flag: true, a: 1 });
+            } catch (e) {
+              result = "threw " + e;
+            }
+            lines.push(name + "=" + result + " [" + events.join(", ") + "]");
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.tsx": /* tsx */ `
+          import { useEffect } from "react";
+          import { log } from "./log";
+
+          export function ExpressionStatement() {
+            useEffect(() => {});
+            require("./expression-statement.cjs");
+            return "ok";
+          }
+          export function UnusedLocal() {
+            useEffect(() => {});
+            const unused = require("./unused-local");
+            return "ok";
+          }
+          export function UnusedDestructure() {
+            useEffect(() => {});
+            const { name } = require("./unused-destructure.cjs");
+            return "ok";
+          }
+          export function InABranch({ flag }) {
+            useEffect(() => {});
+            if (flag) require("./in-a-branch.cjs");
+            return "ok";
+          }
+          export function ReadInACallbackOnly() {
+            useEffect(() => {});
+            const mod = require("./read-in-a-callback-only.cjs");
+            const read = () => mod.name;
+            log("render done");
+            return typeof read;
+          }
+          export function ReadAfterACall() {
+            useEffect(() => {});
+            const mod = require("./read-after-a-call");
+            log("between");
+            return mod.name;
+          }
+          export function BeforeACallInOneExpression({ a }) {
+            useEffect(() => {});
+            const both = [require("./before-a-call.cjs").name, log("arg " + a)];
+            return both.join("+");
+          }
+          export function useRequireInAHook() {
+            useEffect(() => {});
+            require("./in-a-hook.cjs");
+            return "ok";
+          }
+        `,
+        "/log.ts": /* ts */ `
+          export const events: string[] = [];
+          export function log(event: string) {
+            events.push(event);
+            return event;
+          }
+        `,
+        "/expression-statement.cjs": `require("./log").log("ran expression-statement");`,
+        "/unused-local.ts": /* ts */ `
+          import { log } from "./log";
+          log("ran unused-local");
+          export const name = "unused-local";
+        `,
+        "/unused-destructure.cjs": `require("./log").log("ran unused-destructure"); exports.name = "unused-destructure";`,
+        "/in-a-branch.cjs": `require("./log").log("ran in-a-branch");`,
+        "/read-in-a-callback-only.cjs": `require("./log").log("ran read-in-a-callback-only"); exports.name = "read-in-a-callback-only";`,
+        "/read-after-a-call.ts": /* ts */ `
+          import { log } from "./log";
+          log("ran read-after-a-call");
+          export const name = "read-after-a-call";
+        `,
+        "/before-a-call.cjs": `require("./log").log("ran before-a-call"); exports.name = "before-a-call";`,
+        "/in-a-hook.cjs": `require("./log").log("ran in-a-hook");`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `export function useEffect() {}`,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          BeforeACallInOneExpression=before-a-call+arg 1 [ran before-a-call, arg 1]
+          ExpressionStatement=ok [ran expression-statement]
+          InABranch=ok [ran in-a-branch]
+          ReadAfterACall=read-after-a-call [ran read-after-a-call, between]
+          ReadInACallbackOnly=function [ran read-in-a-callback-only, render done]
+          UnusedDestructure=ok [ran unused-destructure]
+          UnusedLocal=ok [ran unused-local]
+          useRequireInAHook=ok [ran in-a-hook]
+        `,
+      },
+      onAfterBundle(api) {
+        // Every form compiled: the compiler outlines the empty effect callback
+        // (client) or drops the effect (ssr).
+        expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+      },
+    });
+
+    // The value of the call in the `try` block is not read. When the compiler
+    // dropped the call, the block was empty, the `catch` block was unreachable
+    // and the build crashed on the `found` that the two blocks merge into.
+    itBundled(`react-compiler/UnusedRequireInATryBlock-${target}`, {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          import { useEffect } from "react";
+
+          export function RequireInATryBlock() {
+            useEffect(() => {});
+            let found = "found";
+            try {
+              require("not-installed");
+            } catch {
+              found = "not found";
+            }
+            return found;
+          }
+          export function ResolveInATryBlock() {
+            useEffect(() => {});
+            let found = "found";
+            try {
+              require.resolve("not-installed");
+            } catch {
+              found = "not found";
+            }
+            return found;
+          }
+          console.log(RequireInATryBlock(), "/", ResolveInATryBlock());
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `export function useEffect() {}`,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      external: ["not-installed"],
+      run: { stdout: "not found / not found" },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toMatch(/\(\(\) => \{\s*\}\)/);
+      },
+    });
+  }
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

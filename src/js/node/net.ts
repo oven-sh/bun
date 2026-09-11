@@ -2312,10 +2312,9 @@ function attachUpgradedDuplex(self, connection, events) {
   connection.on("end", events[1]);
   connection.on("drain", events[2]);
   connection.on("close", events[3]);
-  // The engine has no 'error' thunk. Route a stream's error like node's wrap:
+  // As node's wrap does. Not for a net.Socket: a listener there makes its close synthesize ECONNRESET.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-  // Not a net.Socket: an 'error' listener makes its close synthesize ECONNRESET.
   if (!(connection instanceof Socket)) {
     connection.on("error", err => self._emitTLSError(err));
   }

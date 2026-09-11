@@ -273,11 +273,12 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       ],
       fetch: () => new Response("members only"),
     });
+    const raws: net.Socket[] = [];
     try {
       // The loop runs a few handshakes per iteration and queues the rest, so
       // ClientHellos sent in one go are not all processed when the first
       // handshake completes.
-      const raws = Array.from({ length: 32 }, () => net.connect({ host: "127.0.0.1", port: server.port }));
+      for (let i = 0; i < 32; i++) raws.push(net.connect({ host: "127.0.0.1", port: server.port }));
       for (const raw of raws) raw.on("error", () => {});
       await Promise.all(raws.map(raw => once(raw, "connect")));
 
@@ -297,7 +298,8 @@ describe("Bun.serve per-serverName client certificate policy", () => {
         socket.on("close", () => resolve({ certificate, status: received.split("\r\n")[0] || "no response" }));
         return promise;
       });
-      await firstHandshake.promise;
+      // If no handshake completes, every outcome settles and the assertions report them.
+      await Promise.race([firstHandshake.promise, Promise.all(outcomes)]);
       server.stop();
 
       const settled = await Promise.all(outcomes);
@@ -309,6 +311,7 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       expect(settled.filter(o => o.certificate === "agent1").length).toBeGreaterThan(0);
     } finally {
       server.stop(true);
+      for (const raw of raws) raw.destroy();
     }
   });
 });

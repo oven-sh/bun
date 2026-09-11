@@ -2058,14 +2058,10 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 /// (select-certificate retry) until the JS resolution calls
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
 ///
-/// Node keeps calling the SNICallback for the connections `server.close()`
-/// left open, so this also runs after the listen socket closed, with a null
-/// `_ls`. Everything is resolved from the accepted socket, which shares its
-/// `Handlers` with the listener that accepted it.
+/// `_ls` is null once the listen socket closed (Node still calls SNICallback).
 ///
 /// # Safety
-/// `socket` is the live us_socket_t processing this ClientHello and `hostname`
-/// is a NUL-terminated string valid for the call. JS-thread only.
+/// `socket` is live and `hostname` NUL-terminated for the call. JS-thread only.
 extern "C" fn us_dispatch_server_name(
     _ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
@@ -2084,8 +2080,6 @@ extern "C" fn us_dispatch_server_name(
         Some(tls) => tls,
         None => return core::ptr::null_mut(),
     };
-    // An idle socket can drop its Handlers while the us_socket_t lives on;
-    // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
     if !tls.has_handlers() {
         return core::ptr::null_mut();
     }
@@ -2099,15 +2093,14 @@ extern "C" fn us_dispatch_server_name(
         return core::ptr::null_mut();
     };
     // No `Handlers::enter`/`exit` scope here: that protocol tracks the
-    // accepted-socket callback lifecycle, and running it from inside the
-    // handshake corrupts `active_connections` for every subsequent accept.
-    // The socket, its handlers and the listener are structurally alive for
-    // this synchronous dispatch.
+    // accepted-socket callback lifecycle, and running it against the listener's
+    // own handlers from inside the handshake corrupts `active_connections` for
+    // every subsequent accept.
     let global = handlers.global_object;
     // Pass the listener's `data` (the owning net.Server) rather than minting a
     // JS wrapper for the Listener itself - `to_js` here would create a second
     // cell owning the same Rust struct and whichever is collected first frees
-    // it out from under the other. `stop()` keeps it while connections remain.
+    // it out from under the other.
     let this_value = listener
         .strong_data
         .get()
@@ -2116,10 +2109,10 @@ extern "C" fn us_dispatch_server_name(
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
-    // The socket's JS wrapper is the resume handle an asynchronous SNICallback
-    // uses (`handle.resumeSNI(...)`) to complete the suspended handshake. The
-    // wrapper's lifecycle is GC-managed, so a resume after the socket died is
-    // a safe no-op.
+    // The accepted socket processing this ClientHello: its JS wrapper is the
+    // resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`)
+    // to complete the suspended handshake. The wrapper's lifecycle is
+    // GC-managed, so a resume after the socket died is a safe no-op.
     let socket_handle = tls.get_this_value(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,

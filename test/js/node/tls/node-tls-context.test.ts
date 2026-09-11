@@ -398,41 +398,48 @@ describe("tls.Server", () => {
       server.on("connection", () => {
         if (++accepted === servernames.length) allAccepted.resolve();
       });
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const port = (server.address() as AddressInfo).port;
-      const raws = servernames.map(() => net.connect({ host: "127.0.0.1", port }));
-      for (const raw of raws) raw.on("error", () => {});
-      await Promise.all(raws.map(raw => once(raw, "connect")));
-      await allAccepted.promise;
+      server.on("error", allAccepted.reject);
+      const raws: net.Socket[] = [];
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const port = (server.address() as AddressInfo).port;
+        for (const _ of servernames) raws.push(net.connect({ host: "127.0.0.1", port }));
+        for (const raw of raws) raw.on("error", () => {});
+        await Promise.all(raws.map(raw => once(raw, "connect")));
+        await allAccepted.promise;
 
-      // No TLS byte has been sent yet.
-      server.close();
+        // No TLS byte has been sent yet.
+        server.close();
 
-      const outcomes = await Promise.all(
-        raws.map((raw, i) => {
-          const { promise, resolve } = Promise.withResolvers<{ certificate: string; received: string }>();
-          let certificate = "no handshake";
-          let received = "";
-          const socket = tls.connect(
-            { socket: raw, servername: servernames[i], rejectUnauthorized: false, key: agent3Key, cert: agent3Cert },
-            () => (certificate = socket.getPeerCertificate().subject.CN),
-          );
-          socket.on("data", chunk => (received += chunk));
-          socket.on("error", () => {});
-          socket.on("close", () => resolve({ certificate, received }));
-          return promise;
-        }),
-      );
+        const outcomes = await Promise.all(
+          raws.map((raw, i) => {
+            const { promise, resolve } = Promise.withResolvers<{ certificate: string; received: string }>();
+            let certificate = "no handshake";
+            let received = "";
+            const socket = tls.connect(
+              { socket: raw, servername: servernames[i], rejectUnauthorized: false, key: agent3Key, cert: agent3Cert },
+              () => (certificate = socket.getPeerCertificate().subject.CN),
+            );
+            socket.on("data", chunk => (received += chunk));
+            socket.on("error", () => {});
+            socket.on("close", () => resolve({ certificate, received }));
+            return promise;
+          }),
+        );
 
-      const tenantOutcome = { certificate: "agent1", received: "a.example.com authorized=false" };
-      expect(outcomes.slice(0, 3)).toEqual([tenantOutcome, tenantOutcome, tenantOutcome]);
-      if (mode === "SNICallback") {
-        // The callback is the allow-list: a name it rejects gets no session.
-        expect(outcomes[3]).toEqual({ certificate: "no handshake", received: "" });
-        expect(names.toSorted()).toEqual(servernames.toSorted());
-      } else {
-        expect(outcomes[3].certificate).toBe("agent2");
+        const tenantOutcome = { certificate: "agent1", received: "a.example.com authorized=false" };
+        expect(outcomes.slice(0, 3)).toEqual([tenantOutcome, tenantOutcome, tenantOutcome]);
+        if (mode === "SNICallback") {
+          // The callback is the allow-list: a name it rejects gets no session.
+          expect(outcomes[3]).toEqual({ certificate: "no handshake", received: "" });
+          expect(names.toSorted()).toEqual(servernames.toSorted());
+        } else {
+          expect(outcomes[3].certificate).toBe("agent2");
+        }
+      } finally {
+        if (server.listening) server.close();
+        for (const raw of raws) raw.destroy();
       }
     });
   });

@@ -64,8 +64,7 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    /// C keeps calling `cb` for connections accepted before `close()` whose
-    /// ClientHello arrives after it, and then passes a null `ListenSocket`.
+    /// `cb` receives a null `ListenSocket` once this listen socket closed.
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

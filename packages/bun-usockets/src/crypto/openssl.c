@@ -3044,14 +3044,12 @@ static void sni_node_destructor(void *user) {
   us_free(node);
 }
 
-/* The server names of a TLS listen socket: the static SNI tree and the dynamic
- * resolver. A connection selects its certificate when its ClientHello is
- * processed, and that can be after the listen socket closed: server.close()
- * and a graceful server.stop() keep accepted connections, and a handshake can
- * still be parked in the low-priority queue or waiting for its ClientHello.
- * So the listen socket does not own this alone. It holds one reference, and
+/* A TLS listen socket's static SNI tree and dynamic resolver. A connection
+ * selects its certificate when its ClientHello is processed, which can be
+ * after the listen socket closed (server.close() and a graceful server.stop()
+ * keep accepted connections). So the listen socket holds one reference and
  * every SSL it accepted holds one (us_ssl_server_names_ex_idx) until SSL_free.
- * Loop-thread only, like the listen socket. */
+ * Loop-thread only. */
 struct us_server_names_t {
   unsigned int refs;
   /* NULL once the listen socket closed. */
@@ -3444,10 +3442,8 @@ void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
     ls->ssl_ctx = NULL;
   }
   if (ls->server_names) {
-    /* Accepted sockets may outlive the listener (server.close() keeps existing
-     * connections per Node semantics), and the ones that have not processed
-     * their ClientHello yet still have to select a certificate. They hold
-     * their own reference, and none of them holds `ls`. */
+    /* Accepted SSLs that have not selected a certificate yet keep their own
+     * reference. None of them holds `ls`. */
     ls->server_names->ls = NULL;
     us_server_names_unref(ls->server_names);
     ls->server_names = NULL;

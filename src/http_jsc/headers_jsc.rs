@@ -32,27 +32,25 @@ pub fn from_fetch_headers(
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
 ) -> JsResult<Headers> {
-    // `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
-    // are read-only FFI shims; cast through `*mut` (matching the prior
-    // `link_interface!` impl which did `from_ref(h).cast_mut()`).
+    // `FetchHeaders::fast_has_` takes `&mut self` but is a read-only FFI shim;
+    // cast through `*mut` (matching the prior `link_interface!` impl which did
+    // `from_ref(h).cast_mut()`).
     let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
 
-    let mut header_count: u32 = 0;
-    let mut buf_len: u32 = 0;
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-        if !unsafe { (*h).count(&mut header_count, &mut buf_len) } {
-            return Err(throw_headers_too_large(global));
-        }
-    }
+    let (fetch_header_count, buf_len_before_content_type) =
+        match fetch_headers.map(FetchHeaders::count) {
+            None => (0, 0),
+            Some(Some(counts)) => counts,
+            Some(None) => return Err(throw_headers_too_large(global)),
+        };
+    let (mut header_count, mut buf_len) = (fetch_header_count, buf_len_before_content_type);
     let mut headers = Headers {
         entries: EntryList::default(),
         buf: Vec::new(),
     };
-    let buf_len_before_content_type = buf_len;
     let needs_content_type = 'brk: {
         if let Some(body_ct) = body_content_type {
-            // SAFETY: see `count` above.
+            // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
             let has_ct_header = h_ptr
                 .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
                 .unwrap_or(false);
@@ -100,16 +98,20 @@ pub fn from_fetch_headers(
         core::ptr::write_bytes(names_ptr, 0, header_count as usize);
         core::ptr::write_bytes(values_ptr, 0, header_count as usize);
     }
-    if let Some(h) = h_ptr {
-        // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
-        unsafe {
-            (*h).copy_to(
-                names_ptr,
-                values_ptr,
-                headers.buf.as_mut_ptr(),
-                buf_len_before_content_type,
+    if let Some(h) = fetch_headers {
+        // SAFETY: both columns hold `header_count >= fetch_header_count` slots, zeroed
+        // above, and nothing else borrows them.
+        let (names, values) = unsafe {
+            (
+                core::slice::from_raw_parts_mut(names_ptr, fetch_header_count as usize),
+                core::slice::from_raw_parts_mut(values_ptr, fetch_header_count as usize),
             )
         };
+        h.copy_to(
+            names,
+            values,
+            &mut headers.buf[..buf_len_before_content_type as usize],
+        );
     }
 
     // TODO: maybe we should send Content-Type header first instead of last?

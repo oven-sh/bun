@@ -2420,8 +2420,9 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
-// `buf` holds the `buf_len` bytes that WebCore__FetchHeaders__count reported for these headers.
-void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf, uint32_t buf_len)
+// `names` and `values` each hold `count` entries and `buf` holds `buf_len` bytes:
+// what WebCore__FetchHeaders__count reported for these headers.
+void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, uint32_t count, unsigned char* buf, uint32_t buf_len)
 {
     auto iter = headers->createIterator(false);
     uint32_t i = 0;
@@ -2433,8 +2434,10 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
 
-        // Each branch below writes one byte per code unit.
+        // Each pair writes one entry per column and one byte per code unit.
+        RELEASE_ASSERT(count > 0);
         RELEASE_ASSERT(name.length() <= buf_len - i && value.length() <= buf_len - i - name.length());
+        count--;
 
         if (name.is8Bit()) {
             const auto nameSpan = name.span8();

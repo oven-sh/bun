@@ -707,13 +707,27 @@ static void startNavigation(JSWebView* view, ChromeNavigationKind kind)
     view->m_chromeNavigationSeq++;
 }
 
+// A traversal's own commit lands on the entry it targeted. Both URLs come out of the same JSON decoder.
+static bool commitLandsOnTraversalTarget(JSWebView* view, std::span<const char> params)
+{
+    if (view->m_chromeTraversalUrl.isNull()) return true;
+    auto root = JSON::Value::parseJSON(
+        StringView::fromLatin1(std::span<const Latin1Character>(
+            reinterpret_cast<const Latin1Character*>(params.data()), params.size())));
+    auto o = root ? root->asObject() : nullptr;
+    return !o || o->getString("url"_s) == view->m_chromeTraversalUrl;
+}
+
 // Which commit is the view's? No loader id, so the state says. "historyApi" is the page's own pushState()/replaceState(): navigate() and a traversal report "fragment".
-static bool sameDocumentCommitEndsNavigation(JSWebView* view, std::span<const char> navigationType)
+static bool sameDocumentCommitEndsNavigation(JSWebView* view, std::span<const char> params)
 {
     if (!view->m_pendingNavigate) return false;
+    auto navigationType = jsonString(jsonField(params, { "navigationType", 14 }));
     if (navigationType.size() == 10 && memcmp(navigationType.data(), "historyApi", 10) == 0) return false;
     auto kind = view->m_chromeNavigationKind;
-    return kind == ChromeNavigationKind::SameDocument || kind == ChromeNavigationKind::Unknown;
+    // A cross-document traversal commits late: a #fragment change of the page being left is not it.
+    if (kind == ChromeNavigationKind::Unknown) return commitLandsOnTraversalTarget(view, params);
+    return kind == ChromeNavigationKind::SameDocument;
 }
 
 // The view's navigation is over once its title fetch is in flight. A later commit is the page's own.
@@ -872,8 +886,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // net::ERR_* resolved before commit). Reject now.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty()) {
-            // Chrome commits its error page for this failure next. An aborted navigation (a download, a 204) shows none.
-            view->m_chromeErrorPageDue = !(err.size() == 16 && memcmp(err.data(), "net::ERR_ABORTED", 16) == 0);
+            // Chrome commits its error page for this failure later. An aborted navigation (a download, a 204) shows none.
+            if (!(err.size() == 16 && memcmp(err.data(), "net::ERR_ABORTED", 16) == 0)) view->m_chromeErrorPagesDue++;
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
             return;
         }
@@ -923,6 +937,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         }
         auto elem = entries->get(static_cast<unsigned>(target))->asObject();
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
+        view->m_chromeTraversalUrl = elem ? elem->getString("url"_s) : WTF::String();
         // Chain into navigateToHistoryEntry. The traversal starts now.
         startNavigation(view, ChromeNavigationKind::Requested);
         uint32_t cid = nextId();
@@ -1174,8 +1189,9 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
     // navigate() reported this failure from its reply already: its error page ends nothing and reports nothing.
     auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
-    bool reported = !unreachable.empty() && view->m_chromeErrorPageDue;
-    view->m_chromeErrorPageDue = false;
+    bool reported = !unreachable.empty() && view->m_chromeErrorPagesDue;
+    // Error pages commit in the order of their failures. A real document means none of them is coming any more.
+    view->m_chromeErrorPagesDue = reported ? view->m_chromeErrorPagesDue - 1 : 0;
     if (!reported && commitIsNavigations(view)) {
         view->m_chromeNavigationCommitted = true;
         view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
@@ -1210,7 +1226,7 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
     if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
 
-    if (sameDocumentCommitEndsNavigation(view, jsonString(jsonField(params, { "navigationType", 14 })))) {
+    if (sameDocumentCommitEndsNavigation(view, params)) {
         sendTitleFetch(view, true);
         navigationConsumed(view);
     }
@@ -1287,10 +1303,11 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
 
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0)
         return onFrameNavigated(view, params);
-    if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
-        return onNavigatedWithinDocument(view, params);
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0)
         return onLoadEventFired(view);
+    // Not intercepted before, so it goes on to addEventListener() below as it always has.
+    if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
+        onNavigatedWithinDocument(view, params);
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.
     // params: {"type":"log","args":[<RemoteObject>,...],"stackTrace":{...}}.

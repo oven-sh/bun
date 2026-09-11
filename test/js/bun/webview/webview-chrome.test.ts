@@ -1058,6 +1058,15 @@ function navServer() {
       if (path === "/spa") return page("<title>SPA</title><script>history.replaceState({}, '', '/app/home')</script>");
       // A document whose load event trails its commit: the image holds it back.
       if (path === "/slow-load") return page('<title>slow-load</title><img src="/late.gif">');
+      // A document that commits late, and loads later still: the server takes
+      // its time to answer, and then the image holds the load event back.
+      // no-store: a history traversal asks the server again, not the HTTP cache.
+      if (path === "/slow-doc") {
+        await Bun.sleep(150);
+        return new Response('<title>slow-doc</title><img src="/late.gif">', {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
       if (path === "/late.gif") {
         await Bun.sleep(300);
         return new Response("GIF89a", { headers: { "content-type": "image/gif", "cache-control": "no-store" } });
@@ -1224,6 +1233,27 @@ it("chrome: a cross-document goBack() waits for the load when the page being lef
     title: view.title,
     readyState: await view.evaluate("document.readyState"),
   }).toEqual({ url: srv.base + "/slow-load", title: "slow-load", readyState: "complete" });
+});
+
+it("chrome: a cross-document goBack() is not ended by a #fragment change of the page being left", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/slow-doc");
+  // An unload handler keeps the page out of the back-forward cache, and
+  // no-store keeps it out of the HTTP cache, so the traversal asks the server.
+  await view.evaluate("addEventListener('unload', () => {}), 0");
+  await view.navigate(srv.base + "/leaving");
+  // A page that rewrites its fragment all the time (a scroll spy). Chrome
+  // answers the traversal at once and commits it when the server has answered,
+  // so some of these commits land in between. They report "fragment", like a
+  // traversal's own commit, but they do not land on the entry it asked for.
+  await view.evaluate("setInterval(() => location.replace('#n' + performance.now()), 5), 0");
+  await view.goBack();
+  expect({
+    url: view.url,
+    title: view.title,
+    readyState: await view.evaluate("document.readyState"),
+  }).toEqual({ url: srv.base + "/slow-doc", title: "slow-doc", readyState: "complete" });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

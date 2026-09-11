@@ -49,7 +49,7 @@ enum class ScreenshotEncoding : uint8_t {
 enum class ChromeNavigationKind : uint8_t {
     NotRequested, // nothing asked of Chrome, or it is already done: no event ends it
     Requested, // command written, no reply yet: every commit so far is the page's own
-    Unknown, // a history traversal, which Chrome answers with {}: the next commit of either shape ends it
+    Unknown, // a history traversal, which Chrome answers with {}: a document commit, or a same-document one onto its entry, ends it
     SameDocument, // a #fragment or history.pushState entry: Page.navigatedWithinDocument ends it
     CrossDocument, // Page.loadEventFired ends it, or the commit itself for a back-forward cache restore
 };
@@ -114,10 +114,12 @@ public:
     bool m_chromeNavigationCommitted = false;
     // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
     uint32_t m_chromeNavigationSeq = 0;
+    // Chrome: the URL of the history entry that goBack()/goForward() asked for. A same-document commit elsewhere is the page's own.
+    WTF::String m_chromeTraversalUrl;
     // Chrome: the live main frame document is Chrome's error page for a load that failed.
     bool m_chromeOnErrorPage = false;
-    // Chrome: navigate() reported a failure from Page.navigate's errorText. The next error page to commit is that failure's.
-    bool m_chromeErrorPageDue = false;
+    // Chrome: how many failures navigate() reported from Page.navigate's errorText whose error page has yet to commit.
+    uint32_t m_chromeErrorPagesDue = 0;
     // Chrome: the URL whose error page committed. Reported as a failure once that page has loaded.
     WTF::String m_chromeUnreportedFailure;
     // clickSelector stash — the actionability eval chains into a

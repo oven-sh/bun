@@ -37,6 +37,7 @@ export default [
     proto: {
       // Chainable mutators — record an op and return `this`.
       resize: { fn: "doResize", length: 2 },
+      extract: { fn: "doExtract", length: 1 },
       rotate: { fn: "doRotate", length: 1 },
       flip: { fn: "doFlip", length: 0 },
       flop: { fn: "doFlop", length: 0 },

@@ -80,6 +80,22 @@ img.resize(800, 600, { filter: "mitchell" });
 
 When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
 
+## Extract
+
+Crop to an exact region of the source:
+
+```ts
+img.extract({ left: 100, top: 50, width: 800, height: 600 });
+img.extract({ width: 400, height: 400 }); // left/top default to 0
+img.extract({ left: 200, top: 200, width: 400, height: 400 }).resize(100, 100); // crop, then resize
+```
+
+`width` and `height` are required integers, at least 1; `left` and `top` are non-negative integers, defaulting to `0`. A region that falls outside the image rejects with `ERR_IMAGE_BAD_EXTRACT_AREA` — nothing is clamped.
+
+Operations run in a fixed order (rotate → flip → extract → resize), so the region addresses upright source pixels and a chained `resize()` scales the cropped region. Extracting _from_ a resized result isn't expressible in one pipeline; resize first, then feed the output to a second `Bun.Image`.
+
+An extract turns off the JPEG reduced-scale decode described in Resize above, since the region is addressed in full-resolution pixels. `.placeholder()` ignores pipeline operations, `extract` included.
+
 ## Rotate · flip
 
 ```ts

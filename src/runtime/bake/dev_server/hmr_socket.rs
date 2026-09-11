@@ -158,8 +158,7 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
-                // `pattern` is peer bytes; `FrameworkRouter::match_slow` requires
-                // an absolute path (`debug_assert!(path[0] == b'/')`).
+                // `match_slow` requires an absolute path; these are peer bytes.
                 if pattern.first() != Some(&b'/') {
                     return ws.close();
                 }
@@ -211,9 +210,7 @@ impl HmrSocket {
                     }
                     super::TestingBatchEvents::EnableAfterBundle
                     | super::TestingBatchEvents::ReleaseAfterBundle(_) => {
-                        // A duplicate `H` before the pending batch activates or
-                        // releases is a peer protocol violation; never assert on
-                        // websocket input.
+                        // A duplicate `H` is a protocol violation, not an invariant.
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
@@ -225,11 +222,9 @@ impl HmrSocket {
                             unreachable!()
                         };
 
-                        // A request for a route that is not bundled yet starts a
-                        // bundle without consulting the batch, and
-                        // `start_async_bundle` requires that no bundle is in
-                        // flight. Hold the batch and release it once that bundle
-                        // finishes.
+                        // A request for an unbundled route starts a bundle
+                        // without consulting the batch; `start_async_bundle`
+                        // requires none in flight.
                         if dev.current_bundle.is_some() {
                             dev.testing_batch_events =
                                 super::TestingBatchEvents::ReleaseAfterBundle(batch);

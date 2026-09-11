@@ -1100,11 +1100,14 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
   });
 });
 
+// Keyed on the running architecture rather than probing both paths: the aarch64 CI image also has an amd64 libc
+// installed, which exists on disk but cannot be dlopen'd.
+const glibcPath = { x64: "/lib/x86_64-linux-gnu/libc.so.6", arm64: "/lib/aarch64-linux-gnu/libc.so.6" }[process.arch];
 const libPath =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
-    : existsSync("/lib/x86_64-linux-gnu/libc.so.6") && isGlibcVersionAtLeast("2.36.0")
-      ? "/lib/x86_64-linux-gnu/libc.so.6"
+    : glibcPath && existsSync(glibcPath) && isGlibcVersionAtLeast("2.36.0")
+      ? glibcPath
       : null;
 
 const libSymbols = {

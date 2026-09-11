@@ -2,18 +2,21 @@
 
 shopt -s extglob
 
+_compgen_reply() {
+    local item
+    while IFS= read -r item || [[ -n "${item}" ]]; do
+        [[ -n "${item}" ]] && COMPREPLY+=( "${item}" )
+    done < <(compgen "$@")
+}
+
 _file_arguments() {
     local extensions="${1}"
-    local files=()
-
     if [[ -n "${extensions}" ]]; then
-        files=( $(compgen -f -X "${extensions}" -- "${cur_word}") )
+        _compgen_reply -f -X "${extensions}" -- "${cur_word}"
     else
-        files=( $(compgen -f -- "${cur_word}") )
+        _compgen_reply -f -- "${cur_word}"
     fi
-
-    local dirs=( $(compgen -d -S / -- "${cur_word}") )
-    COMPREPLY+=( "${files[@]}" "${dirs[@]}" )
+    _compgen_reply -d -S / -- "${cur_word}"
 }
 
 _long_short_completion() {
@@ -21,7 +24,7 @@ _long_short_completion() {
     local short_options="${2}"
 
     if [[ -z "${cur_word}" || "${cur_word}" == -* ]]; then
-        COMPREPLY+=( $(compgen -W "${wordlist}" -- "${cur_word}") )
+        _compgen_reply -W "${wordlist}" -- "${cur_word}"
     fi
 }
 
@@ -29,24 +32,31 @@ _read_scripts_in_package_json() {
     local pkg_file="package.json"
     [[ -f "${pkg_file}" && -r "${pkg_file}" ]] || return 0
 
-    local in_scripts=0 line_content script_names=()
+    local in_scripts=0 line_content script_names=() rest
     while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
         if (( ! in_scripts )); then
-            if [[ "${line_content}" =~ \"scripts\"[[:space:]]*:[[:space:]]*\{? ]]; then
+            if [[ "${line_content}" =~ \"scripts\"[[:space:]]*:[[:space:]]*\{(.*) ]]; then
                 in_scripts=1
+                rest="${BASH_REMATCH[1]}"
             fi
         else
-            if [[ "${line_content}" =~ \}[[:space:]]*,? ]]; then
-                break
+            rest="${line_content}"
+        fi
+
+        if (( in_scripts )); then
+            if [[ "${rest}" =~ ^([^}]*)\}(.*) ]]; then
+                rest="${BASH_REMATCH[1]}"
+                in_scripts=0
             fi
-            if [[ "${line_content}" =~ \"([^\"\\]+)\"[[:space:]]*: ]]; then
+            while [[ "${rest}" =~ \"([^\"\\]+)\"[[:space:]]*: ]]; do
                 script_names+=( "${BASH_REMATCH[1]}" )
-            fi
+                rest="${rest#*${BASH_REMATCH[0]}}"
+            done
         fi
     done < "${pkg_file}"
 
     if (( ${#script_names[@]} > 0 )); then
-        COMPREPLY+=( $(compgen -W "${script_names[*]}" -- "${cur_word}") )
+        _compgen_reply -W "${script_names[*]}" -- "${cur_word}"
     fi
 }
 
@@ -84,27 +94,27 @@ _bun_completions_inner() {
         --bunfile)        _file_arguments "!*.bun" && return ;;
         --server-bunfile) _file_arguments "!*.server.bun" && return ;;
         --backend)
-            COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") )
+            _compgen_reply -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}"
             return ;;
         --omit)
-            COMPREPLY=( $(compgen -W "dev optional peer" -- "${cur_word}") )
+            _compgen_reply -W "dev optional peer" -- "${cur_word}"
             return ;;
         --linker)
-            COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") )
+            _compgen_reply -W "isolated hoisted" -- "${cur_word}"
             return ;;
         --cwd|--public-dir)
-            COMPREPLY=( $(compgen -d -S / -- "${cur_word}") )
+            _compgen_reply -d -S / -- "${cur_word}"
             return ;;
         --jsx-runtime)
-            COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") )
+            _compgen_reply -W "automatic classic" -- "${cur_word}"
             return ;;
         --target)
-            COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") )
+            _compgen_reply -W "browser node bun" -- "${cur_word}"
             return ;;
         -l|--loader)
             if [[ "${cur_word}" == *:* ]]; then
                 local prefix="${cur_word%%:*}"
-                COMPREPLY=( $(compgen -W "${prefix}:jsx ${prefix}:js ${prefix}:json ${prefix}:tsx ${prefix}:ts ${prefix}:css" -- "${cur_word}") )
+                _compgen_reply -W "${prefix}:jsx ${prefix}:js ${prefix}:json ${prefix}:tsx ${prefix}:ts ${prefix}:css" -- "${cur_word}"
             fi
             return ;;
     esac
@@ -120,7 +130,11 @@ _bun_completions_inner() {
 
         local w="${COMP_WORDS[i]}"
         case "${w}" in
-            --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|--loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|--jsx-runtime|--omit|--linker)
+            --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|\
+            --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
+            --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
+            --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
+            --main-fields|--extension-order|--conditions|-e|--eval|-u|--use)
                 if [[ "${COMP_WORDS[i+1]}" == "=" ]]; then
                     skip=2
                 else
@@ -171,16 +185,16 @@ _bun_completions_inner() {
                 "${PRUNE_OPTIONS_SHORT}"
             return ;;
         audit)
-            COMPREPLY=( $(compgen -W "fix ${AUDIT_OPTIONS_LONG} ${AUDIT_OPTIONS_SHORT}" -- "${cur_word}") )
+            _compgen_reply -W "fix ${AUDIT_OPTIONS_LONG} ${AUDIT_OPTIONS_SHORT}" -- "${cur_word}"
             return ;;
         create|c)
-            COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") )
+            _compgen_reply -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}"
             return ;;
         upgrade)
-            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h" -- "${cur_word}") )
+            _compgen_reply -W "--version --cwd --help -v -h" -- "${cur_word}"
             return ;;
         repl)
-            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") )
+            _compgen_reply -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}"
             return ;;
         run)
             _read_scripts_in_package_json
@@ -197,10 +211,19 @@ _bun_completions_inner() {
             return ;;
         pm)
             _long_short_completion "${PM_OPTIONS_LONG} ${PM_OPTIONS_SHORT}"
-            COMPREPLY=( $(compgen -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}") )
+            _compgen_reply -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}"
+            return ;;
+        x)
+            local bins
+            bins=$(bun getcompletes b 2>/dev/null)
+            if [[ -n "${bins}" ]]; then
+                _compgen_reply -W "${bins}" -- "${cur_word}"
+            fi
+            _file_arguments
+            _long_short_completion "--bun --install --help -h" "-h"
             return ;;
         "")
-            COMPREPLY=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") )
+            _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
             _long_short_completion "${GLOBAL_OPTIONS_LONG}" "${GLOBAL_OPTIONS_SHORT}"
             _read_scripts_in_package_json
             return ;;
@@ -244,10 +267,59 @@ _bun_completions() {
         builtin cd "${orig_pwd}" 2>/dev/null
     fi
 
-    # Suppress trailing space only when completing a directory
     if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
         compopt -o nospace 2>/dev/null
     fi
 }
 
-complete -F _bun_completions bun bunx
+_bunx_completions() {
+    local working_dir="${PWD}" line
+    for (( line=0; line < ${#COMP_WORDS[@]}; line++ )); do
+        if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
+            if [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
+                working_dir="${COMP_WORDS[line+2]}"
+            elif [[ -n "${COMP_WORDS[line+1]}" ]]; then
+                working_dir="${COMP_WORDS[line+1]}"
+            fi
+        elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
+            working_dir="${COMP_WORDS[line]#--cwd=}"
+        fi
+    done
+
+    working_dir="${working_dir%\"}"
+    working_dir="${working_dir#\"}"
+    working_dir="${working_dir%\'}"
+    working_dir="${working_dir#\'}"
+    working_dir="${working_dir/#\~/$HOME}"
+
+    local orig_pwd="${PWD}"
+    local switched=0
+    if [[ -n "${working_dir}" && -d "${working_dir}" && "${working_dir}" != "${PWD}" ]]; then
+        if builtin cd "${working_dir}" 2>/dev/null; then
+            switched=1
+        fi
+    fi
+
+    local cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+    if [[ "${cur_word}" == -* ]]; then
+        _compgen_reply -W "--bun --install --help -h" -- "${cur_word}"
+    else
+        local bins
+        bins=$(bun getcompletes b 2>/dev/null)
+        if [[ -n "${bins}" ]]; then
+            _compgen_reply -W "${bins}" -- "${cur_word}"
+        fi
+        _file_arguments
+    fi
+
+    if (( switched )); then
+        builtin cd "${orig_pwd}" 2>/dev/null
+    fi
+
+    if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
+        compopt -o nospace 2>/dev/null
+    fi
+}
+
+complete -F _bun_completions bun
+complete -F _bunx_completions bunx

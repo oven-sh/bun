@@ -1028,13 +1028,47 @@ mod border_handler_body {
 
         // State.inlineProp
         // If both values of an inline logical property are equal, then we can just convert them to physical properties.
+        // Evaluates to whether it did.
         macro_rules! inline_prop {
             ($key:ident, $left:ident, $right:ident) => {{
-                if inline_start.$key.is_some()
-                    && css::generic::eql(&inline_start.$key, &inline_end.$key)
-                {
+                let is_eq = inline_start.$key.is_some()
+                    && css::generic::eql(&inline_start.$key, &inline_end.$key);
+                if is_eq {
                     fc_prop!(f, $left, inline_start.$key.take().unwrap());
                     fc_prop!(f, $right, inline_end.$key.take().unwrap());
+                }
+                is_eq
+            }};
+        }
+
+        // A single sub-property differs between the inline sides and the (equal) block sides.
+        // Emits it as a border-inline-* shorthand when the targets support it, or as physical
+        // properties when both inline values are equal. Evaluates to false when the values
+        // differ and must be compiled per side instead.
+        macro_rules! inline_diff {
+            ($key:ident, $shorthand:ident, $left:ident, $right:ident) => {{
+                if f.logical_shorthand_supported {
+                    logical_shorthand!($shorthand, $shorthand, $key, inline_start, inline_end);
+                    true
+                } else {
+                    inline_prop!($key, $left, $right)
+                }
+            }};
+        }
+
+        // Both inline sides are valid and equal: border-inline, or the pair of sides the targets support.
+        macro_rules! equal_inline_sides {
+            () => {{
+                if f.logical_supported {
+                    if f.logical_shorthand_supported {
+                        fc_prop!(f, BorderInline, inline_start.to_border(f.arena));
+                    } else {
+                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.arena));
+                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.arena));
+                    }
+                } else {
+                    fc_prop!(f, BorderLeft, inline_start.to_border(f.arena));
+                    fc_prop!(f, BorderRight, inline_start.to_border(f.arena));
                 }
             }};
         }
@@ -1088,31 +1122,15 @@ mod border_handler_body {
                         }
 
                         if diff == 1 {
-                            if !css::generic::eql(&inline_start.width, &block_start.width) {
-                                fc_prop!(f, BorderInlineWidth, BorderInlineWidth {
-                                    start: inline_start.width.as_ref().unwrap().deep_clone(f.arena),
-                                    end: inline_end.width.as_ref().unwrap().deep_clone(f.arena),
-                                });
-                                handled = true;
+                            handled = if !css::generic::eql(&inline_start.width, &block_start.width) {
+                                inline_diff!(width, BorderInlineWidth, BorderLeftWidth, BorderRightWidth)
                             } else if !css::generic::eql(&inline_start.style, &block_start.style) {
-                                fc_prop!(f, BorderInlineStyle, BorderInlineStyle {
-                                    start: inline_start.style.as_ref().unwrap().deep_clone(f.arena),
-                                    end: inline_end.style.as_ref().unwrap().deep_clone(f.arena),
-                                });
-                                handled = true;
-                            } else if !css::generic::eql(&inline_start.color, &block_start.color) {
-                                fc_prop!(f, BorderInlineColor, BorderInlineColor {
-                                    start: inline_start.color.as_ref().unwrap().deep_clone(f.arena),
-                                    end: inline_end.color.as_ref().unwrap().deep_clone(f.arena),
-                                });
-                                handled = true;
-                            }
-                        } else if diff > 1
-                            && css::generic::eql(&inline_start.width, &inline_end.width)
-                            && css::generic::eql(&inline_start.style, &inline_end.style)
-                            && css::generic::eql(&inline_start.color, &inline_end.color)
-                        {
-                            fc_prop!(f, BorderInline, inline_start.to_border(f.arena));
+                                inline_diff!(style, BorderInlineStyle, BorderLeftStyle, BorderRightStyle)
+                            } else {
+                                inline_diff!(color, BorderInlineColor, BorderLeftColor, BorderRightColor)
+                            };
+                        } else if diff > 1 && left_eq_right {
+                            equal_inline_sides!();
                             handled = true;
                         }
                     }
@@ -1174,17 +1192,7 @@ mod border_handler_body {
             }
 
             if $is_logical && inline_start.eql(inline_end) && inline_start.is_valid() {
-                if f.logical_supported {
-                    if f.logical_shorthand_supported {
-                        fc_prop!(f, BorderInline, inline_start.to_border(f.arena));
-                    } else {
-                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.arena));
-                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.arena));
-                    }
-                } else {
-                    fc_prop!(f, BorderLeft, inline_start.to_border(f.arena));
-                    fc_prop!(f, BorderRight, inline_start.to_border(f.arena));
-                }
+                equal_inline_sides!();
             } else {
                 if $is_logical && !inline_start.is_valid() && !inline_end.is_valid() {
                     if f.logical_shorthand_supported {

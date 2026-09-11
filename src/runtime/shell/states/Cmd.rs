@@ -53,6 +53,10 @@ pub enum Exec {
     Subproc(Box<SubprocExec>),
 }
 
+/// Thrown for a `ReadableStream` redirect other than `< ${stream}`.
+pub(crate) const STREAM_REDIRECT_NOT_STDIN: &str =
+    "ReadableStream cannot be used for stdout or stderr; only '< ${...}' (stdin) is supported";
+
 impl Cmd {
     /// Borrow the AST node this `Cmd` was built from.
     ///
@@ -771,10 +775,7 @@ impl Cmd {
                     crate::webcore::ReadableStream::from_js(jsval, global)?
                 {
                     if !flags.stdin() {
-                        return Err(global.throw(format_args!(
-                            "ReadableStream cannot be used for stdout or stderr; \
-                             only '< ${{...}}' (stdin) is supported"
-                        )));
+                        return Err(global.throw(format_args!("{STREAM_REDIRECT_NOT_STDIN}")));
                     }
                     if stream.is_disturbed_or_locked(global) {
                         return Err(global

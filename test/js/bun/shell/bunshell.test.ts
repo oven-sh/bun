@@ -3470,6 +3470,11 @@ describe("redirect stdin from ReadableStream", () => {
     await expect(runWithErrorPromise(() => $`${BUN} -e 0 2> ${s2}`)).resolves.toThrow(
       /ReadableStream cannot be used for stdout or stderr/,
     );
+    // A builtin gives the same reason, not the stdin-only "use an external command" hint.
+    const s3 = new ReadableStream({ pull: c => c.close() });
+    await expect(runWithErrorPromise(() => $`echo hi > ${s3}`)).resolves.toThrow(
+      /ReadableStream cannot be used for stdout or stderr/,
+    );
   });
 
   test("locked stream throws", async () => {

@@ -722,6 +722,13 @@ impl Builtin {
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                 } else if crate::webcore::ReadableStream::is_readable_stream(jsval) {
+                    if !redirect.stdin() {
+                        let _ = global.throw(format_args!(
+                            "{}",
+                            crate::shell::states::cmd::STREAM_REDIRECT_NOT_STDIN
+                        ));
+                        return Some(Yield::failed());
+                    }
                     let name = Self::of(interp, cmd).kind.as_str();
                     let _ = global.throw(format_args!(
                         "ReadableStream cannot be redirected to a builtin command ('{name}'). \

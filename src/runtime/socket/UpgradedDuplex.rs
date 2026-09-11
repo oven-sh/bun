@@ -296,8 +296,15 @@ impl UpgradedDuplex {
             // net.Socket throws writeAfterFIN (EPIPE). The trailing end() is
             // not a write and still goes through the writableEnded probe
             // below, so a half-open transport sees our FIN.
-            if data.is_some() && Self::readable_got_eof(duplex, &global) {
-                return;
+            if data.is_some() {
+                match Self::readable_got_eof(duplex, &global) {
+                    Ok(false) => {}
+                    Ok(true) => return,
+                    Err(err) => {
+                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                        return;
+                    }
+                }
             }
             match duplex.get(&global, "writableEnded") {
                 Ok(Some(ended)) if ended.to_boolean() => return,
@@ -335,23 +342,16 @@ impl UpgradedDuplex {
 
     /// `duplex._readableState.ended`. The 'end' event comes too late to tell:
     /// a paused transport holds it back until the unread bytes are consumed.
-    fn readable_got_eof(duplex: JSValue, global: &JSGlobalObject) -> bool {
-        let probe = || -> JsResult<bool> {
-            let Some(state) = duplex.get(global, "_readableState")? else {
-                return Ok(false);
-            };
-            if !state.is_object() {
-                return Ok(false);
-            }
-            Ok(state
-                .get(global, "ended")?
-                .is_some_and(|ended| ended.to_boolean()))
+    fn readable_got_eof(duplex: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let Some(state) = duplex.get(global, "_readableState")? else {
+            return Ok(false);
         };
-        // Best-effort probe: consume the exception and report no EOF.
-        probe().unwrap_or_else(|err| {
-            let _ = global.take_exception(err);
-            false
-        })
+        if !state.is_object() {
+            return Ok(false);
+        }
+        Ok(state
+            .get(global, "ended")?
+            .is_some_and(|ended| ended.to_boolean()))
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {

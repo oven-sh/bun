@@ -192,31 +192,36 @@ describe("Bun.cron — end of the Date range", () => {
 
   // Bun.cron.parse rejects a `from` outside the range. The scheduler reads the
   // clock, and fake timers can set the clock to any number.
-  test("Bun.cron() finds no occurrence when the clock is past the range", async () => {
+  test("Bun.cron() finds no occurrence when the clock is at or past the end of the range", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { jest } = Bun.jest();
          jest.useFakeTimers();
-         jest.setSystemTime(8.64e15 + 2 * 86_400_000);
-         let result;
-         try {
-           Bun.cron("* * * * *", () => {}).stop();
-           result = "scheduled";
-         } catch (e) {
-           result = e.message;
+         const out = [];
+         // At the last instant the next minute is past the range. Two days later
+         // JSC has no calendar date for the clock itself.
+         for (const now of [8.64e15, 8.64e15 + 2 * 86_400_000]) {
+           jest.setSystemTime(now);
+           try {
+             Bun.cron("* * * * *", () => {}).stop();
+             out.push("scheduled");
+           } catch (e) {
+             out.push(e.message);
+           }
          }
-         process.stdout.write(result);`,
+         process.stdout.write(JSON.stringify(out));`,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, TZ: "UTC" },
       stderr: "pipe",
       timeout: 20_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "Cron expression '* * * * *' has no future occurrences",
+    const noOccurrence = "Cron expression '* * * * *' has no future occurrences";
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: [noOccurrence, noOccurrence],
       stderr: "",
       exitCode: 0,
     });

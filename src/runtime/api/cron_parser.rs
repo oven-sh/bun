@@ -293,7 +293,10 @@ impl CronExpression {
             }
 
             if let Some(r) = self.resolve_local_match(global_object, tz, dt, from_ms, from_dt)? {
-                return Ok(Some(r));
+                // A candidate on the last day can still resolve past the range.
+                if r <= MAX_ECMASCRIPT_TIME {
+                    return Ok(Some(r));
+                }
             }
             dt.minute += 1;
         }

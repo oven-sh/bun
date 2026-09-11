@@ -3342,42 +3342,44 @@ describe("net.Socket bytesRead", () => {
   });
 
   // Expected values observed under node v26.3.0. A TLS count is of decrypted bytes.
-  it.each(["net", "tls"] as const)("onread over %s: counts each slice as it reaches the callback", async kind => {
-    const { server, port } = await listen(c => {
-      c.on("error", () => {});
-      c.end("abcdefghij");
-    }, kind);
-    let client: Socket | undefined;
-    try {
-      const seen: number[][] = [];
-      let delivered = 0;
-      const options = {
-        port,
-        host: "127.0.0.1",
-        onread: {
-          buffer: Buffer.alloc(4),
-          callback(n: number) {
-            delivered += n;
-            seen.push([delivered, client!.bytesRead]);
+  describe.each(["net", "tls"] as const)("onread over %s", kind => {
+    it("counts each slice as it reaches the callback", async () => {
+      const { server, port } = await listen(c => {
+        c.on("error", () => {});
+        c.end("abcdefghij");
+      }, kind);
+      let client: Socket | undefined;
+      try {
+        const seen: number[][] = [];
+        let delivered = 0;
+        const options = {
+          port,
+          host: "127.0.0.1",
+          onread: {
+            buffer: Buffer.alloc(4),
+            callback(n: number) {
+              delivered += n;
+              seen.push([delivered, client!.bytesRead]);
+            },
           },
-        },
-      };
-      client =
-        kind === "tls" ? tlsConnect({ ...options, ca: tlsCert.cert, servername: "localhost" }) : connect(options);
-      await once(client, "close");
-      // The last slice is shorter than the buffer.
-      expect({ seen, afterClose: client.bytesRead }).toEqual({
-        seen: [
-          [4, 4],
-          [8, 8],
-          [10, 10],
-        ],
-        afterClose: 10,
-      });
-    } finally {
-      client?.destroy();
-      server.close();
-    }
+        };
+        client =
+          kind === "tls" ? tlsConnect({ ...options, ca: tlsCert.cert, servername: "localhost" }) : connect(options);
+        await once(client, "close");
+        // The last slice is shorter than the buffer.
+        expect({ seen, afterClose: client.bytesRead }).toEqual({
+          seen: [
+            [4, 4],
+            [8, 8],
+            [10, 10],
+          ],
+          afterClose: 10,
+        });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
   });
 
   it("onread: counts a read that reaches the callback as the `true` sentinel", async () => {

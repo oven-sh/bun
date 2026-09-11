@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
@@ -277,4 +277,47 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.indexOption).toBe("PerformanceMark {");
   expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
+});
+
+// `options.resolution` is any safe integer >= 1, so it can be far above the int32 range.
+// Node v26.3.0 accepts every value below, and a timer still runs while the monitor is enabled.
+describe("monitorEventLoopDelay with a resolution above the int32 range", () => {
+  const resolutions = [2 ** 31, 2 ** 32, 2 ** 32 + 1, 2 ** 53 - 1];
+  const cases = resolutions.flatMap(resolution => [
+    { resolution, earlierCall: false, when: "as the first call" },
+    { resolution, earlierCall: true, when: "after an earlier call" },
+  ]);
+
+  test.concurrent.each(cases)("resolution $resolution $when", async ({ resolution, earlierCall }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { monitorEventLoopDelay } = require("node:perf_hooks");
+         ${earlierCall ? "monitorEventLoopDelay();" : ""}
+         const histogram = monitorEventLoopDelay({ resolution: ${resolution} });
+         console.log("enable", histogram.enable());
+         // The monitor must not fire in these 10 ms. A resolution that wrapped to
+         // 1 ms (2 ** 32 + 1 as an int32) fires about 10 times and records samples.
+         setTimeout(() => {
+           console.log("count", histogram.count);
+           console.log("disable", histogram.disable());
+         }, 10);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: a monitor that re-arms with a period of 0 ms (2 ** 32 as an int32) spins in
+      // the timer drain forever, and bun:test does not reap the children of a concurrent test.
+      timeout: 4_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "",
+      stdout: "enable true\ncount 0\ndisable true\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

@@ -1188,7 +1188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                      ->hasOverriddenModuleResolveFilenameFunction));
+                ->hasOverriddenModuleResolveFilenameFunction));
 }
 
 extern "C" bool Bun__streamIterEnabled();

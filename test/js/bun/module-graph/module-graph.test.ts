@@ -4,9 +4,9 @@
 // for the names the host passes as `globals`.
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { EventEmitter } from "events";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { renameSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join, resolve } from "path";
 
 type ModuleGraphOptions = { globals?: Record<string, unknown>; onError?: (error: unknown, kind: string) => void };

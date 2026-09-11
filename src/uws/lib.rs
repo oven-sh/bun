@@ -148,7 +148,7 @@ pub fn get_default_ciphers() -> &'static ZStr {
 // ═══════════════════════════════════════════════════════════════════════════
 pub mod ssl_wrapper {
     use core::cell::Cell;
-    use core::ffi::{c_int, c_void};
+    use core::ffi::{CStr, c_int, c_void};
     use core::ptr::NonNull;
 
     // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
@@ -211,6 +211,9 @@ pub mod ssl_wrapper {
     const MAX_RENEGOTIATIONS: u8 = 3;
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
+
+    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
+    const FATAL_REASON_MAX: usize = 256;
 
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Cell<Handlers<T>>,
@@ -347,7 +350,9 @@ pub mod ssl_wrapper {
         pub on_handshake: fn(T, bool, us_bun_verify_error_t),
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
-        pub on_close: fn(T),
+        /// The OpenSSL reason of the fatal `SSL_read` that forced the close,
+        /// `None` otherwise. Points at the caller's stack: valid for the call only.
+        pub on_close: fn(T, Option<&CStr>),
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
         /// - node's `'session'` event. `None` opts the SSL out of session
         /// parking entirely (fetch / WebSocket tunnels have no consumer).
@@ -611,7 +616,7 @@ pub mod ssl_wrapper {
                     // -> deinit) never runs and leaks the whole context graph.
                     // trigger_close_callback is idempotent (closed_notified).
                     self.flags.set_received_ssl_shutdown(true);
-                    self.trigger_close_callback();
+                    self.trigger_close_callback(None);
                     // Do not read self after the close callback: the owner's
                     // teardown chain has started.
                     return true;
@@ -661,7 +666,7 @@ pub mod ssl_wrapper {
                 }
 
                 // we need to trigger close because we are not receiving a SSL_shutdown
-                self.trigger_close_callback();
+                self.trigger_close_callback(None);
                 return false;
             }
 
@@ -674,7 +679,7 @@ pub mod ssl_wrapper {
 
                 if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
                     self.flags.set_fatal_error(true);
-                    self.trigger_close_callback();
+                    self.trigger_close_callback(None);
                     return false;
                 }
             }
@@ -766,6 +771,11 @@ pub mod ssl_wrapper {
             if self.flags.sent_ssl_shutdown() {
                 return Err(WriteDataError::ConnectionClosed);
             }
+            // A fatal read is mid-dispatch (its data callback wrote back):
+            // the close that follows carries the reason. Do not close here.
+            if self.flags.fatal_error() {
+                return Err(WriteDataError::ConnectionClosed);
+            }
 
             if data.is_empty() {
                 // just cycle through internal openssl's state
@@ -799,7 +809,7 @@ pub mod ssl_wrapper {
                 self.flags.set_fatal_error(
                     err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
                 );
-                self.trigger_close_callback();
+                self.trigger_close_callback(None);
                 return Err(WriteDataError::ConnectionClosed);
             }
             self.handle_traffic();
@@ -843,14 +853,28 @@ pub mod ssl_wrapper {
             (handlers.on_data)(handlers.ctx, data);
         }
 
-        fn trigger_close_callback(&self) {
+        fn trigger_close_callback(&self, reason: Option<&CStr>) {
             if self.flags.closed_notified() {
                 return;
             }
             self.flags.set_closed_notified(true);
             // trigger the onClose callback
             let handlers = self.handlers.get();
-            (handlers.on_close)(handlers.ctx);
+            (handlers.on_close)(handlers.ctx, reason);
+        }
+
+        /// The root-cause reason of a fatal `SSL_read`, picked the way openssl.c
+        /// picks its own. `None` when nothing was queued.
+        fn take_fatal_reason(buf: &mut [u8; FATAL_REASON_MAX]) -> Option<&CStr> {
+            // SAFETY: `buf` is writable for `buf.len()` bytes; the helper
+            // NUL-terminates within that length.
+            let taken = unsafe { us_ssl_take_fatal_reason(buf.as_mut_ptr().cast(), buf.len()) };
+            if taken == 0 {
+                return None;
+            }
+            CStr::from_bytes_until_nul(buf)
+                .ok()
+                .filter(|s| !s.is_empty())
         }
 
         fn get_verify_error(&self) -> us_bun_verify_error_t {
@@ -885,7 +909,7 @@ pub mod ssl_wrapper {
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown
                     let _ = self.shutdown(false);
-                    self.trigger_close_callback();
+                    self.trigger_close_callback(None);
 
                     return false;
                 }
@@ -927,7 +951,7 @@ pub mod ssl_wrapper {
                     self.trigger_handshake_callback(false, verify);
 
                     if self.flags.fatal_error() {
-                        self.trigger_close_callback();
+                        self.trigger_close_callback(None);
                         return false;
                     }
                     return true;
@@ -989,6 +1013,16 @@ pub mod ssl_wrapper {
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
+                    let is_fatal =
+                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
+                    // The close carries the reason (node's ERR_SSL_* 'error').
+                    // Take it before the queue is cleared.
+                    let mut reason_buf = [0u8; FATAL_REASON_MAX];
+                    let close_reason = if is_fatal {
+                        Self::take_fatal_reason(&mut reason_buf)
+                    } else {
+                        None
+                    };
                     boring_sys::ERR_clear_error();
 
                     if err != boring_sys::SSL_ERROR_WANT_READ
@@ -1023,7 +1057,7 @@ pub mod ssl_wrapper {
                                 // we failed to renegotiate
                                 let verify = self.get_verify_error();
                                 self.trigger_handshake_callback(false, verify);
-                                self.trigger_close_callback();
+                                self.trigger_close_callback(None);
                                 return false;
                             }
                             // ok, we are done here, we need to call SSL_read again
@@ -1038,8 +1072,7 @@ pub mod ssl_wrapper {
                             let _ = self.shutdown(false);
                             self.handle_end_of_renegotiation();
                         }
-                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
-                        {
+                        if is_fatal {
                             self.flags.set_fatal_error(true);
                         }
 
@@ -1053,6 +1086,14 @@ pub mod ssl_wrapper {
                                 return false;
                             }
                         }
+                        if is_fatal {
+                            // Send the alert BoringSSL sealed into the write BIO
+                            // before the close frees it, so the peer gets its error.
+                            self.handle_writing(buffer);
+                            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                return false;
+                            }
+                        }
                         // A NewSessionTicket/keylog line that rode in ahead of the
                         // peer's close_notify is still parked; deliver it before the
                         // close tears the wrapper down (mirrors the C ZERO_RETURN path).
@@ -1060,7 +1101,7 @@ pub mod ssl_wrapper {
                         if self.ssl.get().is_none() || self.flags.closed_notified() {
                             return false;
                         }
-                        self.trigger_close_callback();
+                        self.trigger_close_callback(close_reason);
                         return false;
                     } else {
                         log!("wanna read/write just break");
@@ -1274,6 +1315,10 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
+        /// Drain the OpenSSL error queue into `out` as the root-cause reason.
+        /// Returns 1 with a reason, 0 with nothing queued.
+        // SAFETY (unsafe fn): `out` writable for `out_len` bytes.
+        fn us_ssl_take_fatal_reason(out: *mut core::ffi::c_char, out_len: usize) -> c_int;
         /// Opt this SSL into the parked new-session/keylog queues
         /// (openssl.c's `us_ssl_new_session_cb` / `us_ssl_keylog_cb` skip
         /// SSLs without the marker).

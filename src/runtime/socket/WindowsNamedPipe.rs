@@ -19,7 +19,7 @@
 //! unified socket interface.
 
 use core::cell::Cell;
-use core::ffi::{c_uint, c_void};
+use core::ffi::{CStr, c_uint, c_void};
 #[cfg(windows)]
 use core::ptr::NonNull;
 
@@ -58,6 +58,8 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 pub struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
     pub(crate) deferred_writer_close: Cell<bool>,
+    /// Owned: the engine's stack buffer is gone when the deferred close runs.
+    pub(crate) deferred_close_reason: JsCell<Option<Box<CStr>>>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
@@ -134,7 +136,8 @@ pub struct Handlers {
     pub(crate) on_open: fn(*mut c_void),
     pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut c_void, &[u8]),
-    pub on_close: fn(*mut c_void),
+    /// `reason`: see `ssl_wrapper::Handlers::on_close`.
+    pub on_close: fn(*mut c_void, Option<&CStr>),
     pub(crate) on_end: fn(*mut c_void),
     pub(crate) on_writable: fn(*mut c_void),
     pub(crate) on_error: fn(*mut c_void, bun_sys::Error),
@@ -309,7 +312,8 @@ impl WindowsNamedPipe {
         if !was_busy {
             self.update_flags(|f| f.remove(Flags::WRITER_BUSY));
             if self.deferred_writer_close.replace(false) {
-                self.on_close();
+                let reason = self.deferred_close_reason.take();
+                self.on_close_with_reason(reason.as_deref());
             }
         }
         r
@@ -383,9 +387,9 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_keylog(d)
     }
-    fn ssl_on_close(this: *mut Self) {
+    fn ssl_on_close(this: *mut Self, reason: Option<&CStr>) {
         // SAFETY: see block note above.
-        unsafe { &*this }.on_close()
+        unsafe { &*this }.on_close_with_reason(reason)
     }
     fn ssl_write(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
@@ -429,8 +433,13 @@ impl WindowsNamedPipe {
     }
 
     fn on_close(&self) {
+        self.on_close_with_reason(None);
+    }
+
+    fn on_close_with_reason(&self, reason: Option<&CStr>) {
         if self.flags.get().contains(Flags::WRITER_BUSY) {
             self.deferred_writer_close.set(true);
+            self.deferred_close_reason.set(reason.map(Into::into));
             return;
         }
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
@@ -438,7 +447,7 @@ impl WindowsNamedPipe {
         self.pipe.set(None);
         if !self.flags.get().is_closed() {
             self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
-            (self.handlers.on_close)(self.handlers.ctx);
+            (self.handlers.on_close)(self.handlers.ctx, reason);
             self.release_resources();
         }
     }
@@ -568,6 +577,7 @@ impl WindowsNamedPipe {
             pipe: Cell::new(Some(NonNull::from(Box::leak(pipe)))),
             wrapper: JsCell::new(None),
             deferred_writer_close: Cell::new(false),
+            deferred_close_reason: JsCell::new(None),
             root: Cell::new(core::ptr::null_mut()),
             handlers,
             // defaults:

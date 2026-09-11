@@ -81,8 +81,8 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// The OpenSSL reason `us_internal_ssl_on_data` attaches to the close of a TLS
-/// socket whose `SSL_read` failed after the handshake. Valid for the dispatch.
+/// The OpenSSL reason a TLS engine (openssl.c or `SSLWrapper`) attaches to
+/// the close of a socket whose `SSL_read` failed after the handshake.
 fn tls_close_reason<'a, const SSL: bool>(reason: Option<*mut c_void>) -> Option<&'a [u8]> {
     if !SSL {
         return None;
@@ -91,8 +91,8 @@ fn tls_close_reason<'a, const SSL: bool>(reason: Option<*mut c_void>) -> Option<
     if ptr.is_null() {
         return None;
     }
-    // SAFETY: the caller (uSockets) passes a NUL-terminated C string that
-    // outlives this close dispatch.
+    // SAFETY: the caller passes a NUL-terminated C string that outlives this
+    // close dispatch.
     let bytes = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
     (!bytes.is_empty()).then_some(bytes)
 }
@@ -4387,7 +4387,7 @@ impl DuplexUpgradeContext {
         }
     }
 
-    fn on_close(this: bun_ptr::ThisPtr<Self>) {
+    fn on_close(this: bun_ptr::ThisPtr<Self>, reason: Option<&core::ffi::CStr>) {
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls.replace(None) {
             // `TLSSocket::on_close` consumes the +1 we hold (its scope-exit deref
@@ -4400,7 +4400,9 @@ impl DuplexUpgradeContext {
             // in `on_error` instead of reading the Handlers that `TLSSocket::on_close`
             // → `mark_inactive` just released.
             let p = tls.into_this_ptr();
-            crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, None));
+            // The reason travels the same way the uSockets close reason does.
+            let reason = reason.map(|r| r.as_ptr().cast_mut().cast::<c_void>());
+            crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, reason));
         }
 
         Self::deinit_in_next_tick(this);
@@ -4780,8 +4782,8 @@ pub fn js_upgrade_duplex_to_tls(
                     DuplexUpgradeContext::on_handshake(bun_ptr::ThisPtr::new(c.cast()), ok, err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_close: |c: *mut ()| {
-                    DuplexUpgradeContext::on_close(bun_ptr::ThisPtr::new(c.cast()))
+                on_close: |c: *mut (), reason| {
+                    DuplexUpgradeContext::on_close(bun_ptr::ThisPtr::new(c.cast()), reason)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_end: |c: *mut ()| DuplexUpgradeContext::on_end(bun_ptr::ThisPtr::new(c.cast())),

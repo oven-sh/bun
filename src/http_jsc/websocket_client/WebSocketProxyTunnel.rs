@@ -319,7 +319,7 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called when connection is closing
-    fn on_close(this: ThisPtr<Self>) {
+    fn on_close(this: ThisPtr<Self>, _reason: Option<&core::ffi::CStr>) {
         let _guard = RefPtr::from_this(this);
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");

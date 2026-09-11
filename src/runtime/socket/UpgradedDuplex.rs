@@ -99,7 +99,8 @@ pub struct Handlers {
     pub(crate) on_open: fn(*mut ()),
     pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut (), &[u8]),
-    pub on_close: fn(*mut ()),
+    /// `reason`: see `ssl_wrapper::Handlers::on_close`.
+    pub on_close: fn(*mut (), Option<&CStr>),
     pub(crate) on_end: fn(*mut ()),
     pub(crate) on_writable: fn(*mut ()),
     pub(crate) on_error: fn(*mut (), JSValue),
@@ -197,7 +198,7 @@ impl UpgradedDuplex {
         }
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(this: *mut Self, reason: Option<&CStr>) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
@@ -208,7 +209,7 @@ impl UpgradedDuplex {
         let js_wrapper = this.js_wrapper;
         js_wrapper.ensure_still_alive();
 
-        (this.handlers.on_close)(this.handlers.ctx);
+        (this.handlers.on_close)(this.handlers.ctx, reason);
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 

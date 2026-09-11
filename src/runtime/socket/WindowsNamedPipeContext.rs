@@ -298,7 +298,7 @@ impl WindowsNamedPipeContext {
         ));
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(this: *mut Self, reason: Option<&core::ffi::CStr>) {
         // SAFETY: see `on_open`. Snapshot `socket` BEFORE clearing it, then match
         // the snapshot — the macro must not read `(*this).socket` directly here.
         let (socket, pipe) = unsafe {
@@ -306,8 +306,10 @@ impl WindowsNamedPipeContext {
             (*this).socket = SocketType::None;
             (socket, ptr::addr_of_mut!((*this).named_pipe))
         };
+        // The reason travels the same way the uSockets close reason does.
+        let reason = reason.map(|r| r.as_ptr().cast_mut().cast::<c_void>());
         match_socket!(socket, |s: NewSocket<SSL>| {
-            let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, reason);
             // Release the +1 ref taken in `create()`.
             s.get().deref();
             closed
@@ -388,7 +390,7 @@ impl WindowsNamedPipeContext {
             on_writable: |p| Self::on_writable(p.cast::<Self>()),
             on_error: |p, e| Self::on_error(p.cast::<Self>(), &e),
             on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
-            on_close: |p| Self::on_close(p.cast::<Self>()),
+            on_close: |p, reason| Self::on_close(p.cast::<Self>(), reason),
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
         };

@@ -60,8 +60,11 @@ impl Seq {
                 idx += 1;
                 continue;
             }
-            if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
+            if let Some(bytes) = arg
+                .strip_prefix(b"-s")
+                .or_else(|| arg.strip_prefix(b"--separator="))
+            {
+                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }
@@ -75,8 +78,11 @@ impl Seq {
                 idx += 1;
                 continue;
             }
-            if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
+            if let Some(bytes) = arg
+                .strip_prefix(b"-t")
+                .or_else(|| arg.strip_prefix(b"--terminator="))
+            {
+                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }

@@ -66,6 +66,30 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("--separator works");
 
+  TestBuilder.command`seq --separator=, 0 5`
+    .exitCode(0)
+    .stdout("0,1,2,3,4,5,")
+    .stderr("")
+    .runAsTest("--separator=value works");
+
+  TestBuilder.command`seq --separator= 0 5`
+    .exitCode(0)
+    .stdout("012345")
+    .stderr("")
+    .runAsTest("--separator= sets an empty separator");
+
+  TestBuilder.command`seq --separator=a=b 0 2`
+    .exitCode(0)
+    .stdout("0a=b1a=b2a=b")
+    .stderr("")
+    .runAsTest("--separator=value splits at the first = only");
+
+  TestBuilder.command`seq --separator, 0 5`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("--separator needs = before an attached value");
+
   TestBuilder.command`seq -t, 0 5`.exitCode(0).stdout("0\n1\n2\n3\n4\n5\n,").stderr("").runAsTest("-t works inline");
 
   TestBuilder.command`seq -t , 0 5`.exitCode(0).stdout("0\n1\n2\n3\n4\n5\n,").stderr("").runAsTest("-t works separate");
@@ -76,11 +100,35 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("--terminator works");
 
+  TestBuilder.command`seq --terminator=, 0 5`
+    .exitCode(0)
+    .stdout("0\n1\n2\n3\n4\n5\n,")
+    .stderr("")
+    .runAsTest("--terminator=value works");
+
+  TestBuilder.command`seq --terminator= 0 2`
+    .exitCode(0)
+    .stdout("0\n1\n2\n")
+    .stderr("")
+    .runAsTest("--terminator= sets an empty terminator");
+
+  TestBuilder.command`seq --terminator, 0 5`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("--terminator needs = before an attached value");
+
   TestBuilder.command`seq -s. -t, 0 5`
     .exitCode(0)
     .stdout("0.1.2.3.4.5.,")
     .stderr("")
     .runAsTest("-s and -t work together");
+
+  TestBuilder.command`seq --separator=. --terminator=, 0 5`
+    .exitCode(0)
+    .stdout("0.1.2.3.4.5.,")
+    .stderr("")
+    .runAsTest("--separator=value and --terminator=value work together");
 
   TestBuilder.command`seq 0`.exitCode(0).stdout("1\n0\n").stderr("").runAsTest("seq 0");
 

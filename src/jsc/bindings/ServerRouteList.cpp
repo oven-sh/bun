@@ -121,32 +121,24 @@ private:
             EncodedSlice rawPath = paths[i];
             WTF::String path = Zig::toString(rawPath);
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
-            size_t startOfIdentifier = 0;
             size_t identifierCount = 0;
-            for (size_t j = 0; j < path.length(); j++) {
-                switch (path[j]) {
-                case '/': {
-                    if (startOfIdentifier && startOfIdentifier < j) {
-                        WTF::String&& identifier = path.substring(startOfIdentifier, j - startOfIdentifier);
-                        m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
-                        identifierCount++;
-                    }
-                    startOfIdentifier = 0;
-                    break;
+
+            // Same grammar as uWS::HttpRouter::add(): the path splits on '/', and a
+            // segment is a parameter only when it starts with ':'. paramsObjectForRoute
+            // pairs these identifiers positionally with req->getParameter(i), so a ':'
+            // inside a literal segment must not produce one.
+            size_t segmentStart = 0;
+            while (segmentStart < path.length()) {
+                size_t segmentEnd = path.find('/', segmentStart);
+                if (segmentEnd == WTF::notFound) {
+                    segmentEnd = path.length();
                 }
-                case ':': {
-                    startOfIdentifier = j + 1;
-                    break;
+                if (segmentEnd > segmentStart && path[segmentStart] == ':') {
+                    WTF::String identifier = path.substring(segmentStart + 1, segmentEnd - segmentStart - 1);
+                    m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
+                    identifierCount++;
                 }
-                default: {
-                    break;
-                }
-                }
-            }
-            if (startOfIdentifier && startOfIdentifier < path.length()) {
-                WTF::String&& identifier = path.substring(startOfIdentifier, path.length() - startOfIdentifier);
-                m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
-                identifierCount++;
+                segmentStart = segmentEnd + 1;
             }
 
             pathIdentifierRanges[0] = { static_cast<uint16_t>(originalIdentifierIndex), static_cast<uint16_t>(identifierCount) };

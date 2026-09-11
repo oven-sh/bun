@@ -131,8 +131,8 @@ void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& 
 
 }
 
-// `JSC::forEachInIterable` with the iterator protocol bounded: by the collection's element count when it has one, else by `budget`. True when elements were left.
-extern "C" bool Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIterable, JSC::JSGlobalObject* globalObject, uint32_t budget, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void* ctx, JSC::EncodedJSValue))
+// `JSC::forEachInIterable` with the iterator protocol bounded: by the collection's element count when it has one, else by `budget`. `sizeAlreadyRead` is a Map or Set `size` the caller read, or -1. True when elements were left.
+extern "C" bool Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIterable, JSC::JSGlobalObject* globalObject, uint32_t budget, int32_t sizeAlreadyRead, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void* ctx, JSC::EncodedJSValue))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -171,15 +171,17 @@ extern "C" bool Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIt
     uint64_t bound = budget;
     if (map || set) {
         // Node's rule for a replaced iterator: it gets as many steps as the collection reports entries.
-        JSC::JSObject* collection = map ? static_cast<JSC::JSObject*>(map) : set;
-        JSC::JSValue sizeValue = collection->get(globalObject, vm.propertyNames->size);
-        RETURN_IF_EXCEPTION(scope, false);
-        double size = sizeValue.toNumber(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        // `size` is a user-controlled claim once it exceeds what the storage holds, so past that only the budget applies.
-        uint64_t trusted = std::max<uint64_t>(map ? map->size() : set->size(), budget);
-        if (size >= 0)
-            bound = size < static_cast<double>(trusted) ? static_cast<uint64_t>(size) : trusted;
+        double size = sizeAlreadyRead;
+        if (sizeAlreadyRead < 0) {
+            JSC::JSObject* collection = map ? static_cast<JSC::JSObject*>(map) : set;
+            JSC::JSValue sizeValue = collection->get(globalObject, vm.propertyNames->size);
+            RETURN_IF_EXCEPTION(scope, false);
+            size = sizeValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        // A size that is not a finite count says nothing about where the walk ends, so the budget stays.
+        if (std::isfinite(size) && size >= 0)
+            bound = size < static_cast<double>(UINT32_MAX) ? static_cast<uint64_t>(size) : UINT32_MAX;
     } else if (auto* array = dynamicDowncast<JSC::JSArray>(iterable))
         bound = array->length();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(iterable))

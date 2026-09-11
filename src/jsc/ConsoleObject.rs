@@ -567,6 +567,7 @@ pub(crate) fn for_each_limited(
     iterable: JSValue,
     global: &JSGlobalObject,
     budget: u32,
+    size_already_read: Option<i32>,
     ctx: *mut c_void,
     callback: jsc::ForEachCallback,
 ) -> JsResult<bool> {
@@ -576,12 +577,21 @@ pub(crate) fn for_each_limited(
             iterable: JSValue,
             global: &JSGlobalObject,
             budget: u32,
+            size_already_read: i32,
             ctx: *mut c_void,
             callback: jsc::ForEachCallback,
         ) -> bool;
     }
+    let size_already_read = size_already_read.filter(|size| *size >= 0).unwrap_or(-1);
     jsc::host_fn::from_js_host_call_generic(global, || {
-        Bun__ConsoleObject__forEachLimited(iterable, global, budget, ctx, callback)
+        Bun__ConsoleObject__forEachLimited(
+            iterable,
+            global,
+            budget,
+            size_already_read,
+            ctx,
+            callback,
+        )
     })
 }
 
@@ -974,6 +984,7 @@ impl<'a> TablePrinter<'a> {
                     tabular_data,
                     global_object,
                     UNSIZED_ITERABLE_BUDGET,
+                    None,
                     (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
                 )?;
@@ -4657,6 +4668,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
@@ -4680,6 +4692,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
@@ -4726,6 +4739,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        None,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
                     )?;
@@ -4750,6 +4764,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        None,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,
                     )?;
@@ -4819,6 +4834,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
@@ -4842,6 +4858,7 @@ pub mod formatter {
                         value,
                         global_this,
                         UNSIZED_ITERABLE_BUDGET,
+                        Some(length),
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each,
                     )?;

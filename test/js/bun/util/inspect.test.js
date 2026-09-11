@@ -1136,6 +1136,35 @@ describe("inspect bounds a replaced Map or Set iterator", () => {
     );
   });
 
+  it("such a subclass prints every entry past the budget for unsized iterables", () => {
+    class Cache extends Map {
+      #items = entries(1500);
+      get size() {
+        return this.#items.length;
+      }
+      *[Symbol.iterator]() {
+        yield* this.#items;
+      }
+    }
+    expect(Bun.inspect(new Cache())).toEndWith("  1498: 1498,\n  1499: 1499,\n}");
+    expect(Bun.inspect.table(new Cache())).toEndWith("│ 1499 │ 1499 │ 1499   │\n└──────┴──────┴────────┘\n");
+  });
+
+  it("reads `size` once", () => {
+    let reads = 0;
+    class Counted extends Map {
+      get size() {
+        reads++;
+        return 1;
+      }
+      *[Symbol.iterator]() {
+        yield ["a", 1];
+      }
+    }
+    expect(Bun.inspect(new Counted())).toBe('Map(1) {\n  "a": 1,\n}');
+    expect(reads).toBe(1);
+  });
+
   it("an iterator that yields more than `size` is cut there and marked", () => {
     class Overflow extends Map {
       get size() {
@@ -1255,20 +1284,26 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("a Map subclass that reports more entries than it can hold", async () => {
+  it("a Map subclass whose size is not a finite count", async () => {
     const { output, runaway, exitCode } = await run(
       `let yielded = 0;
        class Lazy extends Map {
-         get size() { return 1e18; }
+         get size() { return Infinity; }
          *[Symbol.iterator]() { for (;;) { if (++yielded > 5000) process.exit(2); yield [yielded, yielded]; } }
        }
-       console.log(new Lazy());
+       console.table(new Lazy());
        console.log("yielded=" + yielded);`,
       "stdout",
     );
     expect(runaway).toBe(false);
-    // The storage is empty, so the claim is trusted up to the budget of 1000 steps.
-    expect(output).toEndWith("  1000: 1000,\n  ... more items\n}\nyielded=1001\n");
+    // `Infinity` says nothing about where the walk ends, so the budget of 1000 rows applies.
+    expect(output.split("\n").slice(-5)).toEqual([
+      "│ 999 │ 1000 │ 1000   │",
+      "└─────┴──────┴────────┘",
+      "... more rows",
+      "yielded=1001",
+      "",
+    ]);
     expect(exitCode).toBe(0);
   });
 

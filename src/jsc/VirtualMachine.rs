@@ -5445,6 +5445,7 @@ impl VirtualMachine {
                 errors,
                 global_ref,
                 UNSIZED_ERRORS_BUDGET,
+                None,
                 (&raw mut ctx).cast(),
                 agg_iter,
             ) {

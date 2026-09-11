@@ -1173,10 +1173,7 @@ impl ReactCompilerState {
         }
     }
 
-    /// Whether [`maybe_compile_pending`] can replace the body of this
-    /// function, from what is known before the parser visits that body. It is
-    /// `true` for every function that gets compiled. The statements of the
-    /// body and the compile itself then decide.
+    /// Whether [`maybe_compile_pending`] can take this function, decided before its body is visited.
     pub fn may_compile(
         &self,
         name: Option<&[u8]>,

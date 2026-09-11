@@ -130,10 +130,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
-    /// Called by `visit_func` / arrow-visit before anything of the function is
-    /// visited. Sets `react_compiler_may_replace_body` if the function is the
-    /// candidate `react_compiler_candidate_name` announces and the compiler
-    /// may take it. Returns the value to restore after the visit.
+    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         name: Option<js_ast::Ref>,

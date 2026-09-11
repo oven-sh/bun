@@ -472,9 +472,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
-    /// The visit is inside a function the React Compiler may compile. A
-    /// compile re-declares every local in there as a new symbol and can drop
-    /// the declaration, so nothing that outlives the visit may hold one.
+    /// Visiting a function the React Compiler may compile. It re-declares the locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
 
     /// only applicable when `.options.features.server_components` is
@@ -1165,8 +1163,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The import record `ns.name` reads an export of, when `ns` holds that one
     /// module's namespace, so the read can become an import item.
     pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
-        // An unbound item prints `ns.name`, which needs the `ns` declared here
-        // in the output. The React Compiler re-declares or drops it.
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
             || self.react_compiler_may_replace_body
@@ -1195,8 +1191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// export.
     pub(crate) fn note_destructured_locals(&mut self, properties: &[bun_ast::B::Property]) {
         // The dev server does not link, so nothing would bind them. A bound
-        // name leaves the pattern, and `...rest` would then collect it. The
-        // React Compiler re-declares the pattern with new symbols.
+        // name leaves the pattern, and `...rest` would then collect it.
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
             || self.react_compiler_may_replace_body

@@ -881,10 +881,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// The HTTP thread can report body bytes and then fail before the JS thread runs, so one
-    /// `on_progress_update` sees both. The error must not overtake bytes that arrived before
-    /// it: this run handles the bytes as the progress update they arrived as, and a second run
-    /// on the next task handles the failure (returned here, restored by `cleanup`).
+    /// Takes a failure that arrived behind body bytes this thread has not seen out of `result`.
     fn hold_failure_behind_unseen_body(&mut self) -> Option<http::Error> {
         let fail = self.result.fail?;
         if self.scheduled_response_buffer.list.is_empty() {
@@ -944,8 +941,7 @@ impl FetchTasklet {
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
             if let Some(fail) = failure_behind_body {
-                // This run consumed the body bytes. The failure is the terminal update again,
-                // and it carries this thread's ref like the task the HTTP thread posted.
+                // The next task handles the failure as the terminal update, and owns this thread's ref.
                 this.result.fail = Some(fail);
                 this.result.has_more = false;
                 // SAFETY: `vm.event_loop()` is the live JS-thread loop.

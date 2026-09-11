@@ -1618,10 +1618,7 @@ impl<'a> HTTPClient<'a> {
         }
         callback.run(self.parent_async_http(), result);
     }
-    /// A read can hold valid body bytes followed by the bytes that fail the
-    /// response (a malformed chunk-size line). A streaming consumer gets the
-    /// body bytes in a progress callback of their own ahead of the failure,
-    /// as it would have had the two arrived in separate reads.
+    /// Body bytes decoded ahead of the failure reach a streaming consumer first, in a progress callback.
     fn report_body_decoded_before_failure(&mut self) {
         let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
             || self.signals.body_receive_mode.is_some();
@@ -4655,16 +4652,11 @@ impl<'a> HTTPClient<'a> {
         );
 
         match pret {
-            // -1: invalid HTTP response body. A compressed body gets nothing
-            // from this read, as in Node.js, whose decompressor is torn down
-            // by the error before it emits.
+            // Invalid HTTP response body. Node.js gives a compressed body nothing from this read.
             -1 if self.state.encoding.is_compressed() => {
                 return Err(crate::Error::InvalidHTTPResponse);
             }
-            // -2: needs more data.
-            // -1: the chunks decoded ahead of the invalid one are body all the
-            // same; `fail` reports them to a streaming consumer before the
-            // error.
+            // -1: invalid, -2: needs more data. The chunks decoded so far are body either way.
             -1 | -2 => {
                 self.report_progress(buffer_len);
                 let mut processed = false;
@@ -4740,14 +4732,9 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
         match pret {
-            // -1: invalid HTTP response body. A compressed body gets nothing
-            // from this read, as in Node.js, whose decompressor is torn down
-            // by the error before it emits.
+            // Invalid HTTP response body. Node.js gives a compressed body nothing from this read.
             -1 if self.state.encoding.is_compressed() => Err(crate::Error::InvalidHTTPResponse),
-            // -2: needs more data.
-            // -1: the chunks decoded ahead of the invalid one are body all the
-            // same; `fail` reports them to a streaming consumer before the
-            // error.
+            // -1: invalid, -2: needs more data. The chunks decoded so far are body either way.
             -1 | -2 => {
                 self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;

@@ -232,6 +232,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
+
+    /* The response that closes this connection (Connection: close, HTTP/1.0, a
+     * close-delimited body) is complete; the socket only stays open until its
+     * buffered bytes drain. Nothing received from here on is a request this
+     * connection may answer (RFC 9112 9.6), and after a close-delimited body the
+     * peer would read whatever we send as more body. */
+    bool isDrainingBeforeClose() const {
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+    }
 };
 
 /* Per-connection state that only node:http compat servers need.

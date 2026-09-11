@@ -68,7 +68,6 @@ declare interface Error {
 
 interface JSCommonJSModule {
   $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireMap: Map<string, JSCommonJSModule>;
   $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;

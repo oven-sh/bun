@@ -3,19 +3,16 @@
 #include "ModuleGraph.h"
 #include "ZigGlobalObject.h"
 #include "NodeValidator.h"
-#include "BunClientData.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/Exception.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/SourceOrigin.h>
-#include "JSCommonJSModule.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/StackVisitor.h>
@@ -32,7 +29,6 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/SetForScope.h>
-#include <wtf/HexNumber.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 
@@ -57,18 +53,6 @@ JSModuleGraph* moduleGraphForLoader(JSGlobalObject* globalObject, JSModuleLoader
     return moduleGraphForOverlay(defaultGlobalObject(globalObject), loader->moduleScope());
 }
 
-JSMap* requireMapFor(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
-{
-    return graph ? graph->requireMap() : globalObject->requireMap();
-}
-
-JSModuleLoader* moduleLoaderForRequirer(JSGlobalObject* globalObject, JSCommonJSModule* requirer)
-{
-    if (requirer && requirer->moduleGraph())
-        return requirer->moduleGraph()->loader();
-    return globalObject->moduleLoader();
-}
-
 void throwModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
@@ -84,11 +68,10 @@ static bool isHostCommonJSModuleCode(JSFunction* function)
     return provider && provider->sourceType() == JSC::SourceProviderSourceType::Program && provider->sourceOrigin().url().protocolIsFile();
 }
 
-// The graph whose code created `scope` (a function / module / CommonJS scope),
-// and whether the scope belongs to module-ish code at all (`decisive`): a chain
-// with a module environment or a graph overlay on it is module / CommonJS code
-// of SOME loader (a graph's or the global object's) and settles attribution;
-// plain global-scope functions do not.
+// The graph whose code created `scope`, and whether the scope belongs to module
+// code at all (`decisive`): a chain with a module environment or a graph overlay
+// on it is module code of SOME loader (a graph's or the global object's) and
+// settles attribution; plain global-scope functions do not.
 static JSModuleGraph* moduleGraphOwningScope(Zig::GlobalObject* globalObject, JSScope* scope, bool& decisive)
 {
     decisive = false;
@@ -107,8 +90,9 @@ static JSModuleGraph* moduleGraphOwningScope(Zig::GlobalObject* globalObject, JS
     return nullptr;
 }
 
-// Whether the frame of `calleeCell` settles which loader's code is running (module /
-// CommonJS code of a graph or of the global object), and if so which graph (or null).
+// Whether the frame of `calleeCell` settles which loader's code is running (module
+// code of a graph, or module / CommonJS code of the global object), and if so which
+// graph (or null).
 static bool frameDecidesModuleGraph(Zig::GlobalObject* globalObject, JSCell* calleeCell, JSModuleGraph*& graph)
 {
     graph = nullptr;
@@ -127,11 +111,10 @@ static bool frameDecidesModuleGraph(Zig::GlobalObject* globalObject, JSCell* cal
     return decisive || (function && isHostCommonJSModuleCode(function));
 }
 
-// The Bun.unsafe.ModuleGraph whose code is running: the innermost JS frame on
-// the current stack (vm.topCallFrame) whose callee/module scope belongs to a
-// graph. Used to attribute promise rejections (moduleGraphNoteRejection) and to
-// give createRequire() called from graph code the graph's require.
-JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
+// The Bun.unsafe.ModuleGraph whose code is running: the innermost JS frame of
+// module / CommonJS code on the current stack (vm.topCallFrame) decides. Used to
+// attribute promise rejections (moduleGraphNoteRejection).
+static JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -146,31 +129,6 @@ JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
         return frameDecidesModuleGraph(globalObject, calleeCell, found) ? IterationStatus::Done : IterationStatus::Continue;
     });
     return found;
-}
-
-// $moduleGraphMainOf / $requireMapOf (CommonJS.ts): `owner` is a CommonJS module
-// object or a require function bound to one.
-static JSCommonJSModule* commonJSModuleForRequire(JSValue owner)
-{
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(owner))
-        owner = bound->boundThis();
-    return dynamicDowncast<JSCommonJSModule>(owner);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionModuleGraphMainOf, (JSGlobalObject*, CallFrame* callFrame))
-{
-    auto* module = commonJSModuleForRequire(callFrame->argument(0));
-    JSModuleGraph* graph = module ? module->moduleGraph() : nullptr;
-    if (!graph)
-        return JSValue::encode(jsUndefined());
-    JSValue main = graph->mainPath();
-    return JSValue::encode(main.isUndefined() ? jsNull() : main);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionRequireMapOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto* module = commonJSModuleForRequire(callFrame->argument(0));
-    return JSValue::encode(requireMapFor(defaultGlobalObject(globalObject), module ? module->moduleGraph() : nullptr));
 }
 
 // The ModuleGraph whose code produced `error`, if any: the innermost frame of the
@@ -322,19 +280,17 @@ Structure* JSModuleGraph::createStructure(VM& vm, JSGlobalObject* globalObject, 
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSString* overlaySourceSuffix, JSMap* requireMap, JSObject* onError)
+JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSObject* onError)
     : Base(vm, structure)
     , m_loader(loader, WriteBarrierEarlyInit)
     , m_overlay(overlay, WriteBarrierEarlyInit)
-    , m_overlaySourceSuffix(overlaySourceSuffix, WriteBarrierEarlyInit)
-    , m_requireMap(requireMap, WriteBarrierEarlyInit)
     , m_onError(onError, WriteBarrierEarlyInit)
 {
 }
 
-JSModuleGraph* JSModuleGraph::create(VM& vm, Structure* structure, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSString* overlaySourceSuffix, JSMap* requireMap, JSObject* onError)
+JSModuleGraph* JSModuleGraph::create(VM& vm, Structure* structure, JSModuleLoader* loader, JSLexicalEnvironment* overlay, JSObject* onError)
 {
-    auto* cell = new (NotNull, allocateCell<JSModuleGraph>(vm)) JSModuleGraph(vm, structure, loader, overlay, overlaySourceSuffix, requireMap, onError);
+    auto* cell = new (NotNull, allocateCell<JSModuleGraph>(vm)) JSModuleGraph(vm, structure, loader, overlay, onError);
     cell->finishCreation(vm);
     return cell;
 }
@@ -353,11 +309,8 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_loader);
     visitor.append(thisObject->m_overlay);
-    visitor.append(thisObject->m_overlaySourceSuffix);
-    visitor.append(thisObject->m_requireMap);
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_mainPath);
-    visitor.append(thisObject->m_requireCache);
     visitor.append(thisObject->m_pendingImports);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
@@ -498,11 +451,10 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose, (JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleGraph* graph = thisModuleGraph(globalObject, scope, callFrame->thisValue(), "dispose"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    // Drop the loader's registry and this graph's CommonJS cache; reject import()s
-    // still pending. Code of the graph that is still running keeps what it closes
-    // over, as usual (the loader stays reachable from the overlay's @moduleLoader,
-    // so import() from such code still finds the graph, and rejects); onError stays
-    // for its errors.
+    // Drop the loader's registry; reject import()s still pending. Code of the graph
+    // that is still running keeps what it closes over, as usual (the loader stays
+    // reachable from the overlay's @moduleLoader, so import() from such code still
+    // finds the graph, and rejects); onError stays for its errors.
     if (JSModuleLoader* loader = graph->loader())
         loader->clearAll();
     graph->clearLoader();
@@ -515,9 +467,6 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose, (JSGlobalObject * global
                 promise->reject(vm, createTypeError(globalObject, "ModuleGraph has been disposed"_s));
         }
     }
-    graph->requireMap()->clear(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    graph->setRequireCache(vm, jsUndefined());
     return JSValue::encode(jsUndefined());
 }
 
@@ -581,11 +530,9 @@ void JSModuleGraphPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject
 
 // The overlay's names are the host's `globals` keys. Graphs made with the same set of
 // names get overlays of one symbol table, so the modules they load share executables
-// (m_moduleGraphOverlaySymbolTables: sorted names → SymbolTable). Every overlay also
-// binds @moduleLoader (what import() compiles to a lookup of), which sends import()
-// from ANY code scoped to the graph — CommonJS wrappers too, not only its ES
-// modules — to the graph's loader.
-static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObject, JSObject* globals, JSModuleLoader*& loader, JSString*& sourceSuffix)
+// (moduleGraphOverlaySymbolTables: sorted names → SymbolTable). Every overlay also
+// binds @moduleLoader (what import() compiles to a lookup of) to the graph's loader.
+static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObject, JSObject* globals, JSModuleLoader*& loader)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -606,23 +553,6 @@ static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObje
         joined.append(name.length(), ':', name.string());
     JSMap* symbolTables = zigGlobal->moduleGraphOverlaySymbolTables();
     JSString* namesKey = jsString(vm, joined.toString());
-    // Classic code compiled to run in this overlay (CommonJS wrappers) carries this comment,
-    // so the code cache keeps it apart from the same text compiled for the global scope or
-    // for another overlay shape: names percent-encoded onto one line.
-    {
-        StringBuilder suffix;
-        suffix.append("\n// ModuleGraph scope:"_s);
-        for (auto& name : names) {
-            suffix.append(' ');
-            for (auto codeUnit : StringView(name.string()).codeUnits()) {
-                if (isASCIIAlphanumeric(codeUnit) || codeUnit == '_' || codeUnit == '$')
-                    suffix.append(static_cast<char>(codeUnit));
-                else
-                    suffix.append('%', hex(codeUnit, 4));
-            }
-        }
-        sourceSuffix = jsString(vm, suffix.toString());
-    }
     JSValue existing = symbolTables->get(globalObject, namesKey);
     RETURN_IF_EXCEPTION(scope, nullptr);
     SymbolTable* symbolTable = existing ? dynamicDowncast<SymbolTable>(existing) : nullptr;
@@ -720,12 +650,9 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSModuleLoader* loader = nullptr;
-    JSString* overlaySourceSuffix = nullptr;
-    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, loader, overlaySourceSuffix);
+    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, loader);
     RETURN_IF_EXCEPTION(scope, {});
-    JSMap* requireMap = JSMap::create(vm, globalObject->mapStructure());
-    RETURN_IF_EXCEPTION(scope, {});
-    JSModuleGraph* graph = JSModuleGraph::create(vm, structure, loader, overlay, overlaySourceSuffix, requireMap, onError.isUndefined() ? nullptr : asObject(onError));
+    JSModuleGraph* graph = JSModuleGraph::create(vm, structure, loader, overlay, onError.isUndefined() ? nullptr : asObject(onError));
     // overlay → graph, for attributing errors / scopes / loaders to it.
     zigGlobal->moduleGraphRegistry()->set(vm, overlay, graph);
     return JSValue::encode(graph);

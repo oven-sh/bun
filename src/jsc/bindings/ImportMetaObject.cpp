@@ -52,7 +52,6 @@
 #include "WebCoreJSBuiltins.h"
 
 #include "ModuleGraph.h"
-#include "BunClientData.h"
 
 namespace Zig {
 using namespace JSC;
@@ -657,8 +656,7 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        // A graph's import.meta requires into that graph.
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
         RETURN_IF_EXCEPTION(scope, );
         ASSERT(object);
         init.set(uncheckedDowncast<JSFunction>(object));

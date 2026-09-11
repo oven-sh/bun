@@ -5,6 +5,7 @@
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "events";
+import { createRequire } from "node:module";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join, resolve } from "path";
@@ -319,64 +320,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("CommonJS: per-graph require cache, graph globals inside CJS, require(esm) and import() bind to the graph's instances", async () => {
-    const dir = fixture({
-      "counter.cjs": `let n = 0; module.exports = { inc() { return ++n }, app() { return process.env.APP_ID }, gapp() { return globalThis.process.env.APP_ID }, importEsm() { return import('./esm-dep.mjs') } }`,
-      "uses-esm.cjs": `const dep = require('./esm-dep.mjs'); module.exports = { bump() { return dep.bump() }, depApp() { return dep.app() } }`,
-      "esm-dep.mjs": `export let count = 0; export function bump() { return ++count } export function app() { return process.env.APP_ID }`,
-      "entry.mjs": `import { createRequire } from 'node:module'; import { count } from './esm-dep.mjs';
-        const require2 = createRequire(import.meta.url);
-        export const counter = require2('./counter.cjs');
-        const again = import.meta.require('./counter.cjs');
-        const usesEsm = require2('./uses-esm.cjs');
-        export function report() { return { sameCache: counter === again, inc: counter.inc(), cjsApp: counter.app(), cjsGlobalApp: counter.gapp(), cjsToEsmBump: usesEsm.bump(), esmCountSeenByEntry: count, cjsToEsmApp: usesEsm.depApp() } }
-        export async function cjsDynamicImport() { return (await counter.importEsm()).bump() }`,
-    });
-    const mk = (t: string) => ModuleGraph({ env: { APP_ID: t } });
-    const a = await mk("a").import(join(dir, "entry.mjs"));
-    const b = await mk("b").import(join(dir, "entry.mjs"));
-    expect(a.report()).toEqual({
-      sameCache: true,
-      inc: 1,
-      cjsApp: "a",
-      cjsGlobalApp: undefined /* globalThis.process is the global's: shared */,
-      cjsToEsmBump: 1,
-      esmCountSeenByEntry: 1,
-      cjsToEsmApp: "a",
-    });
-    expect(a.report()).toMatchObject({ inc: 2, cjsToEsmBump: 2, esmCountSeenByEntry: 2 });
-    expect(b.report()).toEqual({
-      sameCache: true,
-      inc: 1,
-      cjsApp: "b",
-      cjsGlobalApp: undefined,
-      cjsToEsmBump: 1,
-      esmCountSeenByEntry: 1,
-      cjsToEsmApp: "b",
-    });
-    expect(a.counter).not.toBe(b.counter);
-    expect(await a.cjsDynamicImport()).toBe(3); // same esm-dep instance the graph already bumped twice
-    expect(await b.cjsDynamicImport()).toBe(2);
-    // the host's require of the same file is separate and sees the real process
-    const host = (await import("node:module")).createRequire(import.meta.url)(join(dir, "counter.cjs"));
-    expect(host).not.toBe(a.counter);
-    expect(host.app()).toBeUndefined();
-    // CJS wrapper executables are shared across graphs
-    Bun.gc(true);
-    const before = heapStats().objectTypeCounts.FunctionExecutable;
-    const more = [];
-    for (let i = 0; i < 4; i++) {
-      const g = mk("x" + i);
-      const m = await g.import(join(dir, "entry.mjs"));
-      m.report();
-      more.push([g, m]);
-    }
-    Bun.gc(true);
-    expect(heapStats().objectTypeCounts.FunctionExecutable - before).toBeLessThan(4);
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  test("edge cases: cyclic imports with TLA, evaluation errors are cached per graph (and only per graph), link errors, concurrent first imports, require.cache is per graph", async () => {
+  test("edge cases: cyclic imports with TLA, evaluation errors are cached per graph (and only per graph), link errors, concurrent first imports", async () => {
     const dir = fixture({
       "cyc-a.mjs": `import { b, bReady } from './cyc-b.mjs'; export let aReady = false; await new Promise(r => setTimeout(r, 2)); aReady = true; export function a() { return 'a' + b() } export function seesB() { return bReady }`,
       "cyc-b.mjs": `import { a, aReady } from './cyc-a.mjs'; export let bReady = false; await new Promise(r => setTimeout(r, 2)); bReady = true; export function b() { return 'b' } export function callA() { return a() }`,
@@ -384,7 +328,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
       "badlink.mjs": `import { nope } from './plain.mjs'; export const x = nope`,
       "throws.mjs": `export const v = 1; throw new Error('eval failure ' + process.env.APP_ID)`,
       "dependent.mjs": `import { v } from './throws.mjs'; export const w = v`,
-      "meta.mjs": `export const resolved = import.meta.resolve('./plain.mjs'); export const req = require('./plain.mjs').yes; export function cacheKeys() { return Object.keys(require.cache).map(k => k.split(/[\\\\/]/).pop()).sort() }`,
+      "meta.mjs": `export const resolved = import.meta.resolve('./plain.mjs')`,
     });
     const cyc = await ModuleGraph().import(join(dir, "cyc-a.mjs"));
     const primary = await import(join(dir, "cyc-a.mjs"));
@@ -407,10 +351,9 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     expect([x.callA(), y.callA(), x !== y]).toEqual(["ab", "ab", true]);
 
     await import(join(dir, "plain.mjs")); // host evaluates the template first
-    const meta = await ModuleGraph().import(join(dir, "meta.mjs"));
-    expect(meta.resolved.endsWith("plain.mjs")).toBe(true);
-    expect(meta.req).toBe(1);
-    expect(meta.cacheKeys()).toEqual(["meta.mjs", "plain.mjs"]);
+    expect((await ModuleGraph().import(join(dir, "meta.mjs"))).resolved).toBe(
+      Bun.pathToFileURL(join(dir, "plain.mjs")).href,
+    );
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -450,14 +393,12 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("data modules (json import attribute, toml) are per graph; builtin objects are per-graph copies over shared functions; sync require of an in-flight module throws", async () => {
+  test("data modules (json import attribute, toml) are per graph; builtin modules are the global object's objects", async () => {
     const dir = fixture({
       "data.json": `{ "n": 1 }`,
       "cfg.toml": `n = 1\n[deep]\nlist = [1, 2]\n`,
       "attr.mjs": `export async function load() { const j = await import('./data.json', { with: { type: 'json' } }); j.default.n++; return j.default.n }`,
       "toml-user.mjs": `import cfg from './cfg.toml'; import * as os from 'node:os'; import fs from 'node:fs'; export function bump() { cfg.deep.list.push(0); return cfg.deep.list.length } export { os, fs }`,
-      "slow.mjs": `await new Promise(r => setTimeout(r, 30)); export const v = 1`,
-      "req.cjs": `module.exports = () => require('./slow.mjs')`,
     });
     const a = await ModuleGraph().import(join(dir, "attr.mjs"));
     const b = await ModuleGraph().import(join(dir, "attr.mjs"));
@@ -470,35 +411,6 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     expect(ta.fs).toBe(host.fs);
     expect(ta.fs).toBe(tb.fs);
     expect(ta.os.homedir).toBe(host.os.homedir);
-    const g = ModuleGraph();
-    const inflight = g.import(join(dir, "slow.mjs"));
-    const req = (await g.import(join(dir, "req.cjs"))).default;
-    expect(() => req()).toThrow(/Unable to synchronously evaluate|async module|cannot be evaluated synchronously/);
-    expect((await inflight).v).toBe(1);
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  test("ESM import of a CommonJS file is per graph (own cache, own evaluation, own env) and the host's copy evaluates lazily only when the host imports it", async () => {
-    const dir = fixture({
-      "counter.cjs": `__cjsEvals.push(process.env.APP_ID ?? 'host'); let n = 0; module.exports = { inc() { return ++n }, app: () => process.env.APP_ID ?? 'host' }`,
-      "named.cjs": `exports.who = () => process.env.APP_ID ?? 'host'; exports.value = 42`,
-      "app.mjs": `import counter from './counter.cjs'; import { who, value } from './named.cjs'; import * as ns from './named.cjs'; export function run() { return { inc: counter.inc(), app: counter.app(), who: who(), value, nsWho: ns.who() } }`,
-    });
-    const evals: string[] = ((globalThis as any).__cjsEvals = []);
-    const mk = (t: string) => ModuleGraph({ env: { ...process.env, APP_ID: t }, globals: { __cjsEvals: evals } });
-    const a = await mk("a").import(join(dir, "app.mjs"));
-    expect(evals).toEqual(["a"]); // not evaluated for the host
-    const b = await mk("b").import(join(dir, "app.mjs"));
-    expect(evals).toEqual(["a", "b"]);
-    expect([a.run(), a.run(), b.run()]).toEqual([
-      { inc: 1, app: "a", who: "a", value: 42, nsWho: "a" },
-      { inc: 2, app: "a", who: "a", value: 42, nsWho: "a" },
-      { inc: 1, app: "b", who: "b", value: 42, nsWho: "b" },
-    ]);
-    const host = await import(join(dir, "app.mjs"));
-    expect(evals).toEqual(["a", "b", "host"]);
-    expect(host.run()).toEqual({ inc: 1, app: "host", who: "host", value: 42, nsWho: "host" });
-    rmSync(dir, { recursive: true, force: true });
   });
 
   test("import defer: per-graph deferred namespaces evaluate lazily into the graph; async transitive deps evaluate eagerly; cycle members share the root's fate", async () => {
@@ -1028,18 +940,6 @@ describe.skipIf(!enabled)(
       expect((await ModuleGraph().import(join(dir, "v.cjs"))).default).toBe(2);
       rmSync(dir, { recursive: true, force: true });
     });
-
-    test("require(esm) from a graph's CommonJS after the graph was disposed throws instead of loading into the primary", async () => {
-      const dir = fixture({
-        "late.cjs": `module.exports = () => require("./e.mjs").v`,
-        "e.mjs": `export const v = process.env.T ?? "primary"`,
-      });
-      const g = ModuleGraph({ env: { T: "graph" } });
-      const late = (await g.import(join(dir, "late.cjs"))).default;
-      g.dispose();
-      expect(() => late()).toThrow(/disposed/);
-      rmSync(dir, { recursive: true, force: true });
-    });
   },
 );
 
@@ -1253,157 +1153,6 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
       setTimeout(() => { console.log(JSON.stringify(seen)); process.exit(0) }, 300);`;
     const out = await runBun(["-e", script]);
     expect(out.stdout).toBe(`["timer:nohandler"]`);
-  });
-});
-
-describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CommonJS surface per graph", () => {
-  const dir = fixture({
-    "state.cjs": `let n = 0; module.exports = { inc: () => ++n, env: () => process.env.T, file: __filename, dir: __dirname, mod: module };`,
-    "main.cjs": `const s = require("./state.cjs"); module.exports = { s, main: require.main === module, cacheKeys: () => Object.keys(require.cache), resolve: p => require.resolve(p), children: () => module.children.map(c => c.id), paths: module.paths, del: () => { delete require.cache[require.resolve("./state.cjs")]; return require("./state.cjs") } }`,
-    "json.json": `{ "n": 1 }`,
-    "usejson.cjs": `const j = require("./json.json"); j.n++; module.exports = () => j.n`,
-    "cr.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); export const viaCreateRequire = require("./state.cjs"); export const req = require;`,
-    "esm-from-cjs.cjs": `module.exports = async () => (await import("./esm.mjs")).who`,
-    "esm.mjs": `export const who = process.env.T`,
-    "circular-a.cjs": `exports.a = 1; const b = require("./circular-b.cjs"); exports.seenB = b.b; exports.bSawA = b.sawA`,
-    "circular-b.cjs": `const a = require("./circular-a.cjs"); exports.sawA = a.a; exports.b = 2`,
-    "throws.cjs": `throw new Error("cjs-throws-" + process.env.T)`,
-  });
-  test("module state, __filename/__dirname and module object are per graph", async () => {
-    const a = (await ModuleGraph({ env: { T: "a" } }).import(join(dir, "main.cjs"))).default;
-    const b = (await ModuleGraph({ env: { T: "b" } }).import(join(dir, "main.cjs"))).default;
-    expect([a.s.inc(), a.s.inc(), b.s.inc()]).toEqual([1, 2, 1]);
-    expect([a.s.env(), b.s.env()]).toEqual(["a", "b"]);
-    expect([a.s.file, a.s.dir]).toEqual([join(dir, "state.cjs"), dir]);
-    expect(a.s.mod).not.toBe(b.s.mod);
-    expect(a.s.mod.id).toBe(b.s.mod.id);
-  });
-  test("require.main, module.children, module.paths, require.resolve", async () => {
-    const a = (await ModuleGraph().import(join(dir, "main.cjs"))).default;
-    expect(a.main).toBe(true);
-    expect(a.children()).toContain(join(dir, "state.cjs"));
-    expect(a.paths[0]).toBe(join(dir, "node_modules"));
-    expect(a.resolve("./state.cjs")).toBe(join(dir, "state.cjs"));
-  });
-  test("require.cache is the graph's: keys, delete + re-require re-evaluates in this graph only", async () => {
-    const a = (await ModuleGraph().import(join(dir, "main.cjs"))).default;
-    const b = (await ModuleGraph().import(join(dir, "main.cjs"))).default;
-    expect(a.cacheKeys()).toEqual(expect.arrayContaining([join(dir, "state.cjs"), join(dir, "main.cjs")]));
-    a.s.inc();
-    b.s.inc();
-    b.s.inc();
-    const fresh = a.del();
-    expect([fresh.inc(), b.s.inc()]).toEqual([1, 3]); // a's state.cjs re-evaluated; b untouched
-    expect(require.cache[join(dir, "state.cjs")]).toBeUndefined(); // host cache untouched
-  });
-  test("require of JSON is per graph (own object, mutations isolated)", async () => {
-    const a = (await ModuleGraph().import(join(dir, "usejson.cjs"))).default;
-    const b = (await ModuleGraph().import(join(dir, "usejson.cjs"))).default;
-    expect([a(), a(), b()]).toEqual([2, 2, 2]);
-    expect(require(join(dir, "json.json")).n).toBe(1);
-  });
-  test("createRequire(import.meta.url) inside a graph gives the graph's require", async () => {
-    const g = ModuleGraph({ env: { T: "cr" } });
-    const m = await g.import(join(dir, "cr.mjs"));
-    const main = (await g.import(join(dir, "main.cjs"))).default;
-    expect(m.viaCreateRequire).toBe(main.s); // same cache within the graph
-    expect(m.viaCreateRequire.env()).toBe("cr");
-    expect(typeof m.req.resolve).toBe("function");
-  });
-  test("import() from CommonJS in a graph loads into the graph", async () => {
-    const f = (await ModuleGraph({ env: { T: "dyn" } }).import(join(dir, "esm-from-cjs.cjs"))).default;
-    expect(await f()).toBe("dyn");
-  });
-  test("circular require behaves like Node (partial exports) per graph", async () => {
-    const a = (await ModuleGraph().import(join(dir, "circular-a.cjs"))).default;
-    expect([a.a, a.seenB, a.bSawA]).toEqual([1, 2, 1]);
-    const again = (await ModuleGraph().import(join(dir, "circular-a.cjs"))).default;
-    expect(again).not.toBe(a);
-  });
-  test("a CommonJS module that throws at load rejects the import with the graph's error and is retried on next require", async () => {
-    const g = ModuleGraph({ env: { T: "x" } });
-    await expect(g.import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-x");
-    await expect(g.import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-x");
-    await expect(ModuleGraph({ env: { T: "y" } }).import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-y");
-  });
-  test("import.meta in a CommonJS module of a graph is the graph's: import.meta.require uses the graph's cache, import.meta.main is the graph's entry", async () => {
-    const d = fixture({
-      "state.cjs": `module.exports = { who: typeof marker === "undefined" ? "host" : marker }`,
-      "meta.cjs": `module.exports = { viaMetaRequire: import.meta.require("./state.cjs").who, main: import.meta.main }`,
-    });
-    const host = require(join(d, "meta.cjs"));
-    const a = (await new ModuleGraphClass!({ globals: { marker: "A" } }).import(join(d, "meta.cjs"))).default;
-    const b = (await new ModuleGraphClass!({ globals: { marker: "B" } }).import(join(d, "meta.cjs"))).default;
-    expect([host, a, b]).toEqual([
-      { viaMetaRequire: "host", main: false },
-      { viaMetaRequire: "A", main: true },
-      { viaMetaRequire: "B", main: true },
-    ]);
-    rmSync(d, { recursive: true, force: true });
-  });
-  test("ESM import of CommonJS packages where one require()s the other (react-dom/server + react shape), after the host loaded them: each graph gets its own instances", async () => {
-    // b is imported before a and require()s a while the graph's own ESM import of a is still in flight;
-    // that require must be answered by the graph's loader state, not the host's (which has a loaded).
-    const filler = Array.from({ length: 2000 }, (_, i) => `exports.f${i} = function () { return ${i} };`).join("\n");
-    const d = fixture({
-      "a/index.js": `${filler}\nlet n = 0; exports.tag = typeof marker === "undefined" ? "host" : marker; exports.inc = () => ++n;`,
-      "b/index.js": `const a = require("../a/index.js"); exports.viaB = () => [a.tag, a.inc()];`,
-      "entry.mjs": `import b from "./b/index.js"; import a from "./a/index.js"; export const run = () => [a.tag, a.inc(), ...b.viaB()];`,
-    });
-    const host = await import(join(d, "entry.mjs"));
-    expect(host.run()).toEqual(["host", 1, "host", 2]);
-    const results = [];
-    for (let i = 0; i < 6; i++) {
-      const g = new ModuleGraphClass!({ globals: { marker: "g" + i } });
-      results.push(
-        await g.import(join(d, "entry.mjs")).then(
-          m => m.run(),
-          e => String(e.message),
-        ),
-      );
-    }
-    expect(results).toEqual(Array.from({ length: 6 }, (_, i) => ["g" + i, 1, "g" + i, 2]));
-    expect(host.run()).toEqual(["host", 3, "host", 4]);
-    rmSync(d, { recursive: true, force: true });
-  });
-  test("a require() that throws inside a graph leaves neither the graph's nor the host's cache holding the module; the next require re-evaluates", async () => {
-    const d = fixture({
-      "flaky.cjs": `attempts.n++; if (attempts.n < 3) throw new Error("attempt " + attempts.n); module.exports = { ok: attempts.n }`,
-      "user.cjs": `exports.tryOnce = () => { try { return require("./flaky.cjs").ok } catch (e) { return e.message } }; exports.cached = () => Object.keys(require.cache).filter(k => k.endsWith("flaky.cjs")).length`,
-    });
-    const attempts = { n: 0 };
-    const u = await ModuleGraph({ globals: { attempts } }).import(join(d, "user.cjs"));
-    expect([u.tryOnce(), u.cached(), u.tryOnce(), u.cached(), u.tryOnce(), u.cached(), u.tryOnce()]).toEqual([
-      "attempt 1",
-      0,
-      "attempt 2",
-      0,
-      3,
-      1,
-      3,
-    ]);
-    expect(Object.keys(require.cache).filter(k => k.endsWith("flaky.cjs"))).toEqual([]);
-    rmSync(d, { recursive: true, force: true });
-  });
-  test("CommonJS code in graphs with different globals name sets resolves each graph's own names (one wrapper executable per name set)", async () => {
-    const d = fixture({
-      "w.cjs": `module.exports = { a: typeof alpha === "undefined" ? "-" : alpha, b: typeof beta === "undefined" ? "-" : beta, p: typeof process.pid }`,
-    });
-    const load = (globals: Record<string, unknown>) =>
-      new ModuleGraphClass!({ globals }).import(join(d, "w.cjs")).then(m => m.default);
-    const r1 = await load({ alpha: "A1" }),
-      r2 = await load({ beta: "B2" }),
-      r3 = await load({ alpha: "A3" }),
-      r4 = await load({ beta: "B4", alpha: "A4" }),
-      r5 = await load({});
-    expect([r1, r2, r3, r4, r5]).toEqual([
-      { a: "A1", b: "-", p: "number" },
-      { a: "-", b: "B2", p: "number" },
-      { a: "A3", b: "-", p: "number" },
-      { a: "A4", b: "B4", p: "number" },
-      { a: "-", b: "-", p: "number" },
-    ]);
-    rmSync(d, { recursive: true, force: true });
   });
 });
 
@@ -1741,96 +1490,85 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — constructor / method contr
   });
 });
 
-// require()/import of each module kind from each side, per graph: the loader matrix.
-describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — loader matrix (importer kind × importee kind)", () => {
+// A graph instantiates ES modules. CommonJS modules, require() (createRequire, import.meta.require,
+// require inside CommonJS), require.cache and native addons are the global object's: one instance,
+// shared with the host and every graph.
+describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CommonJS and require() are the global object's", () => {
   const dir = fixture({
-    "esm.mjs": `export const kind = "esm"; export const who = process.env.T; export let n = 0; export const inc = () => ++n;`,
-    "cjs.cjs": `let n = 0; module.exports = { kind: "cjs", who: process.env.T, inc: () => ++n };`,
-    "tla.mjs": `await 0; export const kind = "tla"; export const who = process.env.T;`,
-    "tla-fresh.mjs": `await 0; export const kind = "tla-fresh";`,
-    "data.json": `{ "kind": "json" }`,
-    "ts.ts": `const k: string = "ts"; export const kind = k; export const who: string | undefined = process.env.T; enum E { A = 1 } export const e = E.A;`,
-    "tsx.tsx": `/** @jsxRuntime classic @jsx h */ const h = (...a: unknown[]) => a; export const kind = "tsx"; export const el = typeof (<div />);`,
-    "from-esm.mjs": `import * as esm from "./esm.mjs"; import cjs from "./cjs.cjs"; import * as tla from "./tla.mjs"; import json from "./data.json"; import * as ts from "./ts.ts";
-      import { createRequire } from "node:module"; const require = createRequire(import.meta.url);
-      export const viaImport = { esm: esm.kind + ":" + esm.who, cjs: cjs.kind + ":" + cjs.who, tla: tla.kind + ":" + tla.who, json: json.kind, ts: ts.kind + ":" + ts.who + ":" + ts.e };
-      export function viaRequire() { return { esm: require("./esm.mjs").kind, cjs: require("./cjs.cjs").kind, json: require("./data.json").kind, ts: require("./ts.ts").kind, tla: (() => { try { require("./tla-fresh.mjs"); return "no-throw" } catch (e) { return "throws" } })(), tlaEvaluated: typeof require("./tla.mjs").kind } }
-      export async function viaDynamic() { return { esm: (await import("./esm.mjs")).kind, cjs: (await import("./cjs.cjs")).default.kind, tla: (await import("./tla.mjs")).kind, json: (await import("./data.json")).default.kind, ts: (await import("./ts.ts")).kind } }
-      export function sameInstance() { return require("./esm.mjs").inc() === esm.n && require("./cjs.cjs") === cjs }`,
-    "from-cjs.cjs": `module.exports = {
-        viaRequire: () => ({ esm: require("./esm.mjs").kind + ":" + require("./esm.mjs").who, cjs: require("./cjs.cjs").kind + ":" + require("./cjs.cjs").who, json: require("./data.json").kind, ts: require("./ts.ts").kind }),
-        viaDynamic: async () => ({ esm: (await import("./esm.mjs")).kind, cjs: (await import("./cjs.cjs")).default.kind, tla: (await import("./tla.mjs")).kind }),
-        metaRequire: () => typeof import.meta.require,
-      }`,
+    "c.cjs": `__cjsEvals.push("c"); let n = 0; module.exports = { inc() { return ++n }, who: () => (typeof T === "undefined" ? "host" : T), dyn: () => import("./e.mjs") }`,
+    "named.cjs": `exports.value = 42; exports.fn = () => "named"`,
+    "e.mjs": `export const who = typeof T === "undefined" ? "host" : T; export let count = 0; export const bump = () => ++count`,
+    "d.json": `{"a":[1]}`,
+    "entry.mjs": `import c from "./c.cjs"; import { value, fn } from "./named.cjs"; import * as ns from "./named.cjs"; import json from "./d.json";
+      import { createRequire } from "node:module"; import { who as esmWho } from "./e.mjs";
+      const require = createRequire(import.meta.url);
+      export { c, json };
+      export const report = async () => ({
+        who: typeof T === "undefined" ? "host" : T, esmWho,
+        cjsInc: c.inc(), cjsWho: c.who(),
+        sameAsCreateRequire: c === require("./c.cjs"), sameAsMetaRequire: c === import.meta.require("./c.cjs"),
+        named: [value, fn(), ns.value],
+        requireEsmWho: require("./e.mjs").who, dynamicImportFromCjsWho: (await c.dyn()).who,
+        jsonViaRequireIsHosts: require("./d.json") === hostRequire("./d.json"),
+        inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
+      })`,
   });
-  const mk = (t: string) => ModuleGraph({ env: { T: t }, define: undefined } as any);
-  test("ESM importer: static import of esm/cjs/tla/json/ts", async () => {
-    expect((await mk("A").import(join(dir, "from-esm.mjs"))).viaImport).toEqual({
-      esm: "esm:A",
-      cjs: "cjs:A",
-      tla: "tla:A",
-      json: "json",
-      ts: "ts:A:1",
-    });
+  test("a CommonJS module imported by two graphs and the host is one module object, evaluated once; require() from graph code is the host's", async () => {
+    const evals: string[] = ((globalThis as any).__cjsEvals = []);
+    const hostRequire = createRequire(join(dir, "entry.mjs"));
+    const mk = (t: string) => new ModuleGraphClass!({ globals: { T: t, __cjsEvals: evals, hostRequire } });
+    (globalThis as any).hostRequire = hostRequire;
+    try {
+      const a = await mk("A").import(join(dir, "entry.mjs"));
+      const b = await mk("B").import(join(dir, "entry.mjs"));
+      const host = await import(join(dir, "entry.mjs"));
+      const expected = (who: string, inc: number) => ({
+        who,
+        esmWho: who, // ES modules are per graph
+        cjsInc: inc, // one CommonJS instance: the counter is shared
+        cjsWho: "host", // CommonJS code does not see a graph's globals
+        sameAsCreateRequire: true,
+        sameAsMetaRequire: true,
+        named: [42, "named", 42],
+        requireEsmWho: "host", // require(esm) loads into the global registry
+        dynamicImportFromCjsWho: "host", // import() in CommonJS code is the global loader's
+        jsonViaRequireIsHosts: true,
+        inRequireCache: true,
+      });
+      expect({
+        a: await a.report(),
+        b: await b.report(),
+        host: await host.report(),
+        identity: [a.c === b.c, a.c === host.c, a.c === hostRequire("./c.cjs")],
+        jsonPerGraph: [a.json !== b.json, a.json !== host.json], // a JSON *import* is an ES module record: per graph
+        evals,
+      }).toEqual({
+        a: expected("A", 1),
+        b: expected("B", 2),
+        host: expected("host", 3),
+        identity: [true, true, true],
+        jsonPerGraph: [true, true],
+        evals: ["c"],
+      });
+    } finally {
+      delete (globalThis as any).hostRequire;
+      delete (globalThis as any).__cjsEvals;
+    }
   });
-  test("ESM importer: createRequire of esm/cjs/json/ts; require(unevaluated tla) throws, require(evaluated tla) returns its namespace", async () => {
-    expect((await mk("A").import(join(dir, "from-esm.mjs"))).viaRequire()).toEqual({
-      esm: "esm",
-      cjs: "cjs",
-      json: "json",
-      ts: "ts",
-      tla: "throws",
-      tlaEvaluated: "string",
-    });
-  });
-  test("ESM importer: dynamic import of every kind", async () => {
-    expect(await (await mk("A").import(join(dir, "from-esm.mjs"))).viaDynamic()).toEqual({
-      esm: "esm",
-      cjs: "cjs",
-      tla: "tla",
-      json: "json",
-      ts: "ts",
-    });
-  });
-  test("ESM importer: require() and import see the same instance within a graph", async () => {
-    expect((await mk("A").import(join(dir, "from-esm.mjs"))).sameInstance()).toBe(true);
-  });
-  test("CJS importer: require of esm/cjs/json/ts with the graph's env", async () => {
-    expect((await mk("B").import(join(dir, "from-cjs.cjs"))).default.viaRequire()).toEqual({
-      esm: "esm:B",
-      cjs: "cjs:B",
-      json: "json",
-      ts: "ts",
-    });
-  });
-  test("CJS importer: dynamic import of esm/cjs/tla", async () => {
-    expect(await (await mk("B").import(join(dir, "from-cjs.cjs"))).default.viaDynamic()).toEqual({
-      esm: "esm",
-      cjs: "cjs",
-      tla: "tla",
-    });
-  });
-  test("TS and TSX transpile per graph (enum, JSX)", async () => {
-    const g = mk("C");
-    expect((await g.import(join(dir, "ts.ts"))).e).toBe(1);
-    expect((await g.import(join(dir, "tsx.tsx"))).el).toBe("object");
-  });
-  test("two graphs × every kind: values carry each graph's env", async () => {
-    const [a, b] = [await mk("A").import(join(dir, "from-esm.mjs")), await mk("B").import(join(dir, "from-esm.mjs"))];
-    expect([
-      a.viaImport.esm,
-      b.viaImport.esm,
-      a.viaImport.cjs,
-      b.viaImport.cjs,
-      a.viaImport.tla,
-      b.viaImport.tla,
-    ]).toEqual(["esm:A", "esm:B", "cjs:A", "cjs:B", "tla:A", "tla:B"]);
-  });
-  test("host importing the same files afterwards gets host values (not a graph's)", async () => {
-    await mk("A").import(join(dir, "from-esm.mjs"));
-    const h = await import(join(dir, "from-esm.mjs"));
-    expect(h.viaImport.esm).toBe("esm:" + process.env.T);
-    expect(require(join(dir, "cjs.cjs")).who).toBe(process.env.T);
+  test("a CommonJS file as a graph's entry: the namespace wraps the global object's module; dispose() does not affect it", async () => {
+    (globalThis as any).__cjsEvals = [];
+    try {
+      const g = new ModuleGraphClass!({ globals: { T: "G" } });
+      const ns = await g.import(join(dir, "c.cjs"));
+      expect([Object.keys(ns).sort(), ns.default === createRequire(join(dir, "entry.mjs"))("./c.cjs")]).toEqual([
+        ["default", "dyn", "inc", "who"],
+        true,
+      ]);
+      g.dispose();
+      expect((await ns.default.dyn()).who).toBe("host");
+    } finally {
+      delete (globalThis as any).__cjsEvals;
+    }
   });
 });
 
@@ -2046,60 +1784,6 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — scale", () => {
     expect([da.x, db.x, wa.get0(), wa.get199(), wb.get123()]).toEqual(["A2", "B", "A2", "A2", "B"]);
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
-});
-
-describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — require(esm) by module state, per graph", () => {
-  const dir = fixture({
-    "sync.mjs": `globalThis.__evals = (globalThis.__evals ?? 0) + 1; export const s = process.env.T`,
-    "tla.mjs": `await new Promise(r => setTimeout(r, 20)); export const t = process.env.T`,
-    "throws.mjs": `throw new Error("boom-" + process.env.T)`,
-    "cycle-a.mjs": `import { b } from "./cycle-b.cjs"; export const a = "a:" + b`,
-    "cycle-b.cjs": `let seen; try { seen = require("./cycle-a.mjs").a } catch (e) { seen = e.constructor.name } module.exports = { b: "b", seen }`,
-    "r.cjs": `module.exports = {
-      unevaluated: () => require("./sync.mjs").s,
-      again: () => require("./sync.mjs").s,
-      evals: () => globalThis.__evals,
-      tlaFresh: () => { try { require("./tla.mjs"); return "returned" } catch (e) { return "threw" } },
-      tlaAfter: async () => { await import("./tla.mjs"); return require("./tla.mjs").t },
-      throwing: () => { try { require("./throws.mjs") } catch (e) { return e.message } },
-      throwingAgain: () => { try { require("./throws.mjs"); return "no" } catch (e) { return e.message } },
-      cycle: () => require("./cycle-b.cjs").seen,
-    }`,
-  });
-  const mk = (t: string) =>
-    ModuleGraph({ env: { T: t } })
-      .import(join(dir, "r.cjs"))
-      .then(m => m.default);
-  test("unevaluated → evaluates once in the graph; evaluated → cached", async () => {
-    const r = await mk("U");
-    delete (globalThis as any).__evals;
-    expect([r.unevaluated(), r.again(), r.evals()]).toEqual(["U", "U", 1]);
-    delete (globalThis as any).__evals;
-  });
-  test("TLA module: require before evaluation throws; after import() resolves, require returns the namespace", async () => {
-    const r = await mk("T");
-    expect(r.tlaFresh()).toBe("threw");
-    expect(await r.tlaAfter()).toBe("T");
-  });
-  test("while another graph is mid-TLA on the same module, this graph's require still throws (not blocked, not the other graph's value)", async () => {
-    const other = ModuleGraph({ env: { T: "other" } }).import(join(dir, "tla.mjs"));
-    const r = await mk("me");
-    expect(r.tlaFresh()).toBe("threw");
-    expect((await other).t).toBe("other");
-    expect(await r.tlaAfter()).toBe("me");
-  });
-  test("throwing module: error carries this graph's env, and requiring again rethrows (cached failure within the graph)", async () => {
-    const r = await mk("E");
-    expect([r.throwing(), r.throwingAgain()]).toEqual(["boom-E", "boom-E"]);
-    const r2 = await mk("F");
-    expect(r2.throwing()).toBe("boom-F");
-  });
-  test("ESM↔CJS cycle through require(esm): the CJS side sees a TDZ/cycle error or partial value, never another graph's value", async () => {
-    const a = await mk("C1"),
-      b = await mk("C2");
-    expect([a.cycle(), b.cycle()]).toEqual([a.cycle(), a.cycle()]); // deterministic and identical shape in both graphs
-    expect(String(a.cycle())).not.toContain("C2");
-  });
 });
 
 describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — instance evaluation: async edge cases", () => {
@@ -2463,43 +2147,6 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — specifiers and paths", () 
   });
 });
 
-describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CJS/ESM interop flags per graph", () => {
-  const dir = fixture({
-    "esm-default.mjs": `export default function d() { return "d:" + process.env.T } export const named = "n"`,
-    "cjs-esmodule-flag.cjs": `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = "flagged-default:" + process.env.T; exports.named = "flagged-named"`,
-    "cjs-plain.cjs": `module.exports = { named: "plain-named", t: process.env.T }`,
-    "cjs-fn.cjs": `module.exports = function f() { return "fn:" + process.env.T }; module.exports.extra = 1`,
-    "consumer.mjs": `import d, { named } from "./esm-default.mjs"; import flagged, { named as fnamed } from "./cjs-esmodule-flag.cjs"; import plain, { named as pnamed } from "./cjs-plain.cjs"; import fn, { extra } from "./cjs-fn.cjs";
-      import { createRequire } from "node:module"; const require = createRequire(import.meta.url);
-      export const viaImport = [d(), named, flagged, fnamed, plain.named, pnamed, fn(), extra];
-      export const viaRequire = () => { const e = require("./esm-default.mjs"); return [typeof e.default, e.named, e.__esModule, require("./cjs-esmodule-flag.cjs").default, require("./cjs-fn.cjs")()] }`,
-  });
-  test("import of ESM default/named, CJS with __esModule flag, plain CJS object and CJS function — per graph env", async () => {
-    const a = await ModuleGraph({ env: { T: "A" } }).import(join(dir, "consumer.mjs")),
-      b = await ModuleGraph({ env: { T: "B" } }).import(join(dir, "consumer.mjs"));
-    expect(a.viaImport).toEqual([
-      "d:A",
-      "n",
-      "flagged-default:A",
-      "flagged-named",
-      "plain-named",
-      "plain-named",
-      "fn:A",
-      1,
-    ]);
-    expect(b.viaImport[0]).toBe("d:B");
-    expect(b.viaImport[2]).toBe("flagged-default:B");
-    expect(b.viaImport[6]).toBe("fn:B");
-  });
-  test("require(esm) exposes default/named/__esModule; require of flagged CJS keeps .default; matches host shapes", async () => {
-    const a = await ModuleGraph({ env: { T: "A" } }).import(join(dir, "consumer.mjs"));
-    const h = await import(join(dir, "consumer.mjs"));
-    const [ga, ha] = [a.viaRequire(), h.viaRequire()];
-    expect([ga[0], ga[1], ga[2]]).toEqual([ha[0], ha[1], ha[2]]);
-    expect([ga[3], ga[4]]).toEqual(["flagged-default:A", "fn:A"]);
-  });
-});
-
 describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — module namespace objects per instance", () => {
   const dir = fixture({
     "ns.mjs": `export let late; export const a = 1; export function f() {} export default "d"; export { a as z }; setTimeout(() => {}, 0); late = "set"`,
@@ -2616,8 +2263,6 @@ describe.skipIf(!enabled)(
       "who.mjs": `export const who = process.env.T`,
       "disposer.mjs": `export function run(other) { other.dispose(); return process.env.T }`,
       "thrower.mjs": `export function later() { setTimeout(() => { throw new Error("e1") }, 0) }`,
-      "sync-nested-import.mjs": `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const G = Bun.unsafe.ModuleGraph; const g = new G({ globals: { process: Object.create(process, { env: { value: { T: "cjs-inner" }, enumerable: true } }) } });
-      export const viaRequireInInner = await g.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url))).then(m => m.who); export const mine = require("./who-cjs.cjs").who;`,
       "who-cjs.cjs": `module.exports = { who: process.env.T }`,
     });
     test("a graph whose module top level creates, imports into, and disposes another graph during its own TLA evaluation", async () => {
@@ -2656,10 +2301,6 @@ describe.skipIf(!enabled)(
       for (let i = 0; i < 5; i++) await new Promise<void>(r => setImmediate(r)); // let the other two land wherever they land
       expect(seen.length).toBeGreaterThanOrEqual(1); // first error disposes; later ones are attributed or dropped, never thrown at the host
       expect((await replacement.import(join(dir, "who.mjs"))).who).toBe("new");
-    });
-    test("mixed loaders re-entrantly: a graph whose TLA imports into a nested graph while also require()ing CJS for itself", async () => {
-      const m = await ModuleGraph({ env: { T: "outer2" } }).import(join(dir, "sync-nested-import.mjs"));
-      expect([m.viaRequireInInner, m.mine]).toEqual(["cjs-inner", "outer2"]);
     });
     test("the loading-instance bracket is restored after nested loads: a module imported by the host right after nested graph activity is the host's", async () => {
       await ModuleGraph({ env: { T: "x" } }).import(join(dir, "spawner.mjs"));
@@ -2898,24 +2539,28 @@ describe.skipIf(!enabled)(
 
 describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — import.meta / main-module identity per graph", () => {
   const dir = fixture({
-    "entry.mjs": `import { depMeta } from "./dep.mjs"; import { createRequire } from "node:module";
-      export const meta = { main: import.meta.main, path: import.meta.path, dir: import.meta.dir, file: import.meta.file, url: import.meta.url, bunMain: Bun.main, argv1: process.argv[1], requireMain: (() => { try { return createRequire(import.meta.url).main?.filename ?? null } catch { return "threw" } })() };
+    "entry.mjs": `import { depMeta } from "./dep.mjs";
+      export const meta = { main: import.meta.main, path: import.meta.path, dir: import.meta.dir, file: import.meta.file, url: import.meta.url, bunMain: Bun.main, argv1: process.argv[1] };
       export { depMeta };
-      export const viaMetaRequire = import.meta.require("./c.cjs"); export const viaCreateRequire = createRequire(import.meta.url)("./c.cjs");
       export const resolveSync = import.meta.resolveSync("./dep.mjs"); export const resolved = import.meta.resolve("./dep.mjs");`,
     "dep.mjs": `export const depMeta = { main: import.meta.main, file: import.meta.file }`,
-    "c.cjs": `module.exports = { n: Math.random(), main: require.main === module, mainFile: require.main && require.main.filename }`,
   });
   test("import.meta.main is true for the graph's first import (its main module) and false for deps; path/dir/file/url are the file's", async () => {
     const m = await ModuleGraph().import(join(dir, "entry.mjs"));
-    expect(m.meta).toMatchObject({
-      main: true,
-      path: join(dir, "entry.mjs"),
-      dir,
-      file: "entry.mjs",
-      url: Bun.pathToFileURL(join(dir, "entry.mjs")).href,
+    expect({ meta: m.meta, depMeta: m.depMeta, resolveSync: m.resolveSync, resolved: m.resolved }).toEqual({
+      meta: {
+        main: true,
+        path: join(dir, "entry.mjs"),
+        dir,
+        file: "entry.mjs",
+        url: Bun.pathToFileURL(join(dir, "entry.mjs")).href,
+        bunMain: Bun.main,
+        argv1: process.argv[1],
+      },
+      depMeta: { main: false, file: "dep.mjs" },
+      resolveSync: join(dir, "dep.mjs"),
+      resolved: Bun.pathToFileURL(join(dir, "dep.mjs")).href,
     });
-    expect(m.depMeta).toEqual({ main: false, file: "dep.mjs" });
     const second = await ModuleGraph();
     await second.import(join(dir, "dep.mjs"));
     expect((await second.import(join(dir, "entry.mjs"))).meta.main).toBe(false); // not this graph's first import
@@ -2925,13 +2570,6 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — import.meta / main-module 
     const m = await g.import(join(dir, "entry.mjs"));
     expect([m.meta.bunMain, m.meta.argv1]).toEqual([Bun.main, process.argv[1]]);
     expect((g as any).mainModule).toBe(join(dir, "entry.mjs"));
-  });
-  test("import.meta.require and createRequire share the graph's CJS cache; resolve/resolveSync work", async () => {
-    const a = await ModuleGraph().import(join(dir, "entry.mjs")),
-      b = await ModuleGraph().import(join(dir, "entry.mjs"));
-    expect(a.viaMetaRequire).toBe(a.viaCreateRequire);
-    expect(a.viaMetaRequire).not.toBe(b.viaMetaRequire);
-    expect([a.resolveSync, a.resolved]).toEqual([join(dir, "dep.mjs"), Bun.pathToFileURL(join(dir, "dep.mjs")).href]);
   });
 });
 

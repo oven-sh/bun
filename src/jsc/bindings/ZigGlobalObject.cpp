@@ -71,7 +71,6 @@
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
-#include "ModuleGraphCommonJSTemplates.h"
 #include "NodeV8.h"
 #include "ProcessIdentifier.h"
 #include "GlobalEventScope.h"
@@ -740,9 +739,6 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
-namespace Bun {
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -752,8 +748,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * glob
         return JSValue::encode(jsUndefined());
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
-    auto* entry = loader ? loader->registryEntry(key) : nullptr;
+    auto* entry = globalObject->moduleLoader()->registryEntry(key);
     if (!entry || !isModuleEvaluated(entry->record()))
         return JSValue::encode(jsUndefined());
     auto* ns = entry->record()->getModuleNamespace(globalObject, false);
@@ -770,23 +765,18 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
         return JSValue::encode(jsBoolean(false));
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
-    if (!moduleLoader)
-        return JSValue::encode(jsBoolean(false));
-    return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself
+    return JSValue::encode(jsBoolean(globalObject->moduleLoader()->removeEntry(key))); // takes the loader's cellLock itself
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
-    if (JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(0)))) {
-        for (auto& [key, entry] : loader->moduleMap()) {
-            if (!key.first || !entry || !isModuleEvaluated(entry->record()))
-                continue;
-            keys.append(jsString(vm, String { key.first }));
-        }
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first || !entry || !isModuleEvaluated(entry->record()))
+            continue;
+        keys.append(jsString(vm, String { key.first }));
     }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -807,14 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
 
-    // require(esm) from a CommonJS module that belongs to a Bun.unsafe.ModuleGraph
-    // loads into that graph's loader.
-    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
-    if (!loader) {
-        Bun::throwModuleGraphDisposed(globalObject, scope);
-        return {};
-    }
-
+    auto* loader = globalObject->moduleLoader();
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
@@ -2895,12 +2878,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
         { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
         { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
-        { BuiltinName::k_esmNamespaceForCjs, 2, functionEsmNamespaceForCjs },
-        { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
-        { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
-        { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_moduleGraphMainOf, 1, Bun::functionModuleGraphMainOf },
-        { BuiltinName::k_requireMapOf, 1, Bun::functionRequireMapOf },
+        { BuiltinName::k_esmNamespaceForCjs, 1, functionEsmNamespaceForCjs },
+        { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
+        { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
+        { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3726,7 +3707,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (vm.m_synchronousModuleQueue) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
-            loader,
             moduleKeyJS,
             &res,
             &moduleKeyBun,
@@ -3742,7 +3722,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     JSValue result = Bun::fetchESMSourceCodeAsync(
         static_cast<Zig::GlobalObject*>(globalObject),
-        loader,
         moduleKeyJS,
         &res,
         &moduleKeyBun,
@@ -3762,14 +3741,14 @@ extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized*)
 
 // Synchronous fetch through Bun's loader (embedded modules are bytecode-backed and builtins are in-process, so neither
 // needs the transpiler thread).
-static JSSourceCode* fetchSourceSync(Zig::GlobalObject* globalObject, JSModuleLoader* loader, const Identifier& key)
+static JSSourceCode* fetchSourceSync(Zig::GlobalObject* globalObject, const Identifier& key)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
     auto keyBun = Bun::toString(key.string());
     auto source = Bun::toString(vm.propertyNames->undefinedKeyword.string());
-    JSValue result = Bun::fetchESMSourceCodeSync(globalObject, loader, jsString(vm, key.string()), &res, &keyBun, &source, nullptr);
+    JSValue result = Bun::fetchESMSourceCodeSync(globalObject, jsString(vm, key.string()), &res, &keyBun, &source, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result ? dynamicDowncast<JSSourceCode>(result) : nullptr;
 }
@@ -3894,7 +3873,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                         }
                         target = entry->record();
                     } else {
-                        JSSourceCode* source = fetchSourceSync(globalObject, loader, key);
+                        JSSourceCode* source = fetchSourceSync(globalObject, key);
                         RETURN_IF_EXCEPTION(scope, void());
                         if (!source || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule) [[unlikely]] {
                             complete = false;
@@ -3932,7 +3911,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     }
                     target = entry->record();
                 } else {
-                    JSSourceCode* source = fetchSourceSync(globalObject, loader, key);
+                    JSSourceCode* source = fetchSourceSync(globalObject, key);
                     RETURN_IF_EXCEPTION(scope, void());
                     if (!source || source->sourceCode().provider()->sourceType() != JSC::SourceProviderSourceType::Synthetic) {
                         complete = false;
@@ -4060,7 +4039,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
                 closure.complete = false;
                 continue;
             }
-            JSSourceCode* source = fetchSourceSync(globalObject, loader, key);
+            JSSourceCode* source = fetchSourceSync(globalObject, key);
             RETURN_IF_EXCEPTION(scope, void());
             if (!source) {
                 closure.complete = false;
@@ -4147,7 +4126,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     Identifier rootKey = Identifier::fromString(vm, keyString);
-    JSSourceCode* rootSource = fetchSourceSync(globalObject, loader, rootKey);
+    JSSourceCode* rootSource = fetchSourceSync(globalObject, rootKey);
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     if (!rootSource)
         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));

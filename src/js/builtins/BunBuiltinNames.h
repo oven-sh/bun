@@ -126,8 +126,6 @@ using namespace JSC;
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
-    macro(moduleGraph) \
-    macro(moduleGraphMainOf) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
@@ -161,7 +159,6 @@ using namespace JSC;
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \
-    macro(requireMapOf) \
     macro(requireNativeModule) \
     macro(resolveSync) \
     macro(sameSite) \

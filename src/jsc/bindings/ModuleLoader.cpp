@@ -3,7 +3,6 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
-#include "ModuleGraph.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -495,9 +494,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        JSValue graphValue = promise->getDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName());
-        auto* graph = graphValue ? dynamicDowncast<Bun::JSModuleGraph>(graphValue) : nullptr;
-        auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
+        auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
@@ -653,18 +650,6 @@ JSValue fetchCommonJSModule(
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     ErrorableResolvedSource* res = &resValue;
-    // An ES module reached from here is the requiring module's loader's (a
-    // Bun.unsafe.ModuleGraph has its own); so is "already loaded as ESM". A disposed
-    // graph has no loader: plain CommonJS still loads, anything that needs the
-    // loader throws.
-    JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, target);
-#define REQUIRE_MODULE_LOADER_OR_THROW()                        \
-    do {                                                        \
-        if (!moduleLoader) [[unlikely]] {                       \
-            Bun::throwModuleGraphDisposed(globalObject, scope); \
-            RELEASE_AND_RETURN(scope, {});                      \
-        }                                                       \
-    } while (0)
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -701,11 +686,10 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
-                    REQUIRE_MODULE_LOADER_OR_THROW();
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -771,11 +755,10 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
-                    REQUIRE_MODULE_LOADER_OR_THROW();
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -787,7 +770,7 @@ JSValue fetchCommonJSModule(
     }
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = moduleLoader ? moduleLoader->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString)) : nullptr;
+        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
         return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
 
@@ -806,11 +789,10 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, target);
                 }
             } else {
-                REQUIRE_MODULE_LOADER_OR_THROW();
                 JSC::VM::SynchronousModuleQueue queue;
                 queue.prev = vm.m_synchronousModuleQueue;
                 vm.m_synchronousModuleQueue = &queue;
-                moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
                 if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                 vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
@@ -821,7 +803,6 @@ JSValue fetchCommonJSModule(
 
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
-#undef REQUIRE_MODULE_LOADER_OR_THROW
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
@@ -906,15 +887,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // private queue instead of leaving them on the user microtask queue we're
     // currently inside of.
     {
-        JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, target);
-        if (!moduleLoader) [[unlikely]] {
-            Bun::throwModuleGraphDisposed(globalObject, scope);
-            RELEASE_AND_RETURN(scope, {});
-        }
         JSC::VM::SynchronousModuleQueue queue;
         queue.prev = vm.m_synchronousModuleQueue;
         vm.m_synchronousModuleQueue = &queue;
-        moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
         vm.m_synchronousModuleQueue = queue.prev;
     }
@@ -955,7 +931,6 @@ extern "C" bool isBunTest;
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
-    Bun::JSModuleGraph* graph,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -1012,7 +987,7 @@ static JSValue fetchESMSourceCode(
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
-            auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
+            auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1033,7 +1008,7 @@ static JSValue fetchESMSourceCode(
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,
         // so check the isolation cache before re-creating one.
-        const bool useIsolationCacheForBuiltin = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+        const bool useIsolationCacheForBuiltin = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
         if (useIsolationCacheForBuiltin) {
             if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, moduleKey)) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
@@ -1104,7 +1079,7 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    const bool useIsolationCache = !graph && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+    const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
@@ -1114,7 +1089,7 @@ static JSValue fetchESMSourceCode(
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {
-                auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_tag == ResolvedSourceTagPackageJSONTypeModule);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1134,9 +1109,6 @@ static JSValue fetchESMSourceCode(
     if constexpr (allowPromise) {
         auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
         if (pendingCtx) {
-            // Bun__onFulfillAsyncModule needs the graph for a CommonJS result.
-            if (graph)
-                pendingCtx->putDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName(), graph);
             return pendingCtx;
         }
     } else {
@@ -1144,7 +1116,7 @@ static JSValue fetchESMSourceCode(
     }
 
     if (res->success && res->result.value.isCommonJSModule) {
-        auto created = Bun::createCommonJSModule(globalObject, graph, specifierJS, res->result.value);
+        auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1239,26 +1211,24 @@ static JSValue fetchESMSourceCode(
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<false>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
 }
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
-    JSC::JSModuleLoader* loader,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute)
 {
-    return fetchESMSourceCode<true>(globalObject, Bun::moduleGraphForLoader(globalObject, loader), specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
 }
 }
 

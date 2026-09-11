@@ -38,7 +38,6 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
-class ModuleGraphCommonJSTemplates;
 class GCProfilerObserver;
 } // namespace Bun
 
@@ -814,10 +813,6 @@ public:
     // Set while a Bun.unsafe.ModuleGraph's onError runs: an error it throws is the host's,
     // not attributed to a graph again (ModuleGraph.cpp).
     bool m_inModuleGraphOnError { false };
-
-    // CommonJS wrapper executables shared by Bun.unsafe.ModuleGraphs (JSCommonJSModule.cpp).
-    std::unique_ptr<Bun::ModuleGraphCommonJSTemplates> m_moduleGraphCommonJSTemplates;
-    Bun::ModuleGraphCommonJSTemplates& moduleGraphCommonJSTemplates();
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

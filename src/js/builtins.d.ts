@@ -226,10 +226,10 @@ declare function $errno(): TODO;
 declare function $extname(): TODO;
 declare function $fatal(): TODO;
 declare function $format(): TODO;
-declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): any | undefined;
-declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
-declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
-declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
+declare function $esmNamespaceForCjs(key: string): any | undefined;
+declare function $esmRegistryDelete(key: string): boolean;
+declare function $esmRegistryEvaluatedKeys(): string[];
+declare function $esmLoadSync(key: string): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
 declare function $headers(): TODO;
@@ -259,10 +259,6 @@ declare function $relative(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
-/** For a (bound) require function or CommonJS module that belongs to a Bun.unsafe.ModuleGraph: the path of the graph's first import (or null before one); undefined otherwise. */
-declare function $moduleGraphMainOf(requireOrModule: unknown): string | null | undefined;
-/** The require cache a (bound) require function or CommonJS module reads and writes: its Bun.unsafe.ModuleGraph's, or the global one. */
-declare function $requireMapOf(requireOrModule: unknown): Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(

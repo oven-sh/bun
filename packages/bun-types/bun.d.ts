@@ -5437,7 +5437,7 @@ declare module "bun" {
 
     interface ModuleGraphOptions {
       /**
-       * Values for free identifiers in all of the graph's module and CommonJS code
+       * Values for free identifiers in all of the graph's module code
        * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
        * with the same set of names share compiled code with each other.
        */
@@ -5447,26 +5447,27 @@ declare module "bun" {
        * that belongs to this graph, instead of the process-wide
        * `uncaughtException` / `unhandledRejection` handling; without it (or for
        * an error `onError` itself lets escape) they take that normal path. An
-       * error belongs to the graph whose module or CommonJS code is the
-       * innermost such code on the stack where it was created (functions passed
-       * in through `globals` are the host's code). `kind` is
+       * error belongs to the graph whose module code is the innermost module
+       * code on the stack where it was created (functions passed in through
+       * `globals`, and CommonJS modules, are the host's code). `kind` is
        * `"uncaughtException"` or `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     }
 
     /**
-     * A further instantiation of ES module graphs (and the CommonJS modules
-     * they `require`) in **this** global object.
+     * A further instantiation of ES module graphs in **this** global object.
      *
-     * Every graph that imports a file shares that file's parsed code, bytecode
-     * and JIT-compiled code with every other graph and with the host; each
-     * graph gets its own module-level state (top-level bindings, classes,
-     * closures), its own `import()` / `require` cache, its own `import.meta`,
-     * and its own values for the names in `globals`. Everything else —
-     * `globalThis`, `process`, intrinsics, native modules, the event loop — is
-     * the global object's, shared: this runs cooperating instances of a program
-     * side by side, it is not a sandbox.
+     * Every graph that imports an ES module shares that module's parsed code,
+     * bytecode and JIT-compiled code with every other graph and with the host;
+     * each graph gets its own module-level state (top-level bindings, classes,
+     * closures), its own module registry for `import` / `import()`, its own
+     * `import.meta`, and its own values for the names in `globals`. Everything
+     * else — `globalThis`, `process`, intrinsics, builtin modules, CommonJS
+     * modules and `require()` (one instance and one `require.cache`, the
+     * host's), native addons, the event loop — is the global object's, shared:
+     * this runs cooperating instances of a program side by side, it is not a
+     * sandbox.
      *
      * @experimental
      * @example
@@ -5492,11 +5493,11 @@ declare module "bun" {
        */
       readonly mainModule: string | undefined;
       /**
-       * Drops the graph's module registry and require cache: pending and later
-       * `graph.import()`s reject, `import()` / `require()` of something new from
-       * the graph's own code fails, and modules of the graph that had not run
-       * yet never will. Code from the graph that is still referenced keeps
-       * working, and its errors still go to `onError`. Idempotent.
+       * Drops the graph's module registry: pending and later `graph.import()`s
+       * reject, `import()` from the graph's own module code rejects, and
+       * modules of the graph that had not run yet never will. Code from the
+       * graph that is still referenced keeps working, and its errors still go
+       * to `onError`. Idempotent.
        */
       dispose(): void;
       [Symbol.dispose](): void;

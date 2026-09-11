@@ -2606,7 +2606,7 @@ fn transpile_source_code_inner(
                     file_descriptor: None,
                     // The error printer must not block on, or read from, what is
                     // no longer the regular file the loader read.
-                    non_regular_file: if args.flags == FetchFlags::PrintSource {
+                    non_regular_file: if disable_transpilying {
                         bun_resolver::cache::NonRegularFile::Reject
                     } else {
                         bun_resolver::cache::NonRegularFile::Read

@@ -6333,14 +6333,15 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
 it("a session over TLS whose peer reset is first seen by a write ends without a hang", async () => {
   // An idle connected https session whose peer resets the connection while the
   // client's event loop is blocked: the HEADERS write of the next request() is
-  // the first operation that observes the reset, and its send() fails. The TLS
-  // transport reports that failed send to the frame parser, as a plain TCP
-  // transport does. How the reset then reaches JS differs by kernel, in Node as
-  // well: on Linux the failed send() consumes the socket's pending error, the
-  // read side sees a plain EOF, and the request ends clean (rstCode 8); on
-  // Windows the reset stays readable and both the stream and the session get
-  // ECONNRESET. So this asserts what holds everywhere: the stream and the
-  // session both close, no response appears, and any error is the reset.
+  // the first operation that observes the reset, and its send() fails. Over TLS
+  // the frame parser is not told about that failed send (it keeps it as
+  // backpressure), so the reset reaches JS through the read side. How it looks
+  // there differs by kernel, in Node as well: on Linux the failed send()
+  // consumes the socket's pending error, the read side sees a plain EOF, and
+  // the request ends clean (rstCode 8); on Windows the reset stays readable and
+  // both the stream and the session get ECONNRESET. So this asserts what holds
+  // everywhere: the stream and the session both close, no response appears,
+  // and any error is the reset.
   using dir = tempDir("h2-tls-write-sees-reset", {});
   const resetDoneFile = path.join(String(dir), "reset-done");
   const fixture = `

@@ -875,6 +875,32 @@ describe.concurrent("credentials in the registry url", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `http://user@host/` is `user` with an empty password (npm publishes with `Basic base64("user:")`);
+  // bun used to stop with "missing authentication". Spelled `user:@` because `user@host:port` does not
+  // get through bun's URL parser yet (#16181); both reach the registry config as a username without a password.
+  test("--registry with user:@ publishes with Basic auth and an empty password", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("userinfo-no-password-pkg");
+
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--registry",
+      `http://pubuser:@localhost:${mock.port}/`,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+    expect(out).toContain(" + userinfo-no-password-pkg@1.0.0");
+    expect(mock.requests).toEqual([
+      {
+        method: "PUT",
+        pathname: "/userinfo-no-password-pkg",
+        authorization: `Basic ${Buffer.from("pubuser:").toString("base64")}`,
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test.each(["npm_config_registry", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"])(
     "%s with user:pass@ publishes with Basic auth",
     async key => {

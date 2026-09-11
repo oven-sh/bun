@@ -195,13 +195,29 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, ErrorCode code)
+{
+    const auto& data = errors[static_cast<size_t>(code)];
+    auto* prototype = createErrorPrototype(vm, globalObject, data.type, data.name, data.code);
+
+    // Node's AbortError is a class of its own; its ERR_* errors keep the base error's `constructor`.
+    if (code == ErrorCode::ABORT_ERR) {
+        auto* constructor = JSC::JSFunction::create(vm, globalObject, 0, "AbortError"_s, jsFunctionMakeAbortError, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, jsFunctionMakeAbortError);
+        constructor->setPrototypeDirect(vm, globalObject->errorConstructor());
+        constructor->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        prototype->putDirect(vm, vm.propertyNames->constructor, constructor, JSC::PropertyAttribute::DontEnum | 0);
+    }
+
+    return ErrorInstance::createStructure(vm, globalObject, prototype);
+}
+
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+        auto* structure = createErrorStructure(vm, globalObject, code);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
@@ -248,7 +264,7 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
+    auto* structure = createErrorStructure(vm, globalObject, code);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
     if (scope.exception() && !vm.hasPendingTerminationException())
@@ -1747,14 +1763,15 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
     return JSC::JSValue::encode(error);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto message = callFrame->argument(0);
     auto options = callFrame->argument(1);
-    if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
+    // Node: `if (options !== undefined && typeof options !== 'object')`
+    if (!options.isUndefined() && !JSC::jsTypeofIsObject(lexicalGlobalObject, options)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
         return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(Bun::commonStrings(vm).OperationWasAbortedString())));

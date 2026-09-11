@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunRun, tempDir } from "harness";
+import { join } from "node:path";
 import npmStringWidth from "string-width";
 
 expect.extend({
@@ -149,6 +151,26 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("👨‍❤️‍💋‍👨")[matcher]();
   });
 }
+
+// The @example on `stringWidth` in bun.d.ts is what editors show on hover. It
+// kept claiming a family ZWJ sequence measures 1 after grapheme clustering made
+// it 2, so run the example and compare what it prints with what its comments say.
+test("bun.d.ts @example for stringWidth prints the widths its comments claim", async () => {
+  const dts = await Bun.file(join(import.meta.dir, "../../../../packages/bun-types/bun.d.ts")).text();
+  const declaration = dts.indexOf("\n  function stringWidth(");
+  const jsdoc = dts.slice(dts.lastIndexOf("/**", declaration), declaration);
+  const example = /```ts\n([\s\S]*?)```/.exec(jsdoc)![1].replace(/^[ \t]*\* ?/gm, "");
+  const claims = example.split("\n").filter(line => line.startsWith("console.log("));
+  expect(claims).not.toBeEmpty();
+
+  await using dir = tempDir("stringwidth-dts-example", { "example.ts": example });
+  const result = await bunRun(join(dir, "example.ts"));
+  expect(result).toSpawn();
+
+  const printed = result.stdout.split("\n");
+  expect(printed).toHaveLength(claims.length);
+  expect(claims.map((line, i) => line.replace(/ \/\/ .*$/, ` // ${printed[i]}`))).toEqual(claims);
+});
 
 // ============================================================================
 // Extended tests for stringWidth edge cases

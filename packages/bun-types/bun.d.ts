@@ -2087,7 +2087,7 @@ declare module "bun" {
 
     /**
      * Convert a JavaScript value into a JSON5 string. Object keys that are
-     * valid identifiers are unquoted, strings use double quotes, `Infinity`
+     * valid identifiers are unquoted, strings use single quotes, `Infinity`
      * and `NaN` are represented as literals, and indented output includes
      * trailing commas.
      *
@@ -2104,7 +2104,7 @@ declare module "bun" {
      * import { JSON5 } from "bun";
      *
      * console.log(JSON5.stringify({ a: 1, b: "two" }));
-     * // {a:1,b:"two"}
+     * // {a:1,b:'two'}
      *
      * console.log(JSON5.stringify({ a: 1, b: 2 }, null, 2));
      * // {
@@ -7791,8 +7791,12 @@ declare module "bun" {
       extends BaseOptions<In, Out, Err> {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
-       * data. Reading begins only when you access the `stdout` or `stderr`
-       * properties.
+       * data. Reading begins when you first read from the `stdout` or `stderr`
+       * stream, for example with `.text()` or `.getReader()`. Accessing the
+       * property alone does not start it.
+       *
+       * Until reading begins, a child process that fills the operating system's
+       * pipe buffer blocks on its next write.
        *
        * This can improve performance when you don't need to read output
        * immediately.
@@ -7803,7 +7807,7 @@ declare module "bun" {
        * ```ts
        * const subprocess = Bun.spawn({
        *   cmd: ["echo", "hello"],
-       *   lazy: true, // Don't start reading stdout until accessed
+       *   lazy: true, // Don't start reading stdout until it is read from
        * });
        * // stdout reading hasn't started yet
        * await subprocess.stdout.text(); // Now reading starts

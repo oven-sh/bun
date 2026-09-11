@@ -1826,3 +1826,233 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/42381
+// --frozen-lockfile resolves package.json from scratch and compares that tree
+// with the one it rebuilt from bun.lock. A bun.lock that bun itself just wrote
+// has to pass that comparison unchanged, whatever command wrote it. Each
+// project below puts a different resolver feature on the lockfile boundary.
+describe.each(["hoisted", "isolated"] as const)(
+  "a bun.lock bun writes passes --frozen-lockfile (%s linker)",
+  linker => {
+    const pkg = (name: string, extra: object) => JSON.stringify({ name, version: "1.0.0", ...extra });
+
+    // `shape` lists lockfile entries that show the graph is what the name says.
+    const projects: Record<string, { files: Record<string, string>; shape: string[] }> = {
+      "multiple versions of one transitive dependency": {
+        files: {
+          "package.json": pkg("app", {
+            dependencies: {
+              "no-deps": "1.1.0",
+              "one-dep": "1.0.0",
+              "one-fixed-dep": "2.0.0",
+              "one-fixed-dep-v1": "npm:one-fixed-dep@1.0.0",
+              "one-range-dep": "1.0.0",
+            },
+          }),
+        },
+        shape: [
+          '"no-deps": ["no-deps@1.1.0"',
+          '"one-dep/no-deps": ["no-deps@1.0.1"',
+          '"one-fixed-dep/no-deps": ["no-deps@2.0.0"',
+          '"one-fixed-dep-v1/no-deps": ["no-deps@1.0.0"',
+        ],
+      },
+      "peer dependencies": {
+        // peer-deps-lvl0 depends on no-deps@1.0.0 and on lvl1, which has a peer
+        // on no-deps and depends on lvl2, which has the same peer.
+        // provides-peer-deps-2-0-0 brings no-deps@2.0.0 next to peer-deps.
+        files: {
+          "package.json": pkg("app", {
+            dependencies: {
+              "no-deps": "^1.0.0",
+              "peer-deps-fixed": "1.0.0",
+              "peer-deps-lvl0": "1.0.0",
+              "provides-peer-deps-2-0-0": "1.0.0",
+            },
+          }),
+        },
+        shape: [
+          '"no-deps": ["no-deps@1.1.0"',
+          '"peer-deps-lvl2": ["peer-deps-lvl2@1.0.0"',
+          '"peer-deps-lvl0/no-deps": ["no-deps@1.0.0"',
+          '"provides-peer-deps-2-0-0/no-deps": ["no-deps@2.0.0"',
+        ],
+      },
+      "optional dependencies": {
+        // has-missing-optional-dep: an optional dependency the registry does not have.
+        // duplicate-optional: no-deps in dependencies and optionalDependencies with
+        // different versions, plus a peer on two-range-deps.
+        files: {
+          "package.json": pkg("app", {
+            dependencies: {
+              "duplicate-optional": "1.0.1",
+              "has-missing-optional-dep": "1.0.0",
+              "two-range-deps": "1.0.0",
+            },
+            optionalDependencies: { "no-deps": "2.0.0" },
+          }),
+        },
+        shape: [
+          '"no-deps": ["no-deps@2.0.0"',
+          '"duplicate-optional/no-deps": ["no-deps@1.0.1"',
+          '"two-range-deps/no-deps": ["no-deps@1.1.0"',
+          '"optionalDependencies": { "this-package-does-not-exist-in-the-registry": "||" }',
+        ],
+      },
+      "platform-specific dependencies": {
+        // optional-native's optional dependencies are gated on os, cpu, and libc.
+        // No os value matches a real host, so those are skipped everywhere. Which
+        // libc one is installed depends on the host.
+        files: {
+          "package.json": pkg("app", { dependencies: { "optional-native": "1.0.0" } }),
+        },
+        shape: [
+          '"native-foo-x64": ["native-foo-x64@1.0.0"',
+          '{ "os": "none", "cpu": "x64" }',
+          '{ "os": "none", "cpu": "none" }',
+          '"native-libc-musl": ["native-libc-musl@1.0.0"',
+        ],
+      },
+      "workspaces": {
+        files: {
+          "package.json": pkg("app", {
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "^1.0.0", "pkg-b": "workspace:*" },
+          }),
+          "packages/pkg-a/package.json": pkg("pkg-a", {
+            dependencies: { "no-deps": "1.0.0", "peer-deps": "1.0.0" },
+          }),
+          "packages/pkg-b/package.json": pkg("pkg-b", {
+            dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0", "pkg-a": "workspace:*" },
+            devDependencies: { "peer-deps-fixed": "1.0.0" },
+          }),
+        },
+        shape: [
+          '"pkg-a": ["pkg-a@workspace:packages/pkg-a"]',
+          '"pkg-b": ["pkg-b@workspace:packages/pkg-b"]',
+          '"no-deps": ["no-deps@1.1.0"',
+          '"pkg-a/no-deps": ["no-deps@1.0.0"',
+          '"pkg-b/no-deps": ["no-deps@2.0.0"',
+        ],
+      },
+    };
+    const cases = Object.entries(projects).map(([name, { files, shape }]) => [name, files, shape] as const);
+
+    function createProject(name: string, files: Record<string, string>) {
+      return tempDir(`frozen-roundtrip-${linker}-${name.replaceAll(" ", "-")}-`, {
+        ...files,
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { registry: registry.registryUrl(), linker, saveTextLockfile: true },
+        }),
+      });
+    }
+
+    async function run(cwd: string, args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+      return { out, err };
+    }
+
+    const lockfileText = (cwd: string) => file(join(cwd, "bun.lock")).text();
+
+    // The frozen install over the node_modules the last command left, then over
+    // none, and finally a --lockfile-only install, which always writes bun.lock
+    // and so checks that the tree loaded from bun.lock prints back to the same text.
+    async function expectFrozenInstallKeeps(cwd: string, lockfile: string) {
+      await run(cwd, ["install", "--frozen-lockfile"]);
+      expect(await lockfileText(cwd)).toBe(lockfile);
+
+      await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+      await run(cwd, ["install", "--frozen-lockfile"]);
+      expect(await lockfileText(cwd)).toBe(lockfile);
+
+      await run(cwd, ["install", "--lockfile-only"]);
+      expect(await lockfileText(cwd)).toBe(lockfile);
+    }
+
+    it.concurrent.each(cases)("written by bun install: %s", async (name, files, shape) => {
+      using dir = createProject(name, files);
+      const cwd = String(dir);
+
+      await run(cwd, ["install"]);
+      const lockfile = await lockfileText(cwd);
+      for (const entry of shape) expect(lockfile).toContain(entry);
+
+      await expectFrozenInstallKeeps(cwd, lockfile);
+    });
+
+    it.concurrent.each(cases)("written by bun install --lockfile-only: %s", async (name, files) => {
+      using dir = createProject(name, files);
+      const cwd = String(dir);
+
+      await run(cwd, ["install", "--lockfile-only"]);
+      expect(await exists(join(cwd, "node_modules"))).toBeFalse();
+      const lockfile = await lockfileText(cwd);
+
+      await expectFrozenInstallKeeps(cwd, lockfile);
+    });
+
+    it.concurrent.each(cases)("written by a repeated bun install: %s", async (name, files) => {
+      using dir = createProject(name, files);
+      const cwd = String(dir);
+
+      await run(cwd, ["install"]);
+      const lockfile = await lockfileText(cwd);
+      for (let i = 0; i < 2; i++) {
+        await run(cwd, ["install"]);
+        expect(await lockfileText(cwd)).toBe(lockfile);
+      }
+
+      await expectFrozenInstallKeeps(cwd, lockfile);
+    });
+
+    // https://github.com/oven-sh/bun/issues/31748: the ranges are widened after
+    // the first install, so `bun update` has versions to move and package.json
+    // to rewrite, the way an "update dependencies" bot uses it.
+    it.concurrent("written by bun update", async () => {
+      const manifests = (prefix: "" | "^") => ({
+        "package.json": pkg("app", {
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": `${prefix}1.0.1`,
+            "no-deps": `${prefix}1.0.0`,
+            "peer-deps-fixed": "1.0.0",
+            "pkg-a": "workspace:*",
+          },
+          devDependencies: { "one-fixed-dep": `${prefix}1.0.0` },
+          overrides: { "no-deps": "$no-deps" },
+        }),
+        "packages/pkg-a/package.json": pkg("pkg-a", {
+          dependencies: { "a-dep": `${prefix}1.0.1`, "one-dep": `${prefix}1.0.0` },
+        }),
+      });
+      using dir = createProject("update", manifests(""));
+      const cwd = String(dir);
+
+      await run(cwd, ["install"]);
+      const pinned = await lockfileText(cwd);
+      expect(pinned).toContain('"a-dep": ["a-dep@1.0.1"');
+
+      for (const [path, contents] of Object.entries(manifests("^"))) {
+        await write(join(cwd, path), contents);
+      }
+      await run(cwd, ["update"]);
+      const updated = await lockfileText(cwd);
+      expect(updated).not.toBe(pinned);
+      expect(updated).toContain('"a-dep": ["a-dep@1.0.10"');
+      expect(updated).toContain('"no-deps": ["no-deps@1.1.0"');
+      // bun update rewrote the root ranges, and the $ref override follows them.
+      expect(updated).toContain('"overrides": {\n    "no-deps": "^1.1.0",\n  }');
+
+      await expectFrozenInstallKeeps(cwd, updated);
+    });
+  },
+);

@@ -1396,6 +1396,12 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
+/// The `<number>` that stands for `100%` in the saturation/lightness of hsl() and the
+/// whiteness/blackness of hwb(): `hsl(120 50 40)` is `hsl(120 50% 40%)`.
+/// https://www.w3.org/TR/css-color-4/#the-hsl-notation
+/// https://www.w3.org/TR/css-color-4/#the-hwb-notation
+const HSL_PERCENT_BASIS: f32 = 100.0;
+
 pub(crate) fn parse_hsl_hwb_components<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
@@ -1408,13 +1414,22 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    // Only the legacy comma syntax is limited to `<percentage>`.
+    let parse_channel = |input: &mut css::Parser, parser: &ComponentParser| {
+        if is_legacy_syntax {
+            parser.parse_percentage(input)
+        } else {
+            parser.parse_unit_channel(input, HSL_PERCENT_BASIS)
+        }
+    };
+
+    let a = parse_channel(input, parser)?.clamp(0.0, 1.0);
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let b = parse_channel(input, parser)?.clamp(0.0, 1.0);
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
@@ -1992,6 +2007,16 @@ impl ComponentParser {
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
         }
+    }
+
+    /// A channel written as `<percentage> | <number> | none` and stored as a unit value,
+    /// `percent_basis` being the `<number>` that stands for `100%`.
+    fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
+        if let Ok(number) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(number / percent_basis);
+        }
+
+        self.parse_percentage(input)
     }
 
     fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {

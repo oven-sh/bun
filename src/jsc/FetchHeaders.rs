@@ -31,8 +31,13 @@ unsafe extern "C" {
         arg1: *mut StringPointer,
         arg2: *mut StringPointer,
         arg3: *mut u8,
+        arg4: u32,
     );
-    safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
+    safe fn WebCore__FetchHeaders__count(
+        arg0: &FetchHeaders,
+        arg1: &mut u32,
+        arg2: &mut u32,
+    ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
     // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
@@ -256,7 +261,10 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
-    pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
+    /// Returns `false`, with `names` and `buf_len` unset, when the names and values
+    /// together pass `u32::MAX` bytes: the most a `StringPointer` can address.
+    #[must_use]
+    pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) -> bool {
         WebCore__FetchHeaders__count(self, names, buf_len)
     }
 
@@ -273,9 +281,15 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
+    pub fn copy_to(
+        &mut self,
+        names: *mut StringPointer,
+        values: *mut StringPointer,
+        buf: *mut u8,
+        buf_len: u32,
+    ) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
-        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
+        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf, buf_len) }
     }
 }
 

@@ -731,23 +731,24 @@ impl AnyRoute {
             }
 
             return Ok(AnyRoute::File(FileRoute::init_from_blob(
+                global,
                 blob,
                 &super::file_route::InitOptions {
                     server: None,
                     status_code: 200,
                     headers,
                 },
-            )));
+            )?));
         }
 
-        Ok(AnyRoute::Static(StaticRoute::init_from_any_blob(
-            AnyBlob::Blob(blob),
-            super::static_route::InitFromBytesOptions {
-                server: None,
+        Ok(AnyRoute::Static(
+            StaticRoute::init_from_any_blob_with_headers(
+                global,
+                AnyBlob::Blob(blob),
                 headers,
-                ..Default::default()
-            },
-        )))
+                200,
+            )?,
+        ))
     }
 
     pub(crate) fn html_route_from_js(

@@ -7,7 +7,16 @@ use core::sync::atomic::Ordering;
 use bun_core::{EncodedSlice, StringPointer};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{
+    CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult,
+};
+
+fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
+    global.throw_value(global.create_range_error_instance(format_args!(
+        "Headers exceed the maximum total size of {} bytes",
+        u32::MAX
+    )))
+}
 
 /// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -15,10 +24,14 @@ use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, 
 /// `body_content_type` is `Some(ct)` only when the body has a *user-set*
 /// content-type (callers gate on `has_content_type_from_user()` before passing
 /// `content_type()`); `None` means no body or no user-set content-type.
+///
+/// `Headers` addresses its buffer through `u32` `StringPointer`s. Throws a
+/// `RangeError` when the names and values pass `u32::MAX` bytes in total.
 pub fn from_fetch_headers(
+    global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
-) -> Headers {
+) -> JsResult<Headers> {
     // `FetchHeaders::{count,fast_has_,copy_to}` take `&mut self` but
     // are read-only FFI shims; cast through `*mut` (matching the prior
     // `link_interface!` impl which did `from_ref(h).cast_mut()`).
@@ -28,7 +41,9 @@ pub fn from_fetch_headers(
     let mut buf_len: u32 = 0;
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-        unsafe { (*h).count(&mut header_count, &mut buf_len) };
+        if !unsafe { (*h).count(&mut header_count, &mut buf_len) } {
+            return Err(throw_headers_too_large(global));
+        }
     }
     let mut headers = Headers {
         entries: EntryList::default(),
@@ -42,8 +57,15 @@ pub fn from_fetch_headers(
                 .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
                 .unwrap_or(false);
             if !has_ct_header {
-                header_count += 1;
-                buf_len += u32::try_from(body_ct.len() + b"Content-Type".len()).unwrap();
+                let Some((new_count, new_len)) = header_count.checked_add(1).zip(
+                    u32::try_from(b"Content-Type".len() + body_ct.len())
+                        .ok()
+                        .and_then(|ct_len| buf_len.checked_add(ct_len)),
+                ) else {
+                    return Err(throw_headers_too_large(global));
+                };
+                header_count = new_count;
+                buf_len = new_len;
                 break 'brk true;
             }
         }
@@ -80,7 +102,14 @@ pub fn from_fetch_headers(
     }
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
-        unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
+        unsafe {
+            (*h).copy_to(
+                names_ptr,
+                values_ptr,
+                headers.buf.as_mut_ptr(),
+                buf_len_before_content_type,
+            )
+        };
     }
 
     // TODO: maybe we should send Content-Type header first instead of last?
@@ -108,7 +137,7 @@ pub fn from_fetch_headers(
         }
     }
 
-    headers
+    Ok(headers)
 }
 
 /// Build a `WebCore::FetchHeaders` from `bun.http.Headers` storage.

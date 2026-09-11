@@ -916,13 +916,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             // `cast` returns a live JS-owned FetchHeaders*;
                                             // BackRef invariant holds for this read.
                                             let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
-                                            proxy_headers =
-                                                Some(from_fetch_headers(Some(&*fetch_hdrs), None));
+                                            proxy_headers = Some(from_fetch_headers(
+                                                global_this,
+                                                Some(&*fetch_hdrs),
+                                                None,
+                                            )?);
                                         } else if let Some(fetch_hdrs) =
                                             HeadersRef::create_from_js(ctx, headers_value)?
                                         {
-                                            proxy_headers =
-                                                Some(from_fetch_headers(Some(&fetch_hdrs), None));
+                                            proxy_headers = Some(from_fetch_headers(
+                                                global_this,
+                                                Some(&fetch_hdrs),
+                                                None,
+                                            )?);
                                         }
                                     }
                                 }
@@ -1166,9 +1172,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             Some(from_fetch_headers(
+                global_this,
                 Some(headers_ref),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            ))
+            )?)
         } else {
             headers
         };
@@ -1372,9 +1379,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
+            global_this,
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+        )?);
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

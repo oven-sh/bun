@@ -1,6 +1,6 @@
 /**
- * Runs under both `node --test` and `bun test` (see "http.Agent free keep-alive
- * socket" in node-http.test.ts). Do not use anything Bun-only in here.
+ * All tests in this file run in both Bun and Node.js: `bun test` runs them
+ * here, and the last test runs this same file under Node.js.
  *
  * A keep-alive socket parked in agent.freeSockets has no parser and no reader
  * attached. Bytes that arrive while it is idle are unsolicited: the next
@@ -225,6 +225,27 @@ for (const [protocol, transport] of Object.entries(transports)) {
         assert.strictEqual(freeSocket.destroyed, false);
         assert.strictEqual(serverSockets.length, 1);
       });
+    });
+  });
+}
+
+// Only in Bun: when Node.js runs this file it must not spawn itself again.
+if (typeof Bun !== "undefined") {
+  const { bunEnv, nodeExe } = await import("harness");
+  const node = nodeExe();
+
+  describe("Node.js compatibility", () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+      // A direct run, not `node --test`: the runner mode forks a second node
+      // process per file. node:test still exits non-zero on any failure.
+      await using proc = Bun.spawn({
+        cmd: [node!, "--v8-pool-size=1", fileURLToPath(import.meta.url)],
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      assert.deepStrictEqual({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }, { exitCode: 0, output: "" });
     });
   });
 }

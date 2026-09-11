@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, nodeExe, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -3744,37 +3744,6 @@ it("registering 'keylog' on an agent with live sockets does not throw", async ()
   } finally {
     server.close();
   }
-});
-
-// A keep-alive socket parked in agent.freeSockets has no parser and no reader
-// attached, so bytes that reach it are unsolicited and must not become the next
-// request's response. The cases live in a node:test file so the same assertions
-// run on Node.js and on Bun.
-describe("http.Agent free keep-alive socket", () => {
-  const file = path.join(import.meta.dir, "node-http-agent-free-socket.node.mts");
-  const node = nodeExe();
-
-  test.skipIf(!node)("on node.js", async () => {
-    await using proc = Bun.spawn({
-      cmd: [node!, "--test", file],
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "ignore",
-      env: bunEnv,
-    });
-    expect(await proc.exited).toBe(0);
-  });
-
-  test("on bun", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", file],
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "ignore",
-      env: bunEnv,
-    });
-    expect(await proc.exited).toBe(0);
-  });
 });
 
 it("statusCode = 204 with an empty first write still discards the body", async () => {

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { config } from "../lib/config";
+import { agentGuestRelease, guestImage } from "../lib/config";
 import { guest } from "../lib/guest";
 import { fail } from "../lib/shell";
 import { tart } from "../lib/tart";
@@ -29,6 +29,10 @@ if (!command.includes("runner.node.mjs")) {
   process.exit((await $`bash -c ${command}`.nothrow()).exitCode);
 }
 
+const image = guestImage(
+  agentGuestRelease(env) ?? fail("this agent has no release tag; re-run main.ts install-agent on the host"),
+);
+
 let cleaned = false;
 async function cleanup(): Promise<void> {
   if (cleaned) return;
@@ -48,7 +52,7 @@ try {
 process.exit(status);
 
 async function runInGuest(): Promise<number> {
-  console.log(`--- :tart: ${vm} from ${config.tart.image}`);
+  console.log(`--- :tart: ${vm} from ${image}`);
   const ip = (await boot()) ?? (await retryBoot()) ?? fail(`guest never came up; see /tmp/${vm}.log`);
   console.log(`    guest ${ip}`);
   const g = guest(ip);
@@ -72,7 +76,7 @@ async function runInGuest(): Promise<number> {
 }
 
 async function boot(): Promise<string | undefined> {
-  await tart.cloneLocked(config.tart.image, vm);
+  await tart.cloneLocked(image, vm);
   tart.start(vm, `/tmp/${vm}.log`);
   return tart.waitForSsh(vm);
 }

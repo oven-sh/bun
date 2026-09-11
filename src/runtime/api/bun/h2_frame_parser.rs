@@ -2972,17 +2972,24 @@ impl H2FrameParser {
         }
     }
 
-    /// Runs from the deferred tick (never under a write): closes the native socket with
-    /// the send errno so the normal socket-close teardown runs (native callback detach,
-    /// JS 'error' then 'close', session destroy) - the same path a peer disconnect takes.
-    /// Closes WITHOUT detaching: a close_and_detach here severed the JS wrapper before
-    /// on_close could dispatch, so the session saw neither 'error' nor 'close' and
-    /// callers waiting on the failure hung (grpc-js against a refused server).
-    /// Not-yet-established sockets are left alone entirely - the connect-error path owns
-    /// their failure delivery, and closing a semi-connected socket runs no terminal
-    /// callback (stranding its refs, see the close host_fn in socket_body).
+    /// Runs from the deferred tick (never under a write): closes the native socket so the
+    /// normal socket-close teardown runs (native callback detach, JS 'close', session
+    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
+    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
+    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
+    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
+    /// alone entirely - the connect-error path owns their failure delivery, and closing
+    /// a semi-connected socket runs no terminal callback (stranding its refs, see the
+    /// close host_fn in socket_body).
     fn close_transport_after_fatal_write(&self) {
-        let errno = self.transport_write_errno.get();
+        // A client has a request to fail. A server has nobody to tell that a client
+        // vanished: Node's server sessions close quietly, and an 'error' on a stream
+        // with no listener would end the process.
+        let errno = if self.is_server.get() {
+            0
+        } else {
+            self.transport_write_errno.get()
+        };
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
                 Self::close_socket_for_dead_transport::<true>(socket.get(), errno);

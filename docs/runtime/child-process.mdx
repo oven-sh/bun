@@ -189,6 +189,30 @@ const proc = Bun.spawn({
 
 You can pass the same directory to any number of spawns; the limit applies to their combined usage. Bun supports both cgroup v1 and v2 hierarchies. Creating cgroups typically requires root or a delegated subtree. Bun ignores the option on other platforms; on Linux, the spawn fails if the child cannot join the cgroup.
 
+## Outliving the parent on Windows
+
+On Windows, Bun puts each subprocess in a [job object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) that terminates it when the parent `bun` process exits. `detached: true` prevents that, but a detached subprocess has no console, so each console program it starts opens a new console window.
+
+Pass `windowsKeepAlive: true` to start a subprocess that keeps running after the parent exits and has a hidden console of its own:
+
+```ts index.ts icon="/icons/typescript.svg"
+import { openSync } from "node:fs";
+
+const log = openSync("worker.log", "a");
+
+const proc = Bun.spawn({
+  cmd: ["powershell.exe", "-NoProfile", "-File", "worker.ps1"],
+  stdio: ["ignore", log, log],
+  windowsKeepAlive: true,
+});
+
+proc.unref(); // let the parent exit while the subprocess runs
+```
+
+The subprocess is not added to the job object. It gets a new console that has no window (`CREATE_NO_WINDOW`), also when `stdio` contains file descriptors, and the programs it starts share that console. Unlike `detached`, it stays in the parent's process group. `proc.exited` and `onExit` work as usual while the parent is alive.
+
+Send stdio to files or `"ignore"`. A `"pipe"` breaks when the parent exits, and output to an inherited console goes to the new hidden console, not to the parent's terminal. The option has no effect with `detached: true`, and Bun ignores it on other platforms. `node:child_process` accepts the same option.
+
 ## Using AbortSignal
 
 You can abort a subprocess using an `AbortSignal`:
@@ -537,6 +561,7 @@ namespace SpawnOptions {
     serialization?: "json" | "advanced";
     windowsHide?: boolean;
     windowsVerbatimArguments?: boolean;
+    windowsKeepAlive?: boolean; // Windows only; outlive the parent with a hidden console of its own
     argv0?: string;
     signal?: AbortSignal;
     timeout?: number;

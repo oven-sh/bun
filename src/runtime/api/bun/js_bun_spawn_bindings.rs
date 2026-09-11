@@ -374,6 +374,8 @@ fn spawn_maybe_sync(
     let mut windows_hide: bool = false;
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
+    #[cfg(windows)]
+    let mut windows_keep_alive: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     let mut terminal_info: Option<terminal_body::CreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
@@ -707,6 +709,12 @@ fn spawn_maybe_sync(
                 if let Some(val) = args.get(global_this, "windowsVerbatimArguments")? {
                     if val.is_boolean() {
                         windows_verbatim_arguments = val.as_boolean();
+                    }
+                }
+
+                if let Some(val) = args.get(global_this, "windowsKeepAlive")? {
+                    if val.is_boolean() {
+                        windows_keep_alive = val.as_boolean();
                     }
                 }
             }
@@ -1145,6 +1153,7 @@ fn spawn_maybe_sync(
         windows: spawn::WindowsOptions {
             hide_window: windows_hide,
             verbatim_arguments: windows_verbatim_arguments,
+            keep_alive: windows_keep_alive,
             loop_: loop_handle,
         },
         #[cfg(any(target_os = "linux", target_os = "android"))]

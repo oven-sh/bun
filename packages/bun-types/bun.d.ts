@@ -7700,6 +7700,49 @@ declare module "bun" {
       windowsVerbatimArguments?: boolean;
 
       /**
+       * Let the subprocess keep running after this process exits, with a
+       * hidden console of its own.
+       *
+       * Windows only; ignored on other platforms. By default, Bun puts each
+       * subprocess in a job object that terminates it when this process
+       * exits. `detached: true` prevents that, but the subprocess then has no
+       * console, and each console program it starts opens a new console
+       * window.
+       *
+       * With `windowsKeepAlive: true` the subprocess:
+       * - is not terminated when this process exits,
+       * - gets a new console that has no window, also when `stdio` contains
+       *   file descriptors. The programs it starts share that console, so
+       *   they open no windows either,
+       * - stays in this process's process group.
+       *
+       * {@link Subprocess.exited} and `onExit` work as usual while this
+       * process is alive. Call {@link Subprocess.unref} to let this process
+       * exit before the subprocess does.
+       *
+       * Send stdio to files or `"ignore"`. A `"pipe"` breaks when this
+       * process exits, and output to an inherited console goes to the new
+       * hidden console.
+       *
+       * Has no effect with `detached: true`.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * import { openSync } from "node:fs";
+       * const log = openSync("worker.log", "a");
+       * const proc = Bun.spawn({
+       *   cmd: ["powershell.exe", "-NoProfile", "-File", "worker.ps1"],
+       *   stdio: ["ignore", log, log],
+       *   windowsKeepAlive: true,
+       * });
+       * proc.unref();
+       * ```
+       */
+      windowsKeepAlive?: boolean;
+
+      /**
        * Path to the executable to run in the subprocess.
        *
        * Use this to wrap another application or to simulate a symlink.

@@ -1531,6 +1531,10 @@ describe("client TLS options with a PKCS#12 archive", () => {
     // agent1-with-server-ca.pfx carries agent1's key and certificate plus the
     // self-signed certificate the server presents. Node adds archive CAs on top
     // of the default roots, so a client with only `pfx` verifies this server.
+    // Rebuild it when the harness `tls.cert` or agent1's key pair changes
+    // (server.pem holds `tls.cert` from test/harness.ts):
+    //   openssl pkcs12 -export -out agent1-with-server-ca.pfx -passout pass:sample \
+    //     -inkey keys/agent1-key.pem -in keys/agent1-cert.pem -certfile server.pem
     const bundled = fs.readFileSync(path.join(import.meta.dir, "fixtures/agent1-with-server-ca.pfx"));
     const { server, clients } = startMtlsServer();
     using _server = server;

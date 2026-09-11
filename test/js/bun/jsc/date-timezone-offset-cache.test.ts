@@ -1,19 +1,27 @@
 import { afterAll, describe, expect, test } from "bun:test";
 
 // JSC keeps the local time offset of the current zone in a small interval
-// cache (DateCache::DSTCache in vendor/WebKit/.../runtime/JSDateMath.cpp). To
-// find the instant where the offset changes it bisects between two cached
-// intervals at most 19 days apart. A zone can change its offset more than once
-// within 19 days, and then a bisection probe can match neither interval. JSC
-// filed such a probe under the later interval, so every instant from the probe
-// to that interval got its offset (America/Cambridge_Bay, 2000-10-29 and
-// 2000-11-05: an hour off for up to a week) or its DST flag (America/Asuncion,
-// 2024-10-06 and 2024-10-15: "Paraguay Standard Time" for summer time), until
-// the zone changed. Debug builds hit ASSERT(m_after->offset == offset).
-// oven-sh/WebKit#618 makes such a probe an interval of its own.
+// cache (DateCache::DSTCache in vendor/WebKit/.../runtime/JSDateMath.cpp). It
+// took two instants at most 19 days apart with the same offset to have that
+// offset in between, and found the instant where the offset changes by
+// bisecting between two cached intervals with different offsets. A zone can
+// change its offset more than once within 19 days, so both went wrong:
+// - A change and a change back (America/Recife was on DST from 2000-10-08 to
+//   10-15 only) was merged over: the short period got the offset around it for
+//   the instants the cache had not seen before (oven-sh/bun#42248).
+// - A bisection probe between two changes to different offsets matched neither
+//   interval and was filed under the later one, so every instant from the probe
+//   to that interval got its offset (America/Cambridge_Bay, 2000-10-29 and
+//   2000-11-05: an hour off for up to a week) or its DST flag (America/Asuncion,
+//   2024-10-06 and 2024-10-15: "Paraguay Standard Time" for summer time), until
+//   the zone changed. Debug builds hit ASSERT(m_after->offset == offset).
+// oven-sh/WebKit#618 makes the cache ask ICU's transition table where a run of
+// one offset ends.
 //
 // The expectations come from Intl.DateTimeFormat, which asks ICU directly and
-// shares no state with Date, so they follow whatever tzdata this build has.
+// shares no state with Date, so they follow whatever tzdata this build has. A
+// scenario whose transitions the tzdata does not have fails, unless they are
+// predictions.
 
 const originalTZ = process.env.TZ;
 afterAll(() => {
@@ -80,30 +88,51 @@ const primingDistances = {
   "17 days": 17 * msPerDay,
 };
 
-type Scenario = ReturnType<typeof makeScenario>;
+type Scenario = NonNullable<ReturnType<typeof makeScenario>>;
 
-function makeScenario(timeZone: string, firstTransition: string, lastTransition: string, checkNames: boolean) {
+function makeScenario(
+  timeZone: string,
+  firstTransition: string,
+  lastTransition: string,
+  checkNames: boolean,
+  predicted = false,
+) {
   const first = Date.parse(firstTransition);
   const last = Date.parse(lastTransition);
   const offsetOracle = makeOffsetOracle(timeZone);
   const nameOracle = checkNames ? makeNameOracle(timeZone) : null;
 
+  // Make sure the scenario tests what it is about. The long name tells a DST flag change at the same offset.
+  const longName = makeNameOracle(timeZone);
+  const changesAt = (time: number) =>
+    offsetOracle(time - msPerMinute) !== offsetOracle(time) || longName(time - msPerMinute) !== longName(time);
+  if (!changesAt(first) || !changesAt(last)) {
+    if (!predicted)
+      throw new Error(`${timeZone}: the tzdata in use has no transitions at ${firstTransition} and ${lastTransition}`);
+    return null;
+  }
+
   // The instants to check: from two days before the first transition to 20 days past the last.
   const sweep: number[] = [];
   for (let time = first - 2 * msPerDay; time <= last + 20 * msPerDay; time += step) sweep.push(time);
+  // A walk of one instant per day from 40 days before the first transition to
+  // 20 days past the last, the shape of a calendar loop. Every day of the walk
+  // is on the sweep's grid.
+  const daily: number[] = [];
+  for (let time = first - 40 * msPerDay; time <= last + 20 * msPerDay; time += msPerDay) daily.push(time);
   const offsetAt = new Map<number, number>();
-  for (let time = sweep[0] - step; time <= sweep.at(-1)! + step; time += step) offsetAt.set(time, offsetOracle(time));
-  const nameAt = nameOracle ? new Map(sweep.map(time => [time, nameOracle(time)])) : null;
+  for (let time = daily[0] - step; time <= sweep.at(-1)! + step; time += step) offsetAt.set(time, offsetOracle(time));
+  const nameAt = nameOracle ? new Map([...daily, ...sweep].map(time => [time, nameOracle(time)])) : null;
 
   // The first instants to prime the cache with, from 19 days before the first
   // transition up to the last transition, every other day at another hour. The
-  // second one comes one of the primingDistances later. So the 19 day probe
-  // window past the first one holds both transitions, and the bisection towards
-  // the second one comes at the three offsets from either side.
+  // second one comes one of the primingDistances later. So the 19 day window
+  // past the first one holds both transitions, and the second one comes at the
+  // offsets from either side.
   const primingStarts: number[] = [];
   for (let time = first - 19 * msPerDay - msPerMinute; time <= last; time += 49 * msPerHour) primingStarts.push(time);
 
-  return { timeZone, sweep, offsetAt, nameAt, offsetOracle, primingStarts };
+  return { timeZone, sweep, daily, offsetAt, nameAt, offsetOracle, primingStarts };
 }
 
 // One Date for all the UTC-to-local checks: the cost of a zone change grows
@@ -159,10 +188,47 @@ const scenarios = [
   makeScenario("Europe/Riga", "1944-10-02T01:00Z", "1944-10-12T23:00Z", false),
   // -01 until 1976-04-14T01:00Z, then +00 until 1976-05-01T00:00Z, then +01 DST.
   makeScenario("Africa/El_Aaiun", "1976-04-14T01:00Z", "1976-05-01T00:00Z", false),
-];
 
-describe("local time offset cache, two offset changes less than 19 days apart", () => {
-  // The two reports, spelled out.
+  // A change and a change back within 19 days.
+  // -03 until 2000-10-08T03:00Z, then -02 DST until 2000-10-15T02:00Z, then -03 again.
+  makeScenario("America/Recife", "2000-10-08T03:00Z", "2000-10-15T02:00Z", false),
+  // -03 until 2000-10-08T03:00Z, then -02 DST until 2000-10-22T02:00Z, then -03 again.
+  makeScenario("America/Fortaleza", "2000-10-08T03:00Z", "2000-10-22T02:00Z", false),
+  // -03 until 2004-06-01T03:00Z, then -04 until 2004-06-13T04:00Z, then -03 again.
+  makeScenario("America/Argentina/Tucuman", "2004-06-01T03:00Z", "2004-06-13T04:00Z", false),
+  // +02 DST until 1943-04-17T00:00Z, then +01 until 1943-04-25T01:00Z, then +02 DST again.
+  makeScenario("Africa/Tunis", "1943-04-17T00:00Z", "1943-04-25T01:00Z", false),
+  // +02 until 2040-10-20T00:00Z, then +03 DST until 2040-10-26T23:00Z, then +02 again (a predicted Ramadan break).
+  makeScenario("Asia/Gaza", "2040-10-20T00:00Z", "2040-10-26T23:00Z", false, true),
+].filter(scenario => scenario !== null);
+
+describe("local time offset cache, offset changes less than 19 days apart", () => {
+  // The reports, spelled out.
+  test("America/Recife: 2000-10-10 keeps its -02:00 offset after lookups on either side of the week of DST", () => {
+    resetTimeZone("America/Recife");
+    new Date("2000-10-07T12:00Z").getTimezoneOffset();
+    new Date("2000-10-20T12:00Z").getTimezoneOffset();
+    expect(new Date("2000-10-10T12:00Z").getTimezoneOffset()).toBe(120);
+  });
+
+  test("America/Recife: a daily walk from 2000-09-08 sees the seven days of DST", () => {
+    resetTimeZone("America/Recife");
+    const dstDays: string[] = [];
+    for (let time = Date.parse("2000-09-08T12:00Z"); time <= Date.parse("2000-10-14T12:00Z"); time += msPerDay) {
+      date.setTime(time);
+      if (date.getTimezoneOffset() !== 180) dstDays.push(iso(time).slice(0, 10));
+    }
+    expect(dstDays).toEqual([
+      "2000-10-08",
+      "2000-10-09",
+      "2000-10-10",
+      "2000-10-11",
+      "2000-10-12",
+      "2000-10-13",
+      "2000-10-14",
+    ]);
+  });
+
   test("America/Cambridge_Bay: 2000-11-01 keeps its -05:00 offset after two lookups at the 2000-10-29 change", () => {
     resetTimeZone("America/Cambridge_Bay");
     new Date("2000-10-29T06:59Z").getTimezoneOffset();
@@ -183,6 +249,11 @@ describe("local time offset cache, two offset changes less than 19 days apart", 
     test("walking the window forward on a fresh cache", () => {
       resetTimeZone(timeZone);
       expect(checkWindow(scenario, scenario.sweep)).toEqual([]);
+    });
+
+    test("walking up to the window one day at a time on a fresh cache", () => {
+      resetTimeZone(timeZone);
+      expect(checkWindow(scenario, scenario.daily)).toEqual([]);
     });
 
     test("visiting the window in a shuffled order on a fresh cache", () => {

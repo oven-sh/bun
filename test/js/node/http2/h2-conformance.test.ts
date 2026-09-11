@@ -800,6 +800,173 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe.concurrent("HEADERS on a stream the client neither opened nor reserved (RFC 9113 §5.1.1, §8.4)", () => {
+  // The client never hands such a stream to user code (no 'stream' event for an even id that no
+  // PUSH_PROMISE reserved), so nothing can listen for 'error' on it or close it.
+
+  // The next session-level error must reach the session and the open request only. Run in a
+  // child: the bug is an uncaughtException raised at session teardown. Node v26.3.0 reports the
+  // same four events for both cases.
+  const fixture = (hostileFrames: string) => String.raw`
+    const http2 = require("node:http2");
+    const net = require("node:net");
+    function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    }
+    const events = [];
+    process.on("uncaughtException", err => events.push("uncaughtException " + err.code));
+    process.on("exit", () => console.log(JSON.stringify(events.sort())));
+    // Raw h2c server: SETTINGS, then the hostile frames once the request HEADERS arrived.
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.write(frame(0x4, 0, 0));
+      let buf = Buffer.alloc(0), sawPreface = false, sent = false;
+      socket.on("data", chunk => {
+        if (sent) return;
+        buf = Buffer.concat([buf, chunk]);
+        if (!sawPreface) {
+          if (buf.length < 24) return;
+          buf = buf.subarray(24);
+          sawPreface = true;
+        }
+        while (buf.length >= 9) {
+          const length = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + length) return;
+          const type = buf[3];
+          buf = buf.subarray(9 + length);
+          if (type === 0x1) {
+            sent = true;
+            socket.write(Buffer.concat([frame(0x4, 0x1, 0), ${hostileFrames}]));
+            return;
+          }
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      client.on("error", () => events.push("session error"));
+      client.on("close", () => {
+        events.push("session close");
+        server.close();
+      });
+      client.on("stream", pushed => {
+        events.push("stream event");
+        pushed.on("error", () => {});
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => events.push("request error"));
+      req.on("close", () => events.push("request close"));
+      req.resume();
+    });
+  `;
+
+  test.each([
+    {
+      name: "an unfinished header block, then a PING where CONTINUATION is required",
+      hostileFrames: `frame(0x1, 0, 2), frame(0x6, 0, 0, Buffer.alloc(8))`,
+    },
+    {
+      name: "a complete header block, then GOAWAY(PROTOCOL_ERROR)",
+      // HEADERS: END_HEADERS | END_STREAM, ":status: 200". GOAWAY: last-stream-id 0, code 1.
+      hostileFrames: `frame(0x1, 0x5, 2, Buffer.from([0x88])), frame(0x7, 0, 0, Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]))`,
+    },
+  ])(
+    "even stream 2: $name does not raise an uncaughtException",
+    async ({ hostileFrames }) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(hostileFrames)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(["request close", "request error", "session close", "session error"]) + "\n",
+        stderr: expect.not.stringContaining("ERR_HTTP2"),
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
+  // close() must not wait for such a stream. In both cases below nghttp2 treats the stream as
+  // closed and ignores the frame, and node v26.3.0 finishes the same close().
+
+  // Stream 2 sits below the promised stream 4, so it is not idle.
+  test("even stream 2 left open does not keep a gracefully closed session open", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    client.on("stream", pushed => {
+      pushed.on("error", () => {});
+      pushed.resume();
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // A real push on stream 4, start to finish: [:method GET, :scheme http, :path /,
+      // :authority localhost], then ":status: 200" with END_STREAM.
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(4, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 4, Buffer.from([0x88]));
+      // HEADERS on stream 2, which nothing promised, left open. Then the response to the request.
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 1, Buffer.from([0x88]));
+      await once(req, "close");
+      const closed = once(client, "close");
+      client.close();
+      await closed;
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // Stream 1 already carried a complete request and response.
+  test("HEADERS on a finished request stream does not keep a gracefully closed session open", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const first = client.request({ ":path": "/" });
+      first.on("error", () => {});
+      first.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 1, Buffer.from([0x88]));
+      await once(first, "close");
+      const second = client.request({ ":path": "/" });
+      second.on("error", () => {});
+      second.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      // HEADERS on stream 1 again, left open. Then the response to the second request.
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 3, Buffer.from([0x88]));
+      await once(second, "close");
+      const closed = once(client, "close");
+      client.close();
+      await closed;
+      expect(client.destroyed).toBe(true);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

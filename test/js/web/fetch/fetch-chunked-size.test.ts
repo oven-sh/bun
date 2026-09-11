@@ -97,7 +97,8 @@ describe("fetch: chunked chunk-size token validation", () => {
       expect(await result).toEqual({ body: "x", code: "InvalidHTTPResponse" });
     });
 
-    it("with Content-Encoding: gzip", async () => {
+    // node v26.3.0 delivers nothing here: the error tears its gunzip down before it emits.
+    it("but not of a compressed body", async () => {
       const gz = Bun.gzipSync("hello hello hello hello");
       const wire = Buffer.concat([
         Buffer.from(`${head}Content-Encoding: gzip\r\n\r\n${gz.length.toString(16)}\r\n`),
@@ -107,10 +108,7 @@ describe("fetch: chunked chunk-size token validation", () => {
       const { server, url } = await serveParts(wire);
       await using _s = server;
       const res = await fetch(url);
-      expect(await readUntilError(res.body!.getReader())).toEqual({
-        body: "hello hello hello hello",
-        code: "InvalidHTTPResponse",
-      });
+      expect(await readUntilError(res.body!.getReader())).toEqual({ body: "", code: "InvalidHTTPResponse" });
     });
 
     it("with a chunk larger than one socket read", async () => {

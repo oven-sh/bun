@@ -4655,10 +4655,16 @@ impl<'a> HTTPClient<'a> {
         );
 
         match pret {
+            // -1: invalid HTTP response body. A compressed body gets nothing
+            // from this read, as in Node.js, whose decompressor is torn down
+            // by the error before it emits.
+            -1 if self.state.encoding.is_compressed() => {
+                return Err(crate::Error::InvalidHTTPResponse);
+            }
             // -2: needs more data.
-            // -1: invalid HTTP response body. The chunks decoded ahead of the
-            // invalid one are body all the same; `fail` reports them to a
-            // streaming consumer before the error.
+            // -1: the chunks decoded ahead of the invalid one are body all the
+            // same; `fail` reports them to a streaming consumer before the
+            // error.
             -1 | -2 => {
                 self.report_progress(buffer_len);
                 let mut processed = false;
@@ -4734,10 +4740,14 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
         match pret {
+            // -1: invalid HTTP response body. A compressed body gets nothing
+            // from this read, as in Node.js, whose decompressor is torn down
+            // by the error before it emits.
+            -1 if self.state.encoding.is_compressed() => Err(crate::Error::InvalidHTTPResponse),
             // -2: needs more data.
-            // -1: invalid HTTP response body. The chunks decoded ahead of the
-            // invalid one are body all the same; `fail` reports them to a
-            // streaming consumer before the error.
+            // -1: the chunks decoded ahead of the invalid one are body all the
+            // same; `fail` reports them to a streaming consumer before the
+            // error.
             -1 | -2 => {
                 self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;

@@ -1087,20 +1087,22 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
   });
   test("an error goes to a graph's onError once: an onError that lets it escape again (rethrow, or reject after reading its stack) hands it to the host", async () => {
     using d = tempDir("module-graph-onerror-once", {
-      "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); }`,
+      "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); } export function throwAndCatch(e) { try { throw e; } catch {} }`,
       "host.mjs": `const seen = [];
-        const done = () => { if (seen.length === 4) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
+        const done = () => { if (seen.length === 5) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
         process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
         process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
         // one rethrows from a microtask; the other logs the stack (drops the error's frames) and rejects with it
         const rethrow = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
         const rereject = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
         (await rethrow.import("./boom.mjs")).boom();
-        (await rereject.import("./boom.mjs?2")).boom();`,
+        const m2 = await rereject.import("./boom.mjs?2"); m2.boom();
+        // an object graph code once threw and caught does not make a later host rejection with it the graph's
+        const stale = new Error("stale"); m2.throwAndCatch(stale); Promise.resolve().then(() => Promise.reject(stale));`,
     });
     const r = await runBun(["host.mjs"], { cwd: String(d) });
     expect({ out: r.stdout, err: r.stderr, exitCode: r.exitCode }).toEqual({
-      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","rereject:boom-once","rethrow:boom-once"]`,
+      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","host:unhandledRejection:stale","rereject:boom-once","rethrow:boom-once"]`,
       err: "",
       exitCode: 0,
     });
@@ -1133,7 +1135,9 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
         export async function viaAsync() { throw hostMakeError("rethrown-by-graph"); }
         export function viaCjsHelper() { Promise.reject(cjsMakeError("made-by-host-cjs")); }
         export function viaScriptHelper() { Promise.reject(scriptMakeError("made-by-global-code")); }
-        export function fire() { viaReject(); viaAsync(); viaCjsHelper(); viaScriptHelper(); }`,
+        const cached = Promise.reject(new Error("cached-awaited-twice")); cached.catch(() => {});
+        export async function awaitCached() { await cached; }
+        export function fire() { viaReject(); viaAsync(); viaCjsHelper(); viaScriptHelper(); awaitCached(); awaitCached(); }`,
       "helper.cjs": `module.exports = function (m) { return new Error(m); };`,
     });
     const seen: string[] = [];
@@ -1150,9 +1154,11 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
         onError: (e: any, kind: string) => seen.push(kind + ":" + e.message),
       });
       (await g.import(join(d, "rej.mjs"))).fire();
-      await until(() => seen.length + hostSeen.length >= 4);
+      await until(() => seen.length + hostSeen.length >= 6);
       expect({ seen: seen.sort(), hostSeen }).toEqual({
         seen: [
+          "unhandledRejection:cached-awaited-twice", // two failures of graph code with one error object: both delivered
+          "unhandledRejection:cached-awaited-twice",
           "unhandledRejection:made-by-global-code",
           "unhandledRejection:made-by-host",
           "unhandledRejection:made-by-host-cjs",

@@ -37,7 +37,6 @@ bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSM
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
 // An ErrorInstance is about to drop its stack frames: remember the graph they attribute it to.
 void moduleGraphNoteErrorFrames(Zig::GlobalObject*, JSC::ErrorInstance*, const WTF::Vector<JSC::StackFrame>&);
-JSC::JSValue createModuleGraphConstructor(Zig::GlobalObject*);
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 
 class JSModuleGraph final : public JSC::JSNonFinalObject {

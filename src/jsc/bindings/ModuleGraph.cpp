@@ -156,9 +156,10 @@ static std::optional<JSModuleGraph*> moduleGraphForFrames(Zig::GlobalObject* glo
 
 // promiseRejectionTracker, for a promise rejected with no handler: the code rejecting it
 // is on the stack now — or, for an async function or a promise reaction whose handler
-// threw, nothing is (the runtime rejects after unwinding) and the exception it caught,
-// still the VM's last, carries the throw site. promise -> graph, or -> null for the
-// global object's module code.
+// threw, nothing is (the runtime rejects right after unwinding) and the exception it
+// just caught, the VM's last, carries the throw site. Every tracked rejection consumes
+// that exception, so an older one cannot claim a later rejection of the same value.
+// promise -> graph, or -> null for the global object's module code.
 void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->hasModuleGraphs())
@@ -170,6 +171,7 @@ void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promis
         if (last && last->value() == promise->result())
             owner = moduleGraphForFrames(globalObject, last->stack());
     }
+    vm.clearLastException();
     if (owner)
         globalObject->moduleGraphAttributions()->set(vm, promise, *owner ? JSValue(*owner) : jsNull());
 }
@@ -387,7 +389,9 @@ static JSPromise* moduleGraphImport(Zig::GlobalObject* globalObject, JSModuleGra
     String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // Bare/relative specifiers resolve against process.cwd().
-    String cwd = getCachedCwd(globalObject).toWTFString(globalObject);
+    JSValue cwdValue = getCachedCwd(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String cwd = cwdValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
     Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);

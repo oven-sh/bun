@@ -18,7 +18,6 @@
 #include "webcrypto/CryptoKeyRSA.h"
 #include "webcrypto/CryptoKeyOKP.h"
 #include "webcrypto/CryptoKeyAES.h"
-#include "wtf/DateMath.h"
 #include "AsymmetricKeyValue.h"
 #include <JavaScriptCore/DateInstance.h>
 #include "JSKeyObject.h"
@@ -404,6 +403,14 @@ static JSValue undefinedIfEmpty(JSUint8Array* value)
     return value;
 }
 
+// Built from the ASN.1 time, not from the validFrom / validTo text: that prints
+// the year 30 as "30", which a date parser reads as 2030.
+static JSValue validityDate(VM& vm, JSGlobalObject* globalObject, std::optional<int64_t> seconds)
+{
+    double ms = seconds ? static_cast<double>(*seconds) * 1000.0 : PNaN;
+    return DateInstance::create(vm, globalObject->dateStructure(), ms);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -719,16 +726,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
         return {};
     }
 
-    auto* validToDate = thisObject->validTo(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto view = validToDate->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validToDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
-        return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validToDateView.span().data()), validToDateView.span().size() };
-    double date = WTF::parseDate(span);
-    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
+    return JSValue::encode(validityDate(vm, globalObject, thisObject->view().getValidToTime()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -742,15 +740,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
         return {};
     }
 
-    auto* validFromDate = thisObject->validFrom(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto view = validFromDate->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validFromDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
-        return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validFromDateView.span().data()), validFromDateView.span().size() };
-    double date = WTF::parseDate(span);
-    return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
+    return JSValue::encode(validityDate(vm, globalObject, thisObject->view().getValidFromTime()));
 }
 } // namespace Bun

@@ -1865,8 +1865,7 @@ size_t CopyAsciiPrefixImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     return len;
 }
 
-// dst[i] = src[i] & 0x7F. Each byte is loaded once and stored masked, so the
-// output is ASCII even while another thread writes `src`.
+// dst[i] = src[i] & 0x7F with one load per byte, because `src` can be shared memory.
 void CopyLatin1ToAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t* HWY_RESTRICT dst)
 {
     D8 d;
@@ -1875,8 +1874,7 @@ void CopyLatin1ToAsciiImpl(const uint8_t* HWY_RESTRICT src, size_t len, uint8_t*
     const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
 
     if (len >= N) {
-        // Align the body stores: WTF string characters are never
-        // vector-aligned, and a 64-byte store that splits a line costs double.
+        // Aligned body stores: an unaligned 64-byte store splits a cache line.
         hn::StoreU(hn::And(hn::LoadU(d, src), vec_0x7F), d, dst);
         size_t i = N - (reinterpret_cast<uintptr_t>(dst) % N);
         for (; i + N <= len; i += N) {

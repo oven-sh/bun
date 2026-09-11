@@ -479,9 +479,7 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     bun_highway::copy_u16_to_u8(&input[..count], &mut output[..count]);
 }
 
-/// Node's `'ascii'` decode: `dest[i] = src[i] & 0x7f`. `src` can be a
-/// `SharedArrayBuffer` another thread writes, so it is read once: no
-/// check-then-`memcpy` fast path.
+/// Node's `'ascii'` decode: `dest[i] = src[i] & 0x7f`, reading `src` once because it can be shared memory.
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
     debug_assert_eq!(dest.len(), src.len());
     bun_highway::copy_latin1_to_ascii(src, dest);

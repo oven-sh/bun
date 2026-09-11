@@ -89,6 +89,46 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/42224
+  itBundled("react-compiler/UnderscoreAndDollarComponentTags", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { _Imported } from "./components";
+        const Plain = () => <span>a</span>;
+        const _Underscore = () => <span>b</span>;
+        const $Dollar = () => <span>c</span>;
+
+        export const App = () => (
+          <p>
+            <Plain />
+            <_Underscore />
+            <$Dollar />
+            <_Imported />
+          </p>
+        );
+      `,
+      "/components.tsx": /* tsx */ `
+        export const _Imported = () => <span>d</span>;
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      // Only a tag that starts with a lowercase letter is a host element. An
+      // identifier that starts with `_` or `$` is a component reference.
+      expect(out).toMatch(/jsx\w*\(Plain,/);
+      expect(out).toMatch(/jsx\w*\(_Underscore,/);
+      expect(out).toMatch(/jsx\w*\(\$Dollar,/);
+      expect(out).toMatch(/jsx\w*\(_Imported,/);
+      expect(out).not.toContain('"_Underscore"');
+      expect(out).not.toContain('"$Dollar"');
+      expect(out).not.toContain('"_Imported"');
+    },
+  });
+
   itBundled("react-compiler/OutputModeDefaultsByTarget-Browser", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1189,6 +1229,257 @@ describe("bundler", () => {
       expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
     },
   });
+
+  // Outside the compiler, the bundler binds a local that holds a `require()` /
+  // `import()` export to the export itself: `const { a } = require("./m")`
+  // declares nothing, and `ns.a` off `const ns = require("./m")` is an import
+  // that prints `ns.a` when it can't be bound. A compiled function gets new
+  // symbols for its locals, and the compiler drops a `const ns` it sees no
+  // read of. So in there the reads have to stay reads of the namespace object.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/RequireAndImportLocals-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { setFlag } from "./state";
+            import * as forms from "./forms";
+            setFlag(true);
+            const lines: string[] = [];
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + (await form({})));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, memo } from "react";
+            import { keep } from "./keep";
+
+            export function RequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state") as typeof import("./state");
+              return String(isFlag());
+            }
+            export function RequireDestructureRenamed() {
+              useEffect(() => {});
+              let { isFlag: read } = require("./state");
+              return String(read());
+            }
+            export function useRequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export const MemoRequireDestructure = memo(() => {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            });
+            export function AwaitDestructure() {
+              useEffect(() => {});
+              const load = async () => {
+                const { isFlag } = await import("./state");
+                return String(isFlag());
+              };
+              return load();
+            }
+            export function ThenDestructure() {
+              useEffect(() => {});
+              return import("./state").then(({ isFlag }) => String(isFlag()));
+            }
+            export function NamespaceDestructure() {
+              useEffect(() => {});
+              const ns = require("./state");
+              const { isFlag } = ns;
+              return String(isFlag());
+            }
+            export function NamespaceEscapes() {
+              useEffect(() => {});
+              const ns = require("./state");
+              keep(ns);
+              return String(ns.isFlag());
+            }
+            export function NamespaceOfLazyModule() {
+              useEffect(() => {});
+              const lazy = require("./lazy");
+              return lazy.doubled();
+            }
+            export function NamespaceOfCommonJS() {
+              useEffect(() => {});
+              const cjs = require("./cjs.cjs");
+              return cjs.hello() + cjs.suffix;
+            }
+            export function NamespaceOfBuiltin() {
+              useEffect(() => {});
+              const path = require("node:path");
+              return path.posix.join("a", "b");
+            }
+            export function AwaitNamespaceOfBuiltin() {
+              useEffect(() => {});
+              const load = async () => {
+                const path = await import("node:path");
+                return path.posix.join("a", "b");
+              };
+              return load();
+            }
+            export function ThenNamespaceOfCommonJS() {
+              useEffect(() => {});
+              return import("./cjs.cjs").then(cjs => cjs.hello());
+            }
+            export function ThenNamespaceTwice() {
+              useEffect(() => {});
+              return import("./cjs.cjs")
+                .then(cjs => import("./lazy").then(lazy => cjs.hello() + lazy.doubled()))
+                .then(text => import("./cjs.cjs").then(cjs => text + cjs.suffix));
+            }
+            export function plainFunction() {
+              const { onlyPlain } = require("./only-plain");
+              return onlyPlain();
+            }
+
+            // Declared outside the compiled function: the compiler keeps
+            // these symbols, so the reads stay bound to the exports.
+            const moduleNs = require("./module-ns");
+            const { isFlag: moduleIsFlag } = require("./state");
+            export function ModuleNamespace() {
+              useEffect(() => {});
+              return moduleNs.value();
+            }
+            export function ModuleDestructure() {
+              useEffect(() => {});
+              return String(moduleIsFlag());
+            }
+            export function NestedDeclaration() {
+              useEffect(() => {});
+              function inner() {
+                const { isFlag } = require("./state");
+                return isFlag();
+              }
+              return String(inner());
+            }
+            // A component name, but no hook call and no JSX: not compiled.
+            export function ComponentNameNotCompiled() {
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export function OptOut() {
+              "use no memo";
+              useEffect(keep);
+              const { onlyOptOut } = require("./only-opt-out");
+              return onlyOptOut();
+            }
+            export function optIn() {
+              "use memo";
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+          `,
+          "/state.ts": /* ts */ `
+            let flag = false;
+            export function setFlag(value: boolean) {
+              flag = value;
+            }
+            export function isFlag() {
+              return flag;
+            }
+          `,
+          "/lazy.ts": /* ts */ `
+            const table = [1, 2, 3].map(n => n * 2);
+            export function doubled() {
+              return table.join(",");
+            }
+          `,
+          "/only-plain.ts": /* ts */ `
+            export function onlyPlain() {
+              return "plain";
+            }
+            export const notRead = "PLAIN_NOT_READ_SENTINEL";
+          `,
+          "/only-opt-out.ts": /* ts */ `
+            export function onlyOptOut() {
+              return "opt-out";
+            }
+            export const notRead = "OPT_OUT_NOT_READ_SENTINEL";
+          `,
+          "/module-ns.ts": /* ts */ `
+            export function value() {
+              return "module-ns";
+            }
+            export const notRead = "MODULE_NS_NOT_READ_SENTINEL";
+          `,
+          "/cjs.cjs": /* js */ `
+            exports.hello = function () {
+              return "hello";
+            };
+            exports.suffix = "!";
+          `,
+          "/keep.ts": /* ts */ `
+            export function keep(value: unknown) {
+              (globalThis as any).kept = value;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function memo(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            AwaitDestructure=true
+            AwaitNamespaceOfBuiltin=a/b
+            ComponentNameNotCompiled=true
+            MemoRequireDestructure=true
+            ModuleDestructure=true
+            ModuleNamespace=module-ns
+            NamespaceDestructure=true
+            NamespaceEscapes=true
+            NamespaceOfBuiltin=a/b
+            NamespaceOfCommonJS=hello!
+            NamespaceOfLazyModule=2,4,6
+            NestedDeclaration=true
+            OptOut=opt-out
+            RequireDestructure=true
+            RequireDestructureRenamed=true
+            ThenDestructure=true
+            ThenNamespaceOfCommonJS=hello
+            ThenNamespaceTwice=hello2,4,6!
+            optIn=true
+            plainFunction=plain
+            useRequireDestructure=true
+          `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          // Every component and hook above compiled: the compiler outlines the
+          // empty effect callback (client) or drops the effect (ssr), so no
+          // call takes `() => {}` any more. The callee name can be minified.
+          expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+          // A function the compiler leaves alone still reads the export
+          // without a namespace object, so tree shaking drops the other one.
+          expect(out).not.toContain("PLAIN_NOT_READ_SENTINEL");
+          // So does one that opts out of the compiler.
+          expect(out).not.toContain("OPT_OUT_NOT_READ_SENTINEL");
+          // And a read, in a compiled function, of a local declared outside it.
+          expect(out).not.toContain("MODULE_NS_NOT_READ_SENTINEL");
+        },
+      });
+    }
+  }
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

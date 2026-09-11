@@ -276,6 +276,12 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
+// Node's parent 'connect' -> 'connect': https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+function onUpgradedConnect(self, connection) {
+  if (self.destroyed || self[kupgraded] !== connection) return;
+  self.connecting = false;
+  self.emit("connect");
+}
 let addAbortListener;
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
@@ -2043,6 +2049,9 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("close", events[3]);
           destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
+          if (connection instanceof Socket && connection.connecting) {
+            connection.once("connect", onUpgradedConnect.bind(null, this, connection));
+          }
         } else {
           // upgradeTLS requires an established socket; a socket that is still
           // connecting (e.g. tls.connect({ socket: net.connect(port) })) must be
@@ -2118,6 +2127,7 @@ Socket.prototype.connect = function connect(...args) {
                   throw new Error("Invalid socket");
                 }
               }
+              onUpgradedConnect(this, connection);
             });
           }
         }
@@ -2788,6 +2798,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     }
     this.once("connect", function connect() {
       this.off("close", onClose);
+      // tls.connect({ socket }): the open handler's drain sends this chunk before 'connect' is emitted.
+      if (this._pendingData !== chunk) return;
       this._write(chunk, encoding, callback);
     });
     this.once("close", onClose);

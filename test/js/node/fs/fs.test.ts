@@ -7324,3 +7324,181 @@ describe("module init", () => {
     expect(mismatched).toStrictEqual([]);
   });
 });
+
+// `fs.readv` and `fs.writev` pin each element's ArrayBuffer and hand the pool
+// thread the iovec it built. A pin does not keep the bytes of a
+// `WebAssembly.Memory` mapped: `grow()` on a bounds-checked memory allocates a
+// new block, copies into it, and frees the old one, and JSC detaches the old
+// buffer whatever its pin count. Each fixture below takes the fast memory
+// slots first, so the memory it grows is bounds-checked, and gates the syscall
+// on the parent, so the grow always lands while the call is in flight.
+describe("fs.readv/fs.writev over a WebAssembly.Memory", () => {
+  const FAST_SLOTS = `const hold = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));`;
+
+  it("readv puts the bytes in the memory, not in the block the grow freed", async () => {
+    // The view comes from `toResizableBuffer()`, so it tracks the memory
+    // instead of detaching. That makes the result observable from JS: the
+    // payload has to appear in the grown memory.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        ${FAST_SLOTS}
+        const mem = new WebAssembly.Memory({ initial: 32, maximum: 40 });
+        const view = new Uint8Array(mem.toResizableBuffer());
+        const { promise, resolve } = Promise.withResolvers();
+        fs.readv(0, [view], null, (err, n) => resolve({ err: err ? err.code : null, n }));
+        mem.grow(2);
+        const victim = new WebAssembly.Memory({ initial: 32, maximum: 40 });
+        process.stderr.write("ready\\n");
+        const { err, n } = await promise;
+        console.log(JSON.stringify({
+          err,
+          n,
+          payloadInMemory: Buffer.from(mem.buffer, 0, 8192).equals(Buffer.alloc(8192, 0x41)),
+          victimUntouched: Buffer.from(victim.buffer).indexOf(0x41) === -1,
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // The child prints this after the grow, so the read below cannot complete
+    // before the block it aims at is freed.
+    const stderr = await readUntil(proc.stderr as ReadableStream<Uint8Array>, "ready\n");
+    expect(stderr).toContain("ready\n");
+    proc.stdin.write(Buffer.alloc(8192, 0x41));
+    await proc.stdin.flush();
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ err: null, n: 8192, payloadInMemory: true, victimUntouched: true });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("writev sends the memory's bytes, not what took the block the grow freed", async () => {
+    // The child writes the whole memory to a FIFO and drains it itself. The
+    // first bytes to arrive prove the pool thread is inside writev(2), so the
+    // grow that follows frees the block while the call still reads from it.
+    //
+    // Malloc=1 is what makes a build without the fix fail every time. The
+    // freed block goes back to the system and is unmapped, so the kernel
+    // faults and the write ends short. The default allocator often keeps the
+    // block mapped with its old bytes, and a stale read of those is the same
+    // bytes a correct read sends.
+    using dir = tempDir("fs-writev-wasm", {});
+    const fifo = join(String(dir), "sink");
+    mkfifo(fifo);
+    const TOTAL = 32 * 65536;
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        ${FAST_SLOTS}
+        const PAGES = 32;
+        const mem = new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 8 });
+        const view = new Uint8Array(mem.toResizableBuffer());
+        view.fill(0x41);
+        // O_RDWR so the open does not wait for a reader.
+        const wfd = fs.openSync(${JSON.stringify(fifo)}, fs.constants.O_RDWR);
+        // The reads must not block: a write that ends short leaves the pipe
+        // empty for good, and a blocking read of it would never return.
+        const rfd = fs.openSync(${JSON.stringify(fifo)}, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        let written;
+        fs.writev(wfd, [view], null, (err, n) => { written = err ? err.code : n; });
+
+        const chunk = Buffer.alloc(1 << 16);
+        const payload = Buffer.alloc(chunk.length, 0x41);
+        const read = () => new Promise(res =>
+          fs.read(rfd, chunk, 0, chunk.length, null, (err, n) => res(err ? err.code : n)));
+        let drained = 0, foreign = 0, grown = false;
+        for (;;) {
+          const n = await read();
+          if (typeof n === "number" && n > 0) {
+            if (!chunk.subarray(0, n).equals(payload.subarray(0, n))) foreign++;
+            drained += n;
+            if (!grown) {
+              grown = true;
+              mem.grow(2);
+              new Uint8Array(new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 8 }).buffer).fill(0x5a);
+            }
+            continue;
+          }
+          if (n !== "EAGAIN") throw new Error("read: " + n);
+          // Done once the write has reported and every byte it reported is
+          // drained. An EAGAIN alone does not say so: that read may have run
+          // before the writer's last bytes reached the pipe, and its result
+          // can be delivered after the write's completion.
+          if (written !== undefined && (typeof written !== "number" || drained >= written)) break;
+          await new Promise(res => setImmediate(res));
+        }
+        console.log(JSON.stringify({ drained, foreignChunks: foreign, written }));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Every byte the child read back is the byte it filled the memory with,
+    // and the write reported all of them. stderr only stands in when the child
+    // printed nothing, so that the failure shows why.
+    expect(stdout || stderr).toBe(JSON.stringify({ drained: TOTAL, foreignChunks: 0, written: TOTAL }) + "\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("readv and writev still round-trip an ordinary buffer", async () => {
+    using dir = tempDir("fs-vector-io", {});
+    const file = join(String(dir), "round-trip.bin");
+    const first = Buffer.alloc(64, 0x61);
+    const second = Buffer.alloc(32, 0x62);
+
+    const out = openSync(file, "w");
+    const written = await new Promise<number>((resolve, reject) =>
+      fs.writev(out, [first, second], null, (err, n) => (err ? reject(err) : resolve(n))),
+    );
+    closeSync(out);
+    expect(written).toBe(96);
+
+    const into = [Buffer.alloc(64), Buffer.alloc(32)];
+    const input = openSync(file, "r");
+    const read = await new Promise<number>((resolve, reject) =>
+      fs.readv(input, into, null, (err, n) => (err ? reject(err) : resolve(n))),
+    );
+    closeSync(input);
+    expect({ read, first: into[0].equals(first), second: into[1].equals(second) }).toEqual({
+      read: 96,
+      first: true,
+      second: true,
+    });
+  });
+});
+
+/// Reads `stream` until `marker` has arrived, and returns what was read.
+async function readUntil(stream: ReadableStream<Uint8Array>, marker: string): Promise<string> {
+  const reader = stream.getReader();
+  let seen = "";
+  try {
+    while (!seen.includes(marker)) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      seen += Buffer.from(value).toString();
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return seen;
+}

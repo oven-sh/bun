@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { buildSync } from "esbuild";
-import { copyFileSync, mkdirSync, readFileSync } from "fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { bunEnv, bunExe, tempDir } from "../../../test/harness";
-import { supportedPlatforms } from "../src/platform";
+import { bunEnv, bunExe, isWindows, tempDir } from "../../../test/harness";
+import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
 
 test("npm postinstall preserves the optional executable across repeated runs", async () => {
   using dir = tempDir("bun-npm-postinstall", {
@@ -16,11 +16,15 @@ test("npm postinstall preserves the optional executable across repeated runs", a
   expect(platform).toBeDefined();
   const source = join(root, "node_modules", "@oven", platform.bin, platform.exe);
   mkdirSync(dirname(source), { recursive: true });
-  copyFileSync(bunExe(), source);
+  if (!isWindows) {
+    writeFileSync(join(root, "fixture.sh"), "#!/bin/sh\nexit 0\n");
+  }
+  copyFileSync(isWindows ? bunExe() : join(root, "fixture.sh"), source);
+  if (!isWindows) chmodSync(source, 0o755);
   const original = readFileSync(source);
   const script = join(root, "install.cjs");
   buildSync({
-    entryPoints: [join(import.meta.dir, "npm-postinstall.ts")],
+    entryPoints: [join(import.meta.dir, "../../../packages/bun-release/scripts/npm-postinstall.ts")],
     outfile: script,
     bundle: true,
     treeShaking: true,

@@ -130,6 +130,36 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Called by `visit_func` / arrow-visit before anything of the function is
+    /// visited. Sets `react_compiler_may_replace_body` if the function is the
+    /// candidate `react_compiler_candidate_name` announces and the compiler
+    /// may take it. Returns the value to restore after the visit.
+    pub(crate) fn enter_react_compiler_candidate(
+        &mut self,
+        name: Option<js_ast::Ref>,
+        has_react_hooks_suppression: bool,
+        body: &[js_ast::Stmt],
+    ) -> bool {
+        let prev = self.react_compiler_may_replace_body;
+        if !prev
+            && let Some(candidate) = self.react_compiler_candidate_name
+            && let Some(rc) = self.react_compiler.as_deref()
+        {
+            let name = name
+                .filter(|r| r.is_valid())
+                .or(Some(candidate))
+                .filter(|r| *r != js_ast::Ref::NONE)
+                .map(|r| self.load_name_from_ref(r));
+            self.react_compiler_may_replace_body = rc.may_compile(
+                name,
+                self.react_compiler_in_react_hoc,
+                has_react_hooks_suppression,
+                body,
+            );
+        }
+        prev
+    }
+
     /// Port of upstream `findFunctionDeclarationOrExpression` for the
     /// expression positions (decl init / `export default` / expression
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the

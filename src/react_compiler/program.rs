@@ -982,6 +982,11 @@ fn get_component_or_hook_like(
     None
 }
 
+/// The part of [`get_component_or_hook_like`] that the binding decides.
+fn is_component_or_hook_like_name(name: Option<&[u8]>, in_react_hoc: bool) -> bool {
+    name.is_some_and(|name| is_component_name(name) || is_hook_name(name)) || in_react_hoc
+}
+
 // -----------------------------------------------------------------------
 // Error handling
 // -----------------------------------------------------------------------
@@ -1165,6 +1170,49 @@ impl ReactCompilerState {
             if let Some(fatal) = handle_error(err, &mut self.diagnostics, &self.options) {
                 self.fatal = Some(fatal);
             }
+        }
+    }
+
+    /// Whether [`maybe_compile_pending`] can replace the body of this
+    /// function, from what is known before the parser visits that body. It is
+    /// `true` for every function that gets compiled. The statements of the
+    /// body and the compile itself then decide.
+    pub fn may_compile(
+        &self,
+        name: Option<&[u8]>,
+        in_react_hoc: bool,
+        has_react_hooks_suppression: bool,
+        body: &[Stmt],
+    ) -> bool {
+        if self.fatal.is_some()
+            || self.context.has_module_scope_opt_out
+            || has_react_hooks_suppression
+        {
+            return false;
+        }
+        let directives = collect_body_directives(body);
+        if find_directive_disabling_memoization(&directives).is_some() {
+            return false;
+        }
+        // Fixture pragmas set the mode when `lazy_init` reads them.
+        if self.options.parse_test_pragmas && !self.did_lazy_init {
+            return true;
+        }
+        if self.options.output_mode.as_deref() == Some("lint") {
+            return false;
+        }
+        if find_directive_enabling_memoization(&directives).is_some()
+            || (self.options.dynamic_gating.is_some()
+                && directives
+                    .iter()
+                    .any(|d| d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX)))
+        {
+            return true;
+        }
+        match self.options.compilation_mode.as_deref().unwrap_or("infer") {
+            "all" => true,
+            "infer" => is_component_or_hook_like_name(name, in_react_hoc),
+            _ => false,
         }
     }
 }

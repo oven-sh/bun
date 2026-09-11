@@ -1229,6 +1229,197 @@ describe("bundler", () => {
       expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
     },
   });
+
+  // Outside the compiler, the bundler binds a local that holds a `require()` /
+  // `import()` export to the export itself: `const { a } = require("./m")`
+  // declares nothing, and `ns.a` off `const ns = require("./m")` is an import
+  // that prints `ns.a` when it can't be bound. A compiled function gets new
+  // symbols for its locals, and the compiler drops a `const ns` it sees no
+  // read of. So in there the reads have to stay reads of the namespace object.
+  for (const target of ["bun", "browser"] as const) {
+    for (const minifyIdentifiers of [false, true]) {
+      itBundled(`react-compiler/RequireAndImportLocals-${target}-identifiers=${minifyIdentifiers}`, {
+        files: {
+          "/entry.ts": /* ts */ `
+            import { setFlag } from "./state";
+            import * as forms from "./forms";
+            setFlag(true);
+            const lines: string[] = [];
+            for (const [name, form] of Object.entries(forms)) {
+              try {
+                lines.push(name + "=" + (await form({})));
+              } catch (e) {
+                lines.push(name + " threw " + e);
+              }
+            }
+            console.log(lines.join("\\n"));
+          `,
+          "/forms.tsx": /* tsx */ `
+            import { useEffect, memo } from "react";
+            import { keep } from "./keep";
+
+            export function RequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state") as typeof import("./state");
+              return String(isFlag());
+            }
+            export function RequireDestructureRenamed() {
+              useEffect(() => {});
+              let { isFlag: read } = require("./state");
+              return String(read());
+            }
+            export function useRequireDestructure() {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export const MemoRequireDestructure = memo(() => {
+              useEffect(() => {});
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            });
+            export function AwaitDestructure() {
+              useEffect(() => {});
+              const load = async () => {
+                const { isFlag } = await import("./state");
+                return String(isFlag());
+              };
+              return load();
+            }
+            export function ThenDestructure() {
+              useEffect(() => {});
+              return import("./state").then(({ isFlag }) => String(isFlag()));
+            }
+            export function NamespaceDestructure() {
+              useEffect(() => {});
+              const ns = require("./state");
+              const { isFlag } = ns;
+              return String(isFlag());
+            }
+            export function NamespaceEscapes() {
+              useEffect(() => {});
+              const ns = require("./state");
+              keep(ns);
+              return String(ns.isFlag());
+            }
+            export function NamespaceOfLazyModule() {
+              useEffect(() => {});
+              const lazy = require("./lazy");
+              return lazy.doubled();
+            }
+            export function NamespaceOfCommonJS() {
+              useEffect(() => {});
+              const cjs = require("./cjs.cjs");
+              return cjs.hello() + cjs.suffix;
+            }
+            export function NamespaceOfBuiltin() {
+              useEffect(() => {});
+              const path = require("node:path");
+              return path.posix.join("a", "b");
+            }
+            export function AwaitNamespaceOfBuiltin() {
+              useEffect(() => {});
+              const load = async () => {
+                const path = await import("node:path");
+                return path.posix.join("a", "b");
+              };
+              return load();
+            }
+            export function ThenNamespaceOfCommonJS() {
+              useEffect(() => {});
+              return import("./cjs.cjs").then(cjs => cjs.hello());
+            }
+            export function ThenNamespaceTwice() {
+              useEffect(() => {});
+              return import("./cjs.cjs")
+                .then(cjs => import("./lazy").then(lazy => cjs.hello() + lazy.doubled()))
+                .then(text => import("./cjs.cjs").then(cjs => text + cjs.suffix));
+            }
+            export function plainFunction() {
+              const { onlyPlain } = require("./only-plain");
+              return onlyPlain();
+            }
+          `,
+          "/state.ts": /* ts */ `
+            let flag = false;
+            export function setFlag(value: boolean) {
+              flag = value;
+            }
+            export function isFlag() {
+              return flag;
+            }
+          `,
+          "/lazy.ts": /* ts */ `
+            const table = [1, 2, 3].map(n => n * 2);
+            export function doubled() {
+              return table.join(",");
+            }
+          `,
+          "/only-plain.ts": /* ts */ `
+            export function onlyPlain() {
+              return "plain";
+            }
+            export const notRead = "NOT_READ_SENTINEL";
+          `,
+          "/cjs.cjs": /* js */ `
+            exports.hello = function () {
+              return "hello";
+            };
+            exports.suffix = "!";
+          `,
+          "/keep.ts": /* ts */ `
+            export function keep(value: unknown) {
+              (globalThis as any).kept = value;
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/index.js": /* js */ `
+            export function useEffect() {}
+            export function memo(component) {
+              return component;
+            }
+          `,
+          "/node_modules/react/compiler-runtime.js": /* js */ `
+            export function c(size) {
+              return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+            }
+          `,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        minifyIdentifiers,
+        run: {
+          stdout: `
+            AwaitDestructure=true
+            AwaitNamespaceOfBuiltin=a/b
+            MemoRequireDestructure=true
+            NamespaceDestructure=true
+            NamespaceEscapes=true
+            NamespaceOfBuiltin=a/b
+            NamespaceOfCommonJS=hello!
+            NamespaceOfLazyModule=2,4,6
+            RequireDestructure=true
+            RequireDestructureRenamed=true
+            ThenDestructure=true
+            ThenNamespaceOfCommonJS=hello
+            ThenNamespaceTwice=hello2,4,6!
+            plainFunction=plain
+            useRequireDestructure=true
+          `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          // Every component and hook above compiled: the compiler outlines the
+          // empty effect callback (client) or drops the effect (ssr).
+          expect(out).not.toContain("useEffect(() =>");
+          // A function the compiler leaves alone still reads the export
+          // without a namespace object, so tree shaking drops the other one.
+          expect(out).not.toContain("NOT_READ_SENTINEL");
+        },
+      });
+    }
+  }
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

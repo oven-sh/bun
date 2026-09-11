@@ -115,6 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
+            func.name.map(|n| n.ref_),
+            func.flags
+                .contains(flags::Function::HasReactHooksSuppression),
+            body_stmts,
+        );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -204,6 +210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -1782,6 +1789,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             p.react_compiler = Some(rc);
             if let Some((new_body, result)) = compiled {
+                debug_assert!(
+                    p.react_compiler_may_replace_body,
+                    "ReactCompilerState::may_compile said no for a function that compiled"
+                );
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);

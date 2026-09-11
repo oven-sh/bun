@@ -1322,6 +1322,71 @@ it("empty blob", () => {
   ]);
 });
 
+it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
+  // A detached view has no backing store. It must bind the same way a live
+  // zero-length view does (and the same way node:sqlite binds it), not as NULL.
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, blob BLOB NOT NULL)");
+
+  const u8 = new Uint8Array([1, 2, 3]);
+  u8.buffer.transfer();
+  expect(u8.byteLength).toBe(0);
+  const view = new DataView(new ArrayBuffer(8));
+  structuredClone(view.buffer, { transfer: [view.buffer] });
+  expect(view.buffer.detached).toBe(true);
+
+  expect(db.query("SELECT typeof(?) AS type").get(u8)).toEqual({ type: "blob" });
+
+  const insert = db.prepare("INSERT INTO foo (id, blob) VALUES ($id, $blob)");
+  insert.run({ $id: 1, $blob: new Uint8Array(0) });
+  insert.run({ $id: 2, $blob: u8 });
+  db.run("INSERT INTO foo (id, blob) VALUES (?, ?)", [3, view]);
+
+  expect(db.query("SELECT id, typeof(blob) AS type, length(blob) AS length FROM foo ORDER BY id").all()).toEqual([
+    { id: 1, type: "blob", length: 0 },
+    { id: 2, type: "blob", length: 0 },
+    { id: 3, type: "blob", length: 0 },
+  ]);
+  expect(db.query("SELECT blob FROM foo WHERE id = 2").get()).toEqual({ blob: new Uint8Array(0) });
+  db.close();
+});
+
+it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
+  // A 2^31 byte length overflowed sqlite3_bind_blob()'s int length and bound
+  // an empty TEXT value. The subprocess keeps the 2 GiB reservation out of the
+  // test runner. The buffer is never written, so RSS stays small.
+  const script = `
+    import { Database } from "bun:sqlite";
+    let big;
+    try {
+      big = new Uint8Array(2 ** 31);
+    } catch {
+      console.log(JSON.stringify("SKIP"));
+      process.exit(0);
+    }
+    const db = new Database(":memory:");
+    let result;
+    try {
+      result = db.query("SELECT typeof(?1) AS type, length(?1) AS length").get(big);
+    } catch (e) {
+      result = e.message;
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(["SKIP", "string or blob too big"]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
+  expect(exitCode).toBe(0);
+});
+
 it("multiple statements with a schema change", () => {
   const db = new Database(":memory:");
   db.run(

@@ -7116,8 +7116,7 @@ static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
     }
 }
 
-// DirectArguments and ScopedArguments keep the arguments themselves outside the
-// butterfly; a deleted one is unmapped. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
+// The arguments live outside the butterfly. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
 template<typename Arguments>
 static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
 {
@@ -7128,10 +7127,7 @@ static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
     return noPresentIndex;
 }
 
-// Smallest own present index of an array, arguments object or ordinary object
-// that is >= `start`, or UINT64_MAX when every index from `start` on is a hole.
-// Walks the backing storage so the caller can skip a run of holes without
-// probing each index up to a huge `length`.
+// Smallest own present index >= `start`, or UINT64_MAX when every index from `start` on is a hole.
 extern "C" uint64_t Bun__JSObject__nextPresentIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)

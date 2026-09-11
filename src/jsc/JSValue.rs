@@ -2555,11 +2555,7 @@ impl JSValue {
         }
         crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
-    /// Smallest own present index of an array, arguments object or ordinary
-    /// object that is `>= start`, or `None` when every index from `start`
-    /// on is a hole. Walks the backing storage (butterfly, sparse map,
-    /// argument slots) so a run of holes is skipped in one call instead of
-    /// probing each index. Asserts `self` is an object.
+    /// Smallest own index `>= start` that holds an element, read off the object's indexed storage.
     pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
         debug_assert!(self.is_object());
         unsafe extern "C" {

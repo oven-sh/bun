@@ -1554,7 +1554,6 @@ pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
 pub const MAX_SAFE_INTEGER: i64 = 9007199254740991;
 pub const MIN_SAFE_INTEGER: i64 = -9007199254740991;
 /// JSC's `MAX_ARRAY_INDEX`: the largest index that indexed storage can hold.
-/// A larger "index" is an ordinary string-keyed property.
 pub const MAX_ARRAY_INDEX: u32 = 0xFFFF_FFFE;
 
 unsafe extern "C" {

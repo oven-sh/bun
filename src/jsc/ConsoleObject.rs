@@ -4306,9 +4306,7 @@ pub mod formatter {
 
                 while (i as u64) < len {
                     if i > jsc::MAX_ARRAY_INDEX {
-                        // An array cannot be this long, but an arguments
-                        // object's `length` is a plain writable property.
-                        // Nothing past this index is an indexed property.
+                        // An arguments object's `length` can exceed the index space.
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
@@ -4319,10 +4317,7 @@ pub mod formatter {
                         if empty_start.is_none() {
                             empty_start = Some(i);
                         }
-                        // Skip the whole run of holes at once: probing each
-                        // index is O(length), and `length` can be 2^32 - 1 for
-                        // a sparse array (anything for an arguments object)
-                        // with no elements at all.
+                        // Skip the run of holes at once: probing each index is O(length).
                         match value.next_present_index(i + 1) {
                             Some(next) if (next as u64) < len => i = next,
                             _ => break,

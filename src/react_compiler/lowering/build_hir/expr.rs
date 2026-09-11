@@ -668,10 +668,13 @@ fn lower_simple_assignment(
         Data::EImportIdentifier(ident) => {
             lower_simple_assignment_identifier(builder, ident.ref_, &bin.right, bin.left.loc)
         }
+        // Upstream lowers the right-hand side before the member target. JS
+        // evaluates the target's object and key first, and `a.b = a = c` or
+        // `a[i] = i++` reads a different value when the order is swapped.
         Data::EDot(d) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &d.target)?;
+            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::PropertyStore {
@@ -687,10 +690,10 @@ fn lower_simple_assignment(
             })
         }
         Data::EIndex(i) => {
-            let right = lower_expression_to_temporary(builder, &bin.right)?;
             let left_loc = convert_loc(bin.left.loc);
             let object = lower_expression_to_temporary(builder, &i.target)?;
             let temp = if let Data::ENumber(num) = &i.index.data {
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::PropertyStore {
@@ -702,6 +705,7 @@ fn lower_simple_assignment(
                 )?
             } else {
                 let prop = lower_expression_to_temporary(builder, &i.index)?;
+                let right = lower_expression_to_temporary(builder, &bin.right)?;
                 lower_value_to_temporary(
                     builder,
                     InstructionValue::ComputedStore {

@@ -1980,6 +1980,142 @@ describe("bundler", () => {
     },
     run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
   });
+
+  // `a.b = a = c` and `a[i] = i++` read `a` and `i` for the member target
+  // before the right-hand side runs. The compiler removes assignments and
+  // propagates constants by the order of its own instructions, so it has to
+  // lower the target's object and key first too.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/MemberAssignmentReadsTargetBeforeRightHandSide-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as forms from "./forms";
+          const props = { items: [1, 2, 3], key: "next", flag: true };
+          const lines: string[] = [];
+          for (const [name, Form] of Object.entries(forms)) {
+            try {
+              lines.push(name + "=" + Form(props).props.children);
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          function values(head, next = "next") {
+            const out = [];
+            for (let node = head; node; node = node[next]) out.push(node.v);
+            return out.join();
+          }
+
+          export function AppendInLoop(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail.next = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendTwice(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            tail.next = tail = { v: p.items[0], next: null };
+            tail.next = tail = { v: p.items[1], next: null };
+            return <div>{values(head)}</div>;
+          }
+          export function AppendInCallback(p) {
+            const list = items => {
+              const head = { v: 0, next: null };
+              let tail = head;
+              for (const x of items) {
+                tail.next = tail = { v: x, next: null };
+              }
+              return values(head);
+            };
+            return <div>{list(p.items)}</div>;
+          }
+          export function AppendWithComputedKey(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[p.key] = tail = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+          export function AppendWithNumericKey(p) {
+            const head = { v: 0, 0: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail[0] = tail = { v: x, 0: null };
+            }
+            return <div>{values(head, 0)}</div>;
+          }
+          export function ConstantOnTheRight(p) {
+            let v = {};
+            const first = v;
+            if (p.flag) {
+              v.z = v = 80;
+            }
+            return <div>{JSON.stringify([first, v])}</div>;
+          }
+          export function KeyIsReassignedOnTheRight(p) {
+            let key = "a";
+            const o = {};
+            if (p.flag) {
+              o[key] = key = "b";
+            }
+            return <div>{JSON.stringify([o, key])}</div>;
+          }
+          export function KeyIsIncrementedOnTheRight() {
+            const arr = [];
+            let i = 0;
+            arr[i] = i++;
+            arr[i] = i++;
+            return <div>{JSON.stringify([arr, i])}</div>;
+          }
+          // The right-hand side is the member assignment here, so it already ran first.
+          export function MemberAssignmentOnTheRight(p) {
+            const head = { v: 0, next: null };
+            let tail = head;
+            for (const x of p.items) {
+              tail = tail.next = { v: x, next: null };
+            }
+            return <div>{values(head)}</div>;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": ``,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export const jsx = (type, props) => ({ type, props });
+          export const jsxs = jsx;
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export const jsxDEV = (type, props) => ({ type, props });
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          export function c(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          AppendInCallback=0,1,2,3
+          AppendInLoop=0,1,2,3
+          AppendTwice=0,1,2
+          AppendWithComputedKey=0,1,2,3
+          AppendWithNumericKey=0,1,2,3
+          ConstantOnTheRight=[{"z":80},80]
+          KeyIsIncrementedOnTheRight=[[0,1],2]
+          KeyIsReassignedOnTheRight=[{"a":"b"},"b"]
+          MemberAssignmentOnTheRight=0,1,2,3
+        `,
+      },
+    });
+  }
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

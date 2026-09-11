@@ -8,7 +8,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef, Ref};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     /// Note: The caller has already parsed the "import" keyword
     pub(crate) fn parse_import_expr(
         &mut self,
@@ -72,7 +72,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.allow_in = old_allow_in;
 
-        if SCAN_ONLY {
+        if p.scan_only {
             // Reshaped for borrowck — EString::slice takes &mut self (rope flatten),
             // so capture the slice (arena-lifetime) before re-using `value` by-value below.
             let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {

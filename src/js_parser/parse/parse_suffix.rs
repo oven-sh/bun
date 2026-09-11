@@ -20,7 +20,7 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)

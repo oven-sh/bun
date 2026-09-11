@@ -14,7 +14,7 @@ use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     /// This assumes the "function" token has already been parsed
     pub(crate) fn parse_fn_stmt(
         &mut self,

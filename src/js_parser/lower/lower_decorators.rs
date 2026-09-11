@@ -141,7 +141,7 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
 
 // ── impl P ───────────────────────────────────────────────────────────────────
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     // ── Expression builder helpers ───────────────────────
 
     /// recordUsage + E.Identifier in one call.

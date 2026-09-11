@@ -35,10 +35,7 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
-    pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
-        expr: Expr,
-    ) -> Expr {
+    pub(crate) fn simplify_boolean<'a, const TS: bool>(p: &P<'a, TS>, expr: Expr) -> Expr {
         if !p.options.features.dead_code_elimination {
             return expr;
         }
@@ -47,10 +44,7 @@ impl SideEffects {
         result
     }
 
-    fn _simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
-        expr: &mut Expr,
-    ) {
+    fn _simplify_boolean<'a, const TS: bool>(p: &P<'a, TS>, expr: &mut Expr) {
         loop {
             match &mut expr.data {
                 ExprData::EUnary(e) => {
@@ -118,8 +112,8 @@ impl SideEffects {
         )
     }
 
-    pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
+    pub(crate) fn simplify_unused_expr<'a, const TS: bool>(
+        p: &mut P<'a, TS>,
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
@@ -465,10 +459,7 @@ impl SideEffects {
     /// Inline equivalent of `Expr::join_all_with_comma_callback(slice, p, simplify_unused_expr, _)`.
     /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
     /// recursive `simplify_unused_expr` call.
-    fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
-        items: &[Expr],
-    ) -> Option<Expr> {
+    fn join_all_simplified<'a, const TS: bool>(p: &mut P<'a, TS>, items: &[Expr]) -> Option<Expr> {
         let len = items.len();
         if len == 0 {
             return None;
@@ -495,8 +486,8 @@ impl SideEffects {
     }
 
     ///
-    fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
+    fn simplify_unused_binary_comma_expr<'a, const TS: bool>(
+        p: &mut P<'a, TS>,
         expr: Expr,
     ) -> Option<Expr> {
         let ExprData::EBinary(root_bin) = expr.data else {
@@ -710,8 +701,8 @@ impl SideEffects {
         }
     }
 
-    pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+    pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool>(
+        p: &P<'a, TS>,
         loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
@@ -779,8 +770,8 @@ impl SideEffects {
         }
     }
 
-    pub(crate) fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+    pub(crate) fn to_null_or_undefined<'a, const TS: bool>(
+        p: &P<'a, TS>,
         exp: &ExprData,
     ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
@@ -856,10 +847,7 @@ impl SideEffects {
         }
     }
 
-    pub(crate) fn to_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
-        exp: &ExprData,
-    ) -> Option<Known> {
+    pub(crate) fn to_boolean<'a, const TS: bool>(p: &P<'a, TS>, exp: &ExprData) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
             return None;
         }

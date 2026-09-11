@@ -38,7 +38,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {

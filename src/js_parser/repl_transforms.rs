@@ -16,7 +16,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
 
-impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
+impl<'a, const TS: bool> P<'a, TS> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture

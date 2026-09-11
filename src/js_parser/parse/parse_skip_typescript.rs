@@ -15,7 +15,7 @@ use bun_ast::ts::Metadata;
 // canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(

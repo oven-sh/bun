@@ -64,9 +64,10 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// The transport delivered EOF (its 'end' event fired). Teardown payloads
-    /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
-    pub transport_eof: Cell<bool>,
+    /// [`Self::pause_stream`] paused `origin` and no [`Self::resume_stream`]
+    /// followed. [`Self::on_close`] resumes such a transport so it can still
+    /// drain to its own EOF once the engine is gone.
+    pub reads_paused: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -209,12 +210,68 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
 
         (this.handlers.on_close)(this.handlers.ctx);
+        // A transport left paused would never read its peer's EOF and close.
+        // `teardown` neuters the thunks, so whatever it still delivers is dropped.
+        if this.reads_paused.get() {
+            this.resume_stream();
+        }
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 
         // Early teardown (struct itself is dropped later by parent).
         this.teardown();
         js_wrapper.ensure_still_alive();
+    }
+
+    /// node's `JSStreamSocket.readStop()` / `readStart()`: the transport only
+    /// emits 'data' while the TLS socket wants more. A chunk already handed to
+    /// the engine is still decrypted and delivered in full.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
+    ///
+    /// A pause before `start_tls` ran is left alone, like a socket that is
+    /// still connecting: `on_open` forgets the owner's paused flag, and the
+    /// handshake needs the reads.
+    #[uws_callback(export = "UpgradedDuplex__pause_stream")]
+    pub(crate) fn pause_stream(&self) -> bool {
+        if self.wrapper_ref().is_none() || !self.call_origin("pause") {
+            return false;
+        }
+        self.reads_paused.set(true);
+        true
+    }
+
+    #[uws_callback(export = "UpgradedDuplex__resume_stream")]
+    pub(crate) fn resume_stream(&self) -> bool {
+        if !self.call_origin("resume") {
+            return false;
+        }
+        self.reads_paused.set(false);
+        true
+    }
+
+    /// Calls `origin[name]()`. False when there is no JS duplex to talk to
+    /// (see [`Self::call_write_or_end`]) or the call threw (routed to `on_error`).
+    fn call_origin(&self, name: &str) -> bool {
+        let duplex = self.origin.get();
+        if duplex.is_empty() {
+            return false;
+        }
+        let Some(global) = self.global else {
+            return false;
+        };
+        let method = match duplex.get(&global, name) {
+            Ok(Some(f)) if f.is_callable() => f,
+            Ok(_) => return false,
+            Err(err) => {
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                return false;
+            }
+        };
+        if let Err(err) = method.call(&global, duplex, &[]) {
+            (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+            return false;
+        }
+        true
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
@@ -234,12 +291,12 @@ impl UpgradedDuplex {
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
             // A teardown payload (close_notify) after the transport's readable
-            // side ended has no reader behind it: node writes nothing there,
-            // and a transport that forwards into an auto-ended net.Socket
-            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
-            // and still goes through the writableEnded probe below, so a
-            // half-open transport sees our FIN.
-            if data.is_some() && self.transport_eof.get() {
+            // side got its EOF has no reader behind it: node writes nothing
+            // there, and a transport that forwards into an auto-ended
+            // net.Socket throws writeAfterFIN (EPIPE). The trailing end() is
+            // not a write and still goes through the writableEnded probe
+            // below, so a half-open transport sees our FIN.
+            if data.is_some() && Self::readable_got_eof(duplex, &global) {
                 return;
             }
             match duplex.get(&global, "writableEnded") {
@@ -274,6 +331,27 @@ impl UpgradedDuplex {
                 (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
+    }
+
+    /// `duplex._readableState.ended`. The 'end' event comes too late to tell:
+    /// a paused transport holds it back until the unread bytes are consumed.
+    fn readable_got_eof(duplex: JSValue, global: &JSGlobalObject) -> bool {
+        let probe = || -> JsResult<bool> {
+            let Some(state) = duplex.get(global, "_readableState")? else {
+                return Ok(false);
+            };
+            if !state.is_object() {
+                return Ok(false);
+            }
+            Ok(state
+                .get(global, "ended")?
+                .is_some_and(|ended| ended.to_boolean()))
+        };
+        // Best-effort probe: consume the exception and report no EOF.
+        probe().unwrap_or_else(|err| {
+            let _ = global.take_exception(err);
+            false
+        })
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
@@ -408,7 +486,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
-            transport_eof: Cell::new(false),
+            reads_paused: Cell::new(false),
         }
     }
 
@@ -679,7 +757,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
-        self.transport_eof.set(false);
+        self.reads_paused.set(false);
     }
 }
 
@@ -738,7 +816,6 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
-        this.transport_eof.set(true);
         if this.wrapper_ref().is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
         } else {

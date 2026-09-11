@@ -843,6 +843,232 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   });
 });
 
+describe("a TLS socket over a Duplex transport reads it with backpressure", () => {
+  // Node reads such a transport through a JSStreamSocket, whose readStop() and
+  // readStart() pause and resume it, so it only flows while the TLS socket
+  // takes more data:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
+  // Each side's _write pushes straight into the other side and never waits,
+  // so only the reading TLS socket can slow the transport down.
+  function inMemoryPair() {
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    return { clientSide, serverSide };
+  }
+  const serverContext = () => ({ isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  const payload = Buffer.alloc(1024 * 1024, "x");
+  // Rejects with the first 'error' any of `sockets` emits. Meant to be raced.
+  function firstErrorOf(...sockets: TLSSocket[]) {
+    const { promise, reject } = Promise.withResolvers<never>();
+    promise.catch(() => {});
+    for (const socket of sockets) socket.on("error", reject);
+    return promise;
+  }
+  // Destroys every socket in `sockets` when the test leaves its scope.
+  function destroyedOnExit(sockets: { destroy(): unknown }[]) {
+    return {
+      [Symbol.dispose]() {
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+
+  // Both wraps run the same engine; the reader is the side under test.
+  function securePair(reader: "client" | "server") {
+    const { clientSide, serverSide } = inMemoryPair();
+    const server = new TLSSocket(serverSide, serverContext());
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    const failed = firstErrorOf(server, client);
+    const secured = Promise.all([once(server, "secure"), once(client, "secureConnect")]);
+    const [readerSocket, transport, writerSocket] =
+      reader === "client" ? [client, clientSide, server] : [server, serverSide, client];
+    return { readerSocket, transport, writerSocket, failed, secured, cleanup: destroyedOnExit([client, server]) };
+  }
+
+  describe.each(["client", "server"] as const)("%s reader", reader => {
+    // The writer does not end: what happens to unread data once the peer has
+    // closed is a separate matter from how much the socket takes in.
+    it("a paused socket pauses the transport once its buffer is full", async () => {
+      const { readerSocket, transport, writerSocket, failed, secured, cleanup } = securePair(reader);
+      using _ = cleanup;
+      await Promise.race([secured, failed]);
+      readerSocket.pause();
+      // The pair is synchronous, so the callback runs with every byte handed
+      // to the reader's transport.
+      const written = Promise.withResolvers<void>();
+      writerSocket.write(payload, err => (err ? written.reject(err) : written.resolve()));
+      await Promise.race([written.promise, failed]);
+      // Without backpressure the transport keeps flowing and the paused socket
+      // holds the whole payload.
+      expect({
+        transportFlowing: transport.readableFlowing,
+        socketIsFull: readerSocket.readableLength >= readerSocket.readableHighWaterMark,
+        mostOfItWaitsInTheTransport: transport.readableLength > payload.length / 2,
+      }).toEqual({ transportFlowing: false, socketIsFull: true, mostOfItWaitsInTheTransport: true });
+
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const received = Promise.withResolvers<void>();
+      readerSocket.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        if ((total += chunk.length) >= payload.length) received.resolve();
+      });
+      readerSocket.resume();
+      await Promise.race([received.promise, failed]);
+      expect(Buffer.concat(chunks).equals(payload)).toBe(true);
+    });
+
+    it("a slow reader gets the whole payload while the transport is paused and resumed under it", async () => {
+      const { readerSocket, transport, writerSocket, failed, secured, cleanup } = securePair(reader);
+      using _ = cleanup;
+      await Promise.race([secured, failed]);
+      let pauses = 0;
+      transport.on("pause", () => pauses++);
+      writerSocket.write(payload);
+
+      const read = (async () => {
+        let total = 0;
+        let mostHeld = 0;
+        for await (const chunk of readerSocket) {
+          total += chunk.length;
+          mostHeld = Math.max(mostHeld, readerSocket.readableLength);
+          if (total >= payload.length) break;
+          // Yield a macrotask per chunk so the socket's buffer fills up.
+          await new Promise<void>(resolve => setImmediate(resolve));
+        }
+        return { total, heldLessThanHalfAtAnyTime: mostHeld < payload.length / 2 };
+      })();
+      expect({ ...(await Promise.race([read, failed])), pausedMoreThanOnce: pauses > 1 }).toEqual({
+        total: payload.length,
+        heldLessThanHalfAtAnyTime: true,
+        pausedMoreThanOnce: true,
+      });
+    });
+  });
+
+  it("does not answer a close_notify that it reads after the transport's EOF", async () => {
+    // A net.Socket that has read its peer's FIN fails a later write with EPIPE
+    // (writeAfterFIN in net.ts), and so does this transport. A paused reader
+    // makes the engine read the peer's close_notify long after that EOF, and
+    // the transport's 'end' event, held back by the pause, comes later still.
+    const transportErrors: string[] = [];
+    const gotEOF = new WeakSet<Duplex>();
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          if (gotEOF.has(this))
+            return callback(Object.assign(new Error("write after the peer's FIN"), { code: "EPIPE" }));
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          gotEOF.add(peer());
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    clientSide.on("error", (err: NodeJS.ErrnoException) => transportErrors.push(`${err.code}`));
+    const server = new TLSSocket(serverSide, serverContext());
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    using _ = destroyedOnExit([client, server]);
+    const failed = firstErrorOf(server, client);
+    await Promise.race([Promise.all([once(server, "secure"), once(client, "secureConnect")]), failed]);
+
+    client.pause();
+    // Like a TLS server over TCP: the payload, the close_notify, then the FIN.
+    server.end(payload);
+    await Promise.race([once(server, "finish"), failed]);
+    serverSide.end();
+
+    let total = 0;
+    client.on("data", (chunk: Buffer) => (total += chunk.length));
+    const closed = once(client, "close");
+    client.resume();
+    await Promise.race([closed, failed]);
+    expect({ total, transportErrors }).toEqual({ total: payload.length, transportErrors: [] });
+  });
+
+  it("a pause() issued before the engine exists does not stall the handshake", async () => {
+    // The engine is created on a later event-loop turn. A transport paused
+    // ahead of it would never deliver the server's flight.
+    const { clientSide, serverSide } = inMemoryPair();
+    const server = new TLSSocket(serverSide, serverContext());
+    const client = tls.connect({
+      socket: clientSide,
+      rejectUnauthorized: false,
+      // Only an onread socket stops its handle from pause().
+      onread: { buffer: Buffer.alloc(64), callback: () => {} },
+    });
+    using _ = destroyedOnExit([client, server]);
+    client.pause();
+    const secured = Promise.all([once(server, "secure"), once(client, "secureConnect")]);
+    await Promise.race([secured, firstErrorOf(server, client)]);
+    expect({ server: server.getProtocol(), client: client.getProtocol() }).toEqual({
+      server: "TLSv1.3",
+      client: "TLSv1.3",
+    });
+  });
+
+  it("destroying a paused socket lets a net.Socket transport read its peer's close", async () => {
+    // A server wrap over a net.Socket with unflushed plain writes cannot take
+    // the fd over, so it reads the net.Socket like any other Duplex. Nothing
+    // destroys that net.Socket along with the TLS socket, so one left paused
+    // would never read the client's FIN and would stay open for good.
+    const sockets: { destroy(): unknown }[] = [];
+    const accepted = Promise.withResolvers<{ transport: net.Socket; wrapped: TLSSocket }>();
+    await using listener = net.createServer(transport => {
+      transport.cork();
+      transport.write("!");
+      const wrapped = new TLSSocket(transport, serverContext());
+      transport.uncork();
+      sockets.push(wrapped, transport);
+      accepted.resolve({ transport, wrapped });
+    });
+    // Declared after the listener, so it runs first: close() waits for them.
+    using _ = destroyedOnExit(sockets);
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const clientTransport = net.connect((listener.address() as AddressInfo).port, "127.0.0.1");
+    sockets.push(clientTransport);
+    const [{ transport, wrapped }, [greeting]] = await Promise.all([accepted.promise, once(clientTransport, "data")]);
+    expect(String(greeting)).toBe("!");
+    const client = tls.connect({ socket: clientTransport, rejectUnauthorized: false });
+    sockets.push(client);
+    const failed = firstErrorOf(wrapped, client);
+    await Promise.race([Promise.all([once(wrapped, "secure"), once(client, "secureConnect")]), failed]);
+
+    wrapped.pause();
+    // Without backpressure the engine takes the whole payload and the client's
+    // close_notify, answers it, and the client closes.
+    const outcome = Promise.race([
+      once(transport, "pause").then(() => "transport paused"),
+      once(client, "close").then(() => "client closed"),
+      failed,
+    ]);
+    client.end(payload);
+    expect(await outcome).toBe("transport paused");
+
+    const closed = once(transport, "close");
+    wrapped.destroy();
+    await closed;
+    expect(transport.destroyed).toBe(true);
+  });
+});
+
 describe("application data written over a Duplex transport before the handshake completes", () => {
   // Node parks such a write (TLSWrap's pending cleartext) and sends it right
   // after the handshake: the write is still pending when 'secureConnect' /

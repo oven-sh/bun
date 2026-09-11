@@ -77,6 +77,71 @@ describe("bundler", () => {
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
   });
+  // The build-time bytecode optimizer deletes the jmp that ends a try body whose catch block is empty. When the try
+  // body ends by leaving a for-of loop, its try range then falls through into the try range of the loop's iterator
+  // close. The DFG kept the wrong handler's locals alive across that boundary (oven-sh/WebKit#629), so once the
+  // callee threw in DFG code the loop went on with `next` undefined:
+  // TypeError: undefined is not a function (near '...d of ["objects", "refs"]...')
+  itBundled("bun/bytecode-for-of-exit-from-try-with-empty-catch", {
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import { numberOfDFGCompiles } from "bun:jsc";
+
+        // The call throws for every element, except for the last element when c is "repo".
+        function returnFromTry(c: string) {
+          for (const d of ["objects", "refs"])
+            try {
+              return JSON.parse(c === "repo" && d === "refs" ? "1" : "{bad"), true;
+            } catch {}
+          return false;
+        }
+        function breakToOuterLabel(c: string) {
+          let found = false;
+          outer: for (const once of [0]) {
+            for (const d of ["objects", "refs"]) {
+              try {
+                JSON.parse(c === "repo" && d === "refs" ? "1" : "{bad");
+                found = true;
+                break outer;
+              } catch (e) {}
+            }
+          }
+          return found;
+        }
+        const map = new Map([["objects", 1], ["refs", 2]]);
+        function overMapEntries(c: string) {
+          for (const [d, n] of map)
+            try {
+              return JSON.parse(c === "repo" && d === "refs" ? "1" : "{bad"), n === 2;
+            } catch {}
+          return false;
+        }
+
+        // Calls fn until the DFG has compiled it, then 100 more times, so that the callee throws into DFG code.
+        function check(fn: (c: string) => boolean) {
+          for (let i = 0, callsAfterDFG = 0; callsAfterDFG < 100; i++) {
+            if (i === 100_000) return console.log(fn.name, "never reached the DFG");
+            const expected = i % 3 === 0;
+            let result;
+            try {
+              result = fn(expected ? "repo" : "x");
+            } catch (e) {
+              return console.log(fn.name, "threw at call", i, String(e));
+            }
+            if (result !== expected) return console.log(fn.name, "returned", result, "at call", i);
+            if (numberOfDFGCompiles(fn) > 0) callsAfterDFG++;
+          }
+          console.log(fn.name, "ok");
+        }
+        for (const fn of [returnFromTry, breakToOuterLabel, overMapEntries]) check(fn);
+      `,
+    },
+    run: { stdout: "returnFromTry ok\nbreakToOuterLabel ok\noverMapEntries ok\n" },
+  });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",
     outfile: "",

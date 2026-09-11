@@ -42,7 +42,13 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const {
+  kArmHandshakeTimeout,
+  kDestroyOnRead,
+  kPreHandshakeWrite,
+  kSecureConnectDone,
+  kVerifyError,
+} = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -437,6 +443,11 @@ function tlsHandshakeError(verifyError) {
 function pushDataToSocket(self, socket, buffer) {
   // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
   if (socket[kAdoptedTLSRaw]) return;
+  if (self[kDestroyOnRead]) {
+    $debug("DATA on a socket that must receive nothing - destroying it");
+    self.destroy();
+    return;
+  }
   let full;
   try {
     full = self.push(buffer) === false;
@@ -1589,6 +1600,7 @@ function Socket(options?) {
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
+  this[kDestroyOnRead] = false;
   this.bytesRead = 0;
   this[kBytesWritten] = undefined;
   this[kclosed] = false;

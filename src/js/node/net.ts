@@ -456,8 +456,7 @@ function pushDataToSocket(self, socket, buffer) {
     self.destroy();
     return;
   }
-  // A reset makes the native layer drain the kernel's unread bytes, also into a stopped handle. A socket built with
-  // `readable: false` takes none, as in node, where it never reads: push() would replace the reset with ERR_STREAM_PUSH_AFTER_EOF.
+  // `readable: false` takes no data, but a reset drains the kernel's unread bytes into a stopped handle too.
   if (self.readableEnded) return;
   let full;
   try {

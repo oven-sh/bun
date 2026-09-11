@@ -1303,11 +1303,7 @@ fn arena_utf8_from_utf16(
     Ok(StoreStr::new(buf.leak()))
 }
 
-/// Flatten a rope. The parser's string folding ("a" + "b", "a" + `b${x}`,
-/// `${"a"}b${x}`) links the operands through `next` instead of copying, so
-/// `data` holds only the first segment. String literals and template
-/// heads/tails both reach lowering in that shape; ropes are always 8-bit
-/// (`EString::push` asserts it).
+/// The rope's bytes, concatenated into a fresh arena slice.
 fn arena_str_from_rope(s: &E::EString) -> StoreStr {
     let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(s.len());
     let mut cur = Some(s);

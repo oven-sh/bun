@@ -1112,9 +1112,7 @@ pub(super) fn lower_object_property_key(
     computed: bool,
 ) -> Result<Option<ObjectPropertyKey>, CompilerError> {
     match &key.data {
-        // A folded computed key (`{["a" + "b"]: x}`) arrives as a rope; it takes
-        // the computed arm below, where `lower_expression` flattens it, just as
-        // upstream lowers the unfolded `"a" + "b"` to a computed key.
+        // A rope (a folded `["a" + "b"]` key) takes the computed arm below.
         Data::EString(s) if s.next.is_none() => {
             let name = if s.is_utf16 {
                 arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))

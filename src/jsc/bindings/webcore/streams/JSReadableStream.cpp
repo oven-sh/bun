@@ -199,8 +199,14 @@ static ConvertedUnderlyingSource convertUnderlyingSource(JSC::VM& vm, JSGlobalOb
             result.dict.type = ReadableStreamType::Bytes;
         } else if (typeString == "direct"_s)
             result.type = BunUnderlyingSourceType::Direct;
-        else
-            throwTypeError(globalObject, scope, makeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s));
+        else {
+            // `typeString` comes from JS. `makeString` calls `CRASH()` past `String::MaxLength`.
+            auto message = tryMakeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s);
+            if (message.isNull()) [[unlikely]]
+                throwOutOfMemoryError(globalObject, scope);
+            else
+                throwTypeError(globalObject, scope, message);
+        }
     }
     return result;
 }

@@ -153,3 +153,19 @@ describe.skipIf(!enoughMemory)("text consumers reject binary chunks summing past
     });
   });
 });
+
+// The TypeError for an unknown underlying source `type` quotes the value. With a value
+// near 2^31-1 characters the message does not fit in a string, and building it used to
+// abort the process in WTF::makeString.
+test.skipIf(!enoughMemory)("an underlying source type too long to quote in the error message throws", async () => {
+  const result = await run(`
+    const type = "t".repeat(2 ** 31 - 40);
+    try {
+      new ReadableStream({ type });
+      console.log("constructed");
+    } catch (e) {
+      console.log("threw", e.name, e.message);
+    }
+  `);
+  expect(result).toEqual(threw);
+});

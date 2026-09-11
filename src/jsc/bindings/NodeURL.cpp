@@ -117,21 +117,20 @@ bool hasValidPunycodeHost(WTF::StringView host)
 
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
-// base). Returns a null String when host parsing fails.
-static String parseDomainAsHost(const String& domain)
+// base). Returns a null String when host parsing fails. Throws when the URL
+// string for that parse would be longer than String::MaxLength.
+static String parseDomainAsHost(JSC::JSGlobalObject* globalObject, const String& domain)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
     // The hostname setter's basic-URL parse stops at the first path, query,
     // fragment, or backslash (special scheme) terminator.
     StringView view { domain };
-    size_t end = view.length();
-    for (size_t i = 0; i < view.length(); i++) {
-        char16_t c = view[i];
-        if (c == '/' || c == '?' || c == '#' || c == '\\') {
-            end = i;
-            break;
-        }
+    for (char16_t terminator : { u'/', u'?', u'#', u'\\' }) {
+        if (size_t index = view.find(terminator); index != notFound)
+            view = view.left(index);
     }
-    String host = domain.left(end);
+    String host = domain.left(view.length());
     if (host.isEmpty())
         return {};
 
@@ -147,7 +146,13 @@ static String parseDomainAsHost(const String& domain)
             return {};
     }
 
-    WTF::URL url(makeString("ws://"_s, host, "/"_s));
+    // `host` comes from JS. `makeString` calls `CRASH()` past `String::MaxLength`.
+    auto urlString = tryMakeString("ws://"_s, host, "/"_s);
+    if (urlString.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    WTF::URL url(WTF::move(urlString));
     if (!url.isValid())
         return {};
 
@@ -170,7 +175,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     auto domain = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto host = parseDomainAsHost(domain);
+    auto host = parseDomainAsHost(globalObject, domain);
+    RETURN_IF_EXCEPTION(scope, {});
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, host));
@@ -189,7 +195,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
 
     // Node: validate through the host parse first, then run ToUnicode on the
     // resulting ASCII host.
-    auto host = parseDomainAsHost(domain);
+    auto host = parseDomainAsHost(globalObject, domain);
+    RETURN_IF_EXCEPTION(scope, {});
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
 

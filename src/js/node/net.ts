@@ -49,6 +49,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const reportError = globalThis.reportError;
 
 let uvBinding;
 function uv() {
@@ -432,6 +433,18 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// Node reports a throwing 'data' listener as uncaughtException and keeps reading.
+function pushDataToSocket(self, socket, buffer) {
+  let full;
+  try {
+    full = self.push(buffer) === false;
+  } catch (e) {
+    reportError(e);
+    return;
+  }
+  if (full) readStop(self, socket);
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -448,9 +461,7 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     const self = socket.data;
@@ -770,9 +781,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   keylog(socket, line) {
     const { data: self } = socket;
@@ -1243,7 +1252,12 @@ function onconnection(err, clientHandle) {
 
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  self.emit("connection", _socket);
+  // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
+  try {
+    self.emit("connection", _socket);
+  } catch (e) {
+    reportError(e);
+  }
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
@@ -1281,7 +1295,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) readStop(self, socket);
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     $debug("Bun.Socket drain");

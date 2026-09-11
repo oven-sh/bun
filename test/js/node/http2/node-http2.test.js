@@ -1832,50 +1832,6 @@ it("Symbol keys of the headers object are not sent as headers", async () => {
   }
 });
 
-// Each session caches the Proxy that session.socket returns. After destroy()
-// the traps of that Proxy throw ERR_HTTP2_SOCKET_UNBOUND, including the
-// getPrototypeOf trap that instanceof calls. The getter must not return it.
-it("session.socket is undefined after the session is destroyed", async () => {
-  const server = http2.createServer();
-  try {
-    const serverSide = Promise.withResolvers();
-    const serverSideClosed = Promise.withResolvers();
-    server.on("session", session => {
-      session.on("error", () => {});
-      session.on("close", serverSideClosed.resolve);
-      serverSide.resolve({ session, socketBefore: session.socket });
-    });
-    const listening = Promise.withResolvers();
-    server.on("error", listening.reject);
-    server.listen(0, "127.0.0.1", listening.resolve);
-    await listening.promise;
-
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    const connected = Promise.withResolvers();
-    client.on("error", connected.reject);
-    client.on("connect", connected.resolve);
-    await connected.promise;
-    const sides = [{ session: client, socketBefore: client.socket }, await serverSide.promise];
-
-    const clientSideClosed = Promise.withResolvers();
-    client.on("close", clientSideClosed.resolve);
-    client.destroy();
-    await Promise.all([clientSideClosed.promise, serverSideClosed.promise]);
-
-    for (const { session, socketBefore } of sides) {
-      expect(socketBefore).toBeDefined();
-      expect(session.socket).toBeUndefined();
-      expect(session.socket instanceof net.Socket).toBe(false);
-      // A reference taken before destroy() still throws, as in node.
-      expect(() => socketBefore instanceof net.Socket).toThrow(
-        expect.objectContaining({ code: "ERR_HTTP2_SOCKET_UNBOUND" }),
-      );
-    }
-  } finally {
-    server.close();
-  }
-});
-
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {

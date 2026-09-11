@@ -187,8 +187,7 @@ function onUpgradeWriteClose(callback) {
   callback($ERR_SOCKET_CLOSED());
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
-// True while a TLS socket has no handle because it adopts one later: when the transport it was given
-// connects, or one tick after a server-side wrap. kUpgradeAttached is emitted once it has the handle.
+// Set while a TLS socket waits to adopt its transport's handle; kUpgradeAttached is emitted when it has it.
 const kUpgradePending = Symbol("kUpgradePending");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");

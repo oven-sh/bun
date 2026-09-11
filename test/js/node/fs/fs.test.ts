@@ -3235,6 +3235,27 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+it.if(isPosix)("realpath resolves a symlink before a following parent traversal", async () => {
+  using dir = tempDir("fs-realpath-symlink-parent", {});
+  const root = String(dir);
+  const actualDir = join(root, "actual");
+  const nestedDir = join(actualDir, "nested");
+  const expected = join(actualDir, "target.txt");
+  const collision = join(root, "target.txt");
+  const linkPath = join(root, "link");
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(expected, "expected");
+  writeFileSync(collision, "collision");
+  symlinkSync(nestedDir, linkPath);
+  const input = `${linkPath}${path.sep}..${path.sep}target.txt`;
+
+  expect(realpathSync(input)).toBe(expected);
+  expect(realpathSync.native(input)).toBe(expected);
+  expect(await promises.realpath(input)).toBe(expected);
+  expect(await promisify(fs.realpath)(input)).toBe(expected);
+  expect(await promisify(fs.realpath.native)(input)).toBe(expected);
+});
+
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every

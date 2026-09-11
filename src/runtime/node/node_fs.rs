@@ -218,9 +218,6 @@ pub use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
-#[cfg(not(windows))]
-use bun_resolver::fs::FileSystem;
-
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
 // behind `#[cfg(windows)]`. There is intentionally **no** POSIX stub module
@@ -7385,27 +7382,18 @@ impl NodeFS {
         {
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
-            // SAFETY: single-threaded init flag (resolver/fs.rs).
-            debug_assert!(
-                bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed)
-            );
-
             let path_slice = args.path.slice();
-            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = FileSystem::get();
-            let parts = [fs.top_level_dir, path_slice];
-            let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+            if path_slice.len() >= inbuf.len() {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::realpath,
                     path: args.path.slice().into(),
                     ..Default::default()
                 });
-            };
-            let path_len = joined.len();
-            inbuf[path_len] = 0;
-            let path = ZStr::from_buf(&inbuf[..], path_len);
+            }
+            // Let the OS walk the original components. Resolving to an absolute
+            // path first would collapse `..` before a preceding symlink is followed.
+            let path = args.path.slice_z(inbuf);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let flags = sys::O::PATH; // O_PATH is faster

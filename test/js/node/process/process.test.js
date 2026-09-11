@@ -1222,6 +1222,97 @@ describe.concurrent(() => {
     });
   });
 
+  describe.skipIf(process.platform === "sunos")("process.threadCpuUsage", () => {
+    const assertValidCpuUsage = (usage) => {
+      expect(usage).toEqual({
+        user: expect.any(Number),
+        system: expect.any(Number),
+      });
+      expect(Number.isFinite(usage.user)).toBe(true);
+      expect(Number.isFinite(usage.system)).toBe(true);
+      expect(usage.user).toBeGreaterThanOrEqual(0);
+      expect(usage.system).toBeGreaterThanOrEqual(0);
+    };
+
+    it("works", () => {
+      assertValidCpuUsage(process.threadCpuUsage());
+    });
+
+    it("throws for negative input", () => {
+      expect(() =>
+        process.threadCpuUsage({
+          user: -1,
+          system: 100,
+        }),
+      ).toThrow(RangeError);
+      expect(() =>
+        process.threadCpuUsage({
+          user: -1,
+          system: 100,
+        }),
+      ).toThrow("ERR_INVALID_ARG_VALUE");
+
+      expect(() =>
+        process.threadCpuUsage({
+          user: 100,
+          system: -1,
+        }),
+      ).toThrow(RangeError);
+      expect(() =>
+        process.threadCpuUsage({
+          user: 100,
+          system: -1,
+        }),
+      ).toThrow("ERR_INVALID_ARG_VALUE");
+    });
+
+    describe.each([
+      [NaN, "NaN"],
+      [Infinity, "Infinity"],
+      [-Infinity, "-Infinity"],
+      [Number.MAX_SAFE_INTEGER + 1, "overflow"],
+    ])("throws for invalid numeric value: %s (%s)", (val) => {
+      it("rejects invalid user value", () => {
+        expect(() => process.threadCpuUsage({ user: val, system: 100 })).toThrow();
+      });
+      it("rejects invalid system value", () => {
+        expect(() => process.threadCpuUsage({ user: 100, system: val })).toThrow();
+      });
+    });
+
+    it("works with diff", () => {
+      const init = process.threadCpuUsage();
+      
+      // Perform controlled CPU work to ensure thread CPU usage increments
+      const start = performance.now();
+      while (performance.now() - start < 10) {}
+
+      const delta = process.threadCpuUsage(init);
+      const reference = process.threadCpuUsage();
+
+      assertValidCpuUsage(delta);
+      assertValidCpuUsage(reference);
+      
+      // Verify that the init argument affects the result (delta should be less than the absolute reference)
+      expect(delta.user).toBeLessThan(reference.user);
+    });
+
+    it("throws on invalid property type", () => {
+      const fixtures = [
+        {},
+        { user: null },
+        { user: {} },
+        { user: "potato" },
+        { user: 123 },
+        { user: 123, system: null },
+        { user: 123, system: "potato" },
+      ];
+      for (const fixture of fixtures) {
+        expect(() => process.threadCpuUsage(fixture)).toThrow();
+      }
+    });
+  });
+
   if (process.platform !== "win32") {
     it("process.getegid", () => {
       expect(typeof process.getegid()).toBe("number");

@@ -10,82 +10,63 @@
 //!
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
 
-use crate::collections::IdMap;
-use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::cfg_utils::{
-    get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
-    remove_unnecessary_try_catch, remove_unreachable_for_updates,
+    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+    remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
-use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
+use crate::hir::environment::Environment;
+use crate::hir::{HirFunction, Instruction, InstructionValue, Terminal};
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
+use crate::ssa::eliminate_redundant_phi;
 
 /// Prune `MaybeThrow` terminals for blocks that cannot throw, then clean up the CFG.
-pub(crate) fn prune_maybe_throws(
-    func: &mut HirFunction,
-    functions: &mut [HirFunction],
-) -> Result<(), CompilerDiagnostic> {
-    let terminal_mapping = prune_maybe_throws_impl(func);
-    if let Some(terminal_mapping) = terminal_mapping {
-        // If terminals have changed then blocks may have become newly unreachable.
-        // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
-        remove_unreachable_for_updates(&mut func.body);
-        remove_dead_do_while_statements(&mut func.body);
-        remove_unnecessary_try_catch(&mut func.body);
-        mark_instruction_ids(&mut func.body, &mut func.instructions);
-        merge_consecutive_blocks(func, functions);
+pub(crate) fn prune_maybe_throws(func: &mut HirFunction, env: &mut Environment) {
+    if !prune_maybe_throws_impl(func) {
+        return;
+    }
+    // If terminals have changed then blocks may have become newly unreachable.
+    // Re-run minification of the graph (incl reordering instruction ids).
+    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+    remove_unreachable_for_updates(&mut func.body);
+    remove_dead_do_while_statements(&mut func.body);
+    remove_unnecessary_try_catch(&mut func.body);
+    mark_instruction_ids(&mut func.body, &mut func.instructions);
+    mark_predecessors(&mut func.body);
 
-        // Rewrite phi operands to reference the updated predecessor blocks
-        for block in func.body.blocks.values_mut() {
-            let preds = &block.preds;
-            let mut phi_updates: Vec<(usize, Vec<(BlockId, BlockId)>)> = Vec::new();
-
-            for (phi_idx, phi) in block.phis.iter().enumerate() {
-                let mut updates = Vec::new();
-                for (predecessor, _) in &phi.operands {
-                    if !preds.contains(predecessor) {
-                        let mapped_terminal =
-                            terminal_mapping.get(*predecessor).copied().ok_or_else(|| {
-                                cold_invariant(
-                                    "Expected non-existing phi operand's predecessor to have been mapped to a new terminal",
-                                    Some(format!(
-                                        "Could not find mapping for predecessor bb{} in block bb{}",
-                                        predecessor.0, block.id.0,
-                                    )),
-                                    None,
-                                )
-                            })?;
-                        updates.push((*predecessor, mapped_terminal));
-                    }
-                }
-                if !updates.is_empty() {
-                    phi_updates.push((phi_idx, updates));
-                }
-            }
-
-            for (phi_idx, updates) in phi_updates {
-                for (old_pred, new_pred) in updates {
-                    let operand = block.phis[phi_idx]
-                        .operands
-                        .shift_remove(&old_pred)
-                        .unwrap();
-                    block.phis[phi_idx].operands.insert(new_pred, operand);
-                }
-            }
+    // Now that predecessors are updated, prune phi operands that can never be reached.
+    // The TS version re-keys such an operand through a map from each continuation to
+    // the block before it. The map dates from when this pass turned `MaybeThrow` into
+    // `Goto` and the continuation merged into that block. Blocks keep their ids now, so
+    // an operand whose predecessor is gone is for an edge that no longer exists.
+    let mut pruned_phi_operands = false;
+    for block in func.body.blocks.values_mut() {
+        for phi in &mut block.phis {
+            let operand_count = phi.operands.len();
+            phi.operands
+                .retain(|pred, _operand| block.preds.contains(pred));
+            pruned_phi_operands |= phi.operands.len() != operand_count;
         }
     }
-    Ok(())
+
+    // By removing some phi operands, there may be phis that were not previously
+    // redundant but now are
+    if pruned_phi_operands {
+        eliminate_redundant_phi(func, env);
+    }
+
+    // Finally, merge together any blocks that are now guaranteed to execute
+    // consecutively
+    merge_consecutive_blocks(func, &mut env.functions);
 }
 
-fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, BlockId>> {
-    let mut terminal_mapping: IdMap<BlockId, BlockId> = IdMap::new();
+fn prune_maybe_throws_impl(func: &mut HirFunction) -> bool {
+    let mut has_changes = false;
     let instructions = &func.instructions;
 
     for block in func.body.blocks.values_mut() {
-        let continuation = match &block.terminal {
-            Terminal::MaybeThrow { continuation, .. } => *continuation,
-            _ => continue,
+        let Terminal::MaybeThrow { handler, .. } = &mut block.terminal else {
+            continue;
         };
 
         let can_throw = block
@@ -94,23 +75,16 @@ fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, Bloc
             .any(|instr_id| instruction_may_throw(&instructions[instr_id.0 as usize]));
 
         if !can_throw {
-            let source = terminal_mapping.get(block.id).copied().unwrap_or(block.id);
-            terminal_mapping.insert(continuation, source);
             // Null out the handler rather than replacing with Goto.
             // Preserving the MaybeThrow makes the continuations clear for
             // BuildReactiveFunction, while nulling out the handler tells us
             // that control cannot flow to the handler.
-            if let Terminal::MaybeThrow { handler, .. } = &mut block.terminal {
-                *handler = None;
-            }
+            *handler = None;
+            has_changes = true;
         }
     }
 
-    if terminal_mapping.is_empty() {
-        None
-    } else {
-        Some(terminal_mapping)
-    }
+    has_changes
 }
 
 fn instruction_may_throw(instr: &Instruction) -> bool {

@@ -337,8 +337,8 @@ fn run_hir_passes(
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     timed!(
         "PruneMaybeThrows",
-        crate::optimization::prune_maybe_throws(hir, &mut env.functions)
-    )?;
+        crate::optimization::prune_maybe_throws(hir, env)
+    );
 
     timed!(
         "ValidateContextVariableLValues",
@@ -440,8 +440,8 @@ fn run_hir_passes(
 
     timed!(
         "PruneMaybeThrows2",
-        crate::optimization::prune_maybe_throws(hir, &mut env.functions)
-    )?;
+        crate::optimization::prune_maybe_throws(hir, env)
+    );
 
     timed!(
         "InferMutationAliasingRanges",

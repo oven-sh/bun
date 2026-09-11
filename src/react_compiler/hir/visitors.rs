@@ -8,9 +8,10 @@ use std::collections::HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, IdentifierId,
-    Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
-    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
+    AliasingEffect, ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction,
+    IdentifierId, Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
+    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, PlaceOrSpreadOrHole,
+    ScopeId, Terminal,
 };
 
 // =============================================================================
@@ -1364,6 +1365,68 @@ pub fn for_each_terminal_operand_mut(terminal: &mut Terminal, f: &mut impl FnMut
         | Terminal::Unsupported { .. }
         | Terminal::Scope { .. }
         | Terminal::PrunedScope { .. } => {}
+    }
+}
+
+/// In-place mutation of every place an aliasing effect names.
+///
+/// TS effects hold the same `Place` objects as the instruction they were
+/// inferred for, so a pass that rewrites an instruction's places rewrites its
+/// effects too. Here effects hold clones, so such a pass has to visit them.
+pub fn for_each_aliasing_effect_place_mut(
+    effect: &mut AliasingEffect,
+    f: &mut impl FnMut(&mut Place),
+) {
+    match effect {
+        AliasingEffect::Freeze { value, .. }
+        | AliasingEffect::Mutate { value, .. }
+        | AliasingEffect::MutateConditionally { value }
+        | AliasingEffect::MutateTransitive { value }
+        | AliasingEffect::MutateTransitiveConditionally { value } => {
+            f(value);
+        }
+        AliasingEffect::Capture { from, into }
+        | AliasingEffect::Alias { from, into }
+        | AliasingEffect::MaybeAlias { from, into }
+        | AliasingEffect::Assign { from, into }
+        | AliasingEffect::CreateFrom { from, into }
+        | AliasingEffect::ImmutableCapture { from, into } => {
+            f(from);
+            f(into);
+        }
+        AliasingEffect::Create { into, .. } => {
+            f(into);
+        }
+        AliasingEffect::Apply {
+            receiver,
+            function,
+            args,
+            into,
+            ..
+        } => {
+            f(receiver);
+            f(function);
+            for arg in args.iter_mut() {
+                match arg {
+                    PlaceOrSpreadOrHole::Place(place) => f(place),
+                    PlaceOrSpreadOrHole::Spread(spread) => f(&mut spread.place),
+                    PlaceOrSpreadOrHole::Hole => {}
+                }
+            }
+            f(into);
+        }
+        AliasingEffect::CreateFunction { captures, into, .. } => {
+            for capture in captures.iter_mut() {
+                f(capture);
+            }
+            f(into);
+        }
+        AliasingEffect::MutateFrozen { place, .. }
+        | AliasingEffect::MutateGlobal { place, .. }
+        | AliasingEffect::Impure { place, .. }
+        | AliasingEffect::Render { place } => {
+            f(place);
+        }
     }
 }
 

@@ -13,6 +13,22 @@ fn rewrite_place(place: &mut Place, rewrites: &IdMap<IdentifierId, IdentifierId>
     }
 }
 
+/// Effects are `None` until InferMutationAliasingEffects runs. PruneMaybeThrows
+/// calls this pass after it.
+fn rewrite_effects(
+    effects: &mut Option<HirVec<AliasingEffect>>,
+    rewrites: &IdMap<IdentifierId, IdentifierId>,
+) {
+    let Some(effects) = effects else {
+        return;
+    };
+    for effect in effects.iter_mut() {
+        visitors::for_each_aliasing_effect_place_mut(effect, &mut |place| {
+            rewrite_place(place, rewrites);
+        });
+    }
+}
+
 pub(crate) fn eliminate_redundant_phi(func: &mut HirFunction, env: &mut Environment) {
     let mut rewrites: IdMap<IdentifierId, IdentifierId> = IdMap::new();
     eliminate_redundant_phi_impl(func, env, &mut rewrites);
@@ -101,6 +117,7 @@ fn eliminate_redundant_phi_impl(
                         rewrite_place(place, rewrites);
                     },
                 );
+                rewrite_effects(&mut func.instructions[instr_idx].effects, rewrites);
 
                 // Handle FunctionExpression/ObjectMethod context and recursion
                 let instr = &func.instructions[instr_idx];
@@ -118,6 +135,10 @@ fn eliminate_redundant_phi_impl(
                     for place in context.iter_mut() {
                         rewrite_place(place, rewrites);
                     }
+                    rewrite_effects(
+                        &mut env.functions[fid.0 as usize].aliasing_effects,
+                        rewrites,
+                    );
 
                     // Take inner function out, process it, put it back
                     let mut inner_func = std::mem::replace(
@@ -136,6 +157,11 @@ fn eliminate_redundant_phi_impl(
             visitors::for_each_terminal_operand_mut(terminal, &mut |place| {
                 rewrite_place(place, rewrites);
             });
+            if let Terminal::MaybeThrow { effects, .. } | Terminal::Return { effects, .. } =
+                terminal
+            {
+                rewrite_effects(effects, rewrites);
+            }
         }
 
         if !(rewrites.len() > size && has_back_edge) {

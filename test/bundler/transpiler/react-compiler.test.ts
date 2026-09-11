@@ -1480,6 +1480,206 @@ describe("bundler", () => {
       });
     }
   }
+
+  // Inside a `try`, every instruction ends its block with an edge to the
+  // `catch`. Dead code elimination removes `const unused = ...`, and
+  // PruneMaybeThrows (src/react_compiler/optimization/prune_maybe_throws.rs)
+  // then drops the edge of each block that is left with nothing that can
+  // throw. That runs after SSA, so a phi that joined the value a local has in
+  // the `catch` has to lose that operand too. When all the edges go, the
+  // `catch` goes with them and the phi is left with one operand: it is
+  // replaced by that operand, also in the aliasing effects inferred earlier.
+  //
+  // The fake `react/compiler-runtime` keeps one memo cache per component, and
+  // each component renders twice with the same props. A mutation the compiler
+  // left outside the memo block of the value it mutates shows up as a second
+  // "pushed" in the second render.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/TryBodyCannotThrowAfterDeadCodeElimination-${target}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { render } from "react";
+          import * as forms from "./forms";
+          const ok = () => {};
+          const thrower = () => {
+            throw new Error("thrown");
+          };
+          const items = [1, 2];
+          const renders = [
+            { value: "a", flag: true, items, cb: ok },
+            { value: "a", flag: true, items, cb: ok },
+            { value: "b", flag: false, items: [], cb: thrower },
+          ];
+          const lines: string[] = [];
+          for (const [name, form] of Object.entries(forms)) {
+            lines.push(name + "=" + renders.map(props => JSON.stringify(render(form, props))).join(" "));
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.tsx": /* tsx */ `
+          import { useEffect } from "react";
+
+          // The catch goes, and the block after the try statement merges into
+          // the block before it.
+          export function CatchAssignsLocal() {
+            useEffect(() => {});
+            let found = "found";
+            try {
+              const unused = 1;
+            } catch {
+              found = "missing";
+            }
+            return found;
+          }
+          // The block after the try statement is not the block the removed
+          // catch starts with.
+          export function CatchBranches(props) {
+            useEffect(() => {});
+            let found = "found";
+            try {
+              const unused = 1;
+            } catch {
+              if (props.flag) {
+                found = "missing-a";
+              } else {
+                found = "missing-b";
+              }
+            }
+            return found;
+          }
+          export function CatchHasTry() {
+            useEffect(() => {});
+            let found = "found";
+            try {
+              const unused = 1;
+            } catch {
+              try {
+                const alsoUnused = 2;
+                found = "inner";
+              } catch {
+                found = "missing";
+              }
+            }
+            return found;
+          }
+          // props.cb() keeps the catch. Only the edges from the eliminated
+          // statements go.
+          export function LaterStatementThrows(props) {
+            useEffect(() => {});
+            let x = 0;
+            try {
+              const unused = props.value;
+              x = 1;
+              props.cb();
+            } catch {
+              return "caught:" + x;
+            }
+            return "ok:" + x;
+          }
+          // The phi at the loop head reads the phi after the try statement,
+          // so it becomes redundant once that one does.
+          export function InsideLoop(props) {
+            useEffect(() => {});
+            let found = "found";
+            for (const item of props.items) {
+              try {
+                const unused = 1;
+              } catch {
+                found = "missing:" + item;
+              }
+            }
+            return found;
+          }
+          export function MutatedAfterTry(props) {
+            useEffect(() => {});
+            const base = [props.value];
+            let target = base;
+            try {
+              const unused = 1;
+            } catch {
+              target = [];
+            }
+            target.push("pushed");
+            return base;
+          }
+          export function MutatedInLoop(props) {
+            useEffect(() => {});
+            let list = [];
+            for (const item of props.items) {
+              try {
+                const unused = 1;
+              } catch {
+                list = ["missing"];
+              }
+              list.push(item);
+            }
+            return list;
+          }
+          export function CapturedAfterTry(props) {
+            useEffect(() => {});
+            let list = [props.value];
+            try {
+              const unused = 1;
+            } catch {
+              list = ["missing"];
+            }
+            const push = () => {
+              list.push("pushed");
+            };
+            push();
+            return list;
+          }
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": /* js */ `
+          export let rendering = null;
+          export function render(component, props) {
+            rendering = component;
+            return component(props);
+          }
+          export function useEffect(effect) {
+            effect();
+          }
+        `,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          import { rendering } from "./index.js";
+          const caches = new Map();
+          export function c(size) {
+            let cache = caches.get(rendering);
+            if (cache === undefined) {
+              cache = new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+              caches.set(rendering, cache);
+            }
+            return cache;
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: {
+        stdout: `
+          CapturedAfterTry=["a","pushed"] ["a","pushed"] ["b","pushed"]
+          CatchAssignsLocal="found" "found" "found"
+          CatchBranches="found" "found" "found"
+          CatchHasTry="found" "found" "found"
+          InsideLoop="found" "found" "found"
+          LaterStatementThrows="ok:1" "ok:1" "caught:1"
+          MutatedAfterTry=["a","pushed"] ["a","pushed"] ["b","pushed"]
+          MutatedInLoop=[1,2] [1,2] []
+        `,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        // Every component above compiled: the compiler outlines the empty
+        // effect callback (client) or drops the effect (ssr).
+        expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
+        // Only LaterStatementThrows keeps its try statement.
+        expect(out.match(/\btry \{/g)).toEqual(["try {"]);
+        expect(out).not.toContain("missing");
+      },
+    });
+  }
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

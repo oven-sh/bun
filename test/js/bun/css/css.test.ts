@@ -1226,6 +1226,121 @@ describe("css tests", () => {
       },
     );
 
+    // Unparsed (var()) block-axis properties don't depend on direction, so compiling
+    // logical properties away renames them to the physical top/bottom property in place.
+    for (const [logical, physical] of [
+      ["border-block-start", "border-top"],
+      ["border-block-start-width", "border-top-width"],
+      ["border-block-start-style", "border-top-style"],
+      ["border-block-start-color", "border-top-color"],
+      ["border-block-end", "border-bottom"],
+      ["border-block-end-width", "border-bottom-width"],
+      ["border-block-end-style", "border-bottom-style"],
+      ["border-block-end-color", "border-bottom-color"],
+    ]) {
+      prefix_test(
+        `
+        .foo {
+          ${logical}: var(--test);
+        }
+      `,
+        `
+        .foo {
+          ${physical}: var(--test);
+        }
+      `,
+        {
+          safari: 8 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${logical}: var(--test);
+        }
+      `,
+        `
+        .foo {
+          ${logical}: var(--test);
+        }
+      `,
+        {
+          safari: 13 << 16,
+        },
+      );
+    }
+
+    prefix_test(
+      `
+      .foo {
+        border-block-start: var(--start);
+        border-block-end: var(--end);
+      }
+    `,
+      `
+      .foo {
+        border-top: var(--start);
+        border-bottom: var(--end);
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-top: 1px solid red;
+        border-block-start-width: var(--width);
+      }
+    `,
+      `
+      .foo {
+        border-top: 1px solid red;
+        border-top-width: var(--width);
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-block-end-color: var(--color);
+        border-block-end-width: 2px;
+      }
+    `,
+      `
+      .foo {
+        border-bottom-color: var(--color);
+        border-bottom-width: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-block-start-width: var(--width) !important;
+      }
+    `,
+      `
+      .foo {
+        border-top-width: var(--width) !important;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
     for (const prop of [
       "border-inline-start-color",
       "border-inline-end-color",
@@ -1564,6 +1679,33 @@ describe("css tests", () => {
         safari: 8 << 16,
       },
     );
+
+    for (const [logical, physical] of [
+      ["border-block-start", "border-top"],
+      ["border-block-end", "border-bottom"],
+    ]) {
+      prefix_test(
+        `
+        .foo {
+          ${logical}: var(--border-width) solid lab(40% 56.6 39);
+        }
+      `,
+        `
+        .foo {
+          ${physical}: var(--border-width) solid #b32323;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            ${physical}: var(--border-width) solid lab(40% 56.6 39);
+          }
+        }
+      `,
+        {
+          safari: 8 << 16,
+        },
+      );
+    }
 
     prefix_test(
       `

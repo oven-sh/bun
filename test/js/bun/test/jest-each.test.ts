@@ -57,3 +57,46 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
+
+// Regression for oven-sh/bun#24347: a row that omits an optional trailing tuple
+// element was treated as wanting `done`, so the callback received the `done`
+// function in that slot (and the test then timed out). Short array rows are now
+// padded to the table's widest row before `done` is appended, matching
+// describe.each.
+describe("optional trailing tuple elements (#24347)", () => {
+  it.each([
+    [1, 2],
+    [1, 2, undefined],
+    [10, 0, 10],
+  ])("omitted optional element is undefined, not the done callback [row %#]", (a, b, c) => {
+    expect(typeof c).not.toBe("function");
+  });
+
+  it.each([
+    [1, 2],
+    [1, 2, undefined],
+    [10, 0, 10],
+  ])("done still fires after an omitted optional element [row %#]", (_a, _b, c, done) => {
+    expect(typeof c).not.toBe("function");
+    expect(["number", "undefined"]).toContain(typeof c);
+    expect(typeof done).toBe("function");
+    done();
+  });
+
+  it.each([[1], [2]])("a real done callback still fires for a uniformly short table", (n, done) => {
+    expect(typeof done).toBe("function");
+    done();
+  });
+
+  // `done` accounting is per row: a padded array row uses its (normalized) width,
+  // a scalar row stays a single argument.
+  it.each([[1, 2, 3], 5])("mixed scalar and array rows keep per-row done accounting [row %#]", (value, maybeDone) => {
+    if (typeof maybeDone === "function") {
+      expect(value).toBe(5); // scalar row: second param is the done callback
+      maybeDone();
+    } else {
+      expect(value).toBe(1); // array row: second param is the array's value, not done
+      expect(maybeDone).toBe(2);
+    }
+  });
+});

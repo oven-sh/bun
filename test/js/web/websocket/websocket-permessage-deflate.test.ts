@@ -607,26 +607,30 @@ test("every ServerWebSocket send method delivers the bytes of a SharedArrayBuffe
 // Both memory kinds race. Sharing is not the property that matters, so
 // "mmap" (a plain Uint8Array over a MAP_SHARED region) must hold too.
 describe.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => {
-  test.skipIf(!isASAN)("does not overrun the deflate buffer", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "websocket-shared-buffer-deflate-fixture.ts")],
-      env: {
-        ...bunEnv,
-        MODE: mode,
-        // Symbolizing a sanitizer report costs several seconds, which is
-        // longer than the budget for this test. Raw frames still say it failed.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  test.skipIf(!isASAN)(
+    "does not overrun the deflate buffer",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "websocket-shared-buffer-deflate-fixture.ts")],
+        env: {
+          ...bunEnv,
+          MODE: mode,
+          // Symbolizing a sanitizer report costs several seconds, which is
+          // longer than the budget for this test. Raw frames still say it failed.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("done");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    // Booting a worker under a sanitizer costs about 3s before the race even
-    // starts, so this one needs more than the default ceiling.
-  }, 20_000);
+      expect(stdout.trim()).toBe("done");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      // Booting a worker under a sanitizer costs about 3s before the race even
+      // starts, so this one needs more than the default ceiling.
+    },
+    20_000,
+  );
 });

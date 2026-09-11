@@ -826,29 +826,33 @@ describe("libdeflate one-shot", () => {
   // holds still. An input another thread rewrites between the two passes can
   // outgrow the bound, and the emit pass then wrote past the buffer. Only a
   // sanitizer sees that write, so the race test needs one.
-  it.skipIf(!isASAN)("does not overrun the output when a writer races the input", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts")],
-      env: {
-        ...bunEnv,
-        // Symbolizing a sanitizer report costs several seconds, which is
-        // longer than the budget for this test.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  it.skipIf(!isASAN)(
+    "does not overrun the output when a writer races the input",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), resolve(import.meta.dir, "libdeflate-racing-input-fixture.ts")],
+        env: {
+          ...bunEnv,
+          // Symbolizing a sanitizer report costs several seconds, which is
+          // longer than the budget for this test.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Whether the race fires within the call budget is luck, so `refused` is
-    // reported but not asserted. Surviving it is the point.
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toMatchObject({ compressed: true });
-    expect(exitCode).toBe(0);
-    // Booting a worker under a sanitizer costs about 3s before the race even
-    // starts, so this one needs more than the default ceiling.
-  }, 20_000);
+      // Whether the race fires within the call budget is luck, so `refused` is
+      // reported but not asserted. Surviving it is the point.
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toMatchObject({ compressed: true });
+      expect(exitCode).toBe(0);
+      // Booting a worker under a sanitizer costs about 3s before the race even
+      // starts, so this one needs more than the default ceiling.
+    },
+    20_000,
+  );
 
   it("compresses an input that holds still", () => {
     // The bound covers every stable input, so the one-shot path never reports

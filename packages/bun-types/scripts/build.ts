@@ -19,6 +19,10 @@ let claude = Bun.file(join(import.meta.dir, "../../../src/cli/init/rule.md"));
 if (await claude.exists()) {
   let original = await claude.text();
   const endOfFrontMatter = original.lastIndexOf("---\n");
+  // The template locates the docs through the project's node_modules, once per install
+  // layout (hoisted path, then the isolated store path in parentheses). Inside this package
+  // they are just ./docs.
+  original = original.replace(/ \(`node_modules\/\.bun\/[^`]*`[^)]*\)/, "");
   original = original.replaceAll("node_modules/bun-types/", "");
   if (endOfFrontMatter > -1) {
     original = original.slice(endOfFrontMatter + "---\n".length).trim() + "\n";

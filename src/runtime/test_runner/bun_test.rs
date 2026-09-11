@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
-use bun_collections::LinearFifo;
+use bun_collections::{LinearFifo, StringHashMap};
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -640,6 +640,8 @@ pub struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// Snapshot name -> snapshot matchers (file or inline) run so far; numbers the `.snap` keys.
+    pub(crate) snapshot_counts: StringHashMap<usize>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -677,6 +679,7 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            snapshot_counts: StringHashMap::new(),
         }
     }
 

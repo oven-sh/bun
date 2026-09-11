@@ -540,7 +540,7 @@ impl Execution {
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
                 Execution::discard_junit_failure(buntest);
-                Execution::reset_sequence(sequence);
+                Execution::reset_sequence(buntest, sequence);
                 return;
             }
 
@@ -548,7 +548,7 @@ impl Execution {
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
                 Execution::discard_junit_failure(buntest);
-                Execution::reset_sequence(sequence);
+                Execution::reset_sequence(buntest, sequence);
                 return;
             }
 
@@ -721,7 +721,7 @@ impl Execution {
         }
     }
 
-    pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
+    pub(crate) fn reset_sequence(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
             // reset the entries
@@ -756,12 +756,13 @@ impl Execution {
         // toMatchSnapshot() call. Without this reset, retries / repeats would
         // increment the counter to N on attempt N and look for a key that does
         // not exist (https://github.com/oven-sh/bun/issues/23705).
-        // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
+        // Clearing all entries matches Jest (SnapshotState.clear() on test_retry,
         // jestjs/jest#7493). Concurrent tests never touch the counts map — see
         // SnapshotInConcurrentGroup in expect.rs.
-        if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.reset_counts();
-        }
+        // SAFETY: `buntest` points at the live per-file BunTest; `sequence` points into
+        // the heap buffer of `buntest.execution.sequences`, and no borrow of the
+        // `snapshot_counts` field itself is live. Single-threaded test runner.
+        unsafe { (*buntest.as_ptr()).snapshot_counts.clear() };
     }
 
     pub(crate) fn handle_uncaught_exception(

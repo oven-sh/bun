@@ -933,6 +933,92 @@ test("snapshot numbering", () => {
   expect("hello").toMatchSnapshot("hinted");
 });
 
+describe.concurrent("snapshot numbering across test files", () => {
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+
+  // Every file gets its own counters, so the keys a file writes must not depend on
+  // which files ran before it in the same `bun test` process.
+  async function runBunTest(dir: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { output: stdout + stderr, exitCode };
+  }
+
+  const fileSnapshotThenInlineAndFileSnapshot = {
+    "a.test.ts": /*js*/ `
+      import { test, expect } from "bun:test";
+      test("a", () => {
+        expect(1).toMatchSnapshot();
+      });
+    `,
+    "b.test.ts": /*js*/ `
+      import { test, expect } from "bun:test";
+      test("b", () => {
+        expect("x").toMatchInlineSnapshot(\`"x"\`);
+        expect(2).toMatchSnapshot();
+      });
+    `,
+  };
+
+  test("an inline snapshot taken before the file's first toMatchSnapshot() still counts", async () => {
+    using dir = tempDir("snapshot-numbering-inline-first", fileSnapshotThenInlineAndFileSnapshot);
+
+    const { output, exitCode } = await runBunTest(String(dir), { CI: "false" });
+
+    expect(output).toContain("2 pass");
+    expect(exitCode).toBe(0);
+    // Same key `bun test ./b.test.ts` on its own writes: the inline snapshot is number 1.
+    expect(await Bun.file(`${dir}/__snapshots__/b.test.ts.snap`).text()).toBe(header + "\nexports[`b 2`] = `2`;\n");
+    expect(await Bun.file(`${dir}/__snapshots__/a.test.ts.snap`).text()).toBe(header + "\nexports[`a 1`] = `1`;\n");
+  });
+
+  test("snapshots written by running each file on its own pass when the files run together", async () => {
+    using dir = tempDir("snapshot-numbering-committed", {
+      ...fileSnapshotThenInlineAndFileSnapshot,
+      "__snapshots__/a.test.ts.snap": header + "\nexports[`a 1`] = `1`;\n",
+      "__snapshots__/b.test.ts.snap": header + "\nexports[`b 2`] = `2`;\n",
+    });
+
+    // CI: creating a snapshot under a key missing from the .snap file is an error.
+    const { output, exitCode } = await runBunTest(String(dir), { CI: "true" });
+
+    expect(output).not.toContain("Snapshot creation is disabled");
+    expect(output).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("counts from a file that only uses inline snapshots do not carry over to the next file", async () => {
+    using dir = tempDir("snapshot-numbering-inline-only-file", {
+      "a.test.ts": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("same name", () => {
+          expect(1).toMatchInlineSnapshot(\`1\`);
+        });
+      `,
+      "b.test.ts": /*js*/ `
+        import { test, expect } from "bun:test";
+        test("same name", () => {
+          expect(2).toMatchSnapshot();
+        });
+      `,
+    });
+
+    const { output, exitCode } = await runBunTest(String(dir), { CI: "false" });
+
+    expect(output).toContain("2 pass");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(`${dir}/__snapshots__/b.test.ts.snap`).text()).toBe(
+      header + "\nexports[`same name 1`] = `2`;\n",
+    );
+  });
+});
+
 test("write snapshot from filter", async () => {
   const sver = (m: string, a: boolean) => /*js*/ `
     test("mysnap", () => {

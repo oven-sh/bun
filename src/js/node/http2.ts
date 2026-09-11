@@ -4806,8 +4806,9 @@ class ServerHttp2Session extends Http2Session {
     process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 }
-function emitTimeout(session: ClientHttp2Session) {
-  session.emit("timeout");
+function emitTimeout(stream: Http2Stream) {
+  // A pushed stream the user destroyed stays enumerable until the peer finishes it.
+  if (!stream.destroyed) stream.emit("timeout");
 }
 // Outbound-progress snapshot taken the last time the session's idle timer expired while writes
 // were still pending (see sessionTimerExpired / node's chunksSentSinceLastWrite).
@@ -4904,6 +4905,13 @@ function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
 function streamCancel(stream: Http2Stream) {
+  if (stream[kPush]) {
+    // node end()s a pushed stream when it creates it, so its close(CANCEL) here only records the
+    // code. Ours is still writable: close() would emit 'aborted' and end() into a native write
+    // that rejects the id. Record the code; streamSocketClosed destroys the stream.
+    if (!stream.closed) stream.rstCode = NGHTTP2_CANCEL;
+    return;
+  }
   stream.close(NGHTTP2_CANCEL);
 }
 
@@ -4917,13 +4925,15 @@ function streamSocketClosed(stream: Http2Stream) {
     stream.destroy();
   }
 }
-// A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
+// The GOAWAY's last-stream-id counts the streams this side initiated (RFC 9113 6.8). A pushed
+// stream is the peer's and keeps running (nghttp2 session_close_stream_on_goaway skips it).
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
-  if (typeof stream?.id === "number" && stream.id > lastStreamId) {
+  if (typeof stream?.id === "number" && stream.id > lastStreamId && !stream[kPush]) {
     streamRejectedByGoawaySession(stream);
   }
 }
+// A stream whose session was close()d before the socket finished connecting never reached the
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
 function streamRejectedByGoawaySession(stream: Http2Stream) {
   if (!stream.destroyed) {
     const err = new Error("New streams cannot be created after receiving a GOAWAY");

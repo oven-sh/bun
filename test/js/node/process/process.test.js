@@ -1222,6 +1222,67 @@ describe.concurrent(() => {
     });
   });
 
+  // Node only looks at prevValue when it is truthy (`if (prevValue)` in
+  // lib/internal/process/per_thread.js), so a falsy one behaves like no argument.
+  describe.each(["cpuUsage", "threadCpuUsage"])("process.%s prevValue", name => {
+    it.each([null, 0, false, "", NaN, 0n])("ignores falsy prevValue %p", prevValue => {
+      const usage = process[name](prevValue);
+      expect(usage).toEqual({ user: expect.any(Number), system: expect.any(Number) });
+      expect(usage.user).toBeGreaterThanOrEqual(0);
+      expect(usage.system).toBeGreaterThanOrEqual(0);
+    });
+
+    it.each([
+      [1, "Received type number (1)"],
+      [true, "Received type boolean (true)"],
+      ["x", "Received type string ('x')"],
+      [1n, "Received type bigint (1n)"],
+    ])("still rejects truthy non-object prevValue %p", (prevValue, received) => {
+      expect(() => process[name](prevValue)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "prevValue" argument must be of type object. ${received}`,
+        }),
+      );
+    });
+
+    it.each([
+      [
+        {},
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        'The "prevValue.user" property must be of type number. Received undefined',
+      ],
+      [
+        { user: "x", system: 1 },
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        `The "prevValue.user" property must be of type number. Received type string ('x')`,
+      ],
+      [
+        { user: 1, system: "x" },
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        `The "prevValue.system" property must be of type number. Received type string ('x')`,
+      ],
+      [
+        { user: -1, system: 1 },
+        "RangeError",
+        "ERR_INVALID_ARG_VALUE",
+        "The property 'prevValue.user' is invalid. Received -1",
+      ],
+      [
+        { user: 1, system: -1 },
+        "RangeError",
+        "ERR_INVALID_ARG_VALUE",
+        "The property 'prevValue.system' is invalid. Received -1",
+      ],
+    ])("still rejects truthy invalid prevValue %o", (prevValue, errorName, code, message) => {
+      expect(() => process[name](prevValue)).toThrow(expect.objectContaining({ name: errorName, code, message }));
+    });
+  });
+
   if (process.platform !== "win32") {
     it("process.getegid", () => {
       expect(typeof process.getegid()).toBe("number");

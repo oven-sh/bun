@@ -3028,6 +3028,21 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return stream;
 }
 
+static JSValue constructModuleLoadList(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    // Lazy property builder: an exception (OOM allocating the array) must not
+    // propagate into reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* list = globalObject->internalModuleRegistry()->moduleLoadList(globalObject);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return jsUndefined();
+    }
+    return list;
+}
+
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
     return constructStdioWriteStream(processObject->globalObject(), processObject, 1);
@@ -4990,7 +5005,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   kill                             Process_functionKill                                Function 2
   mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
-  moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
+  moduleLoadList                   constructModuleLoadList                             PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback

@@ -1024,8 +1024,15 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
+        // Native modules the ES module loader instantiates itself (require() goes through
+        // the registry) still belong in process.moduleLoadList; their tag is their registry id.
+#define RECORD_NATIVE_MODULE_LOAD(name)                                                                                                                                                                  \
+    globalObject->internalModuleRegistry()->recordLoad(globalObject, vm, static_cast<InternalModuleRegistry::Field>(SyntheticModuleType::name & (SyntheticModuleType::InternalModuleRegistryFlag - 1))); \
+    RETURN_IF_EXCEPTION(scope, {});
+
 #define CASE(str, name)                                                                                                                              \
     case (SyntheticModuleType::name): {                                                                                                              \
+        RECORD_NATIVE_MODULE_LOAD(name)                                                                                                              \
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                     \
     }
@@ -1034,11 +1041,13 @@ static JSValue fetchESMSourceCode(
 
 #define LAZY_CASE(str, name)                                                                                                                                        \
     case (SyntheticModuleType::name): {                                                                                                                             \
+        RECORD_NATIVE_MODULE_LOAD(name)                                                                                                                             \
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::createWithLazyExports(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                                    \
     }
             BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
 #undef LAZY_CASE
+#undef RECORD_NATIVE_MODULE_LOAD
 
         // A text file embedded by `bun build --compile`: the string is the default export.
         case SyntheticModuleType::ExportDefaultObject: {

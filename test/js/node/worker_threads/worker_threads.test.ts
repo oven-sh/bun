@@ -2929,3 +2929,19 @@ describe("no JS entry after a worker's termination has been thrown", () => {
     });
   }
 });
+
+// Startup-cost guard: every builtin a node worker's bootstrap loads is parsed again
+// on that thread. It must not build the fd-backed process.stdout/stderr/stdin it
+// replaces (node:fs + fs streams) nor reify all of process (which builds the
+// nextTick queue). If this starts failing, make the new dependency lazy instead.
+test("a Worker's bootstrap doesn't load fs, fs streams or the tick queue", async () => {
+  const worker = new Worker("require('node:worker_threads').parentPort.postMessage(process.moduleLoadList)", {
+    eval: true,
+  });
+  const [list] = await once(worker, "message");
+  await worker.terminate();
+  expect(list).toContain("NativeModule worker_threads");
+  for (const unexpected of ["fs", "internal/fs/streams", "internal/fs/glob", "internal/fixed_queue"]) {
+    expect(list).not.toContain("NativeModule " + unexpected);
+  }
+});

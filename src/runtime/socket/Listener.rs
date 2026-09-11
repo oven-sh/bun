@@ -2058,8 +2058,6 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 /// (select-certificate retry) until the JS resolution calls
 /// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
 ///
-/// `_ls` is null once the listen socket closed (Node still calls SNICallback).
-///
 /// # Safety
 /// `socket` is live and `hostname` NUL-terminated for the call. JS-thread only.
 extern "C" fn us_dispatch_server_name(

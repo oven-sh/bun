@@ -90,10 +90,18 @@ void NodeVMSyntheticModule::destroy(JSCell* cell)
 void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // The record is the context's own module loader's, as for a SourceTextModule.
+    JSGlobalObject* moduleGlobalObject = globalObject;
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (nodeVmGlobalObject)
+        moduleGlobalObject = nodeVmGlobalObject;
     // The source type only feeds AbstractModuleRecord::moduleType(), which the loader attaches to
     // errors as the failing module's kind; a vm.SyntheticModule is a JavaScript module in that sense.
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), globalObject->moduleLoader(), Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
+    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleGlobalObject->moduleLoader(), Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
+    RETURN_IF_EXCEPTION(scope, void());
 
     m_moduleRecord.set(vm, this, moduleRecord);
 
@@ -113,6 +121,7 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
     // before setExport() yields undefined), unlike TDZ which would throw.
     JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
     moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
+    RELEASE_AND_RETURN(scope, void());
 }
 
 void NodeVMSyntheticModule::ensureModuleRecord(JSGlobalObject* globalObject)

@@ -253,10 +253,16 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
         }`,
       )(ModuleGraph, join(dir, "intr.mjs"), earlier, expect);
       expect(([1] as any).__graphTag().startsWith("g3")).toBe(true); // host sees the last graph's patch
-      // The earlier writers' patches were overwritten, so nothing references their modules any more.
-      for (let i = 0; i < 100 && earlier.some(r => r.deref()); i++) {
-        await Bun.sleep(5);
+      // The earlier writers' patches were overwritten, so nothing references their modules any more
+      // (same collection regime as collected(): churn the stack, let I/O settle, collect, repeat).
+      const churn = (depth: number): number =>
+        depth <= 0 ? 1 : churn(depth - 1) + [depth, {}, "x".repeat(depth)].length;
+      for (let i = 0; i < 90 && earlier.some(r => r.deref()); i++) {
+        await Bun.sleep(i < 60 ? 5 : 50);
+        if (i >= 60) void new Array(4096).fill(0).map((_, k) => ({ k }));
+        churn(i < 60 ? 64 : 128);
         Bun.gc(true);
+        await new Promise<void>(r => setImmediate(r));
       }
       expect(earlier.map(r => r.deref() === undefined)).toEqual([true, true, true]);
     } finally {

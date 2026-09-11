@@ -523,7 +523,10 @@ class Database implements SqliteTypes.Database {
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[] | undefined, flags: number = 0) {
+  prepare(query: string, params?: SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[], flags: number = 0) {
+    if (params !== undefined && !isArray(params) && (!params || typeof params !== "object" || isTypedArray(params))) {
+      params = [params];
+    }
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

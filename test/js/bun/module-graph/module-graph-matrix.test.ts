@@ -52,18 +52,56 @@ const TARGET_BODY = (name: string) =>
   `globalThis.__log?.push(${JSON.stringify(name)} + "@" + process.env.WHO);
    export const who = process.env.WHO; export let n = 0; export const inc = () => ++n;`;
 
-type Target = { file: string; source: string; tag: string | null; who: (w: string | undefined) => unknown; mutable: boolean; missing?: boolean };
+type Target = {
+  file: string;
+  source: string;
+  tag: string | null;
+  who: (w: string | undefined) => unknown;
+  mutable: boolean;
+  missing?: boolean;
+};
 const targets: Record<string, Target> = {
   esmFresh: { file: "t-fresh.mjs", source: TARGET_BODY("fresh"), tag: "fresh", who: w => w, mutable: true },
-  esmTla: { file: "t-tla.mjs", source: `await new Promise(r => setTimeout(r, 1)); ${TARGET_BODY("tla")}`, tag: "tla", who: w => w, mutable: true },
+  esmTla: {
+    file: "t-tla.mjs",
+    source: `await new Promise(r => setTimeout(r, 1)); ${TARGET_BODY("tla")}`,
+    tag: "tla",
+    who: w => w,
+    mutable: true,
+  },
   // itself dynamically imports another module during its own evaluation
-  esmChain: { file: "t-chain.mjs", source: `export const inner = await import("./t-inner.mjs"); ${TARGET_BODY("chain")}`, tag: "chain", who: w => w, mutable: true },
-  cjs: { file: "t.cjs", source: `globalThis.__log?.push("cjs@" + process.env.WHO); let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`, tag: "cjs", who: w => w, mutable: true },
+  esmChain: {
+    file: "t-chain.mjs",
+    source: `export const inner = await import("./t-inner.mjs"); ${TARGET_BODY("chain")}`,
+    tag: "chain",
+    who: w => w,
+    mutable: true,
+  },
+  cjs: {
+    file: "t.cjs",
+    source: `globalThis.__log?.push("cjs@" + process.env.WHO); let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`,
+    tag: "cjs",
+    who: w => w,
+    mutable: true,
+  },
   json: { file: "t.json", source: `{ "who": "json", "n": 0 }`, tag: null, who: () => "json", mutable: false },
-  ts: { file: "t.ts", source: `${TARGET_BODY("ts")} export type T = number; const typed: T = 1; export { typed };`, tag: "ts", who: w => w, mutable: true },
+  ts: {
+    file: "t.ts",
+    source: `${TARGET_BODY("ts")} export type T = number; const typed: T = 1; export { typed };`,
+    tag: "ts",
+    who: w => w,
+    mutable: true,
+  },
   // node builtins are instantiated per graph as well
   builtin: { file: "node:path", source: "", tag: null, who: () => undefined, mutable: false },
-  missing: { file: "does-not-exist.mjs", source: "", tag: null, who: () => "unreachable", mutable: false, missing: true },
+  missing: {
+    file: "does-not-exist.mjs",
+    source: "",
+    tag: null,
+    who: () => "unreachable",
+    mutable: false,
+    missing: true,
+  },
 };
 
 // How the importer performs `import(T)`; `expr(T)` evaluates to a promise for the namespace.
@@ -92,35 +130,57 @@ const sites: Record<string, Site> = {
 // concurrent:               instances created and their import()s run concurrently
 // host{First,Last}:         the host imports the target itself before / after the graphs
 // disposeMiddleBefore:      g1 is disposed before its import() runs
-const orderings = ["sequential", "firstRunsThenOthersExist", "createAllThenForward", "createAllThenReverse", "onlySomeRun", "concurrent", "hostFirst", "hostLast", "disposeMiddleBefore"] as const;
+const orderings = [
+  "sequential",
+  "firstRunsThenOthersExist",
+  "createAllThenForward",
+  "createAllThenReverse",
+  "onlySomeRun",
+  "concurrent",
+  "hostFirst",
+  "hostLast",
+  "disposeMiddleBefore",
+] as const;
 type Ordering = (typeof orderings)[number];
 
 describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target × ordering", () => {
   const dir = fixture({
     "t-inner.mjs": TARGET_BODY("inner"),
     "dyn-helper.cjs": `module.exports.load = (p) => import(p);`,
-    ...Object.fromEntries(Object.values(targets).filter(t => t.source).map(t => [t.file, t.source])),
+    ...Object.fromEntries(
+      Object.values(targets)
+        .filter(t => t.source)
+        .map(t => [t.file, t.source]),
+    ),
   });
   const specOf = (t: Target) => JSON.stringify(t.file.startsWith("node:") ? t.file : join(dir, t.file));
   const importerName = (site: string, target: string) => `imp-${site}-${target}.mjs`;
   for (const [siteName, site] of Object.entries(sites)) {
     for (const [targetName, target] of Object.entries(targets)) {
       const spec = specOf(target);
-      const staticImport = !target.missing && !site.eager ? `import * as statNs from ${spec}; export const stat = statNs;` : `export const stat = null;`;
+      const staticImport =
+        !target.missing && !site.eager
+          ? `import * as statNs from ${spec}; export const stat = statNs;`
+          : `export const stat = null;`;
       const body = site.eager
         ? `let e; try { e = await ${site.expr(spec)}; } catch (err) { e = { __rejected: err.constructor.name }; } export const dyn = () => Promise.resolve(e);`
         : `export const dyn = () => ${site.expr(spec)};`;
-      writeFileSync(join(dir, importerName(siteName, targetName)), `${staticImport}\n${body}\nexport const who = process.env.WHO;`);
+      writeFileSync(
+        join(dir, importerName(siteName, targetName)),
+        `${staticImport}\n${body}\nexport const who = process.env.WHO;`,
+      );
     }
   }
   const K = 3;
   // the object carrying `who`/`n`/`inc`: the namespace, or `default` for CommonJS
-  const api = (ns: any) => (ns && ns.default && typeof ns.default === "object" && "inc" in ns.default ? ns.default : ns);
+  const api = (ns: any) =>
+    ns && ns.default && typeof ns.default === "object" && "inc" in ns.default ? ns.default : ns;
 
   for (const [siteName, site] of Object.entries(sites)) {
     for (const [targetName, target] of Object.entries(targets)) {
       for (const ordering of orderings) {
-        if (site.eager && !(["sequential", "concurrent", "hostFirst", "hostLast"] as Ordering[]).includes(ordering)) continue;
+        if (site.eager && !(["sequential", "concurrent", "hostFirst", "hostLast"] as Ordering[]).includes(ordering))
+          continue;
         test(`${siteName} × ${targetName} × ${ordering}`, async () => {
           const log: string[] = [];
           const importer = join(dir, importerName(siteName, targetName));
@@ -143,35 +203,76 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
               results[i] = { rejected: errorName(e) };
             }
           };
-          const hostImport = () => import(target.file.startsWith("node:") ? target.file : join(dir, target.file)).then(() => "host-ok", () => "host-rejected");
+          const hostImport = () =>
+            import(target.file.startsWith("node:") ? target.file : join(dir, target.file)).then(
+              () => "host-ok",
+              () => "host-rejected",
+            );
 
           if (ordering === "hostFirst") await hostImport();
           if (ordering === "sequential" || ordering === "hostFirst" || ordering === "hostLast") {
-            for (let i = 0; i < K; i++) { graphs[i] = graph(whos[i], log); mods[i] = await graphs[i].import(importer); await settle(i); }
+            for (let i = 0; i < K; i++) {
+              graphs[i] = graph(whos[i], log);
+              mods[i] = await graphs[i].import(importer);
+              await settle(i);
+            }
           } else if (ordering === "concurrent") {
-            await Promise.all(whos.map(async (w, i) => { graphs[i] = graph(w, log); mods[i] = await graphs[i].import(importer); }));
+            await Promise.all(
+              whos.map(async (w, i) => {
+                graphs[i] = graph(w, log);
+                mods[i] = await graphs[i].import(importer);
+              }),
+            );
             await Promise.all(whos.map((_, i) => settle(i)));
           } else if (ordering === "firstRunsThenOthersExist") {
-            graphs[0] = graph(whos[0], log); mods[0] = await graphs[0].import(importer); await settle(0);
+            graphs[0] = graph(whos[0], log);
+            mods[0] = await graphs[0].import(importer);
+            await settle(0);
             const firstNs = namespaces[0];
-            for (let i = 1; i < K; i++) { graphs[i] = graph(whos[i], log); mods[i] = await graphs[i].import(importer); await settle(i); }
+            for (let i = 1; i < K; i++) {
+              graphs[i] = graph(whos[i], log);
+              mods[i] = await graphs[i].import(importer);
+              await settle(i);
+            }
             await settle(0);
             if (namespaces[0] !== firstNs) results[0] = { changedAfterOthers: true };
           } else {
-            for (let i = 0; i < K; i++) { graphs[i] = graph(whos[i], log); mods[i] = await graphs[i].import(importer); }
+            for (let i = 0; i < K; i++) {
+              graphs[i] = graph(whos[i], log);
+              mods[i] = await graphs[i].import(importer);
+            }
             if (ordering === "disposeMiddleBefore") graphs[1].dispose();
-            for (const i of ordering === "createAllThenReverse" ? [2, 1, 0] : ordering === "onlySomeRun" ? [0, 2] : [0, 1, 2]) await settle(i);
+            for (const i of ordering === "createAllThenReverse"
+              ? [2, 1, 0]
+              : ordering === "onlySomeRun"
+                ? [0, 2]
+                : [0, 1, 2])
+              await settle(i);
           }
           if (ordering === "hostLast") await hostImport();
 
           // a second dyn() in each instance: same namespace as the first, no new evaluation
           const skipped = (i: number) => ordering === "onlySomeRun" && i === 1;
-          const repeat = await Promise.all(mods.map((m: any, i: number) => skipped(i) ? "skipped" : m.dyn().then((ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]), (e: unknown) => `rejected:${errorName(e)}`)));
+          const repeat = await Promise.all(
+            mods.map((m: any, i: number) =>
+              skipped(i)
+                ? "skipped"
+                : m.dyn().then(
+                    (ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]),
+                    (e: unknown) => `rejected:${errorName(e)}`,
+                  ),
+            ),
+          );
 
           // cross-instance identity and state isolation of the dynamically imported module
           const live = namespaces.filter(Boolean);
           let isolation: unknown = "n/a";
-          if (target.mutable && live.length >= 2) { const before = live.map(ns => api(ns).n); api(live[0]).inc(); api(live[0]).inc(); isolation = live.map((ns, i) => api(ns).n - before[i]); }
+          if (target.mutable && live.length >= 2) {
+            const before = live.map(ns => api(ns).n);
+            api(live[0]).inc();
+            api(live[0]).inc();
+            isolation = live.map((ns, i) => api(ns).n - before[i]);
+          }
 
           const actual = {
             results,
@@ -193,9 +294,16 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
               const sameAsStatic = site.eager ? "n/a" : !site.hostScope;
               return { who, sameAsStatic };
             }),
-            repeat: whos.map((_, i) => (skipped(i) ? "skipped" : disposed(i) ? "rejected:TypeError" : rejection ? `rejected:${rejection}` : true)),
+            repeat: whos.map((_, i) =>
+              skipped(i) ? "skipped" : disposed(i) ? "rejected:TypeError" : rejection ? `rejected:${rejection}` : true,
+            ),
             distinctNamespaces: rejection ? 0 : site.hostScope ? 1 : liveWhos.length,
-            isolation: !target.mutable || rejection ? "n/a" : site.hostScope ? liveWhos.map(() => 2) : liveWhos.map((_, i) => (i === 0 ? 2 : 0)),
+            isolation:
+              !target.mutable || rejection
+                ? "n/a"
+                : site.hostScope
+                  ? liveWhos.map(() => 2)
+                  : liveWhos.map((_, i) => (i === 0 ? 2 : 0)),
             // every graph instance evaluates the target exactly once: at the importer's static import (all
             // non-eager sites import it statically as well), or at its dynamic import for eager sites
             evaluations: target.tag ? whos.map(w => `${target.tag}@${w}`).sort() : "n/a",
@@ -395,10 +503,18 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
       for (let i = 0; i < 2; i++) {
         graphs[i] = graph(whos[i], log);
         mods[i] = await graphs[i].import(join(dir, "hot.mjs"));
-        mods[i].d0(HOT); mods[i].d2(HOT); mods[i].viaNamespace(HOT);
+        mods[i].d0(HOT);
+        mods[i].d2(HOT);
+        mods[i].viaNamespace(HOT);
       }
-      mods[0].d0(HOT); mods[0].d2(HOT); mods[0].viaNamespace(HOT);
-      const compilesAfterTwo = { d0: jsc.numberOfDFGCompiles(mods[0].d0), d2: jsc.numberOfDFGCompiles(mods[0].d2), viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace) };
+      mods[0].d0(HOT);
+      mods[0].d2(HOT);
+      mods[0].viaNamespace(HOT);
+      const compilesAfterTwo = {
+        d0: jsc.numberOfDFGCompiles(mods[0].d0),
+        d2: jsc.numberOfDFGCompiles(mods[0].d2),
+        viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace),
+      };
       const reads: unknown[] = [];
       for (let i = 2; i < whos.length; i++) {
         graphs[i] = graph(whos[i], log);
@@ -406,7 +522,11 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
         const n = order === "heatEachInstance" ? HOT : 1000;
         reads.push([mods[i].d0(n), mods[i].d2(n), mods[i].viaNamespace(n), mods[i].setThenRead(i, 10)]);
       }
-      const compilesAfterEight = { d0: jsc.numberOfDFGCompiles(mods[0].d0), d2: jsc.numberOfDFGCompiles(mods[0].d2), viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace) };
+      const compilesAfterEight = {
+        d0: jsc.numberOfDFGCompiles(mods[0].d0),
+        d2: jsc.numberOfDFGCompiles(mods[0].d2),
+        viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace),
+      };
       expect({ reads, compilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
         reads: whos.slice(2).map((w, k) => [`${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:${k + 2}|K:${w}`]),
         compilesAfterEight: compilesAfterTwo,
@@ -710,7 +830,11 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
   } as const;
   const HOT = 100_000;
 
-  for (const sequence of [["v1", "v2", "v2"], ["v1", "v2", "v3", "v1"], ["v1", "v1", "v2", "v2", "v1"]] as const) {
+  for (const sequence of [
+    ["v1", "v2", "v2"],
+    ["v1", "v2", "v3", "v1"],
+    ["v1", "v1", "v2", "v2", "v1"],
+  ] as const) {
     for (const heat of ["heatBeforeEdit", "noHeat"] as const) {
       test(`dependency ${sequence.join("→")} × ${heat}`, async () => {
         const dir = fixture({ "importer.mjs": importer, "dep.mjs": versions.v1 });
@@ -723,7 +847,12 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
           graphs[i] = graph(`d${i}`, log);
           mods[i] = await graphs[i].import(join(dir, "importer.mjs"));
           const n = heat === "heatBeforeEdit" ? HOT : 3;
-          observed.push({ read: mods[i].read(n), viaNamespace: mods[i].viaNamespace(n), keys: mods[i].keys(), lazy: await mods[i].lazy() });
+          observed.push({
+            read: mods[i].read(n),
+            viaNamespace: mods[i].viaNamespace(n),
+            keys: mods[i].keys(),
+            lazy: await mods[i].lazy(),
+          });
         }
         // earlier instances are unaffected by later edits
         const again = mods.map(m => ({ read: m.read(5), viaNamespace: m.viaNamespace(5), keys: m.keys() }));
@@ -747,16 +876,28 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
       const log: string[] = [];
       const graphs: Graph[] = [];
       const mods: any[] = [];
-      const shrinkAndIdle = async () => { Bun.shrink(); await new Promise<void>(r => setTimeout(r, 0)); await new Promise<void>(r => setImmediate(r)); };
+      const shrinkAndIdle = async () => {
+        Bun.shrink();
+        await new Promise<void>(r => setTimeout(r, 0));
+        await new Promise<void>(r => setImmediate(r));
+      };
       const observed: unknown[] = [];
       for (let i = 0; i < 4; i++) {
         graphs[i] = graph(`s${i}`, log);
         mods[i] = await graphs[i].import(join(dir, "importer.mjs"));
         observed.push(mods[i].read(HOT));
-        if ((when === "afterFirstInstance" && i === 0) || (when === "afterSecondInstance" && i === 1) || (when === "twice" && (i === 0 || i === 2))) await shrinkAndIdle();
+        if (
+          (when === "afterFirstInstance" && i === 0) ||
+          (when === "afterSecondInstance" && i === 1) ||
+          (when === "twice" && (i === 0 || i === 2))
+        )
+          await shrinkAndIdle();
       }
       const again = mods.map(m => [m.read(HOT), m.viaNamespace(3)]);
-      expect({ observed, again }).toEqual({ observed: ["x1:1", "x1:1", "x1:1", "x1:1"], again: Array(4).fill(["x1:1", "x1:1"]) });
+      expect({ observed, again }).toEqual({
+        observed: ["x1:1", "x1:1", "x1:1", "x1:1"],
+        again: Array(4).fill(["x1:1", "x1:1"]),
+      });
       for (const g of graphs) g.dispose();
       rmSync(dir, { recursive: true, force: true });
     });

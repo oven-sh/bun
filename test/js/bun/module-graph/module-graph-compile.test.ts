@@ -5,12 +5,11 @@
 // a Worker that does the same, and prints one JSON document that the test compares in full.
 //
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { rmSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-const enabled =
-  typeof (Bun as any).unsafe?.ModuleGraph === "function";
+const enabled = typeof (Bun as any).unsafe?.ModuleGraph === "function";
 
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
 const sources: Record<string, string> = {
@@ -377,7 +376,10 @@ for (const combo of combos) {
 
     test("graphs with live timers are disposed or exited and the executable still exits by itself", async () => {
       expect(await run("timers")).toEqual({
-        parsed: { whos: ["tick0", "tick1", "tick2", "tick3"], log: ["ticker@tick0", "ticker@tick1", "ticker@tick2", "ticker@tick3"] },
+        parsed: {
+          whos: ["tick0", "tick1", "tick2", "tick3"],
+          log: ["ticker@tick0", "ticker@tick1", "ticker@tick2", "ticker@tick3"],
+        },
         exitCode: 0,
         stderr: "",
       });
@@ -385,7 +387,17 @@ for (const combo of combos) {
 
     test("process.exit inside a graph: at load and later; onExit codes; other graphs and the executable continue", async () => {
       expect(await run("exit")).toEqual({
-        parsed: { atLoad: "TypeError", before: "exit-later", after: "TypeError", survivor: "survivor", codes: [["g1", 7], ["g2", 5]], log: ["exits@exit-at-load", "exits@exit-later", "exits@survivor"] },
+        parsed: {
+          atLoad: "TypeError",
+          before: "exit-later",
+          after: "TypeError",
+          survivor: "survivor",
+          codes: [
+            ["g1", 7],
+            ["g2", 5],
+          ],
+          log: ["exits@exit-at-load", "exits@exit-later", "exits@survivor"],
+        },
         exitCode: 0,
         stderr: "",
       });
@@ -394,7 +406,10 @@ for (const combo of combos) {
     test("a module on disk next to the executable loads into graphs and imports embedded code by URL", async () => {
       expect(await run("external")).toEqual({
         parsed: {
-          out: [{ who: "x0", instanceTag: "x0", instanceMeta: "<embedded>/instance.js" }, { who: "x1", instanceTag: "x1", instanceMeta: "<embedded>/instance.js" }],
+          out: [
+            { who: "x0", instanceTag: "x0", instanceMeta: "<embedded>/instance.js" },
+            { who: "x1", instanceTag: "x1", instanceMeta: "<embedded>/instance.js" },
+          ],
           hostView: { who: "host", instanceTag: "host", instanceMeta: "<embedded>/instance.js" },
           log: ["external@x0", "instance@x0", "external@x1", "instance@x1"],
         },

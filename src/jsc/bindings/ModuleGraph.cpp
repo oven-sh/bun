@@ -184,7 +184,6 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleGraphProcess, (JSGlobalObject * globalObj
     return JSValue::encode(graph ? graph->field(JSModuleGraph::Field::Process) : jsUndefined());
 }
 
-
 // The ModuleGraph whose code produced `error`, if any: the innermost JS frame
 // of the captured stack whose callee runs in a graph. Works for JSC::Exception
 // (sync throws, any value) and ErrorInstance reasons (rejections with an Error).
@@ -365,7 +364,6 @@ extern "C" JSC::EncodedJSValue Bun__ModuleGraph__spawnCwd(JSC::JSGlobalObject* l
 //   const g = new Bun.unsafe.ModuleGraph({ env, cwd, globals: { ... } })
 //   const exports = await g.import('/abs/or/relative.mjs')
 //   g.dispose()
-
 
 // Builds the default per-graph globals from { env, cwd, onExit, globals }:
 // a `process` view with its own env/cwd/exit, a globalThis/global shadow whose
@@ -1234,9 +1232,20 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleGraphWriteOverlay, (JSGlobalObject * glob
 // so it is configured when the global object is created -- before any module
 // links -- and the preset provides exactly these keys.
 static constexpr ASCIILiteral moduleGraphOverlayNames[] = {
-    "process"_s, "Bun"_s, "AbortSignal"_s,
-    "setTimeout"_s, "clearTimeout"_s, "setInterval"_s, "clearInterval"_s, "setImmediate"_s, "clearImmediate"_s,
-    "Worker"_s, "Function"_s, "globalThis"_s, "global"_s, "self"_s,
+    "process"_s,
+    "Bun"_s,
+    "AbortSignal"_s,
+    "setTimeout"_s,
+    "clearTimeout"_s,
+    "setInterval"_s,
+    "clearInterval"_s,
+    "setImmediate"_s,
+    "clearImmediate"_s,
+    "Worker"_s,
+    "Function"_s,
+    "globalThis"_s,
+    "global"_s,
+    "self"_s,
 };
 
 // One symbol table for every graph's overlay in this global (names in the order of
@@ -1363,18 +1372,30 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         JSObject* options = optionsValue.getObject();
         JSValue v = options->get(globalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!v.isUndefined()) { Bun::V::validateObject(scope, globalObject, v, "options.env"_s); RETURN_IF_EXCEPTION(scope, {}); }
+        if (!v.isUndefined()) {
+            Bun::V::validateObject(scope, globalObject, v, "options.env"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         v = options->get(globalObject, Identifier::fromString(vm, "cwd"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!v.isUndefined()) { Bun::V::validateString(scope, globalObject, v, "options.cwd"_s); RETURN_IF_EXCEPTION(scope, {}); }
+        if (!v.isUndefined()) {
+            Bun::V::validateString(scope, globalObject, v, "options.cwd"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         for (ASCIILiteral name : { "onExit"_s, "onError"_s }) {
             v = options->get(globalObject, Identifier::fromString(vm, name));
             RETURN_IF_EXCEPTION(scope, {});
-            if (!v.isUndefined()) { Bun::V::validateFunction(scope, globalObject, v, name == "onExit"_s ? "options.onExit"_s : "options.onError"_s); RETURN_IF_EXCEPTION(scope, {}); }
+            if (!v.isUndefined()) {
+                Bun::V::validateFunction(scope, globalObject, v, name == "onExit"_s ? "options.onExit"_s : "options.onError"_s);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
         v = options->get(globalObject, Identifier::fromString(vm, "globals"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        if (!v.isUndefined()) { Bun::V::validateObject(scope, globalObject, v, "options.globals"_s); RETURN_IF_EXCEPTION(scope, {}); }
+        if (!v.isUndefined()) {
+            Bun::V::validateObject(scope, globalObject, v, "options.globals"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
     MarkedArgumentBuffer presetArgs;
     presetArgs.append(optionsValue);

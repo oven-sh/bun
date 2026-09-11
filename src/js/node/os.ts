@@ -112,7 +112,11 @@ function bound(binding) {
     homedir: function () {
       // From code in a Bun.unsafe.ModuleGraph: HOME as that graph sees it.
       const graphProcess = $moduleGraphProcess();
-      const home = graphProcess ? (process.platform === "win32" ? graphProcess.env.USERPROFILE : graphProcess.env.HOME) : undefined;
+      const home = graphProcess
+        ? process.platform === "win32"
+          ? graphProcess.env.USERPROFILE
+          : graphProcess.env.HOME
+        : undefined;
       return home ? home : binding.homedir();
     },
     hostname: binding.hostname,
@@ -142,7 +146,11 @@ function bound(binding) {
     userInfo: function (options) {
       const info = binding.userInfo(options);
       const graphProcess = $moduleGraphProcess();
-      const home = graphProcess ? (process.platform === "win32" ? graphProcess.env.USERPROFILE : graphProcess.env.HOME) : undefined;
+      const home = graphProcess
+        ? process.platform === "win32"
+          ? graphProcess.env.USERPROFILE
+          : graphProcess.env.HOME
+        : undefined;
       if (home && info) info.homedir = options && options.encoding === "buffer" ? Buffer.from(home) : home;
       return info;
     },

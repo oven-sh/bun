@@ -262,7 +262,11 @@ declare const $requireMap: Map<string, JSCommonJSModule>;
 /** The `process` object of the Bun.unsafe.ModuleGraph whose code is on the stack, or undefined. */
 declare function $moduleGraphProcess(): NodeJS.Process | undefined;
 /** The Bun.unsafe.ModuleGraph a (bound) require function / CommonJS module belongs to, as { mainModule, requireMap, requireCache }, or undefined. */
-declare function $moduleGraphOf(requireOrModule: unknown): { mainModule: string; requireMap: Map<string, JSCommonJSModule>; requireCache: Record<string, JSCommonJSModule> } | undefined;
+declare function $moduleGraphOf(
+  requireOrModule: unknown,
+):
+  | { mainModule: string; requireMap: Map<string, JSCommonJSModule>; requireCache: Record<string, JSCommonJSModule> }
+  | undefined;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(

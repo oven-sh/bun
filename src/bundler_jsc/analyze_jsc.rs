@@ -25,8 +25,15 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
     // SourceProvider cache.
-    to_js_module_record(global_object, vm, module_loader, module_key, source_code, res)
-        .unwrap_or(core::ptr::null_mut())
+    to_js_module_record(
+        global_object,
+        vm,
+        module_loader,
+        module_key,
+        source_code,
+        res,
+    )
+    .unwrap_or(core::ptr::null_mut())
 }
 
 /// Walks the serialized body in place (layout documented on the printer's

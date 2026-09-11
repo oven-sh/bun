@@ -17,7 +17,11 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
         ],
     );
     // `Bun.unsafe.ModuleGraph` — further instances of an ES module graph in this global (ModuleGraph.cpp).
-    object.put(global, "ModuleGraph", Bun__ModuleGraph__getConstructor(global));
+    object.put(
+        global,
+        "ModuleGraph",
+        Bun__ModuleGraph__getConstructor(global),
+    );
     object
 }
 

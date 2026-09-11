@@ -5513,7 +5513,6 @@ declare module "bun" {
       [Symbol.dispose](): void;
     }
 
-
     /**
      * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *

@@ -100,7 +100,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
         $argument(1),
       );
     } catch (E) {
-      $assert(this.$requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
+      $assert(
+        this.$requireMap.$get(id) === undefined,
+        "Module " + JSON.stringify(id) + " should no longer be in the map",
+      );
       throw E;
     }
   } else {

@@ -1654,100 +1654,99 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
-    auto provider =
-        JSC::SyntheticSourceProvider::create(
-            [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
-                const JSC::Identifier& moduleKey,
-                Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
-                auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-                auto& vm = JSC::getVM(globalObject);
-                auto scope = DECLARE_THROW_SCOPE(vm);
+    auto provider = JSC::SyntheticSourceProvider::create(
+        [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+            const JSC::Identifier& moduleKey,
+            Vector<JSC::Identifier, 4>& exportNames,
+            JSC::MarkedArgumentBuffer& exportValues) -> void {
+            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
 
-                JSValue keyValue = identifierToJSValue(vm, moduleKey);
-                // The module in the cache of the loader this record was fetched for
-                // (a graph's or the global one). Created here when that cache has
-                // not seen the file yet.
-                JSModuleGraph* loadingGraph = graph.get();
-                JSMap* targetRequireMap = requireMapForLoading(globalObject, loadingGraph);
-                JSValue entry = targetRequireMap->get(globalObject, keyValue);
+            JSValue keyValue = identifierToJSValue(vm, moduleKey);
+            // The module in the cache of the loader this record was fetched for
+            // (a graph's or the global one). Created here when that cache has
+            // not seen the file yet.
+            JSModuleGraph* loadingGraph = graph.get();
+            JSMap* targetRequireMap = requireMapForLoading(globalObject, loadingGraph);
+            JSValue entry = targetRequireMap->get(globalObject, keyValue);
+            RETURN_IF_EXCEPTION(scope, {});
+            // A placeholder a require() in this cache made for the file (no
+            // source yet: require() saw the ESM registry entry and deferred to
+            // it) is loaded the same way as a missing entry.
+            JSCommonJSModule* placeholder = nullptr;
+            if (entry && entry.isCell()) {
+                placeholder = dynamicDowncast<JSCommonJSModule>(entry);
+                if (placeholder && (placeholder->hasEvaluated || !placeholder->sourceCode.isNull()))
+                    placeholder = nullptr;
+            }
+            if (!entry || !entry.isCell() || placeholder) {
+                JSString* keyString = keyValue.toString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
-                // A placeholder a require() in this cache made for the file (no
-                // source yet: require() saw the ESM registry entry and deferred to
-                // it) is loaded the same way as a missing entry.
-                JSCommonJSModule* placeholder = nullptr;
-                if (entry && entry.isCell()) {
-                    placeholder = dynamicDowncast<JSCommonJSModule>(entry);
-                    if (placeholder && (placeholder->hasEvaluated || !placeholder->sourceCode.isNull()))
-                        placeholder = nullptr;
+                JSCommonJSModule* fresh = placeholder;
+                if (!fresh) {
+                    fresh = JSCommonJSModule::create(globalObject, keyString, constructEmptyObject(globalObject), false, jsUndefined());
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (loadingGraph)
+                        fresh->m_moduleGraph.set(vm, fresh, loadingGraph);
+                    targetRequireMap->set(globalObject, keyString, fresh);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
-                if (!entry || !entry.isCell() || placeholder) {
-                    JSString* keyString = keyValue.toString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    JSCommonJSModule* fresh = placeholder;
-                    if (!fresh) {
-                        fresh = JSCommonJSModule::create(globalObject, keyString, constructEmptyObject(globalObject), false, jsUndefined());
-                        RETURN_IF_EXCEPTION(scope, {});
-                        if (loadingGraph)
-                            fresh->m_moduleGraph.set(vm, fresh, loadingGraph);
-                        targetRequireMap->set(globalObject, keyString, fresh);
-                        RETURN_IF_EXCEPTION(scope, {});
-                    }
-                    auto specifier = keyString->value(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    // The ESM registry already has this file (that is why we are
-                    // here), so go straight to transpile-as-CommonJS + evaluate.
-                    BunString referrer = BunStringEmpty;
-                    BunString specifierString = Bun::toString(specifier);
-                    ErrorableResolvedSource resolved;
-                    Bun::fetchCommonJSModuleNonBuiltin<false>(globalObject->bunVM(), vm, globalObject, &specifierString, keyString, &referrer, nullptr, &resolved, fresh, specifier, BunLoaderTypeNone, scope);
-                    if (auto* exception = scope.exception()) {
-                        if (vm.hasPendingTerminationException()) [[unlikely]]
-                            return;
-                        (void)scope.tryClearException();
-                        targetRequireMap->remove(globalObject, keyString);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        scope.throwException(globalObject, exception);
+                auto specifier = keyString->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                // The ESM registry already has this file (that is why we are
+                // here), so go straight to transpile-as-CommonJS + evaluate.
+                BunString referrer = BunStringEmpty;
+                BunString specifierString = Bun::toString(specifier);
+                ErrorableResolvedSource resolved;
+                Bun::fetchCommonJSModuleNonBuiltin<false>(globalObject->bunVM(), vm, globalObject, &specifierString, keyString, &referrer, nullptr, &resolved, fresh, specifier, BunLoaderTypeNone, scope);
+                if (auto* exception = scope.exception()) {
+                    if (vm.hasPendingTerminationException()) [[unlikely]]
                         return;
-                    }
-                    fresh->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                    (void)scope.tryClearException();
+                    targetRequireMap->remove(globalObject, keyString);
                     RETURN_IF_EXCEPTION(scope, {});
+                    scope.throwException(globalObject, exception);
                     return;
                 }
+                fresh->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                RETURN_IF_EXCEPTION(scope, {});
+                return;
+            }
 
-                if (entry) {
-                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
-                                (void)scope.tryClearException();
-
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                targetRequireMap->remove(globalObject, moduleObject->filename());
-                                RETURN_IF_EXCEPTION(scope, {});
-
-                                scope.throwException(globalObject, exception);
+            if (entry) {
+                if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
+                    if (!moduleObject->hasEvaluated) {
+                        evaluateCommonJSModuleOnce(
+                            vm,
+                            globalObject,
+                            moduleObject,
+                            moduleObject->m_dirname.get(),
+                            moduleObject->m_filename.get());
+                        if (auto exception = scope.exception()) {
+                            if (vm.hasPendingTerminationException()) [[unlikely]]
                                 return;
-                            }
-                        }
+                            (void)scope.tryClearException();
 
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, {});
+                            // On error, remove the module from the require map
+                            // so that it can be re-evaluated on the next require.
+                            targetRequireMap->remove(globalObject, moduleObject->filename());
+                            RETURN_IF_EXCEPTION(scope, {});
+
+                            scope.throwException(globalObject, exception);
+                            return;
+                        }
                     }
-                } else {
-                    // require map was cleared of the entry
+
+                    moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
-            },
-            sourceOrigin,
-            sourceURL);
+            } else {
+                // require map was cleared of the entry
+            }
+        },
+        sourceOrigin,
+        sourceURL);
     return JSC::SourceCode(WTF::move(provider));
 }
 

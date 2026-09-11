@@ -24,7 +24,9 @@
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
 
-namespace Bun { class JSModuleGraph; }
+namespace Bun {
+class JSModuleGraph;
+}
 extern "C" Bun::JSModuleGraph* Bun__ambientModuleGraph(JSC::JSGlobalObject*);
 
 namespace Bun {

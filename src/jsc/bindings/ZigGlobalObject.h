@@ -525,11 +525,11 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp) */                                                           \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphPreset)                                                     \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                   \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                 \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTable)                                         \
-    V(public, WriteBarrier<Unknown>, m_commonJSWrapperTemplates)                                              \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphPreset)                                                    \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                  \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTable)                                        \
+    V(public, WriteBarrier<Unknown>, m_commonJSWrapperTemplates)                                             \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \

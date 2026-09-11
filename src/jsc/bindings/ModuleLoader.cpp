@@ -49,7 +49,8 @@ namespace Bun {
 using namespace JSC;
 
 // JSON / TOML / JSONC module provider (each loader that fetches the file gets its own value).
-enum class DataModuleShape { Value, DefaultOnly };
+enum class DataModuleShape { Value,
+    DefaultOnly };
 static Ref<JSC::SyntheticSourceProvider> createDataModuleProvider(Zig::GlobalObject* globalObject, JSC::JSValue value, String&& specifier, DataModuleShape shape)
 {
     auto function = shape == DataModuleShape::Value ? Zig::generateJSValueModuleSourceCode(globalObject, value) : Zig::generateJSValueExportDefaultObjectSourceCode(globalObject, value);
@@ -1045,7 +1046,8 @@ static JSValue fetchESMSourceCode(
                         process = graphProcess.getObject();
                 }
                 return Zig::generateNodeProcessModule(lexicalGlobalObject, process, exportNames, exportValues);
-            }, JSC::SourceOrigin(), WTF::move(moduleKey));
+            },
+                JSC::SourceOrigin(), WTF::move(moduleKey));
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
         }
         switch (tag) {
@@ -1064,8 +1066,8 @@ static JSValue fetchESMSourceCode(
             BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
 #undef CASE
 
-#define LAZY_CASE(str, name)                                                                                                                          \
-    case (SyntheticModuleType::name): {                                                                                                               \
+#define LAZY_CASE(str, name)                                                                                                                         \
+    case (SyntheticModuleType::name): {                                                                                                              \
         auto provider = JSC::SyntheticSourceProvider::createWithLazyExports(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey)); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));                                  \
     }

@@ -817,3 +817,24 @@ describe("crc32", () => {
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
   });
 });
+
+describe("sync convenience methods reject non-buffer input with node's message", () => {
+  const expected =
+    'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.';
+
+  it.each([
+    ["deflateSync", 123, "Received type number (123)"],
+    ["gunzipSync", {}, "Received an instance of Object"],
+    ["brotliCompressSync", [1, 2, 3], "Received an instance of Array"],
+    ["zstdDecompressSync", null, "Received null"],
+    ["inflateRawSync", undefined, "Received undefined"],
+  ])("%s(%p)", (method, input, received) => {
+    expect(() => zlib[method](input)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `${expected} ${received}`,
+      }),
+    );
+  });
+});

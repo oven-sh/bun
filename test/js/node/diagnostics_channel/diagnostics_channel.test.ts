@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -40,7 +40,12 @@ describe("Channel", () => {
     expect(() => {
       // @ts-expect-error
       channel(null);
-    }).toThrow(/"channel" argument must be of type string or symbol/);
+    }).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "channel" argument must be one of type string or symbol. Received null',
+      }),
+    );
 
     checkCalls();
   });
@@ -154,9 +159,29 @@ describe("Channel", () => {
     expect(() => {
       // @ts-expect-error
       subscribe(null);
-    }).toThrow(/"channel" argument must be of type/);
+    }).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "channel" argument must be one of type string or symbol. Received null',
+      }),
+    );
 
     checkCalls();
+  });
+
+  test("rejects a channel name that is neither a string nor a symbol with node's message", () => {
+    expect(() => channel(123 as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "channel" argument must be one of type string or symbol. Received type number (123)',
+      }),
+    );
+    expect(() => unsubscribe({} as any, () => {})).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "channel" argument must be one of type string or symbol. Received an instance of Object',
+      }),
+    );
   });
 
   // test-diagnostics-channel-safe-subscriber-errors.js
@@ -358,6 +383,23 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("rejects a nameOrChannels argument that is neither a string nor an object with node's message", () => {
+    expect(() => tracingChannel(123 as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object. Received type number (123)',
+      }),
+    );
+    expect(() => tracingChannel(undefined as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object. Received undefined',
+      }),
+    );
+  });
 });
 
 const mocks = new Map();

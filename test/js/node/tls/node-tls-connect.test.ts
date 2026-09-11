@@ -2032,6 +2032,15 @@ describe.concurrent("a write that is the first to observe the peer's reset fails
       const port = Number(process.env.TLS_PEER_PORT);
       const events = [];
       let write;
+      let reported = false;
+      function report(hadError) {
+        if (reported) return;
+        reported = true;
+        fs.writeSync(1, JSON.stringify({ write, events, hadError }) + "\\n");
+        process.exit(0);
+      }
+      // Report whatever happened if 'close' never fires.
+      setTimeout(report, 20000, "no close");
       function run(socket) {
         socket.on("error", function onError(err) {
           events.push("error:" + err.code + ":" + err.syscall);
@@ -2039,10 +2048,7 @@ describe.concurrent("a write that is the first to observe the peer's reset fails
         socket.on("end", function onEnd() {
           events.push("end");
         });
-        socket.on("close", function onClose(hadError) {
-          fs.writeSync(1, JSON.stringify({ write, events, hadError }) + "\\n");
-          process.exit(0);
-        });
+        socket.on("close", report);
         socket.once("data", function onData() {
           // Block the loop until the parent has reset the connection. Nothing
           // is polled in between, so the write below meets the reset first.

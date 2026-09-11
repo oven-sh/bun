@@ -857,6 +857,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
   if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
     loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
   }
+  if (loop_ssl_data->ssl_send_error_owner == old_s) {
+    loop_ssl_data->ssl_send_error_owner = new_s;
+  }
 }
 
 static int BIO_s_custom_read(BIO *bio, char *dst, int length) {
@@ -2913,6 +2916,7 @@ int us_internal_ssl_write_check_error(struct us_socket_t *s, const char *data, i
   int send_error = loop_ssl_data->ssl_send_error;
   loop_ssl_data->ssl_send_error_owner = outer_owner;
   loop_ssl_data->ssl_send_error = outer_send_error;
+  s = us_internal_socket_follow_adopted(s);
   /* Before the handshake has been reported, the handshake dispatch carries
    * the failure and its reason. */
   if (send_error && fatal_write_error && us_internal_ssl_handshake_callback_has_fired(s)) {

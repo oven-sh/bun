@@ -4744,6 +4744,15 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
     const script = `
       const fs = require("node:fs");
       const writes = [];
+      let reported = false;
+      function report(closed) {
+        if (reported) return;
+        reported = true;
+        fs.writeSync(1, JSON.stringify({ writes, closed }) + "\\n");
+        process.exit(0);
+      }
+      // Report whatever happened if close() never runs.
+      setTimeout(report, 20000, false);
       Bun.connect({
         hostname: "127.0.0.1",
         port: Number(process.env.PEER_PORT),
@@ -4762,8 +4771,7 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
           },
           error() {},
           close() {
-            fs.writeSync(1, JSON.stringify({ writes }) + "\\n");
-            process.exit(0);
+            report(true);
           },
         },
       });
@@ -4795,7 +4803,7 @@ describe.concurrent("write() that is the first to observe the peer's reset retur
       reset,
       result: JSON.parse(lines[lines.length - 1]),
       failureDetail: exitCode === 0 ? "" : stderr,
-    }).toEqual({ reset: true, result: { writes: [-1, -1] }, failureDetail: "" });
+    }).toEqual({ reset: true, result: { writes: [-1, -1], closed: true }, failureDetail: "" });
     expect(exitCode).toBe(0);
   });
 });

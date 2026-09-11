@@ -104,28 +104,6 @@ static WTF::String formatFunctionName(const WTF::String& name, const JSC::Sampli
     return displayName;
 }
 
-// Helper to format a location string from URL and line number
-static WTF::String formatLocation(const WTF::String& url, int lineNumber)
-{
-    if (url.isEmpty())
-        return "[native code]"_s;
-
-    // Extract path from file:// URL using WTF::URL
-    WTF::String path = url;
-    WTF::URL parsedUrl { url };
-    if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
-        path = parsedUrl.fileSystemPath();
-
-    if (lineNumber >= 0) {
-        WTF::StringBuilder sb;
-        sb.append(path);
-        sb.append(':');
-        sb.append(lineNumber);
-        return sb.toString();
-    }
-    return path;
-}
-
 // Helper to format time in human-readable form
 static WTF::String formatTime(double microseconds)
 {
@@ -296,6 +274,11 @@ struct ProfileData {
     // Wall clock time (microseconds since the Unix epoch) of the last sample
     // folded in. Both formats measure deltas from it.
     double lastTime { 0.0 };
+
+    // URL parsing dominates the per-frame cost. A profile sees few distinct
+    // URLs, so memoize the two conversions by input string.
+    WTF::HashMap<WTF::String, WTF::String> normalizedURLs;
+    WTF::HashMap<WTF::String, WTF::String> fileSystemPaths;
 };
 
 static thread_local ProfileData* s_profileData = nullptr;
@@ -334,13 +317,44 @@ void startCPUProfiler(JSC::VM& vm)
     s_isProfilerRunning = true;
 }
 
+// Helper to format a location string from URL and line number
+static WTF::String formatLocation(ProfileData& data, const WTF::String& url, int lineNumber)
+{
+    if (url.isEmpty())
+        return "[native code]"_s;
+
+    // Extract path from file:// URL using WTF::URL
+    auto cached = data.fileSystemPaths.ensure(url, [&] {
+        WTF::URL parsedUrl { url };
+        if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
+            return parsedUrl.fileSystemPath();
+        return url;
+    });
+    const WTF::String& path = cached.iterator->value;
+
+    if (lineNumber >= 0) {
+        WTF::StringBuilder sb;
+        sb.append(path);
+        sb.append(':');
+        sb.append(lineNumber);
+        return sb.toString();
+    }
+    return path;
+}
+
 // Absolute file path → `file://` URL. Chrome DevTools expects `callFrame.url`
 // to be a proper URL; leaving the raw path breaks source-view resolution.
 // See #29240.
-static void normalizeURL(WTF::String& u)
+static void normalizeURL(ProfileData& data, WTF::String& u)
 {
     if (u.isEmpty())
         return;
+    auto cached = data.normalizedURLs.find(u);
+    if (cached != data.normalizedURLs.end()) {
+        u = cached->value;
+        return;
+    }
+    WTF::String input = u;
     bool isAbsolutePath = false;
     if (u[0] == '/') {
         isAbsolutePath = true;
@@ -353,6 +367,7 @@ static void normalizeURL(WTF::String& u)
     }
     if (isAbsolutePath)
         u = WTF::URL::fileURLWithFileSystemPath(u).string();
+    data.normalizedURLs.add(input, u);
 }
 
 // Fold one batch of stack traces into `data`. The caller holds the JSLock
@@ -456,7 +471,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
 
                     // Normalize `url` to a `file://` URL now that any
                     // sourcemap rewriting is done.
-                    normalizeURL(url);
+                    normalizeURL(data, url);
 
                     if (frame.hasExpressionInfo()) {
                         // Sample position for positionTicks. Use a throwaway
@@ -487,7 +502,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
                             }
 #endif
                         }
-                        normalizeURL(sampleURL);
+                        normalizeURL(data, sampleURL);
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
@@ -561,7 +576,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
                     auto* provider = std::get<0>(sourceProviderAndID);
                     if (provider) {
                         url = provider->sourceURL();
-                        normalizeURL(url);
+                        normalizeURL(data, url);
                     }
 
                     if (frame.hasExpressionInfo()) {
@@ -577,7 +592,7 @@ static void appendStackTraces(JSC::VM& vm, ProfileData& data, WTF::Vector<JSC::S
                     }
                 }
 
-                WTF::String location = formatLocation(url, lineNumber);
+                WTF::String location = formatLocation(data, url, lineNumber);
                 // Key uses zero-width space separator internally (not shown in output)
                 WTF::StringBuilder keyBuilder;
                 keyBuilder.append(functionName);

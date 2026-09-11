@@ -80,7 +80,14 @@ function tryConstructNativeReadable(readableStream: ReadableStream, options): Na
 // getters (highWaterMark, signal.aborted) that could otherwise start the stream
 // between the check and the transfer.
 function fromNativeHandle(bunNativePtr: NativePtr | undefined, options): NativeReadable {
-  const stream = new Readable(options);
+  let stream;
+  try {
+    stream = new Readable(options);
+  } catch (error) {
+    // The web stream is spent, so nothing else can release the handle.
+    bunNativePtr?.cancel(error);
+    throw error;
+  }
   stream._read = read;
   stream._destroy = destroy;
 

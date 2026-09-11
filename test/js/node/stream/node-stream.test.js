@@ -747,6 +747,51 @@ describe.concurrent("Readable.fromWeb over a native stream that a consumer alrea
     readable.destroy();
   });
 
+  // A throw from the Readable constructor comes after the claim, so the web stream stays
+  // locked, as in Node. Nothing else can release the handle then, so fromWeb cancels it:
+  // the pipe closes and the child's write fails. The child writes more than a pipe holds,
+  // so the result does not depend on when the pipe closes.
+  it("a throw from the Readable constructor cancels the claimed handle", async () => {
+    const child = `
+      const fs = require("fs");
+      process.stdin.once("data", () => {
+        let result = "written";
+        try {
+          for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
+        } catch (error) {
+          result = "failed:" + error.code;
+        }
+        fs.writeSync(2, result);
+        process.exit(0);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", child],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const web = proc.stdout;
+    const signal = {
+      get aborted() {
+        throw new Error("boom");
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    expect(() => Readable.fromWeb(web, { signal })).toThrow("boom");
+    expect(web.locked).toBe(true);
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "failed:EPIPE",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   it.each(Object.keys(sources))("%s after getReader() + releaseLock()", async name => {
     using dir = tempDir("fromweb-started-native", { "payload.bin": payload });
     const web = sources[name](join(String(dir), "payload.bin"));

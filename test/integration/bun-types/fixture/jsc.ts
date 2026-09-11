@@ -8,6 +8,7 @@ import {
   gcAndSweep,
   heapSize,
   heapStats,
+  loadedModules,
   memoryUsage,
   noFTL,
   noOSRExitFuzzing,
@@ -18,6 +19,7 @@ import {
   serialize,
   startSamplingProfiler,
   totalCompileTime,
+  type LoadedModule,
   type SamplingProfile,
   type SamplingProfileStackFrame,
   type SamplingProfileStackTraces,
@@ -37,6 +39,12 @@ expectType(gcAndSweep()).is<number>();
 expectType(fullGC()).is<number>();
 expectType(edenGC()).is<number>();
 expectType(heapSize()).is<number>();
+
+const evaluated = loadedModules().filter(module => module.state === "evaluated");
+expectType(evaluated).is<LoadedModule[]>();
+for (const module of evaluated) {
+  expectType(module.id).is<string>();
+}
 
 const stats = heapStats();
 expectType(stats.heapSize).is<number>();

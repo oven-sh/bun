@@ -396,6 +396,41 @@ describe("bundler", () => {
     },
   });
 
+  // A script injected with BUN_OPTIONS=--preload runs before the entry point
+  // of an existing executable and can inspect what it loaded.
+  for (const split of [false, true]) {
+    itBundled(`compile/BunOptionsEnvPreload${split ? "+splitting+bytecode" : ""}`, {
+      compile: true,
+      backend: "cli",
+      ...(split ? { splitting: true, bytecode: true, format: "esm" as const } : {}),
+      files: {
+        "/entry.ts": /* js */ `
+          console.log("entry sees", globalThis.preloaded);
+          const { lazy } = await import("./lazy.ts");
+          console.log(lazy());
+        `,
+        "/lazy.ts": /* js */ `
+          export function lazy() { return "lazy loaded"; }
+        `,
+      },
+      runtimeFiles: {
+        "/preload.js": /* js */ `
+          globalThis.preloaded = "what the preload set";
+          console.log("preload runs first");
+          process.on("exit", () => {
+            const bundled = require("bun:jsc").loadedModules().filter(m => m.id.includes("$bunfs") || m.id.includes("~BUN"));
+            console.log("bundled modules evaluated:", bundled.filter(m => m.state === "evaluated").length, "of", bundled.length);
+          });
+        `,
+      },
+      run: {
+        env: { BUN_OPTIONS: "--preload=./preload.js" },
+        setCwd: true,
+        stdout: `preload runs first\nentry sees what the preload set\nlazy loaded\nbundled modules evaluated: ${split ? "2 of 2" : "1 of 1"}`,
+      },
+    });
+  }
+
   // `bun -e` / `bun -p` start JSC in one-shot mode (no concurrent JIT, one GC
   // marker). That is decided by scanning argv, and a compiled executable's argv
   // belongs to the program, so `./app -p 8080` must keep the full configuration.

@@ -2297,6 +2297,15 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_loadedModuleStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             PropertyOffset offset;
+             auto* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 2);
+             structure = Structure::addPropertyTransition(init.vm, structure, init.vm.propertyNames->id, 0, offset);
+             ASSERT(offset == 0);
+             structure = Structure::addPropertyTransition(init.vm, structure, WebCore::builtinNames(init.vm).statePublicName(), 0, offset);
+             ASSERT(offset == 1);
+             init.set(structure);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSocketAddressDTOStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
          } },

@@ -24,7 +24,12 @@
 #include <JavaScriptCore/JIT.h>
 #include <JavaScriptCore/JSBasePrivate.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -48,6 +53,8 @@
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
+#include "JSCommonJSModule.h"
+#include "BunModuleRegistry.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -967,6 +974,133 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     return JSValue::encode(jsNumber(0));
 }
 
+namespace Bun::LoadedModules {
+
+// The module that imports the entry point (`MAIN_FILE_NAME` in VirtualMachine.rs).
+static constexpr ASCIILiteral mainWrapperSpecifier = "bun:main"_s;
+
+enum class State : uint8_t {
+    Fetching,
+    Unlinked,
+    Linking,
+    Linked,
+    Evaluating,
+    EvaluatingAsync,
+    Evaluated,
+    Errored,
+};
+static constexpr std::array stateNames { "fetching"_s, "unlinked"_s, "linking"_s, "linked"_s, "evaluating"_s, "evaluating-async"_s, "evaluated"_s, "errored"_s };
+static_assert(stateNames.size() == static_cast<size_t>(State::Errored) + 1);
+
+static State stateOf(JSC::ModuleRegistryEntry* entry)
+{
+    using EntryStatus = JSC::ModuleRegistryEntry::Status;
+    switch (entry->status()) {
+    case EntryStatus::FetchFailed:
+    case EntryStatus::InstantiationFailed:
+    case EntryStatus::EvaluationFailed:
+        return State::Errored;
+    default:
+        break;
+    }
+    auto* record = entry->record();
+    if (!record)
+        return State::Fetching;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    // A SyntheticModuleRecord is complete when it is created: it has its exports and nothing to link or run.
+    if (!cyclic)
+        return State::Evaluated;
+    if (cyclic->evaluationError())
+        return State::Errored;
+    using RecordStatus = JSC::CyclicModuleRecord::Status;
+    switch (cyclic->status()) {
+    case RecordStatus::New:
+    case RecordStatus::Unlinked:
+        return State::Unlinked;
+    case RecordStatus::Linking:
+        return State::Linking;
+    case RecordStatus::Linked:
+        return State::Linked;
+    case RecordStatus::Evaluating:
+        return State::Evaluating;
+    case RecordStatus::EvaluatingAsync:
+        return State::EvaluatingAsync;
+    case RecordStatus::Evaluated:
+        return State::Evaluated;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// `hasEvaluated` is set when the body of a CommonJS module starts; nothing records that it finished.
+static State stateOf(Bun::JSCommonJSModule* module)
+{
+    return module->hasEvaluated ? State::Evaluated : State::Unlinked;
+}
+
+// A CommonJS module an ES module imports has no record until the import has been fetched, and the one Bun makes then
+// says nothing about the body having run.
+static bool isRecordOfCommonJSModule(JSC::ModuleRegistryEntry* entry, Bun::JSCommonJSModule* module)
+{
+    return module && (!entry->record() || dynamicDowncast<JSC::SyntheticModuleRecord>(entry->record()));
+}
+
+} // namespace Bun::LoadedModules
+
+JSC_DEFINE_HOST_FUNCTION(functionLoadedModules, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    using namespace Bun::LoadedModules;
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* structure = globalObject->loadedModuleStructure();
+    MarkedArgumentBuffer stateStrings;
+    for (auto name : stateNames)
+        stateStrings.append(jsNontrivialString(vm, String(name)));
+    MarkedArgumentBuffer modules;
+    auto append = [&](JSValue id, State state) {
+        auto* object = JSFinalObject::create(vm, structure);
+        object->putDirectOffset(vm, 0, id);
+        object->putDirectOffset(vm, 1, stateStrings.at(static_cast<unsigned>(state)));
+        modules.append(object);
+    };
+
+    auto* loader = globalObject->moduleLoader();
+    auto* requireMap = globalObject->requireMap();
+    // Nothing below runs JS or adds to either table. An id in both is listed once, from the registry.
+    Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
+        if (scope.exception() || WTF::equal(specifier, mainWrapperSpecifier))
+            return;
+        auto* id = jsString(vm, String { specifier });
+        auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requireMap->get(globalObject, id));
+        if (scope.exception()) [[unlikely]]
+            return;
+        append(id, isRecordOfCommonJSModule(entry, module) ? stateOf(module) : stateOf(entry));
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, IterationKind::Entries);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue key, value;
+    while (iterator->nextKeyValue(globalObject, key, value)) {
+        auto* module = dynamicDowncast<Bun::JSCommonJSModule>(value);
+        if (!module || !key.isString())
+            continue;
+        auto atom = asString(key)->toExistingAtomString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (atom.data && loader->registryEntry(Identifier::fromUid(vm, atom.data)))
+            continue;
+        append(key, stateOf(module));
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (stateStrings.hasOverflowed() || modules.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), modules)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsNull());
@@ -975,7 +1109,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -991,6 +1125,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "samplingProfilerStackTraces"_s), functionSamplingProfilerStackTraces);
     putNativeFn(Identifier::fromString(vm, "noInline"_s), functionNeverInlineFunction);
     putNativeFn(Identifier::fromString(vm, "isRope"_s), functionIsRope);
+    putNativeFn(Identifier::fromString(vm, "loadedModules"_s), functionLoadedModules);
     putNativeFn(Identifier::fromString(vm, "memoryUsage"_s), functionCreateMemoryFootprint);
     putNativeFn(Identifier::fromString(vm, "noFTL"_s), functionNoFTL);
     putNativeFn(Identifier::fromString(vm, "noOSRExitFuzzing"_s), functionNoOSRExitFuzzing);

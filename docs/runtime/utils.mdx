@@ -1007,3 +1007,34 @@ const array = Array(1024).fill({ a: 1 });
 estimateShallowMemoryUsageOf(array);
 // => 16
 ```
+
+---
+
+## `loadedModules` in `bun:jsc`
+
+The `loadedModules` function lists the modules the ES module loader and the CommonJS loader hold, as `{ id, state }`.
+
+- `id` is the resolved specifier: an absolute path for a file, or a name like `node:fs` for a built-in module.
+- `state` says how far loading has come: `"fetching"`, `"unlinked"`, `"linking"`, `"linked"`, `"evaluating"`, `"evaluating-async"`, `"evaluated"` or `"errored"`.
+
+```js
+import { loadedModules } from "bun:jsc";
+
+const evaluated = loadedModules().filter(m => m.state === "evaluated");
+console.log(evaluated.length, "modules evaluated so far");
+```
+
+Unlike `Object.keys(require.cache)`, the list includes modules that have not finished loading and built-in modules that an ES module imported. Most built-in modules loaded with `require()` come from an internal table and are not listed.
+
+To see what an executable built with `bun build --compile` loads, preload a script that calls `loadedModules()` when the process exits:
+
+```js loaded.js icon="/icons/javascript.svg"
+process.on("exit", () => {
+  const { loadedModules } = require("bun:jsc");
+  for (const { id, state } of loadedModules()) console.log(state, id);
+});
+```
+
+```sh
+BUN_OPTIONS="--preload=./loaded.js" ./my-app
+```

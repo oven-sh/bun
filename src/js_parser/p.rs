@@ -1996,6 +1996,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ),
             );
         } else if !self.is_deoptimized_common_js() {
+            // `export var x; var x;`: the linker and the renamer use the symbol that replaced the module scope's `x`.
+            let mut r#ref = r#ref;
+            let symbol = &self.symbols[r#ref.inner_index() as usize];
+            if symbol.has_link() {
+                let mut end = symbol.link.get();
+                loop {
+                    let next = self.symbols[end.inner_index() as usize].link.get();
+                    if !next.is_valid() {
+                        break;
+                    }
+                    end = next;
+                }
+                // The name of `export default (function f(f) {})` links to its parameter.
+                let name = symbol.original_name.slice();
+                let member = self
+                    .module_scope()
+                    .get_member_with_hash(name, js_ast::Scope::get_member_hash(name));
+                if member.is_some_and(|member| member.ref_.eql(end)) {
+                    r#ref = end;
+                }
+            }
             self.named_exports.put(
                 alias,
                 js_ast::NamedExport {

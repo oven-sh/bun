@@ -56,10 +56,7 @@ fn find_scopes_to_merge(
                                 (Some(operand_sid), Some(lvalue_sid)) => {
                                     merged_scopes.union(&[operand_sid, lvalue_sid]);
                                 }
-                                // With memoization disabled the pipeline does not run
-                                // InferReactiveScopeVariables on the outermost function,
-                                // so neither identifier has a scope and there is nothing
-                                // to align. Upstream has no such arm and throws here.
+                                // No scopes exist without memoization. Upstream throws here.
                                 (None, None) if !env.enable_memoization() => {}
                                 // TS: CompilerError.invariant(operandScope != null && lvalueScope != null, ...)
                                 _ => {

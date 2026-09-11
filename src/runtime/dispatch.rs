@@ -270,11 +270,6 @@ pub(crate) fn run_task(
                 ))
             };
         }
-        #[cfg(windows)]
-        task_tag::GetAddrInfoLibuvComplete => {
-            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
-            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
-        }
         task_tag::ValkeyDeferredClose => {
             // SAFETY: boxed at the enqueue site; the arm consumes it.
             unsafe {
@@ -589,7 +584,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 60,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -725,18 +720,30 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             unsafe { crate::shell::io_writer::on_poll(&mut *h, size_or_offset as isize, hup) }
         }),
         poll_tag::DNS_RESOLVER => {
-            // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-            // `Channel::process` re-enters the resolver via c-ares callbacks.
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
-            // SAFETY: `poll` outlives this call (caller contract).
-            resolver.on_dns_poll(unsafe { &mut *poll });
+            let (fd, readable, writable) = (
+                poll_ref.fd.native(),
+                poll_ref.is_readable(),
+                poll_ref.is_writable(),
+            );
+            // SAFETY: tag set with this pointee type at `FilePoll::init`; the
+            // resolver owns the poll, so it is live. `on_dns_poll` re-enters
+            // the resolver via c-ares callbacks (and may release the poll), so
+            // it gets a `ThisPtr` and the fd, not `poll`.
+            let resolver = unsafe { bun_ptr::ThisPtr::new(owner.ptr.cast::<DNSResolver>()) };
+            DNSResolver::on_dns_poll(resolver, fd, readable, writable);
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let shared = owner.ptr.cast::<crate::dns_jsc::dns_sd::SharedConnection>();
-                crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
+                use crate::dns_jsc::dns_sd::SharedConnection;
+                let p = owner.ptr.cast::<SharedConnection>().cast_const();
+                // SAFETY: tag set at `SharedConnection::get` with `Rc::as_ptr` of the
+                // `Rc` that owns this poll (so is live); take a counted handle for the callback.
+                let this = unsafe {
+                    std::rc::Rc::increment_strong_count(p);
+                    std::rc::Rc::from_raw(p)
+                };
+                SharedConnection::on_readable(this);
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1006,11 +1013,16 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
-                timer_arm!(
-                    crate::dns_jsc::dns_sd::SharedConnection,
-                    early_out_timer,
-                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
-                )
+                use crate::dns_jsc::dns_sd::SharedConnection;
+                let p = owner!(SharedConnection, early_out_timer).cast_const();
+                // SAFETY: the container is the `Rc`-held connection whose armed timer
+                // fired (its `Drop` removes the timer first); take a counted handle for the callback.
+                let this = unsafe {
+                    std::rc::Rc::increment_strong_count(p);
+                    std::rc::Rc::from_raw(p)
+                };
+                SharedConnection::on_early_out(this);
+                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1020,10 +1032,11 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // `check_timeouts` re-enters via `ares_process_fd` and may release
+        // refs on the resolver, hence the `ThisPtr`.
         EventLoopTimerTag::DNSResolver => {
             timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(&*now, &*vm)
+                DNSResolver::check_timeouts(bun_ptr::ThisPtr::new(c), &*now, &*vm)
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1294,12 +1307,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }
         // ── Windows-only producers ───────────────────────────────────────
-        task_tag::GetAddrInfoLibuvComplete => {
-            #[cfg(windows)]
-            release!(crate::dns_jsc::LibuvCompleteHolder);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
         task_tag::WindowsNamedPipeContext => {
             #[cfg(windows)]
             release!(crate::socket::WindowsNamedPipeContext);

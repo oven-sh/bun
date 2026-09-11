@@ -106,6 +106,12 @@ unsafe impl JsAffine for () {}
 // SAFETY: see the group note above.
 unsafe impl JsAffine for bool {}
 // SAFETY: see the group note above.
+unsafe impl JsAffine for u8 {}
+// SAFETY: a `RefPtr` to an intrusively-refcounted `T` must be released where
+// `T`'s count may be touched — for the single-threaded counts, `T`'s own
+// thread; a job's `Js` side is exactly that.
+unsafe impl<T: bun_ptr::AnyRefCounted> JsAffine for bun_ptr::RefPtr<T> {}
+// SAFETY: see the group note above.
 unsafe impl<T: JsAffine> JsAffine for Option<T> {}
 // SAFETY: see the group note above.
 unsafe impl<T: JsAffine> JsAffine for Box<T> {}

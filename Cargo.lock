@@ -334,6 +334,7 @@ dependencies = [
  "bun_core",
  "bun_libuv_sys",
  "bun_opaque",
+ "bun_ptr",
  "libc",
  "strum",
 ]
@@ -1574,6 +1575,7 @@ dependencies = [
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
+ "bun_ptr",
  "bun_windows_sys",
  "bun_wyhash",
  "bytemuck",

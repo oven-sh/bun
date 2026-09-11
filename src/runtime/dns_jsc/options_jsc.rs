@@ -5,11 +5,11 @@ use bun_jsc::{
     ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
 
+use bun_dns::address_to_string;
 use bun_dns::{
     BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options,
-    PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
+    PROTOCOL_MAP, Protocol, ResultList, SOCKET_TYPE_MAP, SocketType,
 };
-use bun_dns::{addr_info_count, address_to_string};
 // `FromJSError` is the union of all the per-field `Invalid*` variants plus
 // `JSError`. The enum lives in `bun_dns` (which has no `bun_jsc` dep), so the
 // `JsError → JSError` mapping is done locally via the `js()` helper below.
@@ -188,31 +188,8 @@ fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, F
     Err(FromJSError::InvalidBackend)
 }
 
-pub(crate) fn result_any_to_js(
-    this: &ResultAny,
-    global: &JSGlobalObject,
-) -> JsResult<Option<JSValue>> {
-    Ok(match this {
-        ResultAny::Addrinfo(addrinfo) => {
-            // LIFETIMES.tsv: GetAddrInfo.Result.Any.addrinfo is FFI → *mut libc::addrinfo
-            // (nullable raw pointer, no Option wrapper).
-            let addrinfo: *mut super::netc::addrinfo = *addrinfo;
-            if addrinfo.is_null() {
-                return Ok(None);
-            }
-            // SAFETY: addrinfo is a non-null *mut libc::addrinfo owned by the
-            // resolver; valid for the duration of this call.
-            Some(addr_info_to_js_array(unsafe { &*addrinfo }, global)?)
-        }
-        ResultAny::List(list) => 'brk: {
-            let array = JSValue::create_empty_array(global, list.len())?;
-            let items: &[GaiResult] = list.as_slice();
-            for (i, item) in (0_u32..).zip(items.iter()) {
-                array.put_index(global, i, result_to_js(item, global)?)?;
-            }
-            break 'brk Some(array);
-        }
-    })
+pub(crate) fn result_list_to_js(list: &ResultList, global: &JSGlobalObject) -> JsResult<JSValue> {
+    JSValue::create_array_from_iter(global, list.iter(), |r| result_to_js(r, global))
 }
 
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -238,28 +215,4 @@ pub(crate) fn address_to_js(
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     address_to_string(address).into_js(global)
-}
-
-fn addr_info_to_js_array(
-    addr_info: &super::netc::addrinfo,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global, addr_info_count(addr_info) as usize)?;
-
-    {
-        let mut j: u32 = 0;
-        let mut current: *const super::netc::addrinfo = addr_info;
-        // SAFETY: `current` walks the getaddrinfo(3) singly-linked result list;
-        // each node and its `ai_next` are valid until freeaddrinfo is called by
-        // the owner (which outlives this call).
-        while let Some(this_node) = unsafe { current.as_ref() } {
-            if let Some(result) = GaiResult::from_addr_info(this_node) {
-                array.put_index(global, j, result_to_js(&result, global)?)?;
-                j += 1;
-            }
-            current = this_node.ai_next;
-        }
-    }
-
-    Ok(array)
 }

@@ -256,6 +256,10 @@ describe("quoted strings do not depend on the string's internal representation",
     expect(Bun.inspect({ 'k"\x1b\\': 1, 'k"\x1b\\ 日本 😎': 2 })).toBe(
       '{\n  "k\\"\\u001B\\\\": 1,\n  "k\\"\\u001B\\\\ 日本 😎": 2,\n}',
     );
+    // Invisible separators and lone surrogates are escaped, as in a string value.
+    expect(Bun.inspect({ "a\n\u2028\u2029\ufeff": 1, "\ud800b\udc00": 2 })).toBe(
+      '{\n  "a\\n\\u2028\\u2029\\uFEFF": 1,\n  "\\uD800b\\uDC00": 2,\n}',
+    );
     // URLSearchParams and FormData print their names the same way.
     expect(Bun.inspect(new URLSearchParams([['k"\x1b\\ 日本 😎', "v"]]))).toBe(
       'URLSearchParams {\n  "k\\"\\u001B\\\\ 日本 😎": "v",\n}',

@@ -1265,6 +1265,22 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     Ok(())
 }
 
+/// `write_json_string` for a string whose encoding is known only at run time, such as a JS string.
+/// Equal strings print the same in every encoding.
+pub fn write_json_string_encoded<W: Write + ?Sized>(
+    input: bun_core::EncodedSlice<'_>,
+    writer: &mut W,
+) -> crate::Result<()> {
+    let bytes = input.byte_slice();
+    if input.is_16bit() {
+        write_json_string::<_, { Encoding::Utf16 }>(bytes, writer)
+    } else if input.is_utf8() {
+        write_json_string::<_, { Encoding::Utf8 }>(bytes, writer)
+    } else {
+        write_json_string::<_, { Encoding::Latin1 }>(bytes, writer)
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.

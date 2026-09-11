@@ -2703,14 +2703,7 @@ pub mod formatter {
 
         /// Writes `str` as a quoted JSON string, the same way for every encoding.
         pub(crate) fn write_json_string(&mut self, str: EncodedSlice<'_>) {
-            let encoding = if str.is_16bit() {
-                JSPrinter::Encoding::Utf16
-            } else if str.is_utf8() {
-                JSPrinter::Encoding::Utf8
-            } else {
-                JSPrinter::Encoding::Latin1
-            };
-            if JSPrinter::write_json_string(str.byte_slice(), self.ctx, encoding).is_err() {
+            if bun_js_printer::write_json_string_encoded(str, self.ctx).is_err() {
                 self.failed = true;
             }
         }

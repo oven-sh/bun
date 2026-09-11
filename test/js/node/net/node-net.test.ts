@@ -758,6 +758,8 @@ describe.concurrent("destroy() inside 'connectionAttempt'", () => {
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
       const port = server.address().port;
+      // Two distinct addresses keep the autoSelectFamily path on internalConnectMultiple: a lookup that resolves to
+      // one address falls back to internalConnect. The first attempt targets the server.
       const lookup = (_host, opts, cb) =>
         process.nextTick(
           cb,
@@ -765,7 +767,7 @@ describe.concurrent("destroy() inside 'connectionAttempt'", () => {
           opts.all
             ? [
                 { address: "127.0.0.1", family: 4 },
-                { address: "127.0.0.1", family: 4 },
+                { address: "::1", family: 6 },
               ]
             : "127.0.0.1",
           4,

@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::HashMap;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, redacted};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
@@ -478,7 +478,7 @@ impl WhyCommand {
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),
-                BStr::new(&target_version.version)
+                redacted(BStr::new(&target_version.version))
             );
 
             if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
@@ -553,12 +553,12 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     } else {
         bun_core::pretty!("{}", BStr::new(&package.name));
         if !package.version.is_empty() {
-            bun_core::pretty!("<d>@{}<r>", BStr::new(&package.version));
+            bun_core::pretty!("<d>@{}<r>", redacted(BStr::new(&package.version)));
         }
     }
 
     if !package.spec.is_empty() {
-        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
+        bun_core::prettyln!(" <d>(requires {})<r>", redacted(BStr::new(&package.spec)));
     } else {
         bun_core::prettyln!("");
     }

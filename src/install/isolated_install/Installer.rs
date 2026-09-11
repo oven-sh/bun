@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::fmt::redacted;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -275,7 +276,7 @@ impl<'a> Installer<'a> {
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
                     bstr::BStr::new(name),
-                    resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    redacted(resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     bstr::BStr::new(download_error_reason(err)),
                     bstr::BStr::new(url),
                 ),
@@ -347,7 +348,7 @@ impl<'a> Installer<'a> {
                     "failed to link package: {}@{}",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        redacted(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -357,7 +358,7 @@ impl<'a> Installer<'a> {
                     "failed to symlink dependencies for package: {}@{}",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        redacted(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -366,7 +367,7 @@ impl<'a> Installer<'a> {
                     "failed to patch package: {}@{}",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        redacted(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
@@ -377,7 +378,7 @@ impl<'a> Installer<'a> {
                     "failed to link binaries for package: {}@{}",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        redacted(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                     ),
                 );
             }
@@ -386,7 +387,7 @@ impl<'a> Installer<'a> {
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        redacted(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto)),
                         bstr::BStr::new(download_error_reason(dl.err)),
                         bstr::BStr::new(&dl.url),
                     ),

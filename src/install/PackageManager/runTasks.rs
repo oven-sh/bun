@@ -28,7 +28,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, redacted};
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
@@ -783,9 +783,11 @@ fn run_tasks_erased(
                                 "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
-                                extract
-                                    .resolution
-                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                                redacted(
+                                    extract
+                                        .resolution
+                                        .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                ),
                                 task.retried,
                                 manager.options.max_retry_count,
                             );
@@ -854,9 +856,11 @@ fn run_tasks_erased(
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            redacted(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -866,9 +870,11 @@ fn run_tasks_erased(
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            redacted(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {

@@ -4771,14 +4771,17 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
               data() {},
             },
           });
-          // The accepted socket is reset before this side's open() runs, so the connect
-          // can be reported as failed. Either way the server side has been dispatched.
-          const peer = Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }).then(
-            socket => socket,
-            () => null,
-          );
+          // The client is not awaited. Its socket is reset by the server, so the connect may
+          // resolve or reject, and on kqueue it may never settle: the client's connect
+          // completion is a one-shot write filter that can arrive in the same kevent batch as
+          // the accept, and the nested tick in open() drops the rest of that batch. Only the
+          // server side is under test here.
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: { data() {}, error() {}, connectError() {}, close() {} },
+          }).catch(() => {});
           await dispatched.promise;
-          (await peer)?.terminate();
         }
         console.log("open() done");
       });

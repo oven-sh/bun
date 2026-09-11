@@ -123,6 +123,8 @@ function startReleaseServer(opts: {
   assetNames?: string[];
   zipPath?: string;
   zipBody?: string;
+  zipStream?: () => ReadableStream<Uint8Array>;
+  size?: number;
   digest?: string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
@@ -133,6 +135,7 @@ function startReleaseServer(opts: {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
+        if (opts.zipStream) return new Response(opts.zipStream());
         return new Response(opts.zipBody ?? "this is not a real zip archive");
       }
       return new Response(
@@ -142,6 +145,7 @@ function startReleaseServer(opts: {
             url: "foo",
             content_type: "application/zip",
             name,
+            ...(opts.size !== undefined ? { size: opts.size } : {}),
             ...(opts.digest ? { digest: opts.digest } : {}),
             browser_download_url: `https://${server.hostname}:${server.port}/download/${name}`,
           })),
@@ -255,6 +259,46 @@ describe.concurrent(() => {
     );
     expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
     await proc.exited;
+  });
+
+  // The progress bar prints only after its 500ms initial delay, so the
+  // server paces the body over about one second. With stderr piped, each
+  // refresh is one "Downloading [current/total]" line.
+  it.skipIf(isWindows)("download progress prints sizes in human-readable units", async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    const chunkCount = 40;
+    using server = startReleaseServer({
+      tagName: "bun-v9.9.9",
+      size: chunk.length * chunkCount,
+      zipStream: () => {
+        let sent = 0;
+        return new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(30);
+            controller.enqueue(chunk);
+            if (++sent === chunkCount) controller.close();
+          },
+        });
+      },
+    });
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
+    await using proc = spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: server.env,
+    });
+
+    const [err] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const progress = err.split(/\r?\n/).filter(line => line.startsWith("Downloading ["));
+    expect(progress).not.toBeEmpty();
+    expect(progress).toEqual(
+      progress.map(() => expect.stringMatching(/^Downloading \[\d+(\.\d+)?[KM]?B\/2\.62MB\] $/)),
+    );
   });
 });
 

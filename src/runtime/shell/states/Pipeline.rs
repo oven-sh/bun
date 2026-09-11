@@ -96,6 +96,15 @@ impl Pipeline {
     /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
     /// `Pipeline::next` for the next one once the current child suspends.
     fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
+        if interp.failed() {
+            // A member of a nested pipeline failed while this one was still
+            // starting its members (`drain_pipelines` resumes us).
+            if interp.as_pipeline(this).cmds.is_none() {
+                return Self::finish(interp, this, 1);
+            }
+            Self::release_unstarted(interp, this);
+            return Self::finish_if_all_exited(interp, this);
+        }
         if interp.as_pipeline(this).cmds.is_none() {
             debug_assert_eq!(idx, 0);
             if let Some(y) = Self::setup_commands(interp, this) {
@@ -331,44 +340,83 @@ impl Pipeline {
             exit_code
         );
         // Find the child in `cmds` and replace with its result.
-        let (all_done, n) = {
-            let me = interp.as_pipeline_mut(this);
-            me.exited_count += 1;
-            let n = me.cmds.as_ref().map(|c| c.len() as u32).unwrap_or(0);
-            if let Some(cmds) = &mut me.cmds {
-                for slot in cmds.iter_mut() {
-                    if matches!(slot, CmdOrResult::Cmd(id) if *id == child) {
-                        *slot = CmdOrResult::Result(exit_code);
-                        break;
-                    }
-                }
-            }
-            (me.exited_count >= n && n > 0, n)
-        };
+        Self::record_result(interp, this, child, exit_code);
         // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
         // do NOT free `base.shell` in their own `deinit`, so free it here.
         // Subshell frees its own; Assigns is skipped.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
-        if all_done {
-            // Exit code = last command's exit code (bash semantics).
-            // For a single-runnable pipeline `last_exit_code` stays 0: only
-            // inspect `cmds[len-1]` when `len >= 2`.
-            let exit = {
-                let me = interp.as_pipeline(this);
-                match me.cmds.as_ref() {
-                    Some(c) if c.len() >= 2 => match c.last() {
-                        Some(CmdOrResult::Result(e)) => *e,
-                        _ => 0,
-                    },
-                    _ => 0,
-                }
-            };
-            interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: exit };
-            return Yield::Next(this);
+        if interp.failed() {
+            Self::release_unstarted(interp, this);
         }
-        let _ = n;
-        Yield::suspended()
+        Self::finish_if_all_exited(interp, this)
+    }
+
+    /// `Done` once every member reported, else keep waiting for the rest.
+    fn finish_if_all_exited(interp: &Interpreter, this: NodeId) -> Yield {
+        let me = interp.as_pipeline(this);
+        let Some(cmds) = me.cmds.as_deref() else {
+            return Yield::suspended();
+        };
+        if cmds.is_empty() || (me.exited_count as usize) < cmds.len() {
+            return Yield::suspended();
+        }
+        // Exit code = last command's exit code (bash semantics).
+        // For a single-runnable pipeline `last_exit_code` stays 0: only
+        // inspect `cmds[len-1]` when `len >= 2`.
+        let exit = if cmds.len() >= 2 {
+            match cmds.last() {
+                Some(CmdOrResult::Result(e)) => *e,
+                _ => 0,
+            }
+        } else {
+            0
+        };
+        interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: exit };
+        Yield::Next(this)
+    }
+
+    fn record_result(interp: &Interpreter, this: NodeId, child: NodeId, exit_code: ExitCode) {
+        let me = interp.as_pipeline_mut(this);
+        me.exited_count += 1;
+        if let Some(cmds) = &mut me.cmds {
+            for slot in cmds.iter_mut() {
+                if matches!(slot, CmdOrResult::Cmd(id) if *id == child) {
+                    *slot = CmdOrResult::Result(exit_code);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The script failed (`Interpreter::fail`): the members that did not
+    /// start never will. Free them now so the pipe ends they hold close and
+    /// the members that run see EOF or EPIPE instead of blocking forever.
+    fn release_unstarted(interp: &Interpreter, this: NodeId) {
+        let PipelineState::StartingCmds { idx } = interp.as_pipeline(this).state else {
+            return;
+        };
+        let unstarted: Vec<NodeId> = interp
+            .as_pipeline(this)
+            .cmds
+            .as_deref()
+            .map(|cmds| {
+                cmds.iter()
+                    .skip(idx as usize)
+                    .filter_map(|slot| match slot {
+                        CmdOrResult::Cmd(id) => Some(*id),
+                        CmdOrResult::Result(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for child in unstarted {
+            log!("Pipeline {} release unstarted child {}", this, child);
+            Self::record_result(interp, this, child, 1);
+            Self::deinit_child_duped_env(interp, child);
+            interp.deinit_node(child);
+        }
+        interp.as_pipeline_mut(this).state = PipelineState::Pending;
     }
 
     /// Free the per-child env duped in `next_starting` for child kinds that

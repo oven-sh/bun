@@ -235,7 +235,10 @@ impl CondExpr {
                 return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
-            debug_assert!(false, "Expansion child failed without an error");
+            debug_assert!(
+                interp.failed(),
+                "Expansion child failed without an error"
+            );
             let parent = interp.as_condexpr(this).base.parent;
             return interp.child_done(parent, this, 1);
         }

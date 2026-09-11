@@ -932,10 +932,11 @@ impl Interpreter {
         }
     }
 
-    /// For sequencing states' `child_done`: an interrupted pipeline member stops
-    /// where it is instead of running its next command.
+    /// For sequencing states' `child_done`: an interrupted pipeline member, or
+    /// any node once the script failed (`fail`), stops where it is instead of
+    /// running its next command.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
-        self.node(id).base().is_some_and(|b| b.interrupted)
+        self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
     /// Some ancestor is a member of a multi-command pipeline.
@@ -1029,11 +1030,11 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
-                        // Callers fall through as if the subshell exited 0.
+                        // No child exists, so `parent` is the node that failed.
                         // Return `None` so callers leave `currently_executing`
                         // unset (no `NodeId::NONE` sentinel needed in
                         // `deinit_node`/`free_node` for this path).
-                        return (None, Yield::failed());
+                        return (None, Yield::Failed(parent));
                     }
                 }
             }
@@ -1256,10 +1257,6 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize,
             exit_code
         );
-        debug_assert!(
-            !self.flags.get().failed(),
-            "a failed node never reports to its parent, so the root script cannot complete"
-        );
         // Decrement pending activity unconditionally on exit. Paired with the
         // increment in `run_from_js`; harmless wrap on the mini path (flag is
         // only read from the JS GC `hasPendingActivity()` hook).
@@ -1277,7 +1274,12 @@ impl Interpreter {
             self.exit_code.set(Some(exit_code));
             let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
-                if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
+                if self.failed() {
+                    // `fail` rejected the promise. Every member has exited, so the
+                    // interpreter can let go of the event loop and be collected.
+                    self.keep_alive.with_mut(|k| k.disable());
+                    self.deref_root_shell_and_io_if_needed(true);
+                } else if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
                     // `global_this` is `Some` on the `EventLoopHandle::Js` path
                     // (set by `create_shell_interpreter`); see `global_this_ref`.
@@ -1343,8 +1345,39 @@ impl Interpreter {
         Yield::done()
     }
 
-    /// `Yield::Failed` is terminal: take the pending JS exception and reject the `ShellPromise` with it.
-    pub(crate) fn reject_with_pending_exception(&self) {
+    /// The script failed with a JS error (`Yield::Failed`). The sequencing
+    /// states stop where they are (see `interrupted`), a pipeline frees the
+    /// members it did not start, and `finish` settles nothing.
+    #[inline]
+    pub(crate) fn failed(&self) -> bool {
+        self.flags.get().failed()
+    }
+
+    /// `Yield::Failed(id)`: node `id` threw a JS exception and holds nothing
+    /// in flight. Reject the promise, stop every subprocess, and report `id`
+    /// to its parent as finished. The tree then winds down through the
+    /// normal `child_done` path, so every member that still runs reaches
+    /// `finish` before the interpreter lets go of the event loop.
+    pub(crate) fn fail(&self, id: NodeId) -> Yield {
+        self.reject_with_pending_exception();
+        if self.failed() {
+            let node_count = self.nodes.get().len();
+            for i in 0..node_count {
+                let cmd = NodeId(i as u32);
+                if matches!(self.node(cmd).kind(), StateKind::Cmd) {
+                    Cmd::kill_subprocess(self, cmd);
+                }
+            }
+        }
+        let parent = self
+            .node(id)
+            .base()
+            .map_or(NodeId::INTERPRETER, |b| b.parent);
+        self.child_done(parent, id, 1)
+    }
+
+    /// Take the pending JS exception and reject the `ShellPromise` with it.
+    fn reject_with_pending_exception(&self) {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
 
@@ -1366,17 +1399,16 @@ impl Interpreter {
                 error.is_some(),
                 "Yield::Failed without a pending JS exception"
             );
-            // Nothing was thrown: keep waiting, as the trampoline did for `Failed` before it was terminal.
+            // Nothing was thrown: the node finishes with exit code 1 and the script goes on.
             let Some(error) = error else { return };
             Some(error)
         };
 
         // A second pipeline member failed: the promise is already rejected.
-        if self.flags.get().failed() {
+        if self.failed() {
             return;
         }
         self.update_flags(|f| f.set_failed(true));
-        self.keep_alive.with_mut(|k| k.disable());
 
         let this_jsvalue = self.this_jsvalue.get();
         if let Some(error) = error
@@ -1393,16 +1425,6 @@ impl Interpreter {
             }
             JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
             JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
-        }
-
-        // The nodes are freed by the finalizer, which must not run while a pipeline member's callbacks can still fire.
-        let members_in_flight = self
-            .nodes
-            .get()
-            .iter()
-            .any(|n| matches!(n.kind(), StateKind::Pipeline | StateKind::Async));
-        if !members_in_flight {
-            Self::decr_pending_activity_flag(&self.has_pending_activity);
         }
     }
 

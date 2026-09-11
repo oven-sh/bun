@@ -235,5 +235,46 @@ describe("yield", async () => {
         exitCode: 0,
       });
     });
+
+    // When the member that throws is part of a pipeline, the members that
+    // already run must stop and the members after it must never start. Until
+    // that happened, a producer that wrote more than the pipe buffer blocked
+    // on a pipe end nobody closed, and the process never exited.
+    describe("the other members of the pipeline stop", () => {
+      // 1 MiB: more than the pipe buffer, so the write blocks until the read end closes.
+      const producer = "${bun} -e ${'process.stdout.write(Buffer.alloc(1 << 20, \"a\"))'}";
+      const sleeper = "${bun} -e ${'setTimeout(() => {}, 100_000)'}";
+      const bad = "${bun} --version > ${new Response('r')}";
+
+      test.concurrent("a producer that writes more than the pipe buffer", async () => {
+        await expectRejection(`$\`${producer} | ${bad}\`.quiet().nothrow()`, external);
+      });
+
+      test.concurrent("a member that never touches the pipe is killed", async () => {
+        await expectRejection(`$\`${sleeper} | ${bad}\`.quiet().nothrow()`, external);
+      });
+
+      test.concurrent("the members after the failed one never start", async () => {
+        await expectRejection(`$\`${producer} | ${bad} | ${sleeper} | \${bun} --version\`.quiet().nothrow()`, external);
+      });
+
+      test.concurrent("the failed member is the first one", async () => {
+        await expectRejection(`$\`${bad} | ${sleeper}\`.quiet().nothrow()`, external);
+      });
+
+      test.concurrent("a member inside a subshell is killed", async () => {
+        await expectRejection(`$\`(${sleeper}; echo no) | ${bad}\`.quiet().nothrow()`, external);
+      });
+
+      test.concurrent("a command substitution in another member is stopped", async () => {
+        await expectRejection(`$\`echo $(${sleeper}) | ${bad}\`.quiet().nothrow()`, external);
+      });
+
+      // The thread-pool task of `ls` completes after the failure and writes
+      // to a pipe whose read end is closed by then.
+      test.concurrent("a builtin producer on the thread pool", async () => {
+        await expectRejection(`$\`ls ${"${" + JSON.stringify(import.meta.dir) + "}"} | ${bad}\`.quiet().nothrow()`, external);
+      });
+    });
   });
 });

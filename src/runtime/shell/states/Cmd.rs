@@ -300,7 +300,7 @@ impl Cmd {
     ) -> Yield {
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
+            return Yield::Failed(this);
         }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
@@ -552,7 +552,7 @@ impl Cmd {
             Err(_) => {
                 drop(spawn_args);
                 drop(arena);
-                return Yield::failed();
+                return Yield::Failed(this);
             }
         }
 
@@ -877,6 +877,22 @@ impl Cmd {
             }
         }
         Self::deinit(interp, this);
+    }
+
+    /// The script failed (`Interpreter::fail`): stop a subprocess that still
+    /// runs. Its exit then reaches `on_exit` and finishes the Cmd through
+    /// the normal path, so its pipe ends close once nothing can call back.
+    pub(crate) fn kill_subprocess(interp: &Interpreter, this: NodeId) {
+        let Exec::Subproc(sub) = &interp.as_cmd(this).exec else {
+            return;
+        };
+        if sub.child.is_null() {
+            return;
+        }
+        // SAFETY: `child` was set by `spawn_async` from a
+        // `heap::alloc(ShellSubprocess)` and stays valid until `deinit`
+        // reclaims the box. Single-threaded.
+        let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {

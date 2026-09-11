@@ -144,7 +144,7 @@ impl Cp {
             }
             #[cfg(windows)]
             State::Ebusy(_) => return Self::ignore_ebusy_error_if_possible(interp, cmd),
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {

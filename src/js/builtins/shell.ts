@@ -131,7 +131,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        // Only for a failure to build the output buffers; exit codes go through `resolve`.
+        // Only for a JS error raised by the interpreter itself; exit codes go through `resolve`.
         reject = error => {
           potentialError = undefined;
           rej(error);

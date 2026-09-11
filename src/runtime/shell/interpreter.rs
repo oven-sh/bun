@@ -332,6 +332,13 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
+    /// Set by [`Interpreter::reject_with_pending_exception`].
+    pub(crate) const fn failed(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    pub(crate) fn set_failed(&mut self, v: bool) {
+        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
 }
 
 #[repr(u8)]
@@ -1249,6 +1256,10 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize,
             exit_code
         );
+        debug_assert!(
+            !self.flags.get().failed(),
+            "a failed node never reports to its parent, so the root script cannot complete"
+        );
         // Decrement pending activity unconditionally on exit. Paired with the
         // increment in `run_from_js`; harmless wrap on the mini path (flag is
         // only read from the JS GC `hasPendingActivity()` hook).
@@ -1330,6 +1341,69 @@ impl Interpreter {
         }
 
         Yield::done()
+    }
+
+    /// `Yield::Failed` is terminal: take the pending JS exception and reject the `ShellPromise` with it.
+    pub(crate) fn reject_with_pending_exception(&self) {
+        use crate::jsc::JSValue;
+        use crate::jsc::generated::JSShellInterpreter;
+
+        // Mini event loop: `Interpreter::throw` prints and exits instead.
+        let Some(global_this) = self.global_this_ref() else {
+            return;
+        };
+        log!(
+            "Interpreter(0x{:x}) reject with pending exception",
+            std::ptr::from_ref(self) as usize
+        );
+
+        // A pending termination (`worker.terminate()`) keeps unwinding and settles nothing.
+        let error = if global_this.has_pending_termination_exception() {
+            None
+        } else {
+            let error = global_this.try_take_exception().and_then(JSValue::to_error);
+            debug_assert!(
+                error.is_some(),
+                "Yield::Failed without a pending JS exception"
+            );
+            // Nothing was thrown: keep waiting, as the trampoline did for `Failed` before it was terminal.
+            let Some(error) = error else { return };
+            Some(error)
+        };
+
+        // A second pipeline member failed: the promise is already rejected.
+        if self.flags.get().failed() {
+            return;
+        }
+        self.update_flags(|f| f.set_failed(true));
+        self.keep_alive.with_mut(|k| k.disable());
+
+        let this_jsvalue = self.this_jsvalue.get();
+        if let Some(error) = error
+            && this_jsvalue != JSValue::ZERO
+        {
+            if let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) {
+                let _entered = self.event_loop.entered();
+                global_this.bun_vm().event_loop_mut().run_callback(
+                    reject,
+                    global_this,
+                    JSValue::UNDEFINED,
+                    &[error],
+                );
+            }
+            JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+            JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+        }
+
+        // The nodes are freed by the finalizer, which must not run while a pipeline member's callbacks can still fire.
+        let members_in_flight = self
+            .nodes
+            .get()
+            .iter()
+            .any(|n| matches!(n.kind(), StateKind::Pipeline | StateKind::Async));
+        if !members_in_flight {
+            Self::decr_pending_activity_flag(&self.has_pending_activity);
+        }
     }
 
     /// JS-host entrypoint — sets up root IO
@@ -1441,7 +1515,7 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The script is still in flight (e.g. `worker.terminate()`
+                // The script never reached `finish` (e.g. `worker.terminate()`
                 // mid-command) and `Node` has no `Drop` for its raw-pointer
                 // resources: deinit every live `Cmd` (kills the child, frees
                 // the `ShellSubprocess`, readers, redirection fd). Slots stay

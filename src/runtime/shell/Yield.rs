@@ -37,7 +37,7 @@ pub enum Yield {
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// Threw a JS error.
+    /// A JS exception is pending; terminal (`Interpreter::reject_with_pending_exception`).
     Failed,
     Done,
 }
@@ -131,7 +131,12 @@ impl Yield {
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Suspended | Yield::Failed | Yield::Done => {
+                Yield::Failed => {
+                    // The script is over: the rest of a pipeline's members are not started.
+                    interp.reject_with_pending_exception();
+                    return;
+                }
+                Yield::Suspended | Yield::Done => {
                     if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
                         y
                     } else {

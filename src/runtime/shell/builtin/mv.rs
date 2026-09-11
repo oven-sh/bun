@@ -271,7 +271,7 @@ impl Mv {
                 // Shouldn't happen — driven by batchedMoveTaskDone.
                 Yield::suspended()
             }
-            Tag::WaitingWriteErr => Yield::failed(),
+            Tag::WaitingWriteErr => Yield::suspended(),
             Tag::Done => Builtin::done(interp, cmd, 0),
             Tag::Err => Builtin::done(interp, cmd, 1),
         }

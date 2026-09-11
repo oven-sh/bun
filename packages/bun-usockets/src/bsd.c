@@ -901,6 +901,29 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
     }
 }
 
+int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Windows has no MSG_DONTWAIT. Every socket uSockets owns there is already
+     * non-blocking, which is what bsd_recv relies on too. */
+#ifdef _WIN32
+    const int peek_flags = MSG_PEEK;
+#else
+    const int peek_flags = MSG_PEEK | MSG_DONTWAIT;
+#endif
+    char byte;
+    ssize_t ret;
+    do {
+        ret = recv(fd, &byte, 1, peek_flags);
+    } while (UNLIKELY(IS_EINTR(ret)));
+
+    if (ret > 0) {
+        return LIBUS_QUEUED_INPUT_DATA;
+    }
+    if (ret == 0) {
+        return LIBUS_QUEUED_INPUT_EOF;
+    }
+    return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
+}
+
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
     ssize_t injected = 0; int unused = 0;

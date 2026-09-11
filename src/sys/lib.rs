@@ -918,7 +918,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+pub use bun_core::{Fd, FdKind, FdNative, FileKind, Mode, Stdio, kind_from_mode};
 
 /// Anything that can hand out an [`Fd`] without giving up ownership: a raw
 /// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
@@ -1527,15 +1527,6 @@ impl Tag {
             "uv_os_setpriority",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
-    }
-
-    /// Tags strictly above `WriteFile`
-    /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above that range don't read as Windows.
-    #[inline]
-    pub const fn is_windows(self) -> bool {
-        self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
     }
 }
 impl From<Tag> for &'static str {

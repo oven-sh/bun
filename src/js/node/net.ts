@@ -4310,6 +4310,8 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // Node reads bytesRead off the handle, so a new connection starts at 0.
+  self.bytesRead = 0;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

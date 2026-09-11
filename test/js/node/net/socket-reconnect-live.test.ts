@@ -135,4 +135,38 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     expect(["connect", "err:EALREADY"]).toContain(stdout);
     expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
   });
+
+  it("starts bytesRead at 0 for each new connection", async () => {
+    // Node reads bytesRead off the handle, and a reconnect gets a new handle.
+    // The count covers one connection, and stays readable after close.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { createServer, Socket } = require("node:net");
+          const { once } = require("node:events");
+          const srv = createServer(c => c.end("banner"));
+          srv.listen(0, "127.0.0.1", async () => {
+            const port = srv.address().port;
+            const s = new Socket();
+            s.resume();
+            const seen = [];
+            for (let i = 0; i < 3; i++) {
+              s.connect(port, "127.0.0.1");
+              await once(s, "close");
+              seen.push(s.bytesRead);
+            }
+            srv.close();
+            process.stdout.write(JSON.stringify(seen));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[6,6,6]", stderr, exitCode: 0 });
+  });
 });

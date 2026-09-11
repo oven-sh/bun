@@ -804,6 +804,10 @@ public:
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
 
+    // Set while a Bun.unsafe.ModuleGraph's onError runs: an error it throws is the host's,
+    // not attributed to a graph again (ModuleGraph.cpp).
+    bool m_inModuleGraphOnError { false };
+
     // CommonJS wrapper executables shared by Bun.unsafe.ModuleGraphs (JSCommonJSModule.cpp).
     std::unique_ptr<Bun::ModuleGraphCommonJSTemplates> m_moduleGraphCommonJSTemplates;
     Bun::ModuleGraphCommonJSTemplates& moduleGraphCommonJSTemplates();

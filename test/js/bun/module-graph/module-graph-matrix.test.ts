@@ -12,9 +12,9 @@ import { rmSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
-type ModuleGraphOptions = { globals?: Record<string, unknown>; onError?: (error: unknown, kind: string) => void };
-type Graph = { import(specifier: string): Promise<any>; dispose(): void; readonly mainModule: string | undefined };
-const ModuleGraphClass = (Bun as any).unsafe?.ModuleGraph as { new (opts?: ModuleGraphOptions): Graph } | undefined;
+type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.unsafe.ModuleGraph>[0]>;
+type Graph = InstanceType<typeof Bun.unsafe.ModuleGraph>;
+const ModuleGraphClass: typeof Bun.unsafe.ModuleGraph | undefined = Bun.unsafe?.ModuleGraph;
 const enabled = typeof ModuleGraphClass === "function";
 
 /** A temporary directory with `files` (harness tempDir), as a plain path. */

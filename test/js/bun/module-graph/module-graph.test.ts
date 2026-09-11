@@ -872,6 +872,12 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — API validation and error a
     g.dispose();
     await Bun.sleep(30);
     expect(errs).toEqual(["uncaughtException:late-z"]); // thrown by graph code after dispose → still that graph's onError
+    // An onError that rethrows the graph's error: the host's uncaught exception once, not attributed to the graph again.
+    {
+      const script = `const seen = []; process.on("uncaughtException", e => seen.push("host:" + e.message)); const g = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); throw e } }); (await g.import(${JSON.stringify(join(dir, "boom.mjs"))})).boom(); setTimeout(() => { console.log(JSON.stringify(seen)); }, 30);`;
+      const r = Bun.spawnSync([process.execPath, "-e", script], { env: { ...process.env } });
+      expect([r.stdout.toString().trim(), r.exitCode]).toEqual([`["graph:boom","host:boom"]`, 0]);
+    }
     // An onError that throws: that is the host's own uncaught exception (observed in a child process; here the test runner owns uncaught errors).
     const script = `const seen = []; process.on("uncaughtException", e => seen.push("host:" + e.message)); const bad = await new Bun.unsafe.ModuleGraph({ onError: () => { throw new Error("onError itself throws") } }).import(${JSON.stringify(join(dir, "boom.mjs"))}); bad.boom(); setTimeout(() => { console.log(JSON.stringify(seen)); }, 30);`;
     const r = Bun.spawnSync([process.execPath, "-e", script], { env: { ...process.env } });
@@ -1223,6 +1229,21 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CommonJS surface per graph
     await expect(g.import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-x");
     await expect(g.import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-x");
     await expect(ModuleGraph({ env: { T: "y" } }).import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-y");
+  });
+  test("import.meta in a CommonJS module of a graph is the graph's: import.meta.require uses the graph's cache, import.meta.main is the graph's entry", async () => {
+    const d = fixture({
+      "state.cjs": `module.exports = { who: typeof marker === "undefined" ? "host" : marker }`,
+      "meta.cjs": `module.exports = { viaMetaRequire: import.meta.require("./state.cjs").who, main: import.meta.main }`,
+    });
+    const host = require(join(d, "meta.cjs"));
+    const a = (await new ModuleGraphClass!({ globals: { marker: "A" } }).import(join(d, "meta.cjs"))).default;
+    const b = (await new ModuleGraphClass!({ globals: { marker: "B" } }).import(join(d, "meta.cjs"))).default;
+    expect([host, a, b]).toEqual([
+      { viaMetaRequire: "host", main: false },
+      { viaMetaRequire: "A", main: true },
+      { viaMetaRequire: "B", main: true },
+    ]);
+    rmSync(d, { recursive: true, force: true });
   });
   test("a require() that throws inside a graph leaves neither the graph's nor the host's cache holding the module; the next require re-evaluates", async () => {
     const d = fixture({

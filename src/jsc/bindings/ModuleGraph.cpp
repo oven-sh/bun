@@ -37,6 +37,7 @@
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/SetForScope.h>
 #include <wtf/HexNumber.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -207,6 +208,9 @@ void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promis
 {
     if (!globalObject->m_moduleGraphRegistry.get())
         return;
+    // A reason with a stack of its own is attributed from that (moduleGraphForError); no walk here.
+    if (auto* instance = dynamicDowncast<ErrorInstance>(promise->result()); instance && instance->stackTrace())
+        return;
     JSModuleGraph* graph = ambientModuleGraph(globalObject);
     if (!graph)
         return;
@@ -228,6 +232,9 @@ static JSModuleGraph* moduleGraphForRejectedPromise(Zig::GlobalObject* globalObj
 
 static bool moduleGraphReportUnhandled(Zig::GlobalObject* globalObject, JSValue rawError, JSValue error, ASCIILiteral kind, JSValue promise = JSValue())
 {
+    // What an onError throws (the error it was given, say) is the host's.
+    if (globalObject->m_inModuleGraphOnError)
+        return false;
     JSModuleGraph* graph = moduleGraphForError(globalObject, rawError);
     if (!graph)
         graph = moduleGraphForError(globalObject, error);
@@ -243,6 +250,7 @@ static bool moduleGraphReportUnhandled(Zig::GlobalObject* globalObject, JSValue 
     MarkedArgumentBuffer args;
     args.append(error);
     args.append(jsString(vm, String(kind)));
+    SetForScope inOnError(globalObject->m_inModuleGraphOnError, true);
     JSC::call(globalObject, onError, JSC::getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())

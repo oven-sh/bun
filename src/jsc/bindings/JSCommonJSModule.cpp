@@ -269,8 +269,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
-            args.append(Zig::ImportMetaObject::create(globalObject, filename));
+            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
             RETURN_IF_EXCEPTION(scope, false);
+            // A graph's module: import.meta.main / import.meta.require are the graph's.
+            if (graph)
+                importMeta->putDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName(), graph, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+            args.append(importMeta);
         }
     }
 

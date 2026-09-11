@@ -208,6 +208,57 @@ describe("bundler", async () => {
     run: { stdout: '["string",true]' },
   });
 
+  // The two imports sit in one module, so they meet in one resolve queue, and
+  // the import with the attribute comes first.
+  itBundled("bun/loader-same-file-under-two-import-attributes-in-one-module", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import asText from "./data.json" with { type: "text" };
+        import asJson from "./data.json";
+        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+  });
+
+  // The text request used to be folded into the entry point's own JS module:
+  // `No matching export in "entry.ts" for import "default"`.
+  itBundled("bun/loader-entry-point-imports-itself-as-text", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import source from "./entry.ts" with { type: "text" };
+        console.log(typeof source, source.includes('with { type: "text" }'));
+      `,
+    },
+    run: { stdout: "string true" },
+  });
+
+  // A `type` that names the loader the extension already selects is still the
+  // same module as a plain import.
+  itBundled("bun/loader-same-file-same-loader-is-one-module", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import { a } from "./a";
+        import { b } from "./b";
+        console.log(a === b);
+      `,
+      "/a.ts": /* js */ `
+        import data from "./data.json" with { type: "json" };
+        export const a = data;
+      `,
+      "/b.ts": /* js */ `
+        import data from "./data.json";
+        export const b = data;
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    run: { stdout: "true" },
+  });
+
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",

@@ -5026,6 +5026,39 @@ pub mod bv2_impl {
                         path.namespace = result_ns_static;
                     }
                     if !result.external {
+                        let mut module_key_buf: Vec<u8> = Vec::new();
+                        let (loader, keyed_by_loader): (Loader, bool) =
+                            if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                                // A file that a plugin resolved the entry point to instead keeps its own loader.
+                                let requested = resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier);
+                                (this.requested_file_loader(&path, requested), false)
+                            } else {
+                                // A `with { type }` loader belongs to the import, whichever path the plugin returned.
+                                let path_loader = this.requested_file_loader(&path, None);
+                                let for_dev_server = this.dev_server.is_some();
+                                // Answers run as posted tasks, after the importer's records are on the graph.
+                                let record: &mut ImportRecord =
+                                    &mut this.graph.ast.items_import_records_mut()
+                                        [resolve.import_record.importer_source_index as usize]
+                                        .as_mut_slice()
+                                        [resolve.import_record.import_record_index as usize];
+                                let keyed = super::key_import_record_by_loader(
+                                    &mut module_key_buf,
+                                    record,
+                                    path.text,
+                                    path_loader,
+                                    for_dev_server,
+                                );
+                                (record.loader.unwrap_or(path_loader), keyed)
+                            };
+                        let key: &[u8] = if keyed_by_loader {
+                            &module_key_buf
+                        } else {
+                            path.text
+                        };
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `free_list`/`graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -5034,7 +5067,7 @@ pub mod bv2_impl {
                         let (value_ptr, found_existing) = {
                             let existing = this
                                 .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
+                                .get_or_put(key)
                                 .expect("oom");
                             (
                                 std::ptr::from_mut(existing.value_ptr),
@@ -5053,6 +5086,9 @@ pub mod bv2_impl {
                                     resolve.import_record.original_target,
                                 )
                                 .expect("oom");
+                            if keyed_by_loader {
+                                this.append_loader_to_pretty_path(&mut path, loader);
+                            }
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
@@ -5063,14 +5099,6 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
 
                             this.graph
                                 .input_files

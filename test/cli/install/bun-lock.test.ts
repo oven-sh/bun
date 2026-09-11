@@ -1893,10 +1893,14 @@ describe.each(["hoisted", "isolated"] as const)(
             optionalDependencies: { "no-deps": "2.0.0" },
           }),
         },
+        // two-range-deps wants no-deps@^1.0.0. That resolves to 1.1.0, unless
+        // duplicate-optional's no-deps@1.0.1 was appended first, in which case
+        // the range reuses it (the order depends on manifest arrival). Both
+        // trees have to round-trip, so the shape only pins the major.
         shape: [
           '"no-deps": ["no-deps@2.0.0"',
           '"duplicate-optional/no-deps": ["no-deps@1.0.1"',
-          '"two-range-deps/no-deps": ["no-deps@1.1.0"',
+          '"two-range-deps/no-deps": ["no-deps@1.',
           '"optionalDependencies": { "this-package-does-not-exist-in-the-registry": "||" }',
         ],
       },

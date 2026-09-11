@@ -12,31 +12,32 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
+/** `__intrinsic__<name>(` → value; applied by `intrinsicCall` after the `$` rewrite, so values spell out `__intrinsic__`. */
+const intrinsicCallReplacements = new Map<string, string>();
+
+/** First definition of a name wins. */
+function defineIntrinsicCall(name: string, to: string): void {
+  if (!/^[A-Za-z0-9_]+$/.test(name)) throw new Error(`intrinsic call name must be an identifier: ${name}`);
+  if (!intrinsicCallReplacements.has(name)) intrinsicCallReplacements.set(name, to);
+}
+
 let error_i = 0;
 for (let i = 0; i < NodeErrors.length; i++) {
   const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
-  replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${error_i}, `,
-  });
+  defineIntrinsicCall(code, `__intrinsic__makeErrorWithCode(${error_i}, `);
   error_i += 1;
   for (const con of other_constructors) {
     if (con == null) continue;
-    replacements.push({
-      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
-      to: `$makeErrorWithCode(${error_i}, `,
-    });
+    defineIntrinsicCall(`${code}_${con.name}`, `__intrinsic__makeErrorWithCode(${error_i}, `);
     error_i += 1;
   }
 }
 
 for (let id = 0; id < jsclasses.length; id++) {
-  const name = jsclasses[id][0];
-  replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
-    to: `$inherits(${id}, `,
-  });
+  defineIntrinsicCall(`inherits${jsclasses[id][0]}`, `__intrinsic__inherits(${id}, `);
 }
+
+const intrinsicCall = /\b__intrinsic__([A-Za-z0-9_]+)\(/g;
 
 // These rules are run on the entire file, including within strings.
 export const globalReplacements: ReplacementRule[] = [
@@ -185,6 +186,9 @@ export function applyReplacements(src: string, length: number) {
       replacement.from,
       replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
     );
+  }
+  if (slice.includes("__intrinsic__")) {
+    slice = slice.replace(intrinsicCall, (call, name) => intrinsicCallReplacements.get(name) ?? call);
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {

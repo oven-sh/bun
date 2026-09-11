@@ -116,6 +116,11 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
+        /// Another symbol's `link` points here: a redeclaration, or a `var` or
+        /// function that `hoist_symbols` merged out of a nested scope. The uses
+        /// counted on that symbol are missing from this `use_count_estimate`.
+        const IS_LINK_TARGET = 1 << 3;
+
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped
@@ -151,6 +156,7 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    is_link_target, set_is_link_target => IS_LINK_TARGET;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
@@ -234,6 +240,14 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
+    }
+
+    /// In the parser: every use of the variable resolves to this symbol, so
+    /// `use_count_estimate` counts them all. No declaration merge links it in
+    /// either direction, and no direct `eval` or `with` can name it.
+    #[inline]
+    pub fn use_count_is_exact(&self) -> bool {
+        !self.has_link() && !self.is_link_target() && !self.must_not_be_renamed()
     }
 
     /// An import item the linker merged into the export it names. A local

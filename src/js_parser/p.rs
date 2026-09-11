@@ -339,8 +339,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// counts (one local bound to two records).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
     /// Import records with a use the printer can't rewrite to a direct read
-    /// of an export, so the linker must keep the namespace object.
+    /// of an export, so the linker must keep the namespace object. The local
+    /// may hold another namespace or none (a conditional initializer, a read
+    /// that runs before the declaration), so no read off it is an import item.
     pub(crate) dynamic_import_needs_object: HashMap<u32, ()>,
+    /// Tracked `const` / `let` locals that a read can reach before their
+    /// declaration runs (`can_read_local_before_init`), with the scope that
+    /// declares each. A local that has such a read stays a local.
+    pub(crate) dynamic_import_early_read_watch: Vec<(js_ast::StoreRef<js_ast::Scope>, Ref)>,
     /// Namespace locals that hold a copy, not the namespace (`{...rest}`), or
     /// that no source reads by name (`require_namespace_ref`).
     pub(crate) dynamic_import_copied_locals: HashMap<Ref, ()>,
@@ -1207,6 +1213,113 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && self.symbols[id.r#ref.inner_index() as usize].use_count_estimate == 0
             {
                 self.dynamic_import_destructured_locals.insert(id.r#ref, ());
+            }
+        }
+    }
+
+    /// Whether code below a `const` / `let` declared at `loc` in the current
+    /// scope can run before the declaration. A read of the local there
+    /// throws, so it must not see an export. A later `case` of a `switch`
+    /// shares the scope of the case that declares. A function declared below
+    /// `loc` in this scope can run first when the code above `loc` already
+    /// refers to one. A declaration that prints as `var` has no such read.
+    pub(crate) fn can_read_local_before_init(
+        &self,
+        kind: js_ast::s::Kind,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        if self.select_local_kind(kind) == js_ast::s::Kind::KVar {
+            return false;
+        }
+        self.fn_or_arrow_data_visit.switch_scope == Some(self.current_scope)
+            || self.current_scope().members.values().any(|member| {
+                let symbol = &self.symbols[member.ref_.inner_index() as usize];
+                member.loc.start > loc.start
+                    && symbol.kind.is_function()
+                    && (symbol.use_count_estimate > 0 || !symbol.use_count_is_exact())
+            })
+    }
+
+    /// Watches the tracked locals that `binding` declares in the current
+    /// scope: a read of one in a function declared below it, or in a later
+    /// `case`, keeps it a local (`keep_locals_read_since`).
+    pub(crate) fn watch_early_reads(&mut self, binding: js_ast::Binding) {
+        match binding.data {
+            bun_ast::binding::Data::BIdentifier(id) => {
+                if self.dynamic_import_namespace_locals.contains_key(&id.r#ref) {
+                    self.dynamic_import_early_read_watch
+                        .push((self.current_scope, id.r#ref));
+                }
+            }
+            bun_ast::binding::Data::BObject(object) => {
+                for property in object.properties() {
+                    if let bun_ast::binding::Data::BIdentifier(id) = property.value.data
+                        && self
+                            .dynamic_import_destructured_locals
+                            .contains_key(&id.r#ref)
+                    {
+                        self.dynamic_import_early_read_watch
+                            .push((self.current_scope, id.r#ref));
+                    }
+                }
+            }
+            // `const [{ a }, ns] = await Promise.all([…])`
+            bun_ast::binding::Data::BArray(array) => {
+                for item in array.items() {
+                    self.watch_early_reads(item.binding);
+                }
+            }
+            bun_ast::binding::Data::BMissing(_) => {}
+        }
+    }
+
+    /// How many reads of `local` the linker could bind to an export: the uses
+    /// of a local that a pattern binds, the `ns.a` items of a namespace local.
+    fn bindable_reads(&self, local: Ref) -> u32 {
+        if !self.dynamic_import_namespace_locals.contains_key(&local) {
+            return self.symbols[local.inner_index() as usize].use_count_estimate;
+        }
+        self.import_items_for_namespace
+            .get(&local)
+            .map_or(0, |items| {
+                items
+                    .values()
+                    .iter()
+                    .filter(|item| item.ref_.is_valid())
+                    .fold(0u32, |reads, item| {
+                        reads.saturating_add(
+                            self.symbols[item.ref_.inner_index() as usize].use_count_estimate,
+                        )
+                    })
+            })
+    }
+
+    /// The watched locals of the current scope, each with its bindable reads
+    /// so far. Take it before a function declared in this scope or a `case`.
+    pub(crate) fn watched_reads_in_scope(&self) -> Vec<(Ref, u32)> {
+        self.dynamic_import_early_read_watch
+            .iter()
+            .filter(|(scope, _)| *scope == self.current_scope)
+            .map(|&(_, local)| (local, self.bindable_reads(local)))
+            .collect()
+    }
+
+    /// The function or `case` visited since `before` can run before the
+    /// declaration of these locals. One it reads stays a local.
+    pub(crate) fn keep_locals_read_since(&mut self, before: Vec<(Ref, u32)>) {
+        for (local, reads) in before {
+            if self.bindable_reads(local) <= reads {
+                continue;
+            }
+            match self.dynamic_import_namespace_locals.get(&local) {
+                Some(records) => {
+                    for &record in records {
+                        self.dynamic_import_needs_object.insert(record, ());
+                    }
+                }
+                None => {
+                    self.dynamic_import_destructured_locals.remove(&local);
+                }
             }
         }
     }
@@ -3679,6 +3792,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                self.symbols[existing_idx].set_is_link_target(true);
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -3750,6 +3864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
+                            self.symbols[symbol_idx].set_is_link_target(true);
                             // SAFETY: `name` is a symbol's `original_name`.
                             *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
                                 .value_ptr = value;
@@ -5195,6 +5310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
+                    self.symbols[ref_.inner_index() as usize].set_is_link_target(true);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
                     // If these are both functions, remove the overwritten declaration
@@ -9798,6 +9914,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_namespace_locals: Default::default(),
             dynamic_import_escaped_records: Default::default(),
             dynamic_import_needs_object: Default::default(),
+            dynamic_import_early_read_watch: Vec::new(),
             dynamic_import_copied_locals: Default::default(),
             dynamic_import_destructured_locals: Default::default(),
             namespace_tracked_uses: Default::default(),
@@ -10321,6 +10438,23 @@ pub(crate) fn null_value_expr() -> js_ast::ExprData {
 /// the export the linker would bind.
 pub(crate) fn is_require_marker(record: &ImportRecord, name: &[u8]) -> bool {
     record.kind == bun_ast::ImportKind::Require && (name == b"default" || name == b"__esModule")
+}
+
+/// Whether a default value in the pattern, at any depth, can read a name. A
+/// primitive literal can't.
+pub(crate) fn binding_default_can_read_names(binding: js_ast::Binding) -> bool {
+    let reads =
+        |default_value: Option<Expr>| default_value.is_some_and(|v| !v.is_primitive_literal());
+    match binding.data {
+        bun_ast::binding::Data::BArray(array) => array
+            .items()
+            .iter()
+            .any(|item| reads(item.default_value) || binding_default_can_read_names(item.binding)),
+        bun_ast::binding::Data::BObject(object) => object.properties().iter().any(|property| {
+            reads(property.default_value) || binding_default_can_read_names(property.value)
+        }),
+        bun_ast::binding::Data::BIdentifier(_) | bun_ast::binding::Data::BMissing(_) => false,
+    }
 }
 
 /// The property walk of `try_track_dynamic_import_destructure`, which does not

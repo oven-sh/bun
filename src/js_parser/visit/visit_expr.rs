@@ -1982,6 +1982,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let js_ast::binding::Data::BArray(pattern) = first.binding.data else {
                         break 'promise_all_then;
                     };
+                    // A default value of the parameter is not visited yet. It can
+                    // read a name that the pattern binds after it, and that throws.
+                    if crate::p::binding_default_can_read_names(first.binding) {
+                        break 'promise_all_then;
+                    }
                     p.track_promise_all_destructure(items, &pattern);
                 }
             }
@@ -2038,7 +2043,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .is_some()
                             {
                                 p.note_tracked_namespace_use(im.namespace_ref);
-                                p.note_destructured_locals(obj.properties());
+                                // A default value of the parameter is not visited yet. It
+                                // can read a name that the pattern binds after it, and
+                                // that throws.
+                                if !crate::p::binding_default_can_read_names(first_param.binding) {
+                                    p.note_destructured_locals(obj.properties());
+                                }
                             }
                         }
                         js_ast::binding::Data::BIdentifier(id) => {

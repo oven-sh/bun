@@ -689,7 +689,7 @@ impl Builtin {
                             .to_vec()
                             .into_boxed_slice(),
                     ));
-                    return Some(Yield::failed());
+                    return Some(Yield::failed(cmd));
                 };
                 let jsval = interp.jsobjs[idx];
 
@@ -705,19 +705,19 @@ impl Builtin {
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
                         let Some(buf) = root() else {
-                            return Some(Yield::failed());
+                            return Some(Yield::failed(cmd));
                         };
                         me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stdout() {
                         let Some(buf) = root() else {
-                            return Some(Yield::failed());
+                            return Some(Yield::failed(cmd));
                         };
                         me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
                         let Some(buf) = root() else {
-                            return Some(Yield::failed());
+                            return Some(Yield::failed(cmd));
                         };
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
@@ -733,7 +733,7 @@ impl Builtin {
                         let _ = global.throw(format_args!(
                             "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
                         ));
-                        return Some(Yield::failed());
+                        return Some(Yield::failed(cmd));
                     }
                     let original_blob = body.use_();
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
@@ -759,7 +759,7 @@ impl Builtin {
                         let _ = global.throw(format_args!(
                             "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
                         ));
-                        return Some(Yield::failed());
+                        return Some(Yield::failed(cmd));
                     }
                     let theblob = Arc::new(BuiltinBlob {
                         blob: blob_ref.dupe(),
@@ -777,7 +777,7 @@ impl Builtin {
                         "Unknown JS value used in shell: {}",
                         jsval.fmt_string(global)
                     ));
-                    return Some(Yield::failed());
+                    return Some(Yield::failed(cmd));
                 }
             }
             None if redirect.duplicate_out() => {

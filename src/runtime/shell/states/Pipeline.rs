@@ -390,6 +390,37 @@ impl Pipeline {
         }
     }
 
+    /// The script failed while this pipeline started its children: free the ones that did not
+    /// start and count them as exited, so `child_done` of the last running one finishes the
+    /// pipeline. Their `IO` owns the pipe ends they would have used.
+    pub(crate) fn drop_unstarted(interp: &Interpreter, this: NodeId) {
+        let unstarted: Vec<NodeId> = {
+            let me = interp.as_pipeline_mut(this);
+            let (PipelineState::StartingCmds { idx }, Some(cmds)) = (&me.state, &mut me.cmds)
+            else {
+                return;
+            };
+            let unstarted: Vec<NodeId> = cmds[*idx as usize..]
+                .iter_mut()
+                .filter_map(|slot| match *slot {
+                    CmdOrResult::Cmd(id) => {
+                        *slot = CmdOrResult::Result(1);
+                        Some(id)
+                    }
+                    CmdOrResult::Result(_) => None,
+                })
+                .collect();
+            me.exited_count += unstarted.len() as u32;
+            me.state = PipelineState::Pending;
+            unstarted
+        };
+        log!("Pipeline {} drops {} unstarted", this, unstarted.len());
+        for id in unstarted {
+            Self::deinit_child_duped_env(interp, id);
+            interp.deinit_node(id);
+        }
+    }
+
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Pipeline {} deinit", this);
         // Only children that never started (setup failed) are still here.

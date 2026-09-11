@@ -300,7 +300,7 @@ impl Cmd {
     ) -> Yield {
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
+            return Yield::failed(this);
         }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
@@ -552,7 +552,7 @@ impl Cmd {
             Err(_) => {
                 drop(spawn_args);
                 drop(arena);
-                return Yield::failed();
+                return Yield::failed(this);
             }
         }
 
@@ -857,6 +857,16 @@ impl Cmd {
             me.state = CmdState::Done;
         }
         Yield::Next(this)
+    }
+
+    /// SIGKILL the subprocess, if one runs. The command then finishes through `on_exit`.
+    pub(crate) fn kill(interp: &Interpreter, this: NodeId) {
+        if let Exec::Subproc(sub) = &interp.as_cmd(this).exec
+            && !sub.child.is_null()
+        {
+            // SAFETY: `child` is the live `heap::alloc`'d subprocess until `Cmd::deinit`.
+            let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+        }
     }
 
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the

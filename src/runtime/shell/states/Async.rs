@@ -76,6 +76,14 @@ impl Async {
             this,
             <&'static str>::from(&interp.as_async(this).state)
         );
+        if interp.flags.get().failed() {
+            // `next` sees `Exec { child: Some(_) }` only to start that child: it did not run.
+            if let AsyncState::Exec { child: Some(child) } = interp.as_async(this).state {
+                interp.deinit_node(child);
+            }
+            interp.async_cmd_done(this);
+            return Yield::done();
+        }
         let action = {
             let me = interp.as_async_mut(this);
             match &mut me.state {

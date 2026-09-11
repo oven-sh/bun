@@ -215,7 +215,7 @@ impl Expansion {
                     Err(e) => {
                         drop(io);
                         interp.throw(ShellErr::new_sys(&e));
-                        return Yield::failed();
+                        return Yield::failed(this);
                     }
                 };
                 let script = Script::init(interp, duped, script_ast, this, io);

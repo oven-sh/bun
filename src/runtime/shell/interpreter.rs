@@ -792,6 +792,9 @@ macro_rules! shell_state_dispatch {
         /// Signal to `parent` that `child` finished with `exit_code`. This is the
         /// single hoisted `match` dispatching on the parent's state tag.
         pub fn child_done(&self, parent: NodeId, child: NodeId, exit_code: ExitCode) -> Yield {
+            if self.flags.get().failed() {
+                return self.child_done_after_failure(parent, child);
+            }
             self.propagate_interrupt(parent, child);
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
@@ -1029,11 +1032,10 @@ impl Interpreter {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
-                        // Callers fall through as if the subshell exited 0.
                         // Return `None` so callers leave `currently_executing`
                         // unset (no `NodeId::NONE` sentinel needed in
                         // `deinit_node`/`free_node` for this path).
-                        return (None, Yield::failed());
+                        return (None, Yield::failed(parent));
                     }
                 }
             }
@@ -1088,6 +1090,10 @@ impl Interpreter {
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
+        if self.flags.get().failed() {
+            self.release_if_drained();
+            return;
+        }
         if self.async_commands_executing.get() == 0 {
             if let Some(exit) = self.exit_code.get() {
                 self.finish(exit).run(self);
@@ -1343,18 +1349,20 @@ impl Interpreter {
         Yield::done()
     }
 
-    /// `Yield::Failed` is terminal: take the pending JS exception and reject the `ShellPromise` with it.
-    pub(crate) fn reject_with_pending_exception(&self) {
+    /// `Yield::Failed(node)`: `node` threw a JS error. The first failure rejects the `ShellPromise`
+    /// with it and stops what else runs. `node` then reports as finished, so its ancestors unwind.
+    pub(crate) fn fail(&self, node: NodeId) -> Yield {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
 
         // Mini event loop: `Interpreter::throw` prints and exits instead.
         let Some(global_this) = self.global_this_ref() else {
-            return;
+            return Yield::suspended();
         };
         log!(
-            "Interpreter(0x{:x}) reject with pending exception",
-            std::ptr::from_ref(self) as usize
+            "Interpreter(0x{:x}) {} failed",
+            std::ptr::from_ref(self) as usize,
+            node
         );
 
         // A pending termination (`worker.terminate()`) keeps unwinding and settles nothing.
@@ -1367,43 +1375,109 @@ impl Interpreter {
                 "Yield::Failed without a pending JS exception"
             );
             // Nothing was thrown: keep waiting, as the trampoline did for `Failed` before it was terminal.
-            let Some(error) = error else { return };
+            let Some(error) = error else {
+                return Yield::suspended();
+            };
             Some(error)
         };
 
-        // A second pipeline member failed: the promise is already rejected.
-        if self.flags.get().failed() {
-            return;
-        }
-        self.update_flags(|f| f.set_failed(true));
-        self.keep_alive.with_mut(|k| k.disable());
+        // A later failure (a write error in another pipeline member) finds the promise rejected.
+        if !self.flags.get().failed() {
+            self.update_flags(|f| f.set_failed(true));
+            self.keep_alive.with_mut(|k| k.disable());
+            self.stop_in_flight();
 
-        let this_jsvalue = self.this_jsvalue.get();
-        if let Some(error) = error
-            && this_jsvalue != JSValue::ZERO
-        {
-            if let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) {
-                let _entered = self.event_loop.entered();
-                global_this.bun_vm().event_loop_mut().run_callback(
-                    reject,
+            let this_jsvalue = self.this_jsvalue.get();
+            if let Some(error) = error
+                && this_jsvalue != JSValue::ZERO
+            {
+                if let Some(reject) = JSShellInterpreter::reject_get_cached(this_jsvalue) {
+                    let _entered = self.event_loop.entered();
+                    global_this.bun_vm().event_loop_mut().run_callback(
+                        reject,
+                        global_this,
+                        JSValue::UNDEFINED,
+                        &[error],
+                    );
+                }
+                JSShellInterpreter::resolve_set_cached(
+                    this_jsvalue,
                     global_this,
                     JSValue::UNDEFINED,
-                    &[error],
+                );
+                JSShellInterpreter::reject_set_cached(
+                    this_jsvalue,
+                    global_this,
+                    JSValue::UNDEFINED,
                 );
             }
-            JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
-            JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
         }
 
-        // The nodes are freed by the finalizer, which must not run while a pipeline member's callbacks can still fire.
-        let members_in_flight = self
-            .nodes
-            .get()
-            .iter()
-            .any(|n| matches!(n.kind(), StateKind::Pipeline | StateKind::Async));
-        if !members_in_flight {
-            Self::decr_pending_activity_flag(&self.has_pending_activity);
+        let parent = self
+            .node(node)
+            .base()
+            .expect("a node that fails is live")
+            .parent;
+        self.child_done_after_failure(parent, node)
+    }
+
+    /// The script failed. A pipeline member that did not start never will: freeing it closes its
+    /// pipe ends, so the members that run see EOF or EPIPE. A subprocess that touches neither
+    /// would outlive the script, so every running one is killed.
+    fn stop_in_flight(&self) {
+        for i in 0..self.nodes.get().len() {
+            let id = NodeId(i as u32);
+            match self.node(id).kind() {
+                StateKind::Pipeline => Pipeline::drop_unstarted(self, id),
+                StateKind::Cmd => Cmd::kill(self, id),
+                _ => {}
+            }
         }
+    }
+
+    /// [`Self::child_done`] once the script failed. Nothing more of the script runs: `child` is
+    /// freed, and so is each ancestor that waited only for it. A pipeline or an `&` command may
+    /// have more in flight, so it takes the report itself and continues here when it is done.
+    fn child_done_after_failure(&self, mut parent: NodeId, mut child: NodeId) -> Yield {
+        loop {
+            if parent == NodeId::INTERPRETER {
+                self.deinit_node(child);
+                self.release_if_drained();
+                return Yield::done();
+            }
+            match self.node(parent).kind() {
+                StateKind::Pipeline => return Pipeline::child_done(self, parent, child, 1),
+                StateKind::Async => return Async::child_done(self, parent, child, 1),
+                StateKind::Stmt => self.as_stmt_mut(parent).currently_executing = None,
+                StateKind::Binary => self.as_binary_mut(parent).currently_executing = None,
+                StateKind::Expansion => self.as_expansion_mut(parent).child_script = None,
+                _ => {}
+            }
+            self.deinit_node(child);
+            child = parent;
+            parent = self
+                .node(child)
+                .base()
+                .expect("an ancestor of a live node is live")
+                .parent;
+        }
+    }
+
+    /// A failed script never reaches [`Self::finish`]. Every callback into the interpreter (a
+    /// process exit, a pipe, a thread-pool task) targets a node, so once all of them are freed the
+    /// JS wrapper can be collected.
+    fn release_if_drained(&self) {
+        if self.cleanup_state.get() == CleanupState::RuntimeCleaned
+            || self.nodes.get().iter().any(|n| !matches!(n, Node::Free))
+        {
+            return;
+        }
+        log!(
+            "Interpreter(0x{:x}) drained after failure",
+            std::ptr::from_ref(self) as usize
+        );
+        self.deref_root_shell_and_io_if_needed(true);
+        Self::decr_pending_activity_flag(&self.has_pending_activity);
     }
 
     /// JS-host entrypoint — sets up root IO

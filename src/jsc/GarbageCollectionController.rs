@@ -237,7 +237,7 @@ impl GarbageCollectionController {
                 }
             }
             // The image goes after the last idle collection: an earlier page-out would be read back by the next one.
-            if crossed(if at[1] != 0 { at[1] } else { at[0] }) {
+            if dues.clone().last().is_some_and(crossed) {
                 image.pending.set(Some(CpuSample::now()));
             } else if !full && image.quiet_tick() {
                 spawn_idle_page_out(bun_sys::elf::page_out_program_image);

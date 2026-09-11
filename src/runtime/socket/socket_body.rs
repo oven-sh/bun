@@ -2115,25 +2115,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
+        // Dropped after `_pair_scope`, so the tick queue still drains ahead of the teardown.
+        let _cleanup = CloseTeardown {
+            socket: this,
+            entered: Rc::clone(&handlers),
+        };
         // The upgradeTLS raw twin shares the same us_socket_t so it never
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't
         // recurse, and `onClose` derefs the +1 we took at creation.
-        if let Some(raw) = this.twin.with_mut(|t| t.take()) {
+        // The pair closes as one event: the scope holds the tick queue until
+        // this socket's own close handler, the one with the read error, has run.
+        let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
+            // SAFETY: the VM owns its event loop for the life of the process.
+            let scope =
+                unsafe { jsc::event_loop::EventLoop::enter_scope(handlers.vm.event_loop()) };
             // `on_close` consumes the twin's +1 via its `CloseTeardown`, so
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
             // this socket's own close proceeds regardless.
             crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
-        }
-        let cleanup = CloseTeardown {
-            socket: this,
-            entered: Rc::clone(&handlers),
-        };
+            scope
+        });
 
         if this.flags.get().contains(Flags::FINALIZING) {
-            drop(cleanup);
             return Ok(());
         }
 
@@ -2142,7 +2148,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let callback = handlers.on_close();
 
         if callback.is_empty() {
-            drop(cleanup);
             return Ok(());
         }
 
@@ -2151,7 +2156,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // above is unwinding with a termination pending: it belongs to that
         // frame, so this dispatch neither enters JS over it nor claims it.
         if handlers.global_object.has_exception() {
-            drop(cleanup);
             return Ok(());
         }
 

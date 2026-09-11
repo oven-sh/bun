@@ -505,6 +505,25 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  test("redirect stdin from a ReadableStream throws instead of crashing", async () => {
+    // Streaming a ReadableStream into a shell command's stdin isn't implemented yet; it used to hit a
+    // `panic!("TODO SHELL READABLE STREAM")` and take the whole process down.
+    for (const cmd of ["cat", "echo", "true && cat", `${BUN} -e "process.stdin.pipe(process.stdout)"`]) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello from a stream\n"));
+          controller.close();
+        },
+      });
+      expect(async () => await $`${{ raw: cmd }} < ${stream}`.env(bunEnv).quiet()).toThrow(
+        "ReadableStream is not supported as a shell redirect yet",
+      );
+    }
+    // The documented workaround keeps working.
+    const stream = new Response("hello from a stream\n").body!;
+    expect(await $`cat < ${await new Response(stream).blob()}`.text()).toBe("hello from a stream\n");
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);

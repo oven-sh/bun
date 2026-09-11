@@ -16,7 +16,9 @@ export function require(this: JSCommonJSModule, _: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // Like Node, only read properties off `this`: it can be a plain object or undefined.
+  const parentFilename = this?.filename;
+  const id = $resolveSync(originalId, parentFilename, false, false, options ? options.paths : undefined, this, options);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -31,7 +33,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return this.$requireNativeModule(id);
+    return $requireNativeModule(id);
   } else {
     const existing = $requireMap.$get(id);
     if (existing) {
@@ -68,7 +70,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   }
 
   if (id === "bun:test") {
-    return Bun.jest(this.filename);
+    return Bun.jest(parentFilename);
   }
 
   // To handle import/export cycles, we need to create a module object and put
@@ -87,9 +89,9 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   if (IS_BUN_DEVELOPMENT) {
     $assert(mod.id === id);
     try {
-      out = this.$require(
+      out = mod.$require(
         id,
-        mod,
+        parentFilename,
         // did they pass a { type } object?
         $argumentCount(),
         // the object containing a "type" attribute, if they passed one
@@ -101,7 +103,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw E;
     }
   } else {
-    out = this.$require(id, mod, $argumentCount(), $argument(1));
+    out = mod.$require(id, parentFilename, $argumentCount(), $argument(1));
   }
 
   // -1 means we need to lookup the module from the ESM registry.

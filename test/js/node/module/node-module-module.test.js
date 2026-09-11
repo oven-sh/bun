@@ -760,6 +760,78 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  test("Module.prototype.require called on something that is not a module", async () => {
+    using dir = tempDir("require-plain-parent", {
+      "dep.js": "module.exports = { ok: true, parentIsFake: module.parent === globalThis.fakeParent };",
+      "sub/rel.js": "module.exports = 'relative to sub';",
+      "bare.js": "module.exports = 'no receiver';",
+      "throws.js": "throw new Error('boom');",
+      "main.cjs": `
+        const path = require("node:path");
+        const Module = require("node:module");
+        const dep = path.join(__dirname, "dep.js");
+        const bare = path.join(__dirname, "bare.js");
+        const throws = path.join(__dirname, "throws.js");
+        const fakeParent = (globalThis.fakeParent = {
+          id: path.join(__dirname, "sub", "virtual.js"),
+          filename: path.join(__dirname, "sub", "virtual.js"),
+          paths: Module._nodeModulePaths(path.join(__dirname, "sub")),
+          children: [],
+        });
+        const caught = fn => {
+          try {
+            return fn();
+          } catch (e) {
+            return "threw " + e.name + ": " + e.message;
+          }
+        };
+        const unbound = Module.prototype.require;
+
+        const first = caught(() => Module.prototype.require.call(fakeParent, dep));
+        const cached = require.cache[dep];
+        console.log(
+          JSON.stringify({
+            first,
+            loaded: cached?.loaded,
+            parentIsFakeParent: cached?.parent === fakeParent,
+            second: require(dep),
+            relative: caught(() => Module.prototype.require.call(fakeParent, "./rel.js")),
+            builtin: caught(() => Module.prototype.require.call(fakeParent, "fs") === require("fs")),
+            noReceiver: caught(() => unbound(bare)),
+            noReceiverRelative: caught(() => unbound("./bare.js")),
+            noReceiverBuiltin: caught(() => unbound("node:path") === path),
+            primitiveReceiver: caught(() => Module.prototype.require.call(5, bare)),
+            throwing: caught(() => Module.prototype.require.call(fakeParent, throws)),
+            throwingCached: throws in require.cache,
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      first: { ok: true, parentIsFake: true },
+      loaded: true,
+      parentIsFakeParent: true,
+      second: { ok: true, parentIsFake: true },
+      relative: "relative to sub",
+      builtin: true,
+      noReceiver: "no receiver",
+      noReceiverRelative: "no receiver",
+      noReceiverBuiltin: true,
+      primitiveReceiver: "no receiver",
+      throwing: "threw Error: boom",
+      throwingCached: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

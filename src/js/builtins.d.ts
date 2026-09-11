@@ -294,6 +294,7 @@ declare function $evaluateCommonJSModule(
   sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
 declare function $evictIsolationSourceProviderCache(key?: string): void;
+declare function $requireNativeModule(id: string): any;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 

@@ -67,8 +67,8 @@ declare interface Error {
 }
 
 interface JSCommonJSModule {
-  $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireNativeModule(id: string): any;
+  /** Called on the module being loaded. `parentFilename` is the `filename` of what `require` was called on. */
+  $require(id: string, parentFilename: unknown, args_count: number, args: Array): any;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

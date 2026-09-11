@@ -2879,10 +2879,15 @@ impl TestCommand {
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
+            let global = vm.global();
             // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
             // raw-ptr escape so the closure does not hold a borrowck lock on
             // it for the loop body.
-            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            scopeguard::defer! {
+                unsafe { (*bun_test_root_ptr).exit_file(); }
+                // A mock.module() patch still pending must not hold up the next file.
+                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+            }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
@@ -2964,6 +2969,12 @@ impl TestCommand {
             }
 
             vm.event_loop_ref().tick();
+
+            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref().tick();
+            }
 
             'blk: {
                 // Check if bun_test is available and has tests to run

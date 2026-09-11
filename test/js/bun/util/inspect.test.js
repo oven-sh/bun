@@ -402,6 +402,43 @@ it("inspect", () => {
   );
 });
 
+it("String wrapper objects print as [String: ...] at every depth", () => {
+  class MyString extends String {}
+
+  // Top level. Bun.inspect quotes strings even at the top level, which used to
+  // turn the wrapper into a plain quoted string.
+  expect(Bun.inspect(new String("s"))).toBe('[String: "s"]');
+  expect(Bun.inspect(new String(""))).toBe('[String: ""]');
+  expect(Bun.inspect(new MyString("s"))).toBe('[String: "s"]');
+
+  // Nested in every container, alongside the other wrappers which already printed correctly.
+  expect(Bun.inspect({ n: new Number(3), b: new Boolean(true), s: new String("s") })).toBe(
+    '{\n  n: [Number: 3],\n  b: [Boolean: true],\n  s: [String: "s"],\n}',
+  );
+  expect(Bun.inspect([new String("s"), new String(""), new MyString("sub")])).toBe(
+    '[ [String: "s"], [String: ""], [String: "sub"] ]',
+  );
+  expect(Bun.inspect(new Map([[new String("k"), new String("v")]]))).toBe(
+    'Map(1) {\n  [String: "k"]: [String: "v"],\n}',
+  );
+  expect(Bun.inspect(new Set([new String("s")]))).toBe('Set(1) {\n  [String: "s"],\n}');
+
+  // The contents go through the same escaping as a quoted primitive string, for
+  // both the Latin-1 and the UTF-16 string representations.
+  expect(Bun.inspect({ s: new String('a"b\\c\n') })).toBe('{\n  s: [String: "a\\"b\\\\c\\n"],\n}');
+  expect(Bun.inspect({ s: new String("héllo") })).toBe('{\n  s: [String: "héllo"],\n}');
+  expect(Bun.inspect({ s: new String('日"本') })).toBe('{\n  s: [String: "日\\"本"],\n}');
+  expect(Bun.inspect({ s: new String("héllo 🌍") })).toBe('{\n  s: [String: "héllo 🌍"],\n}');
+
+  // Primitive strings and RegExps share the printer and keep their rendering.
+  expect(Bun.inspect({ s: "s", r: /r/g })).toBe('{\n  s: "s",\n  r: /r/g,\n}');
+  expect(Bun.inspect(["s", /r/g])).toBe('[ "s", /r/g ]');
+
+  // The colored printer is a separate instantiation of the same code.
+  expect(Bun.inspect([new String("s")], { colors: true })).toContain('\x1b[32m[String: "s"]\x1b[0m');
+  expect(Bun.inspect([new String("日本語")], { colors: true })).toContain('\x1b[32m[String: "日本語"]\x1b[0m');
+});
+
 describe("latin1 supplemental", () => {
   const fixture = [
     [["äbc"], '[ "äbc" ]'],

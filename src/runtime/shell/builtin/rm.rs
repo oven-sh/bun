@@ -504,7 +504,8 @@ impl Rm {
     }
 
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> RmParseFlag {
-        if flag.is_empty() || flag[0] != b'-' {
+        // A lone `-` is an operand (a file named `-`), as in getopt(3).
+        if flag.len() < 2 || flag[0] != b'-' {
             return RmParseFlag::Done;
         }
         if flag.len() > 2 && flag[1] == b'-' {

@@ -987,8 +987,8 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
     UwsArg::PassThrough(ty.clone())
 }
 
-/// `#[derive(JsAffine)]` — the struct/enum may live in a job's JS-side
-/// partition (`bun_jsc::job::JsSide`): every field must itself be
+/// `#[derive(JsAffine)]` — the struct/enum may be (part of) a job's `Js`
+/// half (`bun_jsc::JobContext::Js`): every field must itself be
 /// `JsAffine`, which the expansion checks with one bound per field type, so
 /// a field that owns process memory (a `Vec`, a `Box`, a C library handle) is
 /// a compile error here rather than a leak-or-UAF decision at teardown.

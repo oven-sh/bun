@@ -36,7 +36,7 @@ import {
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"latest" | "previous" | "oldest" | "eol" | "beta"} Tier
  * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
@@ -186,14 +186,13 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // The `latest` lane only has two agents behind it right now (the Studios
-  // came back on macOS 15 and can only host 15 guests), so until they are on
-  // 26 it runs on main and on opt-in (see darwinLatestLaneEnabled), not on
-  // every PR push.
+  // These three version-specific lanes run on main and on opt-in (see
+  // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
+  // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
+  // pool serves one PR lane and the whole x64 pool the other.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
-  // x64 is off until enough Intel test agents are back on the queue.
-  // { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
@@ -409,10 +408,10 @@ function getTestAgent(platform, options) {
     // box — because the tier split bottlenecked the smaller pool and Intel
     // can't run latest anyway.
     return {
-      queue: `test-${os}`,
+      queue: tier === "beta" ? darwinBetaQueue : `test-${os}`,
       os,
       arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
+      ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
     };
   }
 
@@ -511,22 +510,19 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
-  const { os, arch } = platform;
-  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
-  // `|| true` keeps a missing package manager from failing the step — the
-  // build's own "nasm not found" error is clearer.
+  const { arch } = platform;
+  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
-    os === "windows" && arch === "x64"
+    arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]
       : [];
   return {
@@ -727,10 +723,17 @@ function getVerifyBaselineStep(platform, options) {
  *
  * linux-aarch64 is absent because its build lane runs on the aarch64 host and
  * traces itself; `packageAndUpload()` is its sole publisher.
+ *
+ * The `on` platforms are entries of `testPlatforms`, so the step runs on an
+ * image that exists. The windows tracer is built on the test VM for whichever
+ * architecture it is running on (scripts/orderfile/functrace-windows.c), so each
+ * windows target traces on its own arch's fleet.
  */
 const traceOrderTargets = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
+  { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
@@ -746,15 +749,24 @@ const traceOrderTargets = [
  * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
  * no consumer. Soft-fail: the order file is an optimization, and a broken
  * tracer must not fail a build.
+ *
+ * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
+ * `|| exit /b 1` convention). The generator compiles the tracer there, which
+ * takes clang-cl or a Visual Studio environment; the image has both, and
+ * vs-shell.ps1 provides the latter the same way it does for the test runner.
+ * The profile zip carries the two maps the generator resolves addresses with
+ * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
  * @param {Target} target
  * @param {Platform} tracePlatform
  * @param {PipelineOptions} options
  * @returns {CommandStep}
  */
 function getTraceOrderStep(target, tracePlatform, options) {
+  const { os } = target;
   const targetKey = getTargetKey(target);
   const triplet = getTargetTriplet(target);
   const profileDir = `${triplet}-profile`;
+  const generate = `scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`;
   return {
     key: `${targetKey}-trace-order`,
     label: `${getTargetLabel(target)} - trace-order`,
@@ -764,13 +776,21 @@ function getTraceOrderStep(target, tracePlatform, options) {
     cancel_on_build_failing: isMergeQueue(),
     soft_fail: true,
     timeout_in_minutes: 15,
-    command: [
-      `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${profileDir}.zip'`,
-      `chmod +x ${profileDir}/bun-profile`,
-      `./${profileDir}/bun-profile scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`,
-      `buildkite-agent artifact upload '${triplet}.order'`,
-    ],
+    command:
+      os === "windows"
+        ? [
+            `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
+            `tar -xf ${profileDir}.zip || exit /b 1`,
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 .\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
+            `buildkite-agent artifact upload ${triplet}.order`,
+          ]
+        : [
+            `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+            `unzip -o '${profileDir}.zip'`,
+            `chmod +x ${profileDir}/bun-profile`,
+            `./${profileDir}/bun-profile ${generate}`,
+            `buildkite-agent artifact upload '${triplet}.order'`,
+          ],
   };
 }
 
@@ -816,10 +836,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
-    retry: getRetry(),
+
+    // No automatic retry on the beta tier: agent loss would re-queue the
+    // job onto a single-box queue with nobody to take it, and a job that
+    // never starts is not something soft_fail can convert.
+    retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+    // One beta box: one shard. soft_fail keeps a failing run from
+    // failing the build, and the lane is never added on the merge queue
+    // (see betaDarwinTestPlatforms). One window stays open: the box was
+    // connected at upload but drops off during the build wait, so the
+    // step sits `scheduled` with nobody to take it. That holds only this
+    // PR's own build, and a cancel clears it.
+    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
+    // The beta lane runs the whole suite as one shard on one box (~35 min).
+    timeout_in_minutes:
+      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
@@ -1425,6 +1458,95 @@ async function getPipelineOptions() {
 }
 
 /**
+ * True when the darwin beta queue can take one more job right now: an
+ * agent is connected to it, and no live build has a job targeting it in
+ * any non-terminal state (`waiting` counts: the beta test step waits on
+ * the darwin build for tens of minutes before it is ever `scheduled`).
+ * Reads the cluster secret `CI_QUEUE_PROBE_TOKEN` (a REST token with
+ * read_builds and read_agents only); without it, or on any error, the
+ * answer is false and the lane is simply not added. Two uploads a few
+ * seconds apart can both see "idle"; a queue of two is the worst case.
+ * @returns {Promise<boolean>}
+ */
+async function darwinBetaQueueIdle() {
+  if (!isBuildkite) {
+    return false;
+  }
+  try {
+    // getSecret throws on Buildkite when the secret is absent; the probe
+    // must never take the pipeline down with it.
+    const token = getSecret("CI_QUEUE_PROBE_TOKEN", { required: false });
+    if (!token) {
+      return false;
+    }
+    const api = async path => {
+      const res = await fetch(`https://api.buildkite.com/v2/organizations/bun/${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return res.ok ? res : undefined;
+    };
+
+    // No connected agent: a step added now would sit `scheduled` until
+    // the box comes back, and soft_fail does nothing for a job that
+    // never starts. The org has a few hundred agents and the list pages
+    // at 100, so follow `Link: rel="next"`; `stopping` does not count.
+    let connected = false;
+    let next = "agents?per_page=100";
+    for (let page = 0; next && page < 10 && !connected; page++) {
+      const res = await api(next);
+      if (!res) {
+        return false;
+      }
+      const agents = await res.json();
+      connected = agents.some(
+        ({ connection_state, meta_data = [] }) =>
+          connection_state === "connected" && meta_data.includes(`queue=${darwinBetaQueue}`),
+      );
+      const link = res.headers.get("link") ?? "";
+      const match = link.match(/<https:\/\/api\.buildkite\.com\/v2\/organizations\/bun\/([^>]+)>;\s*rel="next"/);
+      next = match?.[1];
+    }
+    if (!connected) {
+      return false;
+    }
+
+    // Builds in `failing` and `canceling` still carry live jobs.
+    const res = await api(
+      "pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&state%5B%5D=failing&state%5B%5D=canceling&per_page=100",
+    );
+    if (!res) {
+      return false;
+    }
+    const builds = await res.json();
+    const terminal = new Set([
+      "passed",
+      "failed",
+      "canceled",
+      "skipped",
+      "timed_out",
+      "expired",
+      "broken",
+      "finished",
+      "waiting_failed",
+      "blocked_failed",
+      "unblocked_failed",
+    ]);
+    const busy = builds.some(({ jobs = [] }) =>
+      jobs.some(
+        ({ state, agent_query_rules = [] }) =>
+          !terminal.has(state) && agent_query_rules.includes(`queue=${darwinBetaQueue}`),
+      ),
+    );
+    return !busy;
+  } catch {
+    return false;
+  }
+}
+
+const darwinBetaQueue = "test-darwin-beta";
+
+/**
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
@@ -1546,11 +1668,29 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  const darwinLatestLaneEnabled =
-    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
+  /** @type {Platform[]} */
+  const prDarwinTestPlatforms = [
+    { os: "darwin", arch: "aarch64", release: "any" },
+    { os: "darwin", arch: "x64", release: "any" },
+  ];
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // The macOS beta lane: a single home-hosted mini on the next macOS,
+  // its own queue, soft-fail. PR builds get it only when that queue is
+  // idle at upload time, so it is always busy while PRs flow and never
+  // has a backlog: a PR that misses it loses nothing.
+  // Never on the merge queue: a step that cannot start (box offline) would
+  // hold the required check open and stall the queue.
+  const betaDarwinTestPlatforms =
+    !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
+      ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
+      : [];
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  ).filter(({ os, tier }) => os !== "darwin" || tier !== "latest" || darwinLatestLaneEnabled);
+  )
+    .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {

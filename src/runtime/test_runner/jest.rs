@@ -5,16 +5,16 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
-use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{create_bound, strings as scope_strings, Mode as ScopeKind};
+use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
@@ -144,6 +144,9 @@ pub struct TestRunner<'a> {
 
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
+
+    /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
+    pub(crate) node_test_used: bool,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
@@ -335,7 +338,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::TEST(),
+            "test",
         )?;
         module.put(global_object, b"test", test_scope_functions);
         module.put(global_object, b"it", test_scope_functions);
@@ -345,7 +348,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XTEST(),
+            "xtest",
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
         module.put(global_object, b"xit", xtest_scope_functions);
@@ -355,7 +358,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::DESCRIBE(),
+            "describe",
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
@@ -364,7 +367,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XDESCRIBE(),
+            "xdescribe",
         )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
@@ -477,7 +480,7 @@ pub mod Jest {
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_slice(global_object)?;
+            let str = arguments[0].to_utf8(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
@@ -513,17 +516,21 @@ pub mod Jest {
 }
 
 /// Reached only from `node:test`, through `$newRustFunction` rather than the
-/// public `bun:test` module object. Returns 0 outside `bun test`.
+/// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
 pub(crate) fn js_file_generation(
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     // `runner_ptr()` rather than `runner()`: node:test calls this on every test
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation =
-        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+        if global.bun_vm().worker_ref().is_none() {
+            (*p.as_ptr()).node_test_used = true;
+        }
+        (*p.as_ptr()).bun_test_root.file_generation
+    });
     Ok(JSValue::from(generation))
 }
 
@@ -551,7 +558,7 @@ pub(crate) fn js_node_test_mark_result(
     // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
     let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
     let bound = match dcb_ref {
-        Some(refdata) => refdata.phase.clone(),
+        Some(refdata) => refdata.phase,
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
         // drain before it stamps the DoneCallback. `get_current_state_data()`
         // can't name a sequence inside a concurrent group, but
@@ -617,10 +624,22 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // `report_unhandled` reports the uncaught exception, with a guard
-            // for `Terminated` (which carries no pending exception to take).
-            use bun_jsc::JsResultExt as _;
-            bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
+                // As `RunTestsTask::call`: what advancing the runner threw is
+                // recorded against wherever the runner now is; a termination is
+                // left where it is.
+                if !global_object.has_pending_termination_exception() {
+                    // SAFETY: as above; `run` has returned, this is the only handle.
+                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+                    let phase = buntest.get_current_state_data();
+                    buntest.on_uncaught_exception(
+                        global_object,
+                        Some(global_object.take_exception(e)),
+                        false,
+                        &phase,
+                    );
+                }
+            }
             return;
         }
 
@@ -644,7 +663,7 @@ fn consume_arg(
     fallback: &[u8],
 ) -> JsResult<()> {
     if should_write {
-        let owned_slice = arg.to_slice_or_null(global_this)?;
+        let owned_slice = arg.to_utf8(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
     } else {
         array_list.extend_from_slice(fallback);
@@ -699,13 +718,13 @@ pub(crate) fn format_label(
                 let var_path = &label[var_start..var_end];
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
-                    bun_core::String::init(var_path).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
                     if value.is_string() {
-                        let owned_slice = value.to_slice_or_null(global_this)?;
+                        let owned_slice = value.to_utf8(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
@@ -776,10 +795,8 @@ pub(crate) fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    let mut str = bun_core::String::empty();
-                    // `str` released by Drop.
                     // Use jsonStringifyFast for SIMD-optimized serialization
-                    current_arg.json_stringify_fast(global_this, &mut str)?;
+                    let str = current_arg.json_stringify_fast(global_this)?;
                     let owned_slice = str.to_owned_slice();
                     list.extend_from_slice(&owned_slice);
                     idx += 1;

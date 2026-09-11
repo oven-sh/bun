@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 async function createProxyServer(is_tls: boolean) {
@@ -747,6 +748,53 @@ test("axios with https-proxy-agent", async () => {
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });
 
+// For a refused CONNECT, https-proxy-agent hands node:http a detached
+// `new net.Socket({ writable: false })` and replays the proxy's reply into it.
+// node:http only parses from a socket that is not writable and never writes the
+// request to it, so the caller sees the proxy's status. With `writable` forced
+// to true the request was written to the handle-less socket and failed with
+// ERR_SOCKET_CLOSED instead.
+test("https-proxy-agent reports a refused CONNECT as the proxy's response, like node", async () => {
+  const proxy = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.end(
+        'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="test"\r\nContent-Length: 0\r\n\r\n',
+      );
+    });
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const agent = new HttpsProxyAgent(`http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`);
+  try {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    let sawResponse = false;
+    const req = http.request({ host: "example.test", port: 80, path: "/", agent }, res => {
+      sawResponse = true;
+      events.push(`response ${res.statusCode} ${res.headers["proxy-authenticate"]}`);
+      res.on("error", ended.reject);
+      res.on("end", () => {
+        events.push("res end");
+        ended.resolve();
+      });
+      res.resume();
+    });
+    req.on("error", err => events.push(`req error ${(err as NodeJS.ErrnoException).code}`));
+    req.on("close", () => {
+      closed.resolve();
+      // A request that died without a response has nothing left to end.
+      if (!sawResponse) ended.resolve();
+    });
+    req.end();
+    await Promise.all([closed.promise, ended.promise]);
+    expect(events).toEqual(['response 407 Basic realm="test"', "res end"]);
+  } finally {
+    agent.destroy();
+    proxy.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", async () => {
   httpProxyServer.log.length = 0;
 
@@ -779,6 +827,45 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
 
   const connects = httpProxyServer.log.filter(l => l.startsWith("CONNECT"));
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
+});
+
+// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
+// direct connection: the ClientHello SNI and the certificate verification use
+// the URL host, and a caller-supplied Host header only travels as an HTTP
+// field on the tunneled request.
+test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+  const seen: { sni: string | null; host: string | undefined }[] = [];
+  const target = tls.createServer(
+    {
+      ...tlsCert,
+      SNICallback(servername, cb) {
+        if (servername !== "localhost") return cb(new Error(`unexpected SNI ${servername}`));
+        cb(null, tls.createSecureContext(tlsCert));
+      },
+    },
+    socket => {
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    },
+  );
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const res = await fetch(`https://localhost:${port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      headers: { Host: "other.example" },
+      tls: { ca: tlsCert.cert },
+    });
+    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+  } finally {
+    target.close();
+  }
 });
 
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
@@ -854,6 +941,42 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   });
   expect(response.status).toBe(200);
   expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy reuses the tunnel across checkServerIdentity requests", async () => {
+  using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+  httpProxyServer.log.length = 0;
+  const verified: string[] = [];
+  const withCallback = () => ({
+    proxy: httpProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
+
+  for (let i = 0; i < 3; i++) {
+    expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  }
+  expect(verified).toEqual(["localhost"]);
+  expect(connects()).toBe(1);
+
+  // A strict request without a callback does not inherit the callback-approved
+  // tunnel, and vice versa.
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
+  expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
   expect(verified).toEqual(["localhost"]);
 });
 

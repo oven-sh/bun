@@ -5,13 +5,12 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 
 use bun_lsquic_sys as lsquic;
-
-use super::OrReport;
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
@@ -594,14 +593,14 @@ impl QuicSession {
             .filter(|v| v.is_string())
         {
             self.datagram_drop_newest
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() == b"drop-newest");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
         }
         if let Some(v) = options.get(global, "qlog")? {
             self.qlog_enabled.set(v.to_boolean());
         }
         if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
             self.reject_unverified_peer
-                .set(bun_core::String::from_js(v, global)?.to_utf8_bytes() != b"manual");
+                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
         }
         if let Some(app) = options
             .get(global, "application")?
@@ -779,9 +778,7 @@ impl QuicSession {
                 qs
             }
             Err(e) => {
-                // Returning into lsquic with the exception still pending would
-                // poison the next `callbacks::get()` and silently drop events.
-                global.report_uncaught_exception_from_error(e);
+                crate::dispatch::fold(Err(e));
                 null_mut()
             }
         }
@@ -865,7 +862,7 @@ impl QuicSession {
             if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
                 continue;
             }
-            let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global);
+            let buf = ArrayBuffer::create_buffer(global, &blob).or_report();
             if let Some(cb) = callbacks::get(global, "onSessionTicket") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref()
@@ -914,312 +911,347 @@ impl QuicSession {
             if self.destroyed.get() {
                 break;
             }
-            match event {
-                SessionEvent::HandshakeDone { ok } => {
-                    if ok {
-                        self.capture_hsk_snapshot();
-                        if self.is_server.get() || self.peer_verification_refused() {
-                            // Node's server reports at handshake COMPLETION
-                            // (session.cc: server completion == confirmation
-                            // per RFC 9001 §4.1.2).
-                            self.maybe_report_handshake(global, true);
-                        } else {
-                            // Node's client `opened` settles only for
-                            // connections the server actually accepted.
-                            self.handshake_pending_ok.set(true);
-                        }
+            if let Err(err) = self.dispatch_event(global, event) {
+                // This drain is the events' dispatcher: reported, and the drain
+                // goes on (that event is lost); the VM's stop ends it.
+                if bun_jsc::task::report_error_or_terminate(global, err).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// One queued event's delivery. A value that cannot be built for its
+    /// callback (allocation failure, a terminating VM) is the `Err`, folded by
+    /// the drain in [`Self::process_events`]; the callbacks themselves are
+    /// top-level calls (`run_callback`).
+    fn dispatch_event(&self, global: &JSGlobalObject, event: SessionEvent) -> JsResult<()> {
+        match event {
+            SessionEvent::HandshakeDone { ok } => {
+                if ok {
+                    self.capture_hsk_snapshot();
+                    if self.is_server.get() || self.peer_verification_refused() {
+                        // Node's server reports at handshake COMPLETION
+                        // (session.cc: server completion == confirmation
+                        // per RFC 9001 §4.1.2).
+                        self.maybe_report_handshake(global, true);
                     } else {
-                        self.maybe_report_handshake(global, false);
+                        // Node's client `opened` settles only for
+                        // connections the server actually accepted.
+                        self.handshake_pending_ok.set(true);
                     }
+                } else {
+                    self.maybe_report_handshake(global, false);
                 }
-                SessionEvent::HandshakeConfirmed => {
-                    self.with_state(|s| s.handshake_confirmed = 1);
-                    if self.handshake_pending_ok.get() {
-                        let close_wins = self.streams.get().is_empty()
-                            && self.events.with_mut(|e| {
-                                for ev in e.iter() {
-                                    match ev {
-                                        SessionEvent::StreamReady { .. }
-                                        | SessionEvent::Datagram { .. } => return false,
-                                        // A refusal means never accepted, so
-                                        // `opened` must not settle; a clean
-                                        // close reports the handshake first.
-                                        SessionEvent::PeerClose {
-                                            app_error, code, ..
-                                        } => {
-                                            return !*app_error && *code != 0;
-                                        }
-                                        SessionEvent::Closed => return true,
-                                        _ => {}
+            }
+            SessionEvent::HandshakeConfirmed => {
+                self.with_state(|s| s.handshake_confirmed = 1);
+                if self.handshake_pending_ok.get() {
+                    let close_wins = self.streams.get().is_empty()
+                        && self.events.with_mut(|e| {
+                            for ev in e.iter() {
+                                match ev {
+                                    SessionEvent::StreamReady { .. }
+                                    | SessionEvent::Datagram { .. } => return false,
+                                    // A refusal means never accepted, so
+                                    // `opened` must not settle; a clean
+                                    // close reports the handshake first.
+                                    SessionEvent::PeerClose {
+                                        app_error, code, ..
+                                    } => {
+                                        return !*app_error && *code != 0;
                                     }
+                                    SessionEvent::Closed => return true,
+                                    _ => {}
                                 }
-                                false
-                            });
-                        if !close_wins {
-                            self.handshake_pending_ok.set(false);
-                            self.maybe_report_handshake(global, true);
-                        }
-                    }
-                }
-                SessionEvent::PeerClose {
-                    app_error,
-                    code,
-                    reason,
-                } => {
-                    self.peer_close.set(Some((app_error, code, reason)));
-                }
-                SessionEvent::Closed => {
-                    self.report_close(global);
-                }
-                SessionEvent::StreamReady { stream, remote } => {
-                    let Some(stream) = self.live_stream(stream) else {
-                        continue;
-                    };
-                    // A remote stream that arrives already-reset while this
-                    // session's close is in the same batch must never be
-                    // surfaced (Node's onstream count excludes it).
-                    if remote && self.conn.get().is_null() && stream.pre_reset_code().is_some() {
-                        stream.suppress_announce();
-                        continue;
-                    }
-                    if remote && self.peer_cert_rejected.get() {
-                        stream.suppress_announce();
-                        continue;
-                    }
-                    // Already closing: the CONNECTION_CLOSE precedes this
-                    // stream's packet and a closing endpoint discards new
-                    // streams (RFC 9000 s10.2.1). Raw QUIC only.
-                    if remote
-                        && self.with_state(|st| st.graceful_close == 1)
-                        && !self
-                            .endpoint_ref()
-                            .map(|ep| ep.is_http(self.is_server.get()))
-                            .unwrap_or(false)
-                    {
-                        stream.suppress_announce();
-                        stream.close_raw_silently();
-                        continue;
-                    }
-                    if remote && stream.is_announce_suppressed() {
-                        continue;
-                    }
-                    if remote {
-                        let handle = stream.handle();
-                        // Direction (0=bidi, 1=uni) is bit 1 of the stream id
-                        // (RFC 9000 §2.1).
-                        let id = stream.stream_id();
-                        let direction = JSValue::js_number(if id as u64 & STREAM_ID_UNI_BIT != 0 {
-                            1.0
-                        } else {
-                            0.0
+                            }
+                            false
                         });
-                        if let Some(cb) = callbacks::get(global, "onStreamCreated") {
-                            let vm = global.bun_vm().as_mut();
-                            vm.event_loop_ref().run_callback(
-                                cb,
-                                global,
-                                self.handle(),
-                                &[handle, direction],
-                            );
-                        }
+                    if !close_wins {
+                        self.handshake_pending_ok.set(false);
+                        self.maybe_report_handshake(global, true);
                     }
                 }
-                SessionEvent::NewToken(token) => {
-                    // lsquic emits NEW_TOKEN several times per connection
-                    // (initial + per-CID refresh); Node delivers one.
-                    if !self.has_listener(LISTENER_FLAG_NEW_TOKEN)
-                        || self.new_token_reported.replace(true)
-                    {
-                        continue;
-                    }
-                    let buf = ArrayBuffer::create_buffer(global, &token).or_report(global);
-                    if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref()
-                            .run_callback(cb, global, self.handle(), &[buf]);
-                    }
+            }
+            SessionEvent::PeerClose {
+                app_error,
+                code,
+                reason,
+            } => {
+                self.peer_close.set(Some((app_error, code, reason)));
+            }
+            SessionEvent::Closed => {
+                self.report_close(global);
+            }
+            SessionEvent::StreamReady { stream, remote } => {
+                let Some(stream) = self.live_stream(stream) else {
+                    return Ok(());
+                };
+                // A remote stream that arrives already-reset while this
+                // session's close is in the same batch must never be
+                // surfaced (Node's onstream count excludes it).
+                if remote && self.conn.get().is_null() && stream.pre_reset_code().is_some() {
+                    stream.suppress_announce();
+                    return Ok(());
                 }
-                SessionEvent::Keylog(line) => {
-                    let s = match bun_core::String::clone_utf8(&line).to_js(global) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            global.report_uncaught_exception_from_error(err);
-                            continue;
-                        }
-                    };
-                    if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref()
-                            .run_callback(cb, global, self.handle(), &[s]);
-                    }
+                if remote && self.peer_cert_rejected.get() {
+                    stream.suppress_announce();
+                    return Ok(());
                 }
-                SessionEvent::SessionResume(blob) => {
-                    if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
-                        continue;
-                    }
-                    if self.ticket_delivered.replace(true) {
-                        self.pending_tickets
-                            .with_mut(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
-                        self.schedule_process();
-                        continue;
-                    }
-                    let buf = ArrayBuffer::create_buffer(global, &blob).or_report(global);
-                    if let Some(cb) = callbacks::get(global, "onSessionTicket") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref()
-                            .run_callback(cb, global, self.handle(), &[buf]);
-                    }
+                // Already closing: the CONNECTION_CLOSE precedes this
+                // stream's packet and a closing endpoint discards new
+                // streams (RFC 9000 s10.2.1). Raw QUIC only.
+                if remote
+                    && self.with_state(|st| st.graceful_close == 1)
+                    && !self
+                        .endpoint_ref()
+                        .map(|ep| ep.is_http(self.is_server.get()))
+                        .unwrap_or(false)
+                {
+                    stream.suppress_announce();
+                    stream.close_raw_silently();
+                    return Ok(());
                 }
-                SessionEvent::StreamReset { stream, code } => {
-                    let Some(stream) = self
-                        .live_stream(stream)
-                        .filter(|s| s.wants_reset() && !s.is_announce_suppressed())
-                    else {
-                        continue;
-                    };
+                if remote && stream.is_announce_suppressed() {
+                    return Ok(());
+                }
+                if remote {
                     let handle = stream.handle();
-                    let err = make_application_error(global, code).or_report(global);
-                    {
-                        if let Some(cb) = callbacks::get(global, "onStreamReset") {
-                            let vm = global.bun_vm().as_mut();
-                            vm.event_loop_ref().run_callback(cb, global, handle, &[err]);
-                        }
-                    }
-                }
-                SessionEvent::GoawayReceived => {
-                    // lsquic doesn't surface the GOAWAY stream-id; Node
-                    // reports -1n when the id is unavailable.
-                    let last_stream_id = match JSValue::from_int64_no_truncate(global, -1) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            global.report_uncaught_exception_from_error(e);
-                            continue;
-                        }
-                    };
-                    if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(
-                            cb,
-                            global,
-                            self.handle(),
-                            &[last_stream_id],
-                        );
-                    }
-                }
-                SessionEvent::StreamWantsTrailers { stream } => {
-                    let Some(stream) = self.live_stream(stream) else {
-                        continue;
-                    };
-                    let handle = stream.handle();
-                    if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(cb, global, handle, &[]);
-                    }
-                }
-                SessionEvent::StreamHeaders {
-                    stream,
-                    pairs,
-                    kind,
-                } => {
-                    let Some(stream) = self.live_stream(stream).filter(|s| s.wants_headers())
-                    else {
-                        continue;
-                    };
-                    let handle = stream.handle();
-                    // Latin-1, as node does for HTTP headers. Allocate inside
-                    // the closure: a collected `Vec<JSValue>` is not GC-scanned,
-                    // so early strings would be collectible.
-                    let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
-                        Ok(bun_core::String::clone_latin1(s)
-                            .to_js(global)
-                            .or_report(global))
+                    // Direction (0=bidi, 1=uni) is bit 1 of the stream id
+                    // (RFC 9000 §2.1).
+                    let id = stream.stream_id();
+                    let direction = JSValue::js_number(if id as u64 & STREAM_ID_UNI_BIT != 0 {
+                        1.0
+                    } else {
+                        0.0
                     });
-                    let js_arr = js_arr.or_report(global);
-                    {
-                        if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
-                            let vm = global.bun_vm().as_mut();
-                            vm.event_loop_ref().run_callback(
-                                cb,
-                                global,
-                                handle,
-                                &[js_arr, JSValue::js_number(kind as f64)],
-                            );
-                        }
-                    }
-                }
-                SessionEvent::StreamDrain { stream } => {
-                    let Some(stream) = self.live_stream(stream) else {
-                        continue;
-                    };
-                    let handle = stream.handle();
-                    if let Some(cb) = callbacks::get(global, "onStreamDrain") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(cb, global, handle, &[]);
-                    }
-                }
-                SessionEvent::StreamBlocked { stream } => {
-                    let Some(stream) = self.live_stream(stream).filter(|s| s.wants_block()) else {
-                        continue;
-                    };
-                    let handle = stream.handle();
-                    if let Some(cb) = callbacks::get(global, "onStreamBlocked") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(cb, global, handle, &[]);
-                    }
-                }
-                SessionEvent::StreamWake { stream } => {
-                    let Some(stream) = self
-                        .live_stream(stream)
-                        .filter(|s| !s.is_announce_suppressed())
-                    else {
-                        continue;
-                    };
-                    if let Some(wakeup) = stream.take_wakeup() {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(
-                            wakeup.get(),
-                            global,
-                            JSValue::UNDEFINED,
-                            &[],
-                        );
-                    }
-                }
-                SessionEvent::Datagram { payload, early } => {
-                    self.add_stat(IDX_STATS_SESSION_DATAGRAMS_RECEIVED, 1);
-                    if !self.has_listener(LISTENER_FLAG_DATAGRAM) || self.peer_cert_rejected.get() {
-                        continue;
-                    }
-                    let buf = ArrayBuffer::create_buffer(global, &payload).or_report(global);
-                    if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
+                    if let Some(cb) = callbacks::get(global, "onStreamCreated") {
                         let vm = global.bun_vm().as_mut();
                         vm.event_loop_ref().run_callback(
                             cb,
                             global,
                             self.handle(),
-                            &[buf, JSValue::js_boolean(early)],
+                            &[handle, direction],
                         );
                     }
                 }
-                SessionEvent::DatagramStatus { id, sent } => {
-                    if sent {
-                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
-                        self.inflight_datagrams.with_mut(|q| q.push_back(id));
-                        continue;
+            }
+            SessionEvent::NewToken(token) => {
+                // lsquic emits NEW_TOKEN several times per connection
+                // (initial + per-CID refresh); Node delivers one.
+                if !self.has_listener(LISTENER_FLAG_NEW_TOKEN)
+                    || self.new_token_reported.replace(true)
+                {
+                    return Ok(());
+                }
+                let buf = ArrayBuffer::create_buffer(global, &token)?;
+                if let Some(cb) = callbacks::get(global, "onSessionNewToken") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[buf]);
+                }
+            }
+            SessionEvent::Keylog(line) => {
+                let s = bun_string_jsc::create_utf8_for_js(global, &line)?;
+                if let Some(cb) = callbacks::get(global, "onSessionKeyLog") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[s]);
+                }
+            }
+            SessionEvent::SessionResume(blob) => {
+                if !self.has_listener(LISTENER_FLAG_SESSION_TICKET) {
+                    return Ok(());
+                }
+                if self.ticket_delivered.replace(true) {
+                    self.pending_tickets
+                        .with_mut(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
+                    self.schedule_process();
+                    return Ok(());
+                }
+                let buf = ArrayBuffer::create_buffer(global, &blob)?;
+                if let Some(cb) = callbacks::get(global, "onSessionTicket") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[buf]);
+                }
+            }
+            SessionEvent::StreamReset { stream, code } => {
+                let Some(stream) = self
+                    .live_stream(stream)
+                    .filter(|s| s.wants_reset() && !s.is_announce_suppressed())
+                else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                let err = make_application_error(global, code)?;
+                {
+                    if let Some(cb) = callbacks::get(global, "onStreamReset") {
+                        let vm = global.bun_vm().as_mut();
+                        vm.event_loop_ref().run_callback(cb, global, handle, &[err]);
                     }
-                    if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
+                }
+            }
+            SessionEvent::GoawayReceived => {
+                // lsquic doesn't surface the GOAWAY stream-id; Node
+                // reports -1n when the id is unavailable.
+                let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
+                if let Some(cb) = callbacks::get(global, "onSessionGoaway") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[last_stream_id]);
+                }
+            }
+            SessionEvent::StreamWantsTrailers { stream } => {
+                let Some(stream) = self.live_stream(stream) else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                if let Some(cb) = callbacks::get(global, "onStreamTrailers") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                }
+            }
+            SessionEvent::StreamHeaders {
+                stream,
+                pairs,
+                kind,
+            } => {
+                let Some(stream) = self.live_stream(stream).filter(|s| s.wants_headers()) else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                // Latin-1, as node does for HTTP headers. Allocate inside
+                // the closure: a collected `Vec<JSValue>` is not GC-scanned,
+                // so early strings would be collectible.
+                let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
+                    bun_core::String::clone_latin1(s).into_js(global)
+                });
+                let js_arr = js_arr?;
+                {
+                    if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
+                        let vm = global.bun_vm().as_mut();
+                        vm.event_loop_ref().run_callback(
+                            cb,
+                            global,
+                            handle,
+                            &[js_arr, JSValue::js_number(kind as f64)],
+                        );
+                    }
+                }
+            }
+            SessionEvent::StreamDrain { stream } => {
+                let Some(stream) = self.live_stream(stream) else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                if let Some(cb) = callbacks::get(global, "onStreamDrain") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                }
+            }
+            SessionEvent::StreamBlocked { stream } => {
+                let Some(stream) = self.live_stream(stream).filter(|s| s.wants_block()) else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                if let Some(cb) = callbacks::get(global, "onStreamBlocked") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(cb, global, handle, &[]);
+                }
+            }
+            SessionEvent::StreamWake { stream } => {
+                let Some(stream) = self
+                    .live_stream(stream)
+                    .filter(|s| !s.is_announce_suppressed())
+                else {
+                    return Ok(());
+                };
+                if let Some(wakeup) = stream.take_wakeup() {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(wakeup.get(), global, JSValue::UNDEFINED, &[]);
+                }
+            }
+            SessionEvent::Datagram { payload, early } => {
+                self.add_stat(IDX_STATS_SESSION_DATAGRAMS_RECEIVED, 1);
+                if !self.has_listener(LISTENER_FLAG_DATAGRAM) || self.peer_cert_rejected.get() {
+                    return Ok(());
+                }
+                let buf = ArrayBuffer::create_buffer(global, &payload)?;
+                if let Some(cb) = callbacks::get(global, "onSessionDatagram") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(
+                        cb,
+                        global,
+                        self.handle(),
+                        &[buf, JSValue::js_boolean(early)],
+                    );
+                }
+            }
+            SessionEvent::DatagramStatus { id, sent } => {
+                if sent {
+                    self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
+                    self.inflight_datagrams.with_mut(|q| q.push_back(id));
+                    return Ok(());
+                }
+                if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
+                    return Ok(());
+                }
+                let id_js = JSValue::from_uint64_no_truncate(global, id)?;
+                let status_js = global.common_strings().quic_datagram_abandoned();
+                if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(
+                        cb,
+                        global,
+                        self.handle(),
+                        &[id_js, status_js],
+                    );
+                }
+            }
+            SessionEvent::EarlyDataFailed => {
+                // Node parity: their `closed` promises reject with an
+                // application error.
+                let code = self.with_state(|s| {
+                    if s.internal_error_code != 0 {
+                        s.internal_error_code
+                    } else {
+                        1
+                    }
+                });
+                let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
+                for sp in streams {
+                    if let Some(stream) = self.live_stream(sp) {
+                        stream.cancel_early_rejected(code);
+                    }
+                }
+            }
+            SessionEvent::DatagramAckStatus { count, acked } => {
+                let status_js = if acked {
+                    global.common_strings().quic_datagram_acknowledged()
+                } else {
+                    global.common_strings().quic_datagram_lost()
+                };
+                // Every acknowledged/lost datagram is popped and counted even
+                // when its status cannot be delivered.
+                let mut undelivered = Ok(());
+                for _ in 0..count {
+                    let Some(id) = self.inflight_datagrams.with_mut(VecDeque::pop_front) else {
+                        break;
+                    };
+                    if acked {
+                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
+                    } else {
+                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
+                    }
+                    if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
                     }
                     let id_js = match JSValue::from_uint64_no_truncate(global, id) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            global.report_uncaught_exception_from_error(e);
-                            continue;
-                        }
-                    };
-                    let status_js = match bun_core::String::static_(b"abandoned").to_js(global) {
-                        Ok(v) => v,
+                        Ok(id_js) => id_js,
                         Err(err) => {
-                            global.report_uncaught_exception_from_error(err);
+                            undelivered = Err(err);
                             continue;
                         }
                     };
@@ -1233,233 +1265,165 @@ impl QuicSession {
                         );
                     }
                 }
-                SessionEvent::EarlyDataFailed => {
-                    // Node parity: their `closed` promises reject with an
-                    // application error.
-                    let code = self.with_state(|s| {
-                        if s.internal_error_code != 0 {
-                            s.internal_error_code
-                        } else {
-                            1
-                        }
-                    });
-                    let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
-                    for sp in streams {
-                        if let Some(stream) = self.live_stream(sp) {
-                            stream.cancel_early_rejected(code);
-                        }
-                    }
-                }
-                SessionEvent::DatagramAckStatus { count, acked } => {
-                    let status = if acked {
-                        b"acknowledged".as_slice()
-                    } else {
-                        b"lost".as_slice()
-                    };
-                    for _ in 0..count {
-                        let Some(id) = self.inflight_datagrams.with_mut(VecDeque::pop_front) else {
-                            break;
-                        };
-                        if acked {
-                            self.add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
-                        } else {
-                            self.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
-                        }
-                        if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
-                            continue;
-                        }
-                        let id_js = match JSValue::from_uint64_no_truncate(global, id) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                global.report_uncaught_exception_from_error(e);
-                                continue;
-                            }
-                        };
-                        let status_js = match bun_core::String::static_(status).to_js(global) {
-                            Ok(v) => v,
-                            Err(err) => {
-                                global.report_uncaught_exception_from_error(err);
-                                continue;
-                            }
-                        };
-                        if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
-                            let vm = global.bun_vm().as_mut();
-                            vm.event_loop_ref().run_callback(
-                                cb,
-                                global,
-                                self.handle(),
-                                &[id_js, status_js],
-                            );
-                        }
-                    }
-                }
-                SessionEvent::VersionNegotiation { server_versions } => {
-                    let Some((requested, min)) = self.verneg.get() else {
-                        continue;
-                    };
-                    let requested_arr =
-                        JSValue::create_array_from_iter(global, server_versions.into_iter(), |v| {
-                            Ok(JSValue::js_number(v as f64))
-                        })
-                        .or_report(global);
-                    // Node passes the locally-configured range as
-                    // `[min_version, version]` (session.cc
-                    // EmitVersionNegotiation).
-                    let supported_arr = JSValue::create_array_from_iter(
+                undelivered?;
+            }
+            SessionEvent::VersionNegotiation { server_versions } => {
+                let Some((requested, min)) = self.verneg.get() else {
+                    return Ok(());
+                };
+                let requested_arr =
+                    JSValue::create_array_from_iter(global, server_versions.into_iter(), |v| {
+                        Ok(JSValue::js_number(v as f64))
+                    })?;
+                // Node passes the locally-configured range as
+                // `[min_version, version]` (session.cc
+                // EmitVersionNegotiation).
+                let supported_arr =
+                    JSValue::create_array_from_iter(global, [min, requested].into_iter(), |v| {
+                        Ok(JSValue::js_number(v as f64))
+                    })?;
+                if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(
+                        cb,
                         global,
-                        [min, requested].into_iter(),
-                        |v| Ok(JSValue::js_number(v as f64)),
-                    )
-                    .or_report(global);
-                    if let Some(cb) = callbacks::get(global, "onSessionVersionNegotiation") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(
-                            cb,
-                            global,
-                            self.handle(),
-                            &[
-                                JSValue::js_number(requested as f64),
-                                requested_arr,
-                                supported_arr,
-                            ],
-                        );
-                    }
-                }
-                SessionEvent::Origin(payload) => {
-                    if !self.has_listener(LISTENER_FLAG_ORIGIN) {
-                        continue;
-                    }
-                    // Collect ranges, not JSValues: a `Vec<JSValue>` lives on the
-                    // Rust heap, which the GC does not scan, so strings created
-                    // early would be collectible while later ones allocate.
-                    let mut ranges: Vec<(usize, usize)> = Vec::new();
-                    let mut off = 0usize;
-                    while off + ORIGIN_LEN_PREFIX <= payload.len() {
-                        let n = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
-                        off += ORIGIN_LEN_PREFIX;
-                        if off + n > payload.len() {
-                            break;
-                        }
-                        ranges.push((off, n));
-                        off += n;
-                    }
-                    let array =
-                        JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
-                            bun_core::String::clone_utf8(&payload[o..o + n]).to_js(global)
-                        })
-                        .or_report(global);
-                    if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref()
-                            .run_callback(cb, global, self.handle(), &[array]);
-                    }
-                }
-                SessionEvent::PathValidation {
-                    validated,
-                    preferred,
-                    new_local,
-                    new_remote,
-                    old_local,
-                    old_remote,
-                } => {
-                    if !self.has_listener(LISTENER_FLAG_PATH_VALIDATION) {
-                        continue;
-                    }
-                    // Node reports 'aborted' when the path switched without
-                    // completing validation (a non-probing packet arrived on
-                    // the new path first); 'failure' is never produced here.
-                    let result = if validated {
-                        b"success".as_slice()
-                    } else {
-                        b"aborted".as_slice()
-                    };
-                    let result_js = match bun_core::String::static_(result).to_js(global) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            global.report_uncaught_exception_from_error(err);
-                            continue;
-                        }
-                    };
-                    // Node passes each fact only from the side that owns it:
-                    // the server knows the previous path, the client knows it
-                    // migrated to the preferred address.
-                    let (old_local_js, old_remote_js, preferred_js) = if self.is_server.get() {
-                        (
-                            old_local.to_js_socket_address(global),
-                            old_remote.to_js_socket_address(global),
-                            JSValue::UNDEFINED,
-                        )
-                    } else {
-                        (
-                            JSValue::UNDEFINED,
-                            JSValue::UNDEFINED,
-                            JSValue::js_boolean(preferred),
-                        )
-                    };
-                    if let Some(cb) = callbacks::get(global, "onSessionPathValidation") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(
-                            cb,
-                            global,
-                            self.handle(),
-                            &[
-                                result_js,
-                                new_local.to_js_socket_address(global),
-                                new_remote.to_js_socket_address(global),
-                                old_local_js,
-                                old_remote_js,
-                                preferred_js,
-                            ],
-                        );
-                    }
-                }
-                SessionEvent::StreamStopSending { stream, code } => {
-                    let Some(stream) = self.live_stream(stream) else {
-                        continue;
-                    };
-                    stream.apply_peer_stop_sending(code);
-                }
-                SessionEvent::StreamClosed { stream: stream_ptr } => {
-                    let Some(stream) = self.live_stream(stream_ptr) else {
-                        continue;
-                    };
-                    if stream.mark_close_reported() {
-                        continue;
-                    }
-                    // A suppressed stream was never surfaced to JS, so it gets
-                    // no onStreamClose -- but it still has to leave `streams`
-                    // and drop its self-root, or it lives until teardown.
-                    if stream.is_announce_suppressed() {
-                        self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
-                        stream.release_close_root();
-                        continue;
-                    }
-                    // Runs the parked reader wakeup — user JS, which may destroy
-                    // this stream and let GC free it. Re-acquire before any
-                    // further use; `mark_close_reported` above already fired.
-                    stream.end_read_side(global);
-                    let Some(stream) = self.live_stream(stream_ptr) else {
-                        continue;
-                    };
-                    let handle = stream.handle();
-                    if let Some(cb) = callbacks::get(global, "onStreamClose") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref()
-                            .run_callback(cb, global, handle, &[JSValue::UNDEFINED]);
-                    }
-                    // onStreamClose is user JS too: re-acquire before the
-                    // `release_close_root` below, as above.
-                    let Some(stream) = self.live_stream(stream_ptr) else {
-                        continue;
-                    };
-                    self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
-                    // Nothing else reaches this stream now, so drop the
-                    // self-root; `stream` stays valid because the retain above
-                    // only dropped a pointer.
-                    stream.release_close_root();
+                        self.handle(),
+                        &[
+                            JSValue::js_number(requested as f64),
+                            requested_arr,
+                            supported_arr,
+                        ],
+                    );
                 }
             }
+            SessionEvent::Origin(payload) => {
+                if !self.has_listener(LISTENER_FLAG_ORIGIN) {
+                    return Ok(());
+                }
+                // Collect ranges, not JSValues: a `Vec<JSValue>` lives on the
+                // Rust heap, which the GC does not scan, so strings created
+                // early would be collectible while later ones allocate.
+                let mut ranges: Vec<(usize, usize)> = Vec::new();
+                let mut off = 0usize;
+                while off + ORIGIN_LEN_PREFIX <= payload.len() {
+                    let n = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
+                    off += ORIGIN_LEN_PREFIX;
+                    if off + n > payload.len() {
+                        break;
+                    }
+                    ranges.push((off, n));
+                    off += n;
+                }
+                let array =
+                    JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
+                        bun_string_jsc::create_utf8_for_js(global, &payload[o..o + n])
+                    })?;
+                if let Some(cb) = callbacks::get(global, "onSessionOrigin") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, self.handle(), &[array]);
+                }
+            }
+            SessionEvent::PathValidation {
+                validated,
+                preferred,
+                new_local,
+                new_remote,
+                old_local,
+                old_remote,
+            } => {
+                if !self.has_listener(LISTENER_FLAG_PATH_VALIDATION) {
+                    return Ok(());
+                }
+                // Node reports 'aborted' when the path switched without
+                // completing validation (a non-probing packet arrived on
+                // the new path first); 'failure' is never produced here.
+                let result = if validated {
+                    b"success".as_slice()
+                } else {
+                    b"aborted".as_slice()
+                };
+                let result_js = bun_core::String::static_(result).to_js(global)?;
+                // Node passes each fact only from the side that owns it:
+                // the server knows the previous path, the client knows it
+                // migrated to the preferred address.
+                let (old_local_js, old_remote_js, preferred_js) = if self.is_server.get() {
+                    (
+                        old_local.to_js_socket_address(global),
+                        old_remote.to_js_socket_address(global),
+                        JSValue::UNDEFINED,
+                    )
+                } else {
+                    (
+                        JSValue::UNDEFINED,
+                        JSValue::UNDEFINED,
+                        JSValue::js_boolean(preferred),
+                    )
+                };
+                if let Some(cb) = callbacks::get(global, "onSessionPathValidation") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref().run_callback(
+                        cb,
+                        global,
+                        self.handle(),
+                        &[
+                            result_js,
+                            new_local.to_js_socket_address(global),
+                            new_remote.to_js_socket_address(global),
+                            old_local_js,
+                            old_remote_js,
+                            preferred_js,
+                        ],
+                    );
+                }
+            }
+            SessionEvent::StreamStopSending { stream, code } => {
+                let Some(stream) = self.live_stream(stream) else {
+                    return Ok(());
+                };
+                stream.apply_peer_stop_sending(code);
+            }
+            SessionEvent::StreamClosed { stream: stream_ptr } => {
+                let Some(stream) = self.live_stream(stream_ptr) else {
+                    return Ok(());
+                };
+                if stream.mark_close_reported() {
+                    return Ok(());
+                }
+                // A suppressed stream was never surfaced to JS, so it gets
+                // no onStreamClose -- but it still has to leave `streams`
+                // and drop its self-root, or it lives until teardown.
+                if stream.is_announce_suppressed() {
+                    self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                    stream.release_close_root();
+                    return Ok(());
+                }
+                // Runs the parked reader wakeup — user JS, which may destroy
+                // this stream and let GC free it. Re-acquire before any
+                // further use; `mark_close_reported` above already fired.
+                stream.end_read_side(global);
+                let Some(stream) = self.live_stream(stream_ptr) else {
+                    return Ok(());
+                };
+                let handle = stream.handle();
+                if let Some(cb) = callbacks::get(global, "onStreamClose") {
+                    let vm = global.bun_vm().as_mut();
+                    vm.event_loop_ref()
+                        .run_callback(cb, global, handle, &[JSValue::UNDEFINED]);
+                }
+                // onStreamClose is user JS too: re-acquire before the
+                // `release_close_root` below, as above.
+                let Some(stream) = self.live_stream(stream_ptr) else {
+                    return Ok(());
+                };
+                self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                // Nothing else reaches this stream now, so drop the
+                // self-root; `stream` stays valid because the retain above
+                // only dropped a pointer.
+                stream.release_close_root();
+            }
         }
+        Ok(())
     }
 
     fn maybe_report_handshake(&self, global: &JSGlobalObject, ok: bool) {
@@ -1550,17 +1514,11 @@ impl QuicSession {
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
-            .and_then(|b| match bun_core::String::clone_utf8(&b).to_js(global) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    global.report_uncaught_exception_from_error(e);
-                    None
-                }
-            })
+            .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
-        let cipher_version = bun_core::String::static_(b"TLSv1.3")
+        let cipher_version = bun_core::String::static_("TLSv1.3")
             .to_js(global)
-            .or_report(global);
+            .or_report();
         // Node reports both fields only on failure -- the JS 'auto' rejection
         // gates on `validationErrorReason !== undefined` -- and a server with
         // no client certificate reports X509_V_ERR_UNSPECIFIED.
@@ -1575,10 +1533,10 @@ impl QuicSession {
             Some((code, reason)) => (
                 bun_core::String::static_(reason.as_bytes())
                     .to_js(global)
-                    .or_report(global),
+                    .or_report(),
                 bun_core::String::static_(code.as_bytes())
                     .to_js(global)
-                    .or_report(global),
+                    .or_report(),
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
@@ -1695,9 +1653,7 @@ impl QuicSession {
         // `qlog_fin_sent` is latched above and also gates the guard at the top,
         // so bailing here would silently end the whole qlog stream, not just
         // drop this record.
-        let data_js = bun_core::String::clone_utf8(data.as_bytes())
-            .to_js(global)
-            .or_report(global);
+        let data_js = bun_string_jsc::create_utf8_for_js(global, data.as_bytes()).or_report();
         if let Some(cb) = callbacks::get(global, "onSessionQlog") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -1757,16 +1713,10 @@ impl QuicSession {
         // `close_reported` is already latched above, so returning here would
         // mark the close delivered without ever delivering it and `closed`
         // would never settle. Report and carry on with undefined.
-        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report(global);
+        let code_js = JSValue::from_uint64_no_truncate(global, code).or_report();
         let reason_js = reason
             .filter(|r| !r.is_empty())
-            .and_then(|r| match bun_core::String::clone_utf8(&r).to_js(global) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    global.report_uncaught_exception_from_error(e);
-                    None
-                }
-            })
+            .map(|r| bun_string_jsc::create_utf8_for_js(global, &r).or_report())
             .unwrap_or(JSValue::UNDEFINED);
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
@@ -1858,7 +1808,7 @@ impl QuicSession {
                 .get(global, "type")?
                 .map(|v| {
                     bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
+                        .map(|s| s.to_owned_slice() == b"application")
                 })
                 .transpose()?
                 .unwrap_or(false);
@@ -1866,7 +1816,7 @@ impl QuicSession {
             reason = options
                 .get(global, "reason")?
                 .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes()))
+                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
                 .transpose()?
                 .unwrap_or_default();
             self.self_close.with_mut(|s| {
@@ -1987,31 +1937,26 @@ impl QuicSession {
         }
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn silent_close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
-        if !self.destroyed.get() {
-            if let Some(c) = self.conn() {
-                c.abort();
-                self.schedule_process();
-            }
-        }
-        Ok(JSValue::UNDEFINED)
-    }
     pub(crate) fn destroy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
             let options = frame.arguments_as_array::<1>()[0];
             if options.is_object() {
                 // Node's Destroy with close options. JS has already latched
                 // `inner.destroying` and finished its half before reaching
-                // here, so teardown() MUST run; report a parse failure
-                // instead of propagating past it.
-                if let Err(e) = self.close_with_options(global, options) {
-                    global.report_uncaught_exception_from_error(e);
-                }
-                if let Some(endpoint) = self.endpoint_ref() {
-                    endpoint.drive_engines_once();
+                // here, so teardown() MUST run; a parse failure is taken off
+                // the VM (teardown reaches JS) and re-thrown once it has. No
+                // close was applied then, so the engines are not driven.
+                match self.close_with_options(global, options) {
+                    Ok(()) => {
+                        if let Some(endpoint) = self.endpoint_ref() {
+                            endpoint.drive_engines_once();
+                        }
+                    }
+                    Err(err) => parse_error = Some(global.take_exception(err)),
                 }
             } else if let Some(c) = self.conn() {
                 // Node's server acks the packet that triggered the destroying
@@ -2028,6 +1973,9 @@ impl QuicSession {
             self.schedule_process();
         }
         self.teardown(global);
+        if let Some(err) = parse_error {
+            return Err(global.throw_value(err));
+        }
         Ok(JSValue::UNDEFINED)
     }
     pub(crate) fn open_stream(
@@ -2118,7 +2066,7 @@ impl QuicSession {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest.get() {
-                self.report_datagram_abandoned(global, id);
+                self.report_datagram_abandoned(global, id)?;
                 // SAFETY: as above.
                 unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
                 return JSValue::from_uint64_no_truncate(global, id);
@@ -2126,7 +2074,7 @@ impl QuicSession {
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
-                self.report_datagram_abandoned(global, dropped_id);
+                self.report_datagram_abandoned(global, dropped_id)?;
                 if self.destroyed.get() || self.conn.get().is_null() {
                     return JSValue::from_uint64_no_truncate(global, 0);
                 }
@@ -2142,29 +2090,20 @@ impl QuicSession {
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
     }
-    fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) {
+    /// Runs inside `sendDatagram`: what building the status left pending is
+    /// thrown from there.
+    fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) -> JsResult<()> {
         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
-            return;
+            return Ok(());
         }
-        let id_js = match JSValue::from_uint64_no_truncate(global, id) {
-            Ok(v) => v,
-            Err(e) => {
-                global.report_uncaught_exception_from_error(e);
-                return;
-            }
-        };
-        let status_js = match bun_core::String::static_(b"abandoned").to_js(global) {
-            Ok(v) => v,
-            Err(err) => {
-                global.report_uncaught_exception_from_error(err);
-                return;
-            }
-        };
+        let id_js = JSValue::from_uint64_no_truncate(global, id)?;
+        let status_js = global.common_strings().quic_datagram_abandoned();
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()
                 .run_callback(cb, global, self.handle(), &[id_js, status_js]);
         }
+        Ok(())
     }
 
     /// Node's JS layer discards this return value, matching upstream.
@@ -2316,34 +2255,31 @@ impl QuicSession {
             b"disableActiveMigration",
             JSValue::js_boolean(tp.disable_active_migration != 0),
         );
-        let put_cid = |name: &[u8], s: &str| {
+        let put_cid = |name: &[u8], s: &str| -> JsResult<()> {
             let v = if s.is_empty() {
                 JSValue::UNDEFINED
             } else {
-                bun_core::String::clone_utf8(s.as_bytes())
-                    .to_js(global)
-                    .or_report(global)
+                bun_string_jsc::create_utf8_for_js(global, s.as_bytes())?
             };
             obj.put(global, name, v);
+            Ok(())
         };
-        put_cid(b"initialSCID", tp.initial_scid_str());
-        put_cid(b"retrySCID", tp.retry_scid_str());
-        put_cid(b"originalDCID", tp.original_dcid_str());
+        put_cid(b"initialSCID", tp.initial_scid_str())?;
+        put_cid(b"retrySCID", tp.retry_scid_str())?;
+        put_cid(b"originalDCID", tp.original_dcid_str())?;
         Ok(obj)
     }
 }
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
-        Some(b) => bun_core::String::clone_utf8(b)
-            .to_js(global)
-            .or_report(global),
+        Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
         None => JSValue::UNDEFINED,
     }
 }
 
 fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValue> {
-    let kind = bun_core::String::static_(b"application").to_js(global)?;
+    let kind = bun_core::String::static_("application").to_js(global)?;
     let code = JSValue::from_uint64_no_truncate(global, code)?;
     JSValue::create_array_from_slice(
         global,
@@ -2384,12 +2320,6 @@ impl QuicSession {
         };
         Self::transport_params_to_js(global, &tp)
     }
-
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {
@@ -2639,5 +2569,28 @@ lsquic_callback! {
         let early = unsafe { lsquic::Conn::from_raw(session.conn.get()) }
             .is_some_and(|c| c.datagram_early());
         session.push_event(SessionEvent::Datagram { payload, early });
+    }
+}
+
+/// node's lifecycle callbacks (`onSessionClose`, `onSessionHandshake`, …) run
+/// behind state that is latched *before* their arguments are built — bailing
+/// would leave `closed`/`opened` never settling — so an argument that cannot be
+/// built (allocation failure, a terminating VM) is folded and replaced with
+/// `undefined`, and the callback still runs (or is skipped by `run_callback`'s
+/// gate when it is the termination).
+trait OrReport {
+    fn or_report(self) -> JSValue;
+}
+
+impl OrReport for JsResult<JSValue> {
+    #[inline]
+    fn or_report(self) -> JSValue {
+        match self {
+            Ok(v) => v,
+            Err(e) => {
+                crate::dispatch::fold(Err(e));
+                JSValue::UNDEFINED
+            }
+        }
     }
 }

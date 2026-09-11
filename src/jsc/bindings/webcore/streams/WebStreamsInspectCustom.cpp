@@ -108,9 +108,10 @@ WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisV
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)
 {
     auto* globalObject = prototype->globalObject();
+    // Matches Node: { writable: true, enumerable: false, configurable: true }.
     prototype->putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
         nativeFunction, ImplementationVisibility::Public, NoIntrinsic,
-        static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum));
+        static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 } // namespace WebStreams

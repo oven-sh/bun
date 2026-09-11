@@ -1,11 +1,10 @@
-diff --git a/src/bun_bin/Cargo.toml b/src/bun_bin/Cargo.toml
-index 94839e8d1237..dd880fa1fa74 100644
---- a/src/bun_bin/Cargo.toml
-+++ b/src/bun_bin/Cargo.toml
-@@ -11,7 +11,12 @@ edition.workspace = true
- [lib]
- name = "bun_rust"
- path = "lib.rs"
+diff --git a/src/runtime/Cargo.toml b/src/runtime/Cargo.toml
+--- a/src/runtime/Cargo.toml
++++ b/src/runtime/Cargo.toml
+@@ -10,7 +10,12 @@
+ # rather than an rlib consumed by a separate shim crate, means rustc never
+ # encodes crate metadata for this (by far the largest) crate and cargo never
+ # re-bundles every rlib into a second archive on each rebuild.
 -crate-type = ["staticlib"]
 +crate-type = ["staticlib", "rlib"]
 +

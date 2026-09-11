@@ -9,7 +9,6 @@ use bun_core::ZStr;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::strings;
-use bun_paths::{self, PathBuffer};
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
@@ -31,12 +30,6 @@ pub enum ImportWatcher {
     Hot(Box<Watcher>),
     Watch(Box<Watcher>),
 }
-
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` —
-// the watcher stores that value for auto-watched directories. This crate sees
-// both types, so the compile-time check lives here.
-const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
     /// Look up the `package_json` column for `hash` under the watcher's
@@ -62,13 +55,9 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // Note: bun_watcher::Loader is an opaque newtype over u8;
-        // wrap the bun_ast::Loader discriminant.
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
-            }
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
             ImportWatcher::None => true,
         }
     }
@@ -79,22 +68,15 @@ impl ImportWatcher {
         fd: Fd,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        loader: bun_ast::Loader,
         dir_fd: Fd,
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
-            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
-                .add_file::<COPY_FILE_PATH>(
-                    fd,
-                    file_path,
-                    hash,
-                    bun_watcher::Loader(loader as u8),
-                    dir_fd,
-                    package_json,
-                ),
+            ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
+                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+            }
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
@@ -113,7 +95,7 @@ impl HotReloaderCtx for VirtualMachine {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // `VirtualMachine.bun_watcher` is the
         // `*mut ImportWatcher` (see the field comment in
-        // VirtualMachine.rs), and `getContext` only runs after
+        // VirtualMachine.rs), and `get_context` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
         // is unreachable.
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
@@ -125,9 +107,7 @@ impl HotReloaderCtx for VirtualMachine {
         }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // The inherent `reload` ignores its task argument, so pass `None`
-        // rather than threading the dyn view through.
+    fn reload(&mut self) {
         VirtualMachine::reload(self, None);
     }
 
@@ -220,10 +200,8 @@ pub trait HotReloaderCtx {
     /// Implementor returns the live `Watcher` regardless of how it's stored.
     fn bun_watcher_mut(&mut self) -> &mut Watcher;
 
-    /// Called from `Task::run` to perform the actual reload. The const-generic
-    /// task is erased via the `HotReloadTaskView` so this trait isn't
-    /// recursively generic.
-    fn reload(&mut self, task: &mut dyn HotReloadTaskView);
+    /// Called from `Task::run` to perform the actual reload.
+    fn reload(&mut self);
 
     /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
@@ -252,28 +230,6 @@ pub trait HotReloaderCtx {
     ) -> *mut Watcher;
 
     fn compute_clear_screen(&self) -> bool;
-}
-
-/// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
-/// `HotReloaderCtx::reload` doesn't need to name the const generics.
-pub trait HotReloadTaskView {
-    fn count(&self) -> u8;
-    fn hashes(&self) -> &[u32];
-    fn paths(&self) -> &[&'static [u8]];
-}
-
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
-    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
-{
-    fn count(&self) -> u8 {
-        self.count
-    }
-    fn hashes(&self) -> &[u32] {
-        &self.hashes[..self.count as usize]
-    }
-    fn paths(&self) -> &[&'static [u8]] {
-        &self.paths[..self.count as usize]
-    }
 }
 
 /// When non-null, `on_file_update` records the absolute path of every file
@@ -596,7 +552,7 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            unsafe { (*ctx).reload() };
         }
     }
 
@@ -687,6 +643,9 @@ fn arm_watch_reload_grace_timer() {
     let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
         .spawn(move || {
+            // `force()` clears the terminal through this thread's `Output`
+            // writers; they are zeroed until the thread is configured.
+            Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when
             // the kill-signal emit is observed so a bounded synchronous
@@ -878,7 +837,7 @@ where
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
-        let mut _on_file_update_path_buf = PathBuffer::uninit();
+        let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -1035,7 +994,7 @@ where
                                             // bun_sys::access takes a &ZStr; build one on the
                                             // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
-                                                let mut zbuf = PathBuffer::uninit();
+                                                let mut zbuf = bun_paths::path_buffer_pool::get();
                                                 if affected_path.len() >= zbuf.len() {
                                                     false
                                                 } else {
@@ -1113,7 +1072,7 @@ where
                                     continue;
                                 }
                                 let main_exists = {
-                                    let mut zbuf = PathBuffer::uninit();
+                                    let mut zbuf = bun_paths::path_buffer_pool::get();
                                     if self.main.file.len() >= zbuf.len() {
                                         false
                                     } else {
@@ -1347,7 +1306,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         unsafe { &mut *handle.as_ptr() }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+    fn reload(&mut self) {
         // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
         // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()

@@ -7,6 +7,7 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlLenencInt,
   mysqlOkPacket,
@@ -112,10 +113,12 @@ test("mysql: mysqlHandshakeV10 + mysqlOkPacket are accepted by Bun's parser", as
     let authed = false;
     socket.write(mysqlHandshakeV10());
     socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
+        } else {
+          mysqlAckSessionSetup(socket, payload);
         }
       });
     });

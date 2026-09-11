@@ -72,6 +72,9 @@ impl CurrentTime {
         bun_core::mock_time::set_wall_ms(date_now);
 
         vm.overridden_performance_now = Some(offset.ns());
+        // `Date.now() == date_now_offset + performance.now()`, so the offset is
+        // the fake clock's `performance.timeOrigin`.
+        vm.overridden_time_origin = Some(date_now_offset);
     }
 
     pub(crate) fn clear(&self, global: &JSGlobalObject) {
@@ -86,27 +89,35 @@ impl CurrentTime {
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, f64::NAN);
         vm.overridden_performance_now = None;
+        vm.overridden_time_origin = None;
     }
 }
 
 /// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
-/// instead of the stale activation-time offset. No-op when fake timers are
-/// inactive or `ms` is NaN (the "clear override" sentinel).
+/// instead of the stale activation-time offset. `performance.now()` does not
+/// move, so `performance.timeOrigin` follows the rebased offset. No-op when
+/// fake timers are inactive. A NaN `ms` is the "clear override" sentinel:
+/// `Date.now()` is real again until the next tick, so the mocked wall clock
+/// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
-    if ms.is_nan() {
-        return;
-    }
+extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
         return;
     };
+    let vm = global.bun_vm().as_mut();
+    if ms.is_nan() {
+        bun_core::mock_time::clear_wall();
+        vm.overridden_time_origin = None;
+        return;
+    }
     let date_now_offset = ms - current.ms() as f64;
     CURRENT_TIME
         .date_now_offset
         .store(date_now_offset.to_bits(), Ordering::Relaxed);
     bun_core::mock_time::set_wall_ms(ms);
+    vm.overridden_time_origin = Some(date_now_offset);
 }
 
 use crate::jsc_hooks::timer_all;
@@ -153,7 +164,7 @@ impl ClearedTimers {
             // job was scheduled and its JS wrapper (strong while scheduled)
             // keeps it alive; no JS has run since; the `FakeTimers` borrow
             // ended before this call.
-            unsafe { CronJob::stop_dropped_from_fake_heap(job) };
+            CronJob::stop_dropped_from_fake_heap(unsafe { bun_ptr::ThisPtr::new(job) });
         }
     }
 }
@@ -222,19 +233,23 @@ impl FakeTimers {
         cleared
     }
 
-    fn execute_next(global: &JSGlobalObject) -> bool {
+    fn execute_next(global: &JSGlobalObject) -> JsResult<bool> {
         // SAFETY: `timer_all()` is the live per-thread `All`; the borrow ends
         // at this statement, before `fire` re-enters `All::insert`.
         let next = match unsafe { (*timer_all()).fake_timers.timers.delete_min() } {
             Some(n) => n,
-            None => return false,
+            None => return Ok(false),
         };
 
-        Self::fire(global, next);
-        true
+        Self::fire(global, next)?;
+        Ok(true)
     }
 
-    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) {
+    /// Fired from inside the `jest` timer-control host functions. The fake
+    /// clock is a timer drain of its own: like `All::drain_timers`, a
+    /// timer whose callback threw is reported and the drain goes on; only the
+    /// VM's termination stops it, thrown to the `jest` host function driving it.
+    fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
@@ -248,10 +263,15 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        match fired {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
+                .map_err(|stopped| stopped.throw(global)),
+        }
     }
 
-    fn execute_until(global: &JSGlobalObject, until: Timespec) {
+    fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {
         let all = timer_all();
         'outer: loop {
             let next = 'blk: {
@@ -271,22 +291,24 @@ impl FakeTimers {
                 debug_assert!(core::ptr::eq(min, peek));
                 break 'blk min;
             };
-            Self::fire(global, next);
+            Self::fire(global, next)?;
         }
+        Ok(())
     }
 
-    fn execute_only_pending_timers(global: &JSGlobalObject) {
+    fn execute_only_pending_timers(global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: `timer_all()` is the live per-thread `All`.
         let until = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
             // SAFETY: `t` is reachable in the heap and live while linked.
             Some(t) => from_el_timespec(unsafe { &(*t).next }),
-            None => return,
+            None => return Ok(()),
         };
-        Self::execute_until(global, until);
+        Self::execute_until(global, until)
     }
 
-    fn execute_all_timers(global: &JSGlobalObject) {
-        while Self::execute_next(global) {}
+    fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
+        while Self::execute_next(global)? {}
+        Ok(())
     }
 }
 
@@ -307,24 +329,25 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
 /// Set or remove the "clock" property on setTimeout to indicate that fake timers are active.
 /// This is used by testing-library/react's jestFakeTimersAreEnabled() function to detect
 /// if jest.advanceTimersByTime() should be called when draining the microtask queue.
-fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
+fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()> {
     let global_this = global.to_js_value();
     // `get()` (vs `get_own_truthy`) so the LUT-registered `setTimeout` is
     // resolved even before first reification — semantically equivalent on
     // the global since `setTimeout` is always an own property.
-    let Ok(Some(set_timeout_fn)) = global_this.get(global, "setTimeout") else {
-        return;
+    let Some(set_timeout_fn) = global_this.get(global, "setTimeout")? else {
+        return Ok(());
     };
     if !set_timeout_fn.is_object() {
-        return;
+        return Ok(());
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
     if enabled {
         set_timeout_fn.put(global, "clock", JSValue::TRUE);
     } else {
-        let _ = set_timeout_fn.delete_property(global, "clock");
+        set_timeout_fn.delete_property(global, "clock")?;
     }
+    Ok(())
 }
 
 #[bun_jsc::host_fn]
@@ -352,6 +375,12 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                     "'now' must be a number or Date"
                 )));
             }
+            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+            if !js_now.is_finite() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a finite number or a valid Date"
+                )));
+            }
         }
     }
 
@@ -360,7 +389,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
-    set_fake_timer_marker(global, true);
+    set_fake_timer_marker(global, true)?;
 
     Ok(frame.this())
 }
@@ -372,7 +401,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     cleared.release(global.bun_vm_ptr());
 
     // Remove the setTimeout.clock marker when switching back to real timers.
-    set_fake_timer_marker(global, false);
+    set_fake_timer_marker(global, false)?;
 
     Ok(frame.this())
 }
@@ -381,7 +410,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    let _ = FakeTimers::execute_next(global);
+    FakeTimers::execute_next(global)?;
 
     Ok(frame.this())
 }
@@ -393,7 +422,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let arg = frame.arguments_as_array::<1>()[0];
     if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() expects a number of milliseconds"
+            "advanceTimersByTime() expects a number of milliseconds"
         )));
     }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
@@ -403,9 +432,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
-    if arg_number < 0.0 || arg_number > max_advance as f64 {
+    if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
+            "advanceTimersByTime() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
             max_advance, arg_number
         )));
     }
@@ -415,8 +444,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
-    FakeTimers::execute_until(global, target);
+    let advanced = FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
+    advanced?;
 
     Ok(frame.this())
 }
@@ -425,7 +455,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_only_pending_timers(global);
+    FakeTimers::execute_only_pending_timers(global)?;
 
     Ok(frame.this())
 }
@@ -434,7 +464,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_all_timers(global);
+    FakeTimers::execute_all_timers(global)?;
 
     Ok(frame.this())
 }

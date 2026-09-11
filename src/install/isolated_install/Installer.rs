@@ -113,6 +113,10 @@ pub struct Installer<'a> {
     /// the final step. The directory existing at its final path is the only
     /// completeness signal the warm-hit check needs.
     pub(crate) global_store_tmp_suffix: u64,
+
+    /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
+    pub(crate) waiters_head: Box<[StoreEntryId]>,
+    pub(crate) next_waiter: Box<[StoreEntryId]>,
 }
 
 impl<'a> Installer<'a> {
@@ -168,6 +172,15 @@ impl<'a> Installer<'a> {
             .schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
+    /// Called from main thread, for an existing project-local store entry.
+    pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
+        self.tasks[entry_id.get() as usize].relink = Relink::Pending;
+        // .monotonic is okay because the task isn't running yet.
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::SymlinkDependencies as u32, Ordering::Relaxed);
+        self.start_task(entry_id);
+    }
+
     pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
@@ -196,20 +209,26 @@ impl<'a> Installer<'a> {
                 let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];
 
-                let patch_info =
-                    bun_core::handle_oom(self.package_patch_info(pkg_name, pkg_name_hash, pkg_res));
+                let patched = self
+                    .package_patch_info(pkg_name, pkg_name_hash, pkg_res)
+                    .and_then(|patch_info| {
+                        let PatchInfo::Patch(patch) = patch_info else {
+                            return Ok(());
+                        };
+                        let mut log = Log::init();
+                        self.apply_package_patch(entry_id, &patch, &mut log);
+                        if log.has_errors() {
+                            return Err(TaskError::Patching(log));
+                        }
+                        Ok(())
+                    });
 
-                if let PatchInfo::Patch(patch) = &patch_info {
-                    let mut log = Log::init();
-                    self.apply_package_patch(entry_id, patch, &mut log);
-                    if log.has_errors() {
-                        // monotonic is okay because we haven't started the task yet (it isn't running
-                        // on another thread)
-                        entry_steps[entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Relaxed);
-                        self.on_task_fail(entry_id, &TaskError::Patching(log));
-                        continue;
-                    }
+                if let Err(err) = patched {
+                    // .monotonic is okay because the task isn't running on another thread.
+                    entry_steps[entry_id.get() as usize]
+                        .store(Step::Done as u32, Ordering::Relaxed);
+                    self.on_task_fail(entry_id, &err);
+                    continue;
                 }
 
                 self.start_task(entry_id);
@@ -422,7 +441,7 @@ impl<'a> Installer<'a> {
         self.summary.fail += 1;
 
         self.decrement_pending_tasks();
-        self.resume_unblocked_tasks();
+        self.resume_unblocked_tasks(entry_id);
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {
@@ -441,26 +460,35 @@ impl<'a> Installer<'a> {
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
-        if !self.is_task_blocked(entry_id, &mut parent_dedupe) {
-            // .monotonic is okay because the task isn't running right now.
-            self.store.entries.items_step()[entry_id.get() as usize]
-                .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
-            self.start_task(entry_id);
-            return;
+        match self.is_task_blocked(entry_id, &mut parent_dedupe) {
+            None => {
+                // .monotonic is okay because the task isn't running right now.
+                self.store.entries.items_step()[entry_id.get() as usize]
+                    .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
+                self.start_task(entry_id);
+            }
+            Some(blocked_on) => {
+                // .monotonic is okay because the task isn't running right now.
+                self.store.entries.items_step()[entry_id.get() as usize]
+                    .store(Step::Blocked as u32, Ordering::Relaxed);
+                self.push_waiter(blocked_on, entry_id);
+            }
         }
-
-        // .monotonic is okay because the task isn't running right now.
-        self.store.entries.items_step()[entry_id.get() as usize]
-            .store(Step::Blocked as u32, Ordering::Relaxed);
     }
 
-    /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
-    /// task thread (via `run`). `parent_dedupe` should not be shared between threads.
+    /// Main thread only.
+    fn push_waiter(&mut self, dep: StoreEntryId, waiter: StoreEntryId) {
+        let head = &mut self.waiters_head[dep.get() as usize];
+        self.next_waiter[waiter.get() as usize] = *head;
+        *head = waiter;
+    }
+
+    /// Returns the first unfinished non-cyclic dependency; runs on main and task threads, so `parent_dedupe` must not be shared.
     fn is_task_blocked(
         &self,
         entry_id: StoreEntryId,
         parent_dedupe: &mut ArrayHashMap<StoreEntryId, ()>,
-    ) -> bool {
+    ) -> Option<StoreEntryId> {
         let entries = &self.store.entries;
         let entry_deps = entries.items_dependencies();
         let entry_steps = entries.items_step();
@@ -473,14 +501,18 @@ impl<'a> Installer<'a> {
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
                     continue;
                 }
-                return true;
+                return Some(dep.entry_id);
             }
         }
-        false
+        None
     }
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
+        let state = match self.tasks[entry_id.get() as usize].relink {
+            Relink::Unchanged => CompleteState::Skipped,
+            Relink::Off | Relink::Pending | Relink::Changed => state,
+        };
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
@@ -491,7 +523,7 @@ impl<'a> Installer<'a> {
         }
 
         self.decrement_pending_tasks();
-        self.resume_unblocked_tasks();
+        self.resume_unblocked_tasks(entry_id);
 
         if let Some(node) = self.install_node.as_mut() {
             node.complete_one();
@@ -523,9 +555,7 @@ impl<'a> Installer<'a> {
         };
 
         match real_state {
-            CompleteState::Success => {
-                self.summary.success += 1;
-            }
+            CompleteState::Success => {}
             CompleteState::Skipped => {
                 self.summary.skipped += 1;
                 return;
@@ -543,28 +573,36 @@ impl<'a> Installer<'a> {
         self.installed.set(pkg_id as usize);
     }
 
-    // This function runs only on the main thread. The installer tasks threads
-    // will be changing values in `entry_step`, but the blocked state is only
-    // set on the main thread, allowing the code between
-    // `entry_steps[entry_id.get() as usize].load(.monotonic)`
-    // and
-    // `entry_steps[entry_id.get() as usize].store(.symlink_dependency_binaries, .monotonic)`
-    pub(crate) fn resume_unblocked_tasks(&mut self) {
-        let entries = &self.store.entries;
-        let entry_steps = entries.items_step();
+    /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
+    pub(crate) fn resume_unblocked_tasks(&mut self, completed: StoreEntryId) {
+        let entry_steps = self.store.entries.items_step();
+        if Environment::CI_ASSERT {
+            assert!(
+                entry_steps[completed.get() as usize].load(Ordering::Relaxed) == Step::Done as u32
+            );
+        }
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
-        for id_int in 0..self.store.entries.len() {
-            let entry_id = StoreEntryId::from(u32::try_from(id_int).expect("int cast"));
-
-            // .monotonic is okay because only the main thread sets this to `.blocked`.
-            let entry_step = entry_steps[entry_id.get() as usize].load(Ordering::Relaxed);
-            if entry_step != Step::Blocked as u32 {
-                continue;
+        let mut waiter = core::mem::replace(
+            &mut self.waiters_head[completed.get() as usize],
+            StoreEntryId::INVALID,
+        );
+        while waiter != StoreEntryId::INVALID {
+            let entry_id = waiter;
+            waiter = core::mem::replace(
+                &mut self.next_waiter[entry_id.get() as usize],
+                StoreEntryId::INVALID,
+            );
+            if Environment::CI_ASSERT {
+                assert!(
+                    entry_steps[entry_id.get() as usize].load(Ordering::Relaxed)
+                        == Step::Blocked as u32
+                );
             }
 
-            if self.is_task_blocked(entry_id, &mut parent_dedupe) {
+            if let Some(blocked_on) = self.is_task_blocked(entry_id, &mut parent_dedupe) {
+                self.push_waiter(blocked_on, entry_id);
                 continue;
             }
 
@@ -581,6 +619,14 @@ pub enum CompleteState {
     Success,
     Skipped,
     Fail,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Relink {
+    Off,
+    Pending,
+    Unchanged,
+    Changed,
 }
 
 fn download_error_reason(e: crate::Error) -> &'static [u8] {
@@ -615,6 +661,7 @@ pub struct Task {
     pub(crate) next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub(crate) result: Result,
+    pub(crate) relink: Relink,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -650,34 +697,6 @@ pub enum TaskError {
     Binaries(crate::Error),
     Patching(Log),
     Download(DownloadError),
-}
-
-impl TaskError {
-    pub(crate) fn clone(&self) -> TaskError {
-        match self {
-            TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
-            TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
-            TaskError::Binaries(err) => TaskError::Binaries(*err),
-            TaskError::RunScripts(err) => TaskError::RunScripts(*err),
-            TaskError::Patching(_log) => {
-                // `bun_ast::Log` is non-Clone; the only caller of
-                // `TaskError::clone()` is the `Result::Err(err) => err.clone()`
-                // task-batch drain in PackageManager/runTasks.rs, and
-                // `Task::result` is only set to `Result::Err` from the
-                // `Yield::Fail` arm in `Task::run`. No `Yield::Fail` /
-                // `Yield::failure` site ever constructs `TaskError::Patching` —
-                // it is built only for direct `on_task_fail` calls (Installer.rs
-                // and isolated_install.rs patch paths), so this arm is
-                // unreachable in practice. Preserve a fresh Log so we don't UAF
-                // a borrowed one.
-                TaskError::Patching(Log::init())
-            }
-            TaskError::Download(dl) => TaskError::Download(DownloadError {
-                err: dl.err,
-                url: dl.url.clone(),
-            }),
-        }
-    }
 }
 
 #[repr(u8)]
@@ -765,7 +784,13 @@ impl Task {
             Step::LinkPackage => Step::SymlinkDependencies,
             Step::SymlinkDependencies => Step::CheckIfBlocked,
             Step::CheckIfBlocked => Step::SymlinkDependencyBinaries,
-            Step::SymlinkDependencyBinaries => Step::RunPreinstall,
+            Step::SymlinkDependencyBinaries => {
+                if self.relink == Relink::Off {
+                    Step::RunPreinstall
+                } else {
+                    Step::Done
+                }
+            }
             Step::RunPreinstall => Step::Binaries,
             Step::Binaries => Step::RunPostInstallAndPrePostPrepare,
             Step::RunPostInstallAndPrePostPrepare => Step::Done,
@@ -843,7 +868,6 @@ impl Task {
 
         let entries = &installer.store.entries;
         let entry_node_ids = entries.items_node_id();
-        let entry_dependencies = entries.items_dependencies();
         let entry_steps = entries.items_step();
         let entry_scripts = entries.items_scripts();
         let entry_hoisted = entries.items_hoisted();
@@ -989,19 +1013,17 @@ impl Task {
                                             };
 
                                             if src_path_len == 0 || src_path_len as usize >= cap {
-                                                use bun_sys::windows::Win32ErrorExt as _;
-                                                let err: sys::SystemErrno = if src_path_len == 0 {
-                                                    bun_sys::windows::Win32Error::get()
-                                                        .to_system_errno()
-                                                        .unwrap_or(sys::SystemErrno::EUNKNOWN)
-                                                } else {
-                                                    sys::SystemErrno::ENAMETOOLONG
-                                                };
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    sys::Error {
-                                                        errno: err as _,
-                                                        syscall: sys::Tag::copyfile,
-                                                        ..Default::default()
+                                                    if src_path_len == 0 {
+                                                        sys::Error::from_win32(
+                                                            sys::windows::Win32Error::get(),
+                                                            sys::Tag::copyfile,
+                                                        )
+                                                    } else {
+                                                        sys::Error::from_code(
+                                                            sys::E::ENAMETOOLONG,
+                                                            sys::Tag::copyfile,
+                                                        )
                                                     },
                                                 )));
                                             }
@@ -1062,8 +1084,14 @@ impl Task {
                         }
 
                         tag => {
-                            let patch_info =
-                                installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                            let patch_info = match installer.package_patch_info(
+                                pkg_name,
+                                pkg_name_hash,
+                                &pkg_res,
+                            ) {
+                                Ok(patch_info) => patch_info,
+                                Err(err) => return Ok(Yield::failure(err)),
+                            };
 
                             let manager = manager_ref.get();
                             // SAFETY: `tag` discriminates the active `Resolution.value` variant
@@ -1190,6 +1218,15 @@ impl Task {
                                 }
                             }
                         }
+
+                        // hardlink/copyfile overlay an existing tree, keeping files a previous patched build added.
+                        let mut previous = AutoPath::init_top_level_dir();
+                        installer.append_real_store_path(
+                            &mut previous,
+                            self.entry_id,
+                            Which::Final,
+                        );
+                        let _ = Fd::cwd().delete_tree(previous.slice());
                     }
 
                     if uses_global_store {
@@ -1442,112 +1479,31 @@ impl Task {
 
                 Step::SymlinkDependencies => {
                     let current_step = Step::SymlinkDependencies;
-                    let string_buf = lockfile.buffers.string_bytes.as_slice();
-                    let dependencies = lockfile.buffers.dependencies.as_slice();
+                    let relinking = self.relink != Relink::Off;
+                    let strategy = if relinking
+                        || matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                    {
+                        symlinker::Strategy::ExpectExisting
+                    } else {
+                        symlinker::Strategy::ExpectMissing
+                    };
 
-                    for dep in entry_dependencies[self.entry_id.get() as usize].slice() {
-                        let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
-
-                        let mut dest = AutoPath::init_top_level_dir();
-
-                        installer.append_real_store_node_modules_path(
-                            &mut dest,
-                            self.entry_id,
-                            Which::Staging,
-                        );
-
-                        let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-
-                        if let Some(entry_node_modules_name) = installer
-                            .entry_store_node_modules_package_name(
-                                dep_id, pkg_id, &pkg_res, pkg_names,
-                            )
-                        {
-                            if strings::eql_long(dep_name, entry_node_modules_name, true) {
-                                // nest the dependency in another node_modules if the name is the same as the entry name
-                                // in the store node_modules to avoid collision
-                                let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
-                                let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-                            }
+                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
+                        sys::Result::Ok(changed) => changed,
+                        sys::Result::Err(err) => {
+                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
                         }
+                    };
 
-                        let mut dep_store_path = AutoAbsPath::init_top_level_dir();
-
-                        // When this entry lives in the global virtual store, its
-                        // dep symlinks must point at sibling *global* entries
-                        // (relative `../../<dep>-<hash>/...`) so the entry stays
-                        // valid for any project. Non-global parents (root,
-                        // workspace) keep pointing at the project-local
-                        // `.bun/<storepath>` indirection so `node_modules/<pkg>`
-                        // remains a relative link into `node_modules/.bun/`.
-                        if installer.entry_uses_global_store(self.entry_id) {
-                            // The eligibility DFS + fixed-point pass guarantee
-                            // every dep of a global entry is itself global; if
-                            // that ever regressed the failure mode is a
-                            // dangling symlink with no install-time error.
-                            debug_assert!(installer.entry_uses_global_store(dep.entry_id));
-                            // Target the dep's *final* path: the relative
-                            // `../../<dep>/...` link is computed against our
-                            // staging directory but resolves identically once
-                            // we're renamed (same parent), and the dep will
-                            // have been (or will be) renamed into that final
-                            // path by its own task.
-                            installer.append_real_store_path(
-                                &mut dep_store_path,
-                                dep.entry_id,
-                                Which::Final,
-                            );
-                        } else {
-                            installer.append_store_path(&mut dep_store_path, dep.entry_id);
+                    if relinking {
+                        if !changed {
+                            self.relink = Relink::Unchanged;
+                            entry_steps[self.entry_id.get() as usize]
+                                .store(Step::Done as u32, Ordering::Release);
+                            return Ok(Yield::Done);
                         }
-
-                        // A `dest.save()` `ResetScope` guard would hold `&mut dest`,
-                        // which can't coexist with `dest.undo()/dest.relative()`.
-                        // Capture the length and restore manually.
-                        let dest_saved_len = dest.len();
-                        let target = {
-                            dest.undo(1);
-                            dest.relative(&dep_store_path)
-                        };
-                        dest.set_length(dest_saved_len);
-
-                        let mut symlinker = Symlinker {
-                            dest: dest.into_sep::<{ PathSeparators::ANY }>(),
-                            target: target.into_sep::<{ PathSeparators::ANY }>(),
-                            #[cfg(windows)]
-                            fallback_junction_target: dep_store_path
-                                .into_sep::<{ PathSeparators::ANY }>(),
-                        };
-
-                        let link_strategy: symlinker::Strategy = if matches!(
-                            pkg_res.tag,
-                            ResolutionTag::Root | ResolutionTag::Workspace
-                        ) {
-                            // root and workspace packages ensure their dependency symlinks
-                            // exist unconditionally. To make sure it's fast, first readlink
-                            // then create the symlink if necessary
-                            symlinker::Strategy::ExpectExisting
-                        } else {
-                            // Global-store entries are built under a private
-                            // per-process staging directory, so nothing else
-                            // is touching this path.
-                            symlinker::Strategy::ExpectMissing
-                        };
-
-                        match symlinker.ensure_symlink(link_strategy) {
-                            sys::Result::Ok(()) => {}
-                            sys::Result::Err(err) => {
-                                return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
-                            }
-                        }
-                    }
-
-                    if installer.entry_uses_global_store(self.entry_id) {
-                        // The entry now exists in the shared global virtual store.
-                        // Project-local `node_modules/.bun/<storepath>` becomes a
-                        // symlink into it so that the relative `../../<dep>` links
-                        // created above (which live inside the global entry) remain
-                        // reachable from the project's node_modules.
+                        self.relink = Relink::Changed;
+                    } else if installer.entry_uses_global_store(self.entry_id) {
                         match installer.link_project_to_global_store(self.entry_id) {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(err) => {
@@ -1567,7 +1523,10 @@ impl Task {
 
                     let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
-                    if installer.is_task_blocked(self.entry_id, &mut parent_dedupe) {
+                    if installer
+                        .is_task_blocked(self.entry_id, &mut parent_dedupe)
+                        .is_some()
+                    {
                         return Ok(Yield::Blocked);
                     }
 
@@ -2085,12 +2044,13 @@ impl PatchInfo {
 }
 
 impl<'a> Installer<'a> {
+    /// A patch entry without a hash is an error, not `PatchInfo::None`.
     pub(crate) fn package_patch_info(
         &self,
         pkg_name: SemverString,
         pkg_name_hash: PackageNameHash,
         pkg_res: &Resolution,
-    ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
+    ) -> core::result::Result<PatchInfo, TaskError> {
         if self.lockfile().patched_dependencies.len() == 0
             && self.manager().patched_dependencies_to_remove.len() == 0
         {
@@ -2106,7 +2066,7 @@ impl<'a> Installer<'a> {
             "{}@",
             bstr::BStr::new(pkg_name.slice(string_buf))
         )
-        .map_err(|_| bun_alloc::AllocError)?;
+        .expect("unreachable");
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
@@ -2114,7 +2074,7 @@ impl<'a> Installer<'a> {
                     self.lockfile().workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
-                        .map_err(|_| bun_alloc::AllocError)?;
+                        .expect("unreachable");
                 }
             }
             _ => {
@@ -2123,7 +2083,7 @@ impl<'a> Installer<'a> {
                     "{}",
                     pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 )
-                .map_err(|_| bun_alloc::AllocError)?;
+                .expect("unreachable");
             }
         }
 
@@ -2134,9 +2094,20 @@ impl<'a> Installer<'a> {
             .patched_dependencies
             .get(&name_and_version_hash)
         {
+            let Some(contents_hash) = patch.patchfile_hash() else {
+                let mut log = Log::init();
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "the hash of patch file {} was not calculated before install, this is a bug in Bun",
+                        bun_core::fmt::quote(patch.path.slice(string_buf)),
+                    ),
+                    Default::default(),
+                );
+                return Err(TaskError::Patching(log));
+            };
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
-                contents_hash: patch.patchfile_hash().unwrap(),
+                contents_hash,
             }));
         }
 
@@ -2261,6 +2232,70 @@ impl<'a> Installer<'a> {
         }
 
         None
+    }
+
+    /// Ok(true) when at least one dependency link of the entry was written.
+    fn symlink_dependencies(
+        &self,
+        entry_id: StoreEntryId,
+        strategy: symlinker::Strategy,
+    ) -> sys::Result<bool> {
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        let pkg_res = &pkg_resolutions[pkg_id as usize];
+
+        let entry_node_modules_name =
+            self.entry_store_node_modules_package_name(dep_id, pkg_id, pkg_res, pkg_names);
+        let uses_global_store = self.entry_uses_global_store(entry_id);
+
+        let mut dest = AutoPath::init_top_level_dir();
+        self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
+        let base_len = dest.len();
+
+        let mut changed = false;
+        for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
+            let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+
+            dest.set_length(base_len);
+            let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+                // same name as the entry itself: nest one node_modules deeper to avoid the collision
+                let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
+                let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+            }
+
+            let mut dep_store_path = AutoAbsPath::init_top_level_dir();
+            if uses_global_store {
+                debug_assert!(self.entry_uses_global_store(dep.entry_id));
+                self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
+            } else {
+                self.append_store_path(&mut dep_store_path, dep.entry_id);
+            }
+
+            let dest_len = dest.len();
+            dest.undo(1);
+            let target = dest.relative(&dep_store_path);
+            dest.set_length(dest_len);
+
+            let mut symlinker = Symlinker {
+                dest: dest.into_sep::<{ PathSeparators::ANY }>(),
+                target: target.into_sep::<{ PathSeparators::ANY }>(),
+                #[cfg(windows)]
+                fallback_junction_target: dep_store_path.into_sep::<{ PathSeparators::ANY }>(),
+            };
+            let result = symlinker.ensure_symlink(strategy);
+            dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
+            changed |= result?;
+        }
+
+        Ok(changed)
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {

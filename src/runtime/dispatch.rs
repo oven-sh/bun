@@ -38,10 +38,10 @@ use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
 };
 
-use bun_jsc::JSGlobalObject;
-use bun_jsc::event_loop::{EventLoop, JsTerminated};
+use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JsResult};
 
 /// X-macro: the `node:fs` ops that are libuv requests on Windows
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
@@ -157,8 +157,9 @@ pub(crate) enum RunTaskResult {
 
 /// Dispatch a single `Task` to its variant's `run`-style entry point.
 ///
-/// The surrounding drain loop + microtask flush
-/// lives in [`tick_queue_with_count`] below.
+/// Every arm hands back what the task's JS left pending as `Err` and never
+/// reports it itself: the surrounding drain loop ([`tick_queue_with_count`])
+/// folds each task's result in one place, then flushes microtasks.
 // PERF(startup/dot): `#[inline(never)]` is deliberate. `#[inline]` here
 // bloated `tick_queue_with_count` to ~14 KB of `.text` interleaved with cold
 // shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
@@ -172,7 +173,7 @@ pub(crate) fn run_task(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     global: &JSGlobalObject,
-) -> Result<RunTaskResult, JsTerminated> {
+) -> JsResult<RunTaskResult> {
     /// `*(task.ptr as *mut T)` with the SAFETY invariant spelled once.
     macro_rules! cast {
         ($ty:ty) => {{
@@ -205,10 +206,7 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            let completed = unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) };
-            if let Err(err) = completed {
-                report_error_or_terminate(global, err)?;
-            }
+            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
@@ -219,28 +217,32 @@ pub(crate) fn run_task(
             // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
             bun_jsc::async_module::AsyncModule::on_done(unsafe {
                 bun_core::heap::take(cast_ptr!(bun_jsc::async_module::AsyncModule))
-            });
+            })?;
         }
         task_tag::BundleV2PluginResolve => {
-            // SAFETY: tag identifies pointee — a live `Resolve` owned by the
-            // plugin dispatch chain.
-            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
-                .run_on_js_thread();
+            // `bun_bundler` is JSC-free; the C++ hop it calls answers the request
+            // itself when the plugin throws, but can return early with an
+            // exception pending (argument conversion), so check the scope here.
+            bun_jsc::call_check_slow(global, || {
+                // SAFETY: tag identifies pointee — a live `Resolve` owned by the
+                // plugin dispatch chain.
+                unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve) }
+                    .run_on_js_thread()
+            })?;
         }
         task_tag::BundleV2PluginLoad => {
-            // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
-            // dispatch chain.
-            unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
-                .run_on_js_thread();
+            // As `BundleV2PluginResolve`.
+            bun_jsc::call_check_slow(global, || {
+                // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
+                // dispatch chain.
+                unsafe { &mut *cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load) }
+                    .run_on_js_thread()
+            })?;
         }
         task_tag::JSBundleCompletionTask => {
-            if let Err(err) =
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
-                    cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
-                )
-            {
-                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
-            }
+            crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
+                cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
+            )?;
         }
         task_tag::FetchTaskletPromiseSettle => {
             // SAFETY: boxed at the fetch completion site; the arm consumes it.
@@ -251,23 +253,12 @@ pub(crate) fn run_task(
             };
             holder.run()?;
         }
-        task_tag::FileResponseStreamEof => {
-            let stream = cast_ptr!(crate::server::FileResponseStream);
-            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
-            // this task at enqueue time which this guard adopts.
-            let _pin =
-                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
-            // SAFETY: `stream` is live for this call (pinned above).
-            unsafe { (*stream).on_reader_done() };
-        }
         task_tag::DuplexUpgradeContext => {
-            // SAFETY: tag identifies pointee; `run_event` may free the context,
-            // so it takes the raw pointer (no `&mut` at this boundary).
-            unsafe {
-                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
-                    crate::socket::DuplexUpgradeContext
-                ))
-            };
+            // SAFETY: tag identifies pointee; the queue owns the live context
+            // until `run_event` (which may free it).
+            crate::socket::DuplexUpgradeContext::run_event(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(crate::socket::DuplexUpgradeContext))
+            });
         }
         #[cfg(windows)]
         task_tag::WindowsNamedPipeContext => {
@@ -312,25 +303,19 @@ pub(crate) fn run_task(
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-            if let Err(err) = unsafe {
+            unsafe {
                 crate::node::node_fs_stat_watcher::StatWatcher::run_hop(cast_ptr!(
                     crate::node::node_fs_stat_watcher::StatWatcher
                 ))
-            } {
-                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
-            }
+            }?;
         }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
             // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
-            if let Err(err) = unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) } {
-                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
-            }
+            unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) }?;
         }
         task_tag::CppTask => {
-            if let Err(err) = cast!(CppTask).run(global) {
-                report_error_or_terminate(global, err)?;
-            }
+            cast!(CppTask).run(global)?;
         }
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
@@ -370,19 +355,19 @@ pub(crate) fn run_task(
 
         // ── napi ─────────────────────────────────────────────────────────
         task_tag::NapiAsyncWork => {
-            cast!(napi_async_work).run_from_js(vm, global);
+            cast!(napi_async_work).run_from_js(global)?;
         }
         task_tag::ThreadSafeFunction => {
             ThreadSafeFunction::on_dispatch(cast_ptr!(ThreadSafeFunction));
         }
         task_tag::NapiFinalizerTask => {
-            NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask));
+            NapiFinalizerTask::run_on_js_thread(cast_ptr!(NapiFinalizerTask))?;
         }
 
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding();
-            cast!(JSCDeferredWorkTask).run()?;
+            cast!(JSCDeferredWorkTask).run(global)?;
         }
         task_tag::PollPendingModulesTask => {
             vm.modules.on_poll();
@@ -419,9 +404,10 @@ pub(crate) fn run_task(
             // runs it.
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            unsafe { (*t).run() };
+            let ran = unsafe { (*t).run() };
             // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
             unsafe { FSWatchTask::deinit(t) };
+            ran?;
         }
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────
@@ -482,9 +468,9 @@ pub(crate) fn run_task(
             // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
             // THROW_SCOPE is left unchecked and trips JSC exception validation
             // at the next `drainMicrotasks` scope.
-            let _ = bun_jsc::call_check_slow(global, || {
+            bun_jsc::call_check_slow(global, || {
                 cast!(BundleV2DeferredBatchTask).run_on_js_thread();
-            });
+            })?;
         }
         // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::FlushPendingFileSinkTask => unsafe {
@@ -603,7 +589,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 62,
+    task_tag::COUNT == 61,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -615,7 +601,7 @@ pub(crate) fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop.
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
@@ -625,15 +611,18 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        match run_task(task, el, vm, global)? {
-            RunTaskResult::Continue => {}
-            RunTaskResult::EarlyReturn => {
+        match run_task(task, el, vm, global) {
+            Ok(RunTaskResult::Continue) => {}
+            Ok(RunTaskResult::EarlyReturn) => {
                 // Caller is `while tickWithCount(ctx) > 0` — must keep
                 // draining after a hot-reload task, so report exactly one
                 // task processed. Do NOT set 0 here.
                 *counter = 1;
                 return Ok(());
             }
+            // The one fold for every queued task: report what it left as
+            // uncaught, or stand the loop down if it is the VM's termination.
+            Err(err) => report_error_or_terminate(global, err)?,
         }
         el.drain_microtasks_with_global(global, global_vm)?;
     }
@@ -912,13 +901,22 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine:
 /// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
 /// [`crate::timer::All::get_timeout`] (WTFTimer side-effect).
 ///
+/// Each arm is the owner's timer entry with its result surfaced: an owner
+/// returns the exception it left pending and never reports it; the drain loop
+/// (`All::drain_timers`) folds every timer's result in one place. Owners whose
+/// entry cannot enter JS return `()` (`timer_arm!` makes that `Ok(())`).
+///
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
 /// `now` is the snapshot taken by `All::next`; `vm` is the erased
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+pub(crate) unsafe fn __bun_fire_timer(
+    t: *mut EventLoopTimer,
+    now: *const ElTimespec,
+    vm: *mut (),
+) -> bun_event_loop::JsResult<()> {
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -939,16 +937,19 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
     /// `$body` under one `unsafe` covering the per-fn-contract dereferences.
     /// Defined *after* the `vm` cast so the def-site `vm` ident resolves to
     /// the typed `*mut VirtualMachine`, not the erased `*mut ()` param.
+    // An owner that cannot enter JS: its `()` return is `Ok(())` here.
     macro_rules! timer_arm {
         ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
             let $c: *mut $Ty = owner!($Ty, $field);
             let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-            unsafe { $body };
+            let () = unsafe { $body };
+            Ok(())
         }};
     }
-    match tag {
+    let fired: JsResult<()> = match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
+        // `Bun__JSTimeout__call` reports the callback's exception itself.
         EventLoopTimerTag::TimeoutObject => {
             let container = owner!(TimeoutObject, event_loop_timer);
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
@@ -958,6 +959,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             // per-thread VM. `fire` may free the container; `t` is dead after.
             // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            Ok(())
         }
         EventLoopTimerTag::ImmediateObject => {
             let container = owner!(ImmediateObject, event_loop_timer);
@@ -965,6 +967,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
             unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
+            Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(
@@ -1014,6 +1017,7 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 if cfg!(debug_assertions) {
                     unreachable!("DnsSdConnection timer on non-macOS");
                 }
+                Ok(())
             }
         }
         // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
@@ -1028,12 +1032,14 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
                 unsafe { (*container).on_timeout() };
+                Ok(())
             }
             #[cfg(not(windows))]
             {
                 if cfg!(debug_assertions) {
                     unreachable!("WindowsNamedPipe timer on non-Windows");
                 }
+                Ok(())
             }
         }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
@@ -1042,31 +1048,38 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_connection_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_max_lifetime_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
             // SAFETY: §Dispatch — `t` is the connection's `timer` field.
             let container = unsafe { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_connection_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_max_lifetime_timeout() };
+            Ok(())
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            timer_arm!(Valkey, timer, |c, _now, _vm| (*c).on_connection_timeout())
+            let container = owner!(Valkey, timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_connection_timeout() }
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            timer_arm!(Valkey, reconnect_timer, |c, _now, _vm| (*c)
-                .on_reconnect_timer())
+            let container = owner!(Valkey, reconnect_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).on_reconnect_timer() }
         }
         EventLoopTimerTag::SubprocessTimeout => {
             timer_arm!(Subprocess<'_>, event_loop_timer, |c, _now, _vm| (*c)
@@ -1077,11 +1090,13 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
             // the store inside.
             // SAFETY: per fn contract.
             SourceMapStore::sweep_weak_refs(t, unsafe { &*now });
+            Ok(())
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
             // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
             // field of a live DevServer.
             DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
+            Ok(())
         }
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
@@ -1109,16 +1124,39 @@ pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTime
                 }
             };
             BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
+            Ok(())
         }
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(c, VirtualMachine::get());
+            // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
+            CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
+            Ok(())
         }
         EventLoopTimerTag::QuicEndpoint => {
             let c: *mut crate::node::quic::QuicEndpoint =
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
+            Ok(())
         }
+    };
+    fired
+}
+
+/// The fold for a foreign dispatcher's landing frame — a uSockets / uWS /
+/// lsquic / pipe-reader callback that returns `void`, so what its JS left
+/// pending has nowhere to go but here: reported as uncaught (or, for the VM's
+/// termination, left for the loop to stand down on), on the JS thread this
+/// dispatch runs on, rather than left pending for whatever enters JS next.
+#[inline]
+pub(crate) fn fold(result: JsResult<()>) {
+    #[cold]
+    #[inline(never)]
+    fn report(err: bun_jsc::JsError) {
+        let global = VirtualMachine::get().global();
+        let _ = report_error_or_terminate(global, err);
+    }
+    if let Err(err) = result {
+        report(err);
     }
 }
 
@@ -1154,7 +1192,7 @@ unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     // SAFETY: per fn contract.
     let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)
@@ -1184,9 +1222,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
-            let js = VirtualMachine::get().global().js_thread();
             // SAFETY: as `release!`.
-            unsafe { bun_jsc::job::release_unrun_erased(task.ptr, &js) }
+            unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
         }
         task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
@@ -1203,7 +1240,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletPromiseSettle => {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }
-        task_tag::FileResponseStreamEof => release!(crate::server::FileResponseStream),
         task_tag::FSWatchTask => release!(FSWatchTask),
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),

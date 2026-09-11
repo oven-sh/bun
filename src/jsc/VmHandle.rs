@@ -1,32 +1,49 @@
-//! [`VmHandle`] — the only way another thread reaches a [`VirtualMachine`].
+//! The door out of a VM's thread: [`Ticket`] and [`VmHandle`].
 //!
-//! Off-thread code (thread-pool jobs, the HTTP thread, watcher/waiter threads,
-//! addon threads) legitimately needs three things from a VM: post a completion
-//! and wake its loop, ref/unref its keep-alive, and — while running — sometimes
-//! use memory the VM owns. It never needs the `VirtualMachine`, its global or
-//! its heap directly; whatever touches those runs later, on the JS thread, from
-//! the posted task. A `VmHandle` provides exactly those three, safely and for
-//! as long as anyone holds it (it outlives the VM), and the VM's teardown
-//! *closes* it: after `close()` returns no thread can reach the VM's queues,
-//! waker or memory through any handle, and posts are refused (the poster gets
-//! its task back and releases it on its own thread — deliver-or-discard, as
-//! WebKit's WorkerRunLoop does). The same object carries the script-forbidden
-//! bit that native→JS entry points consult (Node's `can_call_into_js`).
+//! Invariant: *a VM is destroyed only after everything that left its thread has
+//! come back.* Anything that runs on, or is referenced from, another thread on
+//! behalf of a VM holds a [`Ticket`] for it. Creating a ticket counts it;
+//! dropping it uncounts it; the VM's teardown ([`VmHandle::close_and_wait`])
+//! forbids script, cancels what it can, and then *waits* — servicing its queue
+//! so returning work is released on this thread with the heap alive — until no
+//! ticket is outstanding, and only then destroys the JSC VM, the loops and the
+//! `VirtualMachine`. So no thread can hold anything of a VM's while it is being
+//! destroyed, whatever the work captured (VM state, JS buffers, atom strings,
+//! arena memory) and whether or not its author thought about teardown.
 //!
-//! Gate: posters/borrowers hold `active` for the duration of their access and
-//! then check `state`; `close()` publishes `Closed` and waits for `active == 0`
-//! (SeqCst on both sides — the Dekker pair). So an access either finished
-//! before `close()` returned or observed `Closed` and touched nothing.
+//! Counting *is* holding the ticket: there is no separate register/finished
+//! call to forget. A ticket also carries which of the VM's loops its completion
+//! belongs on, and posting through it cannot fail — there is no "VM already
+//! gone" case for work that holds one.
+//!
+//! [`VmHandle`] is the uncounted form: what something that merely *refers* to a
+//! VM from elsewhere holds (another context's message queue, a JSC helper
+//! thread, the process-wide child waiter, a file-watcher thread). It cannot
+//! reach the VM; it can post to it — deliver-or-refuse, WebKit's
+//! `postTaskTo(identifier)`. Long-lived holders (a JS-owned object, a struct
+//! the VM frees) hold this and never a ticket: a ticket freed only *after* the
+//! wait would deadlock it, and the debug build's wait names any such holder.
+//!
+//! The raw thread-crossing primitives (the work pool, the HTTP thread, thread
+//! spawning) are not called from VM code except through a type that embeds a
+//! ticket (`bun_jsc::Job`, or a struct holding a `Ticket` for its in-flight
+//! duration); `test/internal/source-lints/vm-thread-door.test.ts` freezes the
+//! set of call sites and of `unsafe impl Send/Sync` in the VM crates so a new
+//! path around the door needs a justification rather than a reviewer's luck.
 
+#[cfg(debug_assertions)]
+use core::panic::Location;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::Arc;
 
-use bun_threading::{Condvar, Mutex};
+use bun_threading::{Condvar, Guarded};
 
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
+
+pub use bun_event_loop::Posted;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -34,29 +51,38 @@ enum State {
     /// Normal operation.
     Open = 0,
     /// The VM is going away — a parent's `terminate()` (from its thread) or
-    /// this thread's own exit/teardown: native code enters no more script and
-    /// starts no new off-thread work; posts are still accepted so completions
-    /// of already-running work are delivered (and released by the teardown).
+    /// this thread's own exit: native code enters no more script. Tickets are
+    /// still issued and posts still accepted, so work already running comes
+    /// back and follow-on work it starts is counted like any other.
     Stopping = 1,
-    /// `close()` ran: nothing off-thread reaches the VM any more.
-    Closed = 2,
+    /// Teardown is waiting for outstanding tickets. Ticket holders post as
+    /// before (their completions are released on the JS thread as they
+    /// arrive); no new ticket is issued to another thread; a [`VmHandle`]'s
+    /// posts are still delivered (and released).
+    Draining = 2,
+    /// No ticket is outstanding and none can be created: nothing off-thread
+    /// reaches the VM any more. Weak posts are refused.
+    Closed = 3,
 }
 
-/// Which of the VM's two embedded loops a task belongs to, fixed when the task
-/// is created on the JS thread (a task started while a macro runs completes
-/// into the macro loop). `Bun.spawnSync`'s isolated loop is not one of these:
-/// its producers post through that loop's own [`JsPoster`].
+/// Which of the VM's two embedded loops a completion belongs to, fixed when
+/// the ticket is taken on the JS thread (work started while a macro runs
+/// completes into the macro loop); a weak poster passes the kind its JS-side
+/// initiator captured the same way (C++ `BunLoopKind`). `Bun.spawnSync`'s
+/// isolated loop is not one of these: its producers post through that loop's
+/// own [`JsPoster`].
+///
+/// [`JsPoster`]: bun_event_loop::JsPoster
+#[repr(u8)] // C++: `BunLoopKind` (BunLoopKind.h)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
-    Regular,
-    Macro,
+    Regular = 0,
+    Macro = 1,
 }
 
-/// The part of [`Shared`] every native→JS entry on the JS thread reads
-/// (`state`, and `vm` on each post) but that changes twice per VM lifetime.
-/// Kept on its own cache line: the counters below are RMW'd by pool / HTTP
-/// threads on every completion, and sharing a line with them made each of the
-/// JS thread's reads a miss whenever another thread had just posted.
+/// `state` (read by every native→JS entry on the JS thread) and `vm`, on
+/// their own cache line: the counters after it are RMW'd by pool / HTTP
+/// threads on every completion.
 #[cfg_attr(
     any(
         target_arch = "x86_64",
@@ -68,73 +94,212 @@ pub enum LoopKind {
 #[cfg_attr(target_arch = "s390x", repr(align(128)))]
 struct ReadMostly {
     state: AtomicU8,
-    /// Dereferenced only while an `Access` guard is held and `state != Closed`,
-    /// or on the JS thread. Nulled by `close()`.
-    vm: core::cell::UnsafeCell<*mut VirtualMachine>,
+    /// The VM. Dereferenced by a ticket holder (the VM outlives every ticket),
+    /// by a weak accessor inside the `active` gate before `Closed`, or on the
+    /// JS thread.
+    vm: *mut VirtualMachine,
 }
 
-#[cfg_attr(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64"
-    ),
-    repr(align(64))
-)]
-#[cfg_attr(target_arch = "s390x", repr(align(128)))]
 pub struct Shared {
     hot: ReadMostly,
-    /// Threads currently inside `post`/`wake`/`ref`/`unref` or holding a
-    /// [`Borrow`]. `close()` waits for zero after publishing `Closed`.
+    /// Outstanding [`Ticket`]s. Teardown waits for zero.
+    tickets: AtomicU32,
+    /// Threads currently inside a weak `post`/keep-alive/wake. `Closed` is
+    /// published and then this is waited to zero (the Dekker pair), so a weak
+    /// access either finished before close returned or saw `Closed`.
     active: AtomicU32,
-    /// For `close()` to sleep on while `active` drains (borrows may be long),
-    /// and `wait_for_embedded_work()` while `embedded` drains.
-    drained: (Mutex, Condvar),
-    /// Pool work scheduled with storage inside a JS-owned object (see
-    /// [`VmHandle::embedded_work_scheduled`]); teardown waits for zero.
-    embedded: AtomicU32,
+    /// The tearing-down JS thread sleeps here; ticket drops and posts notify
+    /// it once draining has begun.
+    drained: (Guarded<()>, Condvar),
     #[cfg(debug_assertions)]
-    js_thread: std::thread::ThreadId,
-    /// Test suite only — see [`refusal_gate`].
-    #[cfg(debug_assertions)]
-    park_posts: core::sync::atomic::AtomicBool,
+    debug: DebugState,
 }
 
-// SAFETY: `vm` is only dereferenced under the gate described in the module doc;
-// everything else is atomics / std sync primitives.
+/// Debug builds: the JS thread's id, where every live ticket was taken (so a
+/// wait that does not end can say who it is waiting for), and the test gate.
+#[cfg(debug_assertions)]
+struct DebugState {
+    js_thread: std::thread::ThreadId,
+    live: Guarded<LiveTickets>,
+    /// Test suite only — see [`test_gate`].
+    gate: core::sync::atomic::AtomicBool,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Default)]
+struct LiveTickets {
+    next_id: u64,
+    at: bun_collections::HashMap<u64, &'static Location<'static>>,
+}
+
+// SAFETY: `vm` is dereferenced only under the discipline in the module doc
+// (ticket held ⇒ VM alive; weak ⇒ inside the `active` gate before `Closed`);
+// everything else is atomics / sync primitives.
 unsafe impl Send for Shared {}
 // SAFETY: as above.
 unsafe impl Sync for Shared {}
 
-/// See the module documentation. `repr(transparent)` over the `Arc` so a
-/// `*const VmHandle` can cross FFI (C++ / napi hold boxed clones).
-#[derive(Clone)]
-#[repr(transparent)]
-pub struct VmHandle(Arc<Shared>);
+// Orderings: two store→load (Dekker) pairs need `SeqCst` on all four
+// operations — `Ticket::drop`'s `tickets` decrement / `state` load against the
+// wait's `Draining` store / `tickets` load, and `enter`'s `active` increment /
+// `state` load against the wait's `Closed` store / `active` load. Everything
+// on `state`, `tickets` and `active` is `SeqCst` so no site has to argue which
+// pair it is in; the cost is in the RMWs, not the ordering.
+impl Shared {
+    #[inline]
+    fn state(&self) -> State {
+        match self.hot.state.load(Ordering::SeqCst) {
+            0 => State::Open,
+            1 => State::Stopping,
+            2 => State::Draining,
+            _ => State::Closed,
+        }
+    }
 
-pub use bun_event_loop::Posted;
+    #[inline]
+    fn loop_of(&self, kind: LoopKind) -> &EventLoop {
+        // SAFETY: caller holds a ticket or is inside the weak gate before
+        // `Closed`; the VM and both embedded loops are alive.
+        unsafe {
+            match kind {
+                LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
+                LoopKind::Macro => &(*self.hot.vm).macro_event_loop,
+            }
+        }
+    }
 
-/// RAII: one unit of `active`. While held, `close()` cannot complete.
-struct Access<'a>(&'a Shared);
-impl Drop for Access<'_> {
+    fn notify(&self) {
+        let _g = self.drained.0.lock();
+        self.drained.1.notify_all();
+    }
+
+    /// Push + wake; while draining, also wake the waiting teardown (it sleeps
+    /// on the condvar, not on the loop).
+    fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
+        let el = self.loop_of(kind);
+        el.concurrent_tasks.push(task);
+        if self.state() >= State::Draining {
+            self.notify();
+        } else {
+            el.wakeup();
+        }
+    }
+
+    fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
+        let el = self.loop_of(kind);
+        let _ = el.concurrent_ref.fetch_add(delta, Ordering::SeqCst);
+        el.wakeup();
+    }
+}
+
+// ── Ticket ────────────────────────────────────────────────────────────────
+
+/// One unit of "something of this VM's is on another thread". See the module
+/// doc. `Send + Sync`; obtain on the JS thread with [`VirtualMachine::ticket`]
+/// (or by cloning one you hold, on any thread), keep it in the in-flight
+/// operation — never in a JS-owned or VM-owned object — and drop it when the
+/// operation's last touch of the VM's memory from another thread is done
+/// (normally: right after posting the completion).
+pub struct Ticket {
+    shared: Arc<Shared>,
+    kind: LoopKind,
+    #[cfg(debug_assertions)]
+    id: u64,
+}
+
+impl Ticket {
+    #[track_caller]
+    fn issue(shared: &Arc<Shared>, kind: LoopKind) -> Ticket {
+        shared.tickets.fetch_add(1, Ordering::SeqCst);
+        #[cfg(debug_assertions)]
+        let id = {
+            let mut live = shared.debug.live.lock();
+            let id = live.next_id;
+            live.next_id += 1;
+            live.at.insert(id, Location::caller());
+            id
+        };
+        Ticket {
+            shared: Arc::clone(shared),
+            kind,
+            #[cfg(debug_assertions)]
+            id,
+        }
+    }
+
+    /// Queue `task` on the loop this ticket was taken for and wake it. Any
+    /// thread. Cannot fail: the VM waits for this ticket before it goes.
+    ///
+    /// The JS thread may consume `task` — and free whatever it points into —
+    /// before this returns, so `self` must not live inside that memory: move
+    /// the ticket out of the work's struct first, post, then drop it.
+    pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
+        test_gate::before_ticket_post(self);
+        debug_assert!(
+            self.shared.state() != State::Closed,
+            "ticket post after its VM closed (a ticket was created after the wait)"
+        );
+        self.shared.deliver(self.kind, task);
+    }
+
+    /// Release a keep-alive taken on the VM's loop (any thread).
+    pub fn unref_keep_alive(&self) {
+        self.shared.add_keep_alive(self.kind, -1);
+    }
+
+    /// Whether the VM is still running script (not stopping). What an
+    /// off-thread body checks before doing work whose only consumer is
+    /// script; either way it posts its completion back.
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        self.shared.state() == State::Open
+    }
+
+    /// Whether the VM has begun its final wait: work it has not started yet is
+    /// no longer wanted (Node `uv_cancel`s queued work at the same point) —
+    /// hand it straight back.
+    #[inline]
+    pub fn cancelled(&self) -> bool {
+        self.shared.state() >= State::Draining
+    }
+}
+
+impl Clone for Ticket {
+    /// One more ticket for the same VM and loop (any thread).
+    #[track_caller]
+    fn clone(&self) -> Ticket {
+        Ticket::issue(&self.shared, self.kind)
+    }
+}
+
+impl Drop for Ticket {
     fn drop(&mut self) {
-        if self.0.active.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8
+        #[cfg(debug_assertions)]
+        self.shared.debug.live.lock().at.remove(&self.id);
+        if self.shared.tickets.fetch_sub(1, Ordering::SeqCst) == 1
+            && self.shared.state() >= State::Draining
         {
-            self.0.drained.0.lock();
-            self.0.drained.1.notify_all();
-            self.0.drained.0.unlock();
+            self.shared.notify();
         }
     }
 }
 
-/// An off-thread job is using memory the VM owns (request buffers, a JS
-/// buffer's backing store) for as long as this is held; the VM's teardown
-/// waits for it before freeing anything. Obtain with [`VmHandle::borrow`].
-pub struct Borrow {
-    _access: Access<'static>,
-    /// Keeps the `Shared` that `_access` borrows alive.
-    _handle: VmHandle,
+// ── VmHandle (uncounted) ──────────────────────────────────────────────────
+
+/// See the module documentation. `repr(transparent)` over the `Arc` so a
+/// `*const Shared` can cross FFI (C++ / napi hold references).
+#[derive(Clone)]
+#[repr(transparent)]
+pub struct VmHandle(Arc<Shared>);
+
+/// RAII: one unit of `active`. While held, `close_and_wait` cannot return.
+struct Access<'a>(&'a Shared);
+impl Drop for Access<'_> {
+    fn drop(&mut self) {
+        if self.0.active.fetch_sub(1, Ordering::SeqCst) == 1 && self.0.state() == State::Closed {
+            self.0.notify();
+        }
+    }
 }
 
 impl VmHandle {
@@ -143,15 +308,17 @@ impl VmHandle {
         VmHandle(Arc::new(Shared {
             hot: ReadMostly {
                 state: AtomicU8::new(State::Open as u8),
-                vm: core::cell::UnsafeCell::new(vm),
+                vm,
             },
+            tickets: AtomicU32::new(0),
             active: AtomicU32::new(0),
-            drained: (Mutex::new(), Condvar::new()),
-            embedded: AtomicU32::new(0),
+            drained: (Guarded::new(()), Condvar::new()),
             #[cfg(debug_assertions)]
-            js_thread: std::thread::current().id(),
-            #[cfg(debug_assertions)]
-            park_posts: core::sync::atomic::AtomicBool::new(false),
+            debug: DebugState {
+                js_thread: std::thread::current().id(),
+                live: Default::default(),
+                gate: core::sync::atomic::AtomicBool::new(false),
+            },
         }))
     }
 
@@ -159,64 +326,36 @@ impl VmHandle {
     fn enter(&self) -> Option<Access<'_>> {
         self.0.active.fetch_add(1, Ordering::SeqCst);
         let a = Access(&self.0);
-        if self.0.hot.state.load(Ordering::SeqCst) == State::Closed as u8 {
-            drop(a);
-            return None;
-        }
-        Some(a)
+        (self.0.state() != State::Closed).then_some(a)
     }
 
-    /// # Safety
-    /// Caller holds an `Access` obtained from `enter()` (so `state != Closed`
-    /// was observed after `active` was raised, and `close()` cannot have
-    /// returned), or is the JS thread before `close()`.
-    #[inline]
-    unsafe fn vm(&self) -> *mut VirtualMachine {
-        // SAFETY: per fn contract.
-        unsafe { *self.0.hot.vm.get() }
-    }
+    // ── any-thread API ─────────────────────────────────────────────────────
 
-    #[inline]
-    fn loop_of<'a>(vm: *mut VirtualMachine, kind: LoopKind) -> &'a EventLoop {
-        // SAFETY: caller is inside the gate; the VM and both embedded loops are alive.
-        unsafe {
-            match kind {
-                LoopKind::Regular => &(*vm).regular_event_loop,
-                LoopKind::Macro => &(*vm).macro_event_loop,
-            }
-        }
-    }
-
-    // ── off-thread API ────────────────────────────────────────────────────
-
-    /// Queue `task` on the VM's `kind` loop and wake it, or hand it back.
+    /// Queue `task` on the VM's `kind` loop and wake it, or hand it back if
+    /// the VM is closed. For posters that hold no ticket (their payload is
+    /// their own to free on refusal).
     pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        refusal_gate::before_post(self);
-        let Some(_a) = self.enter() else {
-            // SAFETY: handed to us by the caller and not yet queued anywhere.
-            let tag = unsafe { task.as_ref() }.task.tag;
-            refusal_gate::refused(self, format_args!("post: {}", tag.name()));
-            return Posted::Refused(task);
-        };
-        // SAFETY: inside the gate.
-        let el = Self::loop_of(unsafe { self.vm() }, kind);
-        el.concurrent_tasks.push(task);
-        el.wakeup();
-        Posted::Queued
+        test_gate::weak_post(&self.0, task, |task| {
+            let Some(_a) = self.enter() else {
+                return Posted::Refused(task);
+            };
+            self.0.deliver(kind, task);
+            Posted::Queued
+        })
     }
 
-    /// Queue a C++ `EventLoopTask` from another thread (WebCore's
-    /// `postTaskConcurrently`), or delete it unrun if the VM is gone — the
-    /// same release teardown applies to queued C++ tasks.
+    /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another
+    /// thread (WebCore's `postTaskTo` / `postTaskConcurrently`), or delete it
+    /// unrun if the VM is closed.
     ///
     /// # Safety
     /// `task` is a live heap `WebCore::EventLoopTask` the caller hands over.
-    pub unsafe fn post_cpp_task(&self, task: *mut crate::cpp_task::CppTask) {
+    pub unsafe fn post_cpp_task(&self, kind: LoopKind, task: *mut crate::cpp_task::CppTask) {
         unsafe extern "C" {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if let Posted::Refused(ct) = self.post(LoopKind::Regular, ct) {
+        if let Posted::Refused(ct) = self.post(kind, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
                 drop(bun_core::heap::take(ct.as_ptr()));
@@ -225,120 +364,17 @@ impl VmHandle {
         }
     }
 
-    /// Keep the VM's loop alive from another thread (no-op once closed; the
-    /// teardown ignores keep-alives anyway).
-    pub fn ref_keep_alive(&self, kind: LoopKind) {
+    /// Adjust the VM's keep-alive from another thread (no-op once closed).
+    pub fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
         if let Some(_a) = self.enter() {
-            // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, kind);
-            let _ = el.concurrent_ref.fetch_add(1, Ordering::SeqCst);
-            el.wakeup();
+            self.0.add_keep_alive(kind, delta);
         }
     }
 
-    pub fn unref_keep_alive(&self, kind: LoopKind) {
-        if let Some(_a) = self.enter() {
-            // SAFETY: inside the gate.
-            let el = Self::loop_of(unsafe { self.vm() }, kind);
-            let _ = el.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
-            el.wakeup();
-        }
-    }
-
-    /// This job is about to use VM-owned memory off-thread; `None` if the VM
-    /// is closed (touch nothing). Hold the result until done. Jobs that could
-    /// block indefinitely on an external party must own their memory instead.
-    pub fn borrow(&self) -> Option<Borrow> {
-        let a = self.enter()?;
-        // SAFETY: lifetime extension is sound because `Borrow` also holds a
-        // clone of the Arc that `a` borrows from.
-        let a: Access<'static> = unsafe { core::mem::transmute(a) };
-        Some(Borrow {
-            _access: a,
-            _handle: self.clone(),
-        })
-    }
-
-    /// As [`borrow`](Self::borrow), but only while the VM is still running
-    /// (not yet stopping): what a pool body checks before doing work whose
-    /// only consumer is script.
-    pub fn borrow_if_running(&self) -> Option<Borrow> {
-        let b = self.borrow()?;
-        (self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8).then_some(b)
-    }
-
-    // ── embedded work ─────────────────────────────────────────────────────
-    //
-    // Pool work whose storage is a field of a JS-owned object (a transpile
-    // slot inside the VM, a zlib stream's native part) cannot be boxed into a
-    // `Job` and cannot outlive the VM. It is counted instead: teardown waits
-    // for the count before the handle closes, so such work always posts its
-    // completion into a live queue and is released on the JS thread — the
-    // pool side never sees a dead VM. Bodies check `borrow_if_running` so a
-    // stopping VM only waits for the pool to *reach* the work, not to do it.
-
-    /// JS thread, before handing embedded work to the pool. Script starts
-    /// such work only while the VM is open; a native continuation that runs
-    /// during teardown (a release arm retrying a request) checks
-    /// [`accepting_work`](Self::accepting_work) first and fails instead.
-    pub fn embedded_work_scheduled(&self) {
-        debug_assert!(
-            self.0.hot.state.load(Ordering::SeqCst) != State::Closed as u8,
-            "embedded work started on a closed VM handle"
-        );
-        self.0.embedded.fetch_add(1, Ordering::SeqCst);
-    }
-
-    /// Whether new off-thread work may still be started for this VM (it has
-    /// not begun stopping). JS thread.
-    pub fn accepting_work(&self) -> bool {
-        self.0.hot.state.load(Ordering::SeqCst) == State::Open as u8
-    }
-
-    /// Pool thread, after its last touch of the embedded storage (i.e. after
-    /// posting the completion).
-    pub fn embedded_work_finished(&self) {
-        if self.0.embedded.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.0.hot.state.load(Ordering::SeqCst) != State::Open as u8
-        {
-            self.0.drained.0.lock();
-            self.0.drained.1.notify_all();
-            self.0.drained.0.unlock();
-        }
-    }
-
-    pub(crate) fn embedded_work_outstanding(&self) -> u32 {
-        self.0.embedded.load(Ordering::SeqCst)
-    }
-
-    /// Teardown (JS thread, stopping, before `close()`): wait until the pool
-    /// holds no embedded work of this VM.
-    pub(crate) fn wait_for_embedded_work(&self) {
-        self.assert_js_thread();
-        debug_assert!(self.0.hot.state.load(Ordering::SeqCst) != State::Open as u8);
-        if self.0.embedded.load(Ordering::SeqCst) != 0 {
-            self.0.drained.0.lock();
-            while self.0.embedded.load(Ordering::SeqCst) != 0 {
-                self.0.drained.1.wait(&self.0.drained.0);
-            }
-            self.0.drained.0.unlock();
-        }
-    }
-
-    // ── JS-thread API ─────────────────────────────────────────────────────
-
-    #[cfg(debug_assertions)]
-    pub(crate) fn assert_js_thread(&self) {
-        debug_assert_eq!(std::thread::current().id(), self.0.js_thread);
-    }
-    #[cfg(not(debug_assertions))]
-    #[inline(always)]
-    pub(crate) fn assert_js_thread(&self) {}
-
-    /// The VM is going away: `Open → Stopping` (idempotent; never reopens or
-    /// un-closes). Any thread — a parent's `terminate()` calls it at request
-    /// time, as Node's `Environment::ExitEnv` sets `is_stopping` from the
-    /// requesting thread; this thread's own exit path calls it via
+    /// The VM is going away: `Open → Stopping` (idempotent; never reopens).
+    /// Any thread — a parent's `terminate()` calls it at request time, as
+    /// Node's `Environment::ExitEnv` sets `is_stopping` from the requesting
+    /// thread; this thread's own exit path calls it via
     /// `VirtualMachine::forbid_script`.
     pub fn stop(&self) {
         let _ = self.0.hot.state.compare_exchange(
@@ -349,111 +385,267 @@ impl VmHandle {
         );
     }
 
-    /// May native code call into user JS / settle its promises right now?
-    /// (Node's `can_call_into_js()`.) Any thread; meaningful on the JS thread.
-    pub fn script_allowed(&self) -> bool {
-        self.0.hot.state.load(Ordering::Acquire) == State::Open as u8
+    /// [`stop`](Self::stop), raise a JSC `TerminationException` in the VM at
+    /// its next safepoint, and wake its loop. Any thread (a parent's
+    /// `worker.terminate()`); no-op once the VM is closed.
+    pub fn request_termination(&self) {
+        self.stop();
+        if let Some(_a) = self.enter() {
+            // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
+            // `notify_need_termination` is thread-safe (VMTraps). Raw field
+            // read, no `&VirtualMachine` formed off-thread.
+            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            self.0.loop_of(LoopKind::Regular).wakeup();
+        }
     }
 
-    /// Teardown, JS thread, after children are joined and before queued work
-    /// is released: refuse every future post/wake/ref/borrow and wait until no
-    /// thread is inside one. After this returns nothing off-thread can reach
-    /// the VM; whatever was posted before is in the queues for the teardown to
-    /// release.
-    pub(crate) fn close(&self) {
-        self.assert_js_thread();
-        self.0
-            .hot
-            .state
-            .store(State::Closed as u8, Ordering::SeqCst);
-        refusal_gate::closed(self);
-        if self.0.active.load(Ordering::SeqCst) != 0 {
-            self.0.drained.0.lock();
-            while self.0.active.load(Ordering::SeqCst) != 0 {
-                self.0.drained.1.wait(&self.0.drained.0);
-            }
-            self.0.drained.0.unlock();
+    /// Wake the VM's loop (no-op once closed). Any thread.
+    pub fn wake(&self) {
+        if let Some(_a) = self.enter() {
+            self.0.loop_of(LoopKind::Regular).wakeup();
         }
-        // SAFETY: JS thread; no accessor can be inside any more.
-        unsafe { *self.0.hot.vm.get() = core::ptr::null_mut() };
+    }
+
+    /// May native code call into user JS / settle its promises right now?
+    /// (Node's `can_call_into_js()`.) Any thread; meaningful on the JS thread.
+    #[inline]
+    pub fn script_allowed(&self) -> bool {
+        self.0.state() == State::Open
+    }
+
+    pub(crate) fn tickets_outstanding(&self) -> u32 {
+        self.0.tickets.load(Ordering::SeqCst)
+    }
+
+    // ── JS-thread API ─────────────────────────────────────────────────────
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_js_thread(&self) {
+        debug_assert_eq!(std::thread::current().id(), self.0.debug.js_thread);
+    }
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    pub(crate) fn assert_js_thread(&self) {}
+
+    /// Teardown, phase B of `VirtualMachine::teardown` (JS thread, script
+    /// forbidden, everything cancellable cancelled): wait until no ticket is outstanding, calling `service`
+    /// (release everything queued, on this thread, heap alive) whenever
+    /// something may have arrived; then refuse weak accessors and wait out any
+    /// mid-call. After this returns nothing off-thread can reach the VM.
+    ///
+    /// Unbounded by design: a job that cannot be cancelled makes this take as
+    /// long as the job (as Node's environment cleanup does). Every wake source
+    /// (ticket drop, post) notifies the condvar; the 1 s timeout is a backstop
+    /// and the debug build's cadence for naming the outstanding tickets.
+    pub(crate) fn close_and_wait(&self, mut service: impl FnMut()) {
+        self.assert_js_thread();
+        let s = &*self.0;
+        s.hot.state.store(State::Draining as u8, Ordering::SeqCst);
+        test_gate::draining(self);
+        #[cfg(debug_assertions)]
+        let started = std::time::Instant::now();
+        #[cfg(debug_assertions)]
+        let mut next_report = test_gate::first_report_secs(self);
+        loop {
+            service();
+            let mut g = s.drained.0.lock();
+            if !s.loop_of(LoopKind::Regular).concurrent_tasks.is_empty()
+                || !s.loop_of(LoopKind::Macro).concurrent_tasks.is_empty()
+            {
+                continue;
+            }
+            if s.tickets.load(Ordering::SeqCst) == 0 {
+                s.hot.state.store(State::Closed as u8, Ordering::SeqCst);
+                break;
+            }
+            let _ = s.drained.1.timed_wait_guarded(&mut g, 1_000_000_000);
+            drop(g);
+            #[cfg(debug_assertions)]
+            {
+                let secs = started.elapsed().as_secs();
+                if secs >= next_report {
+                    next_report = secs + 10;
+                    self.dump_outstanding(secs);
+                }
+            }
+        }
+        if s.active.load(Ordering::SeqCst) != 0 {
+            let mut g = s.drained.0.lock();
+            while s.active.load(Ordering::SeqCst) != 0 {
+                s.drained.1.wait_guarded(&mut g);
+            }
+        }
+        // A weak post that entered before `Closed` was published.
+        service();
+    }
+
+    #[cfg(debug_assertions)]
+    fn dump_outstanding(&self, secs: u64) {
+        let live = self.0.debug.live.lock();
+        let mut sites: Vec<(&'static str, u32)> =
+            live.at.values().map(|l| (l.file(), l.line())).collect();
+        sites.sort_unstable();
+        let w = bun_core::output::error_writer();
+        let _ = writeln!(
+            w,
+            "[vm] teardown has waited {secs}s for {} ticket(s) still held off-thread:",
+            sites.len()
+        );
+        for run in sites.chunk_by(|a, b| a == b) {
+            let _ = writeln!(
+                w,
+                "[vm]   {}× taken at {}:{}",
+                run.len(),
+                run[0].0,
+                run[0].1
+            );
+        }
+        let _ = w.flush();
     }
 }
 
-// ── Test suite only: deterministic refusals ───────────────────────────────
+impl VirtualMachine {
+    /// JS thread: a ticket for work about to leave this thread — this VM, and
+    /// the loop it is currently ticking. Hold it in the in-flight operation
+    /// and drop it after the completion is posted. Infallible until the wait
+    /// has finished (after which nothing on this thread starts off-thread work).
+    #[track_caller]
+    #[inline]
+    pub fn ticket(&self) -> Ticket {
+        let h = self.handle_ref();
+        h.assert_js_thread();
+        debug_assert!(
+            h.0.state() != State::Closed,
+            "off-thread work started after the VM finished draining"
+        );
+        Ticket::issue(&h.0, self.current_loop_kind())
+    }
+}
+
+/// JS thread: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
+/// captured by the initiator of work whose completion is posted weakly.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
+    vm.current_loop_kind()
+}
+
+// ── Test suite only: deterministic late completions ───────────────────────
 //
-// `BUN_DEBUG_TEST_WORKER_REFUSAL_GATE` (worker VMs; builds with debug
-// assertions): a post from another thread — unless counted work is
-// outstanding, whose producer must post before its count can return — waits
-// until this handle is closed and only then proceeds, so it is refused with the
-// real preconditions (the JS side already released, the handle really closed)
-// and the producer's own release path runs every time rather than only when it
-// happens to lose the race with teardown. Each refusal is named on stderr.
+// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with
+// debug assertions): a post from another thread is held until the worker's
+// teardown has begun waiting, so it always arrives *during* the wait — the
+// ticketed path (queued, released on the JS thread, then the wait ends) and
+// the weak path (queued-and-released while draining, or refused once closed)
+// run with their real preconditions every time instead of only when they lose
+// the race. Each is named on stderr. The parked thread keeps whatever locks it
+// holds (the fetch tasklet's mutex, a streaming body's buffer lock), so a row
+// whose worker then blocks on that same lock never reaches teardown: a hang
+// under the gate, not in production.
 #[cfg(debug_assertions)]
-mod refusal_gate {
-    use super::{Ordering, State, VmHandle};
+mod test_gate {
+    use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};
+    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
     impl VmHandle {
-        pub(crate) fn park_posts_until_closed(&self) {
-            self.0.park_posts.store(true, Ordering::Relaxed);
-        }
-        fn posts_parked(&self) -> bool {
-            self.0.park_posts.load(Ordering::Relaxed)
+        pub(crate) fn arm_test_gate(&self) {
+            self.0.debug.gate.store(true, Ordering::Relaxed);
         }
     }
-
-    pub(super) fn before_post(h: &VmHandle) {
-        if !h.posts_parked()
-            || std::thread::current().id() == h.0.js_thread
-            || h.0.embedded.load(Ordering::SeqCst) != 0
-        {
-            return;
-        }
-        // Not holding `active` here: close() waits for that to drain.
-        h.0.drained.0.lock();
-        while h.0.hot.state.load(Ordering::SeqCst) != State::Closed as u8 {
-            h.0.drained.1.wait(&h.0.drained.0);
-        }
-        h.0.drained.0.unlock();
+    fn on(s: &Shared) -> bool {
+        s.debug.gate.load(Ordering::Relaxed)
     }
-
-    /// close(), after publishing Closed: parked posts go now (and are refused).
-    pub(super) fn closed(h: &VmHandle) {
-        if h.posts_parked() {
-            h.0.drained.0.lock();
-            h.0.drained.1.notify_all();
-            h.0.drained.0.unlock();
+    fn armed(s: &Shared) -> bool {
+        on(s) && std::thread::current().id() != s.debug.js_thread
+    }
+    fn park_until_draining(s: &Shared) {
+        let mut g = s.drained.0.lock();
+        while s.state() < State::Draining {
+            s.drained.1.wait_guarded(&mut g);
         }
     }
+    /// One line at a time: pool threads report concurrently.
+    static SAY: bun_threading::Mutex = bun_threading::Mutex::new();
+    fn say(what: core::fmt::Arguments<'_>) {
+        let _g = SAY.lock_guard();
+        // The poster can be a thread Bun never set up for output (a JSC helper).
+        bun_core::output::Source::configure_thread();
+        let w = bun_core::output::error_writer();
+        let _ = writeln!(w, "[vm] {what}");
+        let _ = w.flush();
+    }
 
-    pub(super) fn refused(h: &VmHandle, what: core::fmt::Arguments<'_>) {
-        if h.posts_parked() {
-            let w = bun_core::output::error_writer();
-            let _ = writeln!(w, "[vm_handle] refused {what}");
-            let _ = w.flush();
+    pub(super) fn before_ticket_post(t: &Ticket) {
+        if armed(&t.shared) {
+            park_until_draining(&t.shared);
+            let l = *t
+                .shared
+                .debug
+                .live
+                .lock()
+                .at
+                .get(&t.id)
+                .expect("live ticket");
+            say(format_args!(
+                "late completion from {}:{}",
+                l.file(),
+                l.line()
+            ));
         }
+    }
+    pub(super) fn weak_post(s: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
+        if !armed(s) {
+            return post(task);
+        }
+        park_until_draining(s);
+        // SAFETY: handed over by the caller and not yet queued anywhere.
+        let tag = unsafe { task.as_ref() }.task.tag;
+        let r = post(task);
+        let outcome = match r {
+            Posted::Queued => "released by the wait",
+            Posted::Refused(_) => "refused",
+        };
+        say(format_args!("late post: {} ({outcome})", tag.name()));
+        r
+    }
+    /// The wait began: parked posts go now.
+    pub(super) fn draining(h: &VmHandle) {
+        if on(&h.0) {
+            h.0.notify();
+        }
+    }
+    /// The gate's tests read the outstanding-ticket dump; everyone else only
+    /// after a wait long enough to be worth explaining even on a slow build.
+    pub(super) fn first_report_secs(h: &VmHandle) -> u64 {
+        if on(&h.0) { 2 } else { 10 }
     }
 }
 #[cfg(not(debug_assertions))]
-mod refusal_gate {
-    use super::VmHandle;
+mod test_gate {
+    use super::{Posted, Shared, Ticket, VmHandle};
+    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    impl VmHandle {
+        #[inline(always)]
+        pub(crate) fn arm_test_gate(&self) {}
+    }
     #[inline(always)]
-    pub(super) fn before_post(_: &VmHandle) {}
+    pub(super) fn before_ticket_post(_: &Ticket) {}
     #[inline(always)]
-    pub(super) fn closed(_: &VmHandle) {}
+    pub(super) fn weak_post(_: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
+        post(task)
+    }
     #[inline(always)]
-    pub(super) fn refused(_: &VmHandle, _: core::fmt::Arguments<'_>) {}
+    pub(super) fn draining(_: &VmHandle) {}
 }
 
-// ── C++ holds counted references to a handle ─────────────────────────────
+// ── C++ holds references ──────────────────────────────────────────────────
 //
-// One representation crosses the FFI: `*const Shared`, a strong count on the
-// Arc every `VmHandle` clone points at (`BunVmHandleRef` in C++). Long-lived
-// holders (JSVMClientData, EventLoopTaskNoContext, NapiEnv) `retain` one and
-// `release` it; a call that merely uses a reference someone else holds borrows
-// it for the duration ([`VmHandle::borrow_ref`]). Nothing is boxed.
+// `*const Shared` (`BunVmHandleRef`) is one strong count on the Arc behind a
+// [`VmHandle`] — what a long-lived C++ holder (JSVMClientData, NapiEnv) keeps
+// and posts through. C++ work bound for another thread (WebCrypto's
+// `EventLoopTaskNoContext`) is carried by a Rust task that holds the ticket
+// (`ConcurrentCppTask`), so no ticket crosses the FFI.
 
-/// A `VmHandle` view over a reference C++ holds, for the duration of one call:
-/// the count stays C++'s.
+/// A `VmHandle` view over a reference C++ holds, for the duration of one call.
 pub struct BorrowedRef(core::mem::ManuallyDrop<VmHandle>);
 impl core::ops::Deref for BorrowedRef {
     type Target = VmHandle;
@@ -469,8 +661,8 @@ impl VmHandle {
     }
 
     /// # Safety
-    /// `r` is a live reference obtained from [`VmHandle::into_ref`] (directly or
-    /// via `Bun__VmHandle__retain*`) that its holder keeps for the duration.
+    /// `r` is a live reference obtained from [`VmHandle::into_ref`] that its
+    /// holder keeps for the duration.
     pub unsafe fn borrow_ref(r: *const Shared) -> BorrowedRef {
         // SAFETY: fn contract; ManuallyDrop leaves the holder's count untouched.
         BorrowedRef(core::mem::ManuallyDrop::new(VmHandle(unsafe {
@@ -492,8 +684,7 @@ pub extern "C" fn Bun__VmHandle__retain(vm: &VirtualMachine) -> *const Shared {
     vm.handle().into_ref()
 }
 
-/// Any thread: one more reference on the same handle (for something that may
-/// outlive whoever it got the reference from).
+/// Any thread: one more reference on the same handle.
 ///
 /// # Safety
 /// `r` is a live reference its holder keeps for the duration of the call.
@@ -513,9 +704,8 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
     drop(unsafe { VmHandle::from_ref(r) });
 }
 
-/// Any thread: post a C++ task through a reference and give the reference up
-/// (queued, or deleted unrun if the VM is gone). For a caller that took the
-/// reference only to keep the VM reachable past a lock it was about to drop.
+/// Any thread: post a C++ task to the VM's `kind` loop through a reference and
+/// give the reference up (queued, or deleted unrun if the VM is closed).
 ///
 /// # Safety
 /// `r` came from `Bun__VmHandle__retain*` and is not used afterwards; `task` is
@@ -524,16 +714,15 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
 pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
     r: *const Shared,
     task: *mut crate::cpp_task::CppTask,
+    kind: LoopKind,
 ) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::from_ref(r) };
     // SAFETY: fn contract.
-    unsafe { handle.post_cpp_task(task) };
+    unsafe { handle.post_cpp_task(kind, task) };
 }
 
-/// JS thread: adjust this VM's keep-alive directly (balanced pairs from
-/// MessagePort / BroadcastChannel / ScriptExecutionContext stay balanced through
-/// teardown; the cross-thread route below stops applying once the VM closes).
+/// JS thread: adjust this VM's keep-alive directly.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
     if delta > 0 {
@@ -543,23 +732,22 @@ pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core:
     }
 }
 
-/// Any thread: adjust the VM's keep-alive (no-op once the VM is closed).
+/// Any thread: adjust the keep-alive on the VM's `kind` loop (no-op once the
+/// VM is closed).
 ///
 /// # Safety
 /// `r` is a live reference its holder keeps for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(r: *const Shared, delta: core::ffi::c_int) {
+pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
+    r: *const Shared,
+    kind: LoopKind,
+    delta: core::ffi::c_int,
+) {
     // SAFETY: fn contract.
-    let handle = unsafe { VmHandle::borrow_ref(r) };
-    if delta > 0 {
-        handle.ref_keep_alive(LoopKind::Regular);
-    } else {
-        handle.unref_keep_alive(LoopKind::Regular);
-    }
+    unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(kind, delta.signum());
 }
 
-/// Any thread: Node's `can_call_into_js()` — false once the VM's stop was
-/// requested (a parent's terminate(), the worker's own exit, teardown).
+/// Any thread: Node's `can_call_into_js()`.
 ///
 /// # Safety
 /// `r` is a live reference its holder keeps for the duration of the call.
@@ -570,8 +758,7 @@ pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool 
 }
 
 /// The address of this handle's state byte, for C++ to test
-/// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries instead
-/// of calling out per callback. Valid as long as the reference is held.
+/// `*addr == BUN_VM_HANDLE_STATE_OPEN` inline on its native→JS entries.
 ///
 /// # Safety
 /// `r` is a live reference.
@@ -586,29 +773,41 @@ const _: () = assert!(State::Open as u8 == 0);
 
 // ── Producers that serve either a JS VM or a MiniEventLoop ────────────────
 //
-// fs.cp (also used by the shell), shell builtins, password hashing, zlib run
-// on the work pool for whichever loop created them. For the JS case the
-// completion goes through the VM's handle; a MiniEventLoop (bundler / shell /
-// install threads) is owned by its thread and outlives the work it schedules,
-// so its concurrent queue is posted to directly, as before.
+// fs.cp (also used by the shell), shell builtins, zlib run on the work pool
+// for whichever loop created them. For the JS case the work holds a ticket; a
+// MiniEventLoop (bundler / shell / install threads) is owned by its thread and
+// outlives the work it schedules, so its concurrent queue is posted to directly.
 
-/// Where an off-thread completion goes: a JS VM (through its handle) or a
-/// mini event loop. Captured on the owning thread when the work is created.
-#[derive(Clone)]
+/// Where an off-thread completion goes: a JS VM (through a ticket the work
+/// holds) or a mini event loop. Captured on the owning thread when the work is
+/// created; dropped when the work is done with the loop. Cloning the JS arm
+/// takes one more ticket.
 pub enum ConcurrentPoster {
-    /// Erased handle of the JS loop's VM (obtained from the `EventLoopHandle`
-    /// itself, so it is correct whichever thread constructs the poster).
-    Js(bun_event_loop::JsPoster),
+    Js(Ticket),
     Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
 }
 
+impl Clone for ConcurrentPoster {
+    #[track_caller]
+    fn clone(&self) -> Self {
+        match self {
+            ConcurrentPoster::Js(t) => ConcurrentPoster::Js(t.clone()),
+            ConcurrentPoster::Mini(m) => ConcurrentPoster::Mini(*m),
+        }
+    }
+}
+
 impl ConcurrentPoster {
-    /// From an `EventLoopHandle`: the JS arm asks the loop for its VM's poster
-    /// (a JS-thread-owned handle knows its VM); the mini arm posts directly.
+    /// Owning thread: for a JS loop, take a ticket on its VM; for a mini loop,
+    /// post directly.
+    #[track_caller]
     pub fn from_event_loop_handle(h: &bun_event_loop::EventLoopHandle) -> Self {
         match h {
             bun_event_loop::EventLoopHandle::Js { owner } => {
-                ConcurrentPoster::Js(owner.js_poster())
+                // SAFETY: a `Js` handle is only formed on its VM's thread from
+                // the live VM (`EventLoopHandle::init` contract).
+                let vm = unsafe { &*owner.bun_vm().cast::<VirtualMachine>() };
+                ConcurrentPoster::Js(vm.ticket())
             }
             bun_event_loop::EventLoopHandle::Mini(mini) => ConcurrentPoster::Mini(*mini),
         }
@@ -618,32 +817,15 @@ impl ConcurrentPoster {
         matches!(self, ConcurrentPoster::Js(..))
     }
 
-    /// JS arm: count embedded work on the VM (see `VmHandle`). A mini loop is
-    /// owned by its thread and outlives its work, so there is nothing to count.
-    pub fn embedded_work_scheduled(&self) {
-        if let ConcurrentPoster::Js(p) = self {
-            p.embedded_work_scheduled();
-        }
-    }
-    pub fn embedded_work_finished(&self) {
-        if let ConcurrentPoster::Js(p) = self {
-            p.embedded_work_finished();
-        }
-    }
-
-    /// Post a JS-loop `ConcurrentTask`. `Refused` ⇒ VM torn down, caller
-    /// releases. Panics (debug) if this poster is `Mini`.
-    pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+    /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
+    pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) {
         match self {
-            ConcurrentPoster::Js(p) => p.post(task),
-            ConcurrentPoster::Mini(_) => {
-                debug_assert!(false, "post_js on a Mini poster");
-                Posted::Refused(task)
-            }
+            ConcurrentPoster::Js(t) => t.post(task),
+            ConcurrentPoster::Mini(_) => debug_assert!(false, "post_js on a Mini poster"),
         }
     }
 
-    /// Post a mini-loop task (always accepted; the mini loop outlives its work).
+    /// Post a mini-loop task (the mini loop outlives its work).
     pub fn post_mini(
         &self,
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
@@ -682,28 +864,14 @@ unsafe fn poster_drop(data: *const ()) {
     // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
     unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
 }
-unsafe fn poster_embedded_scheduled(data: *const ()) {
-    // SAFETY: as `poster_post`.
-    unsafe { &*data.cast::<PosterData>() }
-        .handle
-        .embedded_work_scheduled();
-}
-unsafe fn poster_embedded_finished(data: *const ()) {
-    // SAFETY: as `poster_post`.
-    unsafe { &*data.cast::<PosterData>() }
-        .handle
-        .embedded_work_finished();
-}
 static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: poster_post,
-    embedded_work_scheduled: poster_embedded_scheduled,
-    embedded_work_finished: poster_embedded_finished,
     clone: poster_clone,
     drop: poster_drop,
 };
 
 impl VmHandle {
-    /// An erased poster for `kind`, for code that cannot name `VmHandle`.
+    /// An erased weak poster for `kind`, for code that cannot name `VmHandle`.
     pub fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
         let data = Arc::into_raw(Arc::new(PosterData {
             handle: self.clone(),
@@ -716,129 +884,9 @@ impl VmHandle {
 }
 
 impl VirtualMachine {
-    /// JS thread: an erased poster for the current loop of this VM.
+    /// JS thread: an erased weak poster for the current loop of this VM.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
-        self.loop_handle().to_js_poster()
-    }
-}
-
-// ── LoopHandle: "where this job's completion goes" ────────────────────────
-
-/// A [`VmHandle`] plus the loop of that VM the completion belongs on — what a
-/// job created on the JS thread captures (`vm.loop_handle()`) and posts back
-/// through from whatever thread finishes it.
-#[derive(Clone)]
-pub struct LoopHandle {
-    vm: VmHandle,
-    kind: LoopKind,
-}
-
-/// A job that finishes off the JS thread and is posted back to its VM as a
-/// `ConcurrentTask` — see [`post_job`]. It says where its [`LoopHandle`] lives
-/// and how to release itself when the VM is already gone. There is
-/// deliberately no default for the release: a job that cannot release itself
-/// does not compile.
-pub trait Postable: bun_event_loop::Taskable + Sized {
-    /// The handle captured at creation (`vm.loop_handle()`), stored in the job.
-    ///
-    /// # Safety
-    /// `this` is live.
-    unsafe fn loop_handle(this: *mut Self) -> *const LoopHandle;
-
-    /// The `ConcurrentTask` that carries `this`: a fresh heap one by default;
-    /// jobs with an embedded task return that instead.
-    ///
-    /// # Safety
-    /// `this` is live.
-    unsafe fn concurrent_task(this: *mut Self) -> NonNull<ConcurrentTaskItem> {
-        ConcurrentTaskItem::create_from(this)
-    }
-
-    /// The VM refused the completion (torn down). Runs on the posting thread,
-    /// usually *not* the JS thread: free what the job owns, do not touch JSC
-    /// handles (they die with the VM), and free the allocation itself.
-    ///
-    /// # Safety
-    /// `this` is the live job; nothing uses it afterwards.
-    unsafe fn release_refused(this: *mut Self);
-}
-
-/// Post a finished job's completion back to the VM it came from. If that VM
-/// has been torn down, the job releases itself here; callers have nothing to
-/// check either way.
-///
-/// # Safety
-/// `job` is a live heap job whose off-thread part is finished; the caller does
-/// not touch it afterwards (it now belongs to the VM's queue, or was released).
-pub unsafe fn post_job<T: Postable>(job: *mut T) {
-    // Clone the handle out first: a refusal frees `job`, handle field included.
-    // SAFETY: fn contract.
-    let handle = unsafe { (*T::loop_handle(job)).clone() };
-    // SAFETY: fn contract.
-    let task = unsafe { T::concurrent_task(job) };
-    if let Posted::Refused(task) = handle.post_task(task) {
-        refusal_gate::refused(
-            &handle.vm,
-            format_args!("job: {}", core::any::type_name::<T>()),
-        );
-        // SAFETY: handed back unqueued; `job` per fn contract.
-        unsafe {
-            ConcurrentTaskItem::release_refused(task);
-            T::release_refused(job);
-        }
-    }
-}
-
-impl LoopHandle {
-    /// Post an already-built task. Prefer [`post_job`], which leaves the caller
-    /// nothing to check; this hands a refusal back.
-    pub fn post_task(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        self.vm.post(self.kind, task)
-    }
-    pub fn borrow(&self) -> Option<Borrow> {
-        self.vm.borrow()
-    }
-    pub fn borrow_if_running(&self) -> Option<Borrow> {
-        self.vm.borrow_if_running()
-    }
-    pub fn accepting_work(&self) -> bool {
-        self.vm.accepting_work()
-    }
-    pub fn embedded_work_scheduled(&self) {
-        self.vm.embedded_work_scheduled()
-    }
-    pub fn embedded_work_finished(&self) {
-        self.vm.embedded_work_finished()
-    }
-    pub fn ref_keep_alive(&self) {
-        self.vm.ref_keep_alive(self.kind)
-    }
-    pub fn unref_keep_alive(&self) {
-        self.vm.unref_keep_alive(self.kind)
-    }
-    /// An erased poster for this loop, for code that cannot name `bun_jsc`.
-    pub fn to_js_poster(&self) -> bun_event_loop::JsPoster {
-        self.vm.to_js_poster(self.kind)
-    }
-}
-
-impl VirtualMachine {
-    /// This VM's live pool jobs. JS thread only.
-    #[allow(clippy::mut_from_ref)]
-    #[inline]
-    pub fn jobs(&self) -> &mut crate::job::JobList {
-        // SAFETY: JS-thread-only intrusive list; callers never hold two at once
-        // (each call is a single push/unlink/release statement).
-        unsafe { &mut *self.jobs.get() }
-    }
-
-    /// JS thread: the handle a new job captures — this VM, and the loop it is
-    /// currently ticking (regular, macro, or a spawnSync isolated loop).
-    pub fn loop_handle(&self) -> LoopHandle {
-        LoopHandle {
-            vm: self.handle(),
-            kind: self.current_loop_kind(),
-        }
+        self.handle_ref().to_js_poster(self.current_loop_kind())
     }
 }
 
@@ -847,7 +895,8 @@ impl VirtualMachine {
 // spawnSync runs a third, heap-allocated `EventLoop` on the JS thread while it
 // blocks; process exits (waiter thread) and pool completions for that call
 // must land on *its* concurrent queue, not the VM's. It gets its own small
-// poster with the same gate discipline, closed before the loop is freed.
+// weak poster with the same gate discipline, closed before the loop is freed.
+// The VM cannot tear down under it: its creator drives it synchronously.
 
 /// Opaque outside this crate: the poster of a spawnSync isolated loop.
 pub struct IsolatedPosterInner {
@@ -915,13 +964,8 @@ unsafe fn isolated_drop(data: *const ()) {
     // SAFETY: as above.
     unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
 }
-// An isolated loop is driven to completion synchronously by its creator on
-// the JS thread (spawnSync), so its VM cannot tear down under its work.
-unsafe fn isolated_embedded_noop(_data: *const ()) {}
 static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: isolated_post,
-    embedded_work_scheduled: isolated_embedded_noop,
-    embedded_work_finished: isolated_embedded_noop,
     clone: isolated_clone,
     drop: isolated_drop,
 };

@@ -75,7 +75,6 @@ pub mod task_tag {
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
-        FileResponseStreamEof,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         HotReloadTask,
@@ -137,12 +136,12 @@ pub struct Task {
 /// freed when it will never run. Implement on every type that can be
 /// enqueued; the impl lives in whatever crate owns the type.
 ///
-/// A queued task ends one of three ways: it runs (`bun_runtime::dispatch::
-/// run_task`); it is refused at post because its VM already closed (the
-/// poster frees it — `Postable::release_refused` / the `Posted::Refused` arm);
-/// or it was queued in time but its VM stops before running it —
+/// A queued task ends one of two ways: it runs (`bun_runtime::dispatch::
+/// run_task`), or its VM stops before running it —
 /// [`release_unrun`](Self::release_unrun), required here so no type can be
-/// queued without having decided it.
+/// queued without having decided it. (A *weak* poster — `JsPoster` — can also
+/// get its task back unqueued once the VM has closed; that task never entered
+/// a queue and is the poster's own to free: [`ConcurrentTask::release_refused`].)
 ///
 /// Re-exported from `bun_jsc` for ergonomics, but defined here (lowest tier on
 /// the hot-dispatch list, see PORTING.md §Dispatch) so that
@@ -312,23 +311,36 @@ impl ConcurrentTask {
         self
     }
 
-    /// A poster got `task` back because the target VM is gone: free it if it
-    /// is a heap task (`create*`); an intrusive one belongs to its container.
+    /// Consuming thread: unwrap the payload, freeing the carrier if it was
+    /// heap-allocated (`create*`); an intrusive carrier stays with its container.
+    ///
+    /// # Safety
+    /// `this` came off a queue (or was never queued) and is not used afterwards.
+    pub unsafe fn into_task(this: core::ptr::NonNull<ConcurrentTask>) -> Task {
+        // SAFETY: fn contract.
+        unsafe {
+            let (task, auto_delete) = (this.as_ref().task, this.as_ref().auto_delete());
+            if auto_delete {
+                drop(bun_core::heap::take(this.as_ptr()));
+            }
+            task
+        }
+    }
+
+    /// A weak poster got `task` back because the target VM has closed: free
+    /// it if it is a heap task (`create*`); an intrusive one belongs to its
+    /// container.
     ///
     /// # Safety
     /// `task` was just refused and is not queued anywhere.
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
         // SAFETY: fn contract.
-        unsafe {
-            // A callback task (`from_callback`, `ManagedTask::new*`) owns a
-            // heap `ManagedTask` behind `task.ptr` as well.
-            let inner = task.as_ref().task;
-            if inner.tag == crate::task_tag::ManagedTask {
-                crate::ManagedTask::ManagedTask::release(inner.ptr.cast());
-            }
-            if task.as_ref().auto_delete() {
-                drop(bun_core::heap::take(task.as_ptr()));
-            }
+        let inner = unsafe { Self::into_task(task) };
+        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
+        // `ManagedTask` behind `task.ptr` as well.
+        if inner.tag == crate::task_tag::ManagedTask {
+            // SAFETY: as above; refused ⇒ ours.
+            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
         }
     }
 

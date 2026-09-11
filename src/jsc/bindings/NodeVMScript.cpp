@@ -3,21 +3,26 @@
 
 #include "ErrorCode.h"
 
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
-#include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
 #include "NodeVMScriptFetcher.h"
-#include "../vm/SigintWatcher.h"
+#include "../vm/NodeVMRunTermination.h"
 
 #include <bit>
 
 namespace Bun {
 using namespace NodeVM;
+
+static std::optional<Seconds> timeoutOf(const RunningScriptOptions& options)
+{
+    return options.timeout ? std::optional { Seconds::fromMilliseconds(*options.timeout) } : std::nullopt;
+}
 
 bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
 {
@@ -52,20 +57,18 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         }
 
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateTimeout(globalObject, vm, scope, options, this->timeout))
             any = true;
-        }
+        // The validators return false both for "absent" and for "threw".
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
         // Handle importModuleDynamically option
         JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
@@ -114,6 +117,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
+    options.lineOffset = clampOffsetForSource(options.lineOffset, sourceString.length());
+    options.columnOffset = clampOffsetForSource(options.columnOffset, sourceString.length());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
@@ -132,15 +137,17 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
+
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
 
+    fetcher->owner(vm, script);
+
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that. This is a
-    // double-parse (checkSyntax discards its AST and runInThisContext reparses
-    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
+    // recoverable-error flow (and user code) relies on that.
     JSC::ParserError parseError;
-    if (!JSC::checkSyntax(vm, source, parseError)) {
-        auto exception = parseError.toErrorObject(globalObject, source, -1);
+    if (!script->unlinkedCodeBlockFor(globalObject, parseError)) {
+        auto exception = parseError.toErrorObject(globalObject, script->source(), -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError
         // anyway. tryClearException leaves a termination for the check below.
@@ -151,19 +158,14 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
         // An absent filename becomes evalmachine.<anonymous>; an explicitly
         // provided one — including "" — is used verbatim.
-        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
+        const ScriptOptions& scriptOptions = script->options();
+        String url = scriptOptions.filenameProvided ? scriptOptions.filename : "evalmachine.<anonymous>"_s;
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, scriptOptions.lineOffset);
+        RETURN_IF_EXCEPTION(scope, {});
         throwException(globalObject, scope, exception);
         return {};
     }
-
-    const bool produceCachedData = options.produceCachedData;
-    auto filename = options.filename;
-
-    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
-
-    fetcher->owner(vm, script);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -198,11 +200,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (produceCachedData) {
+    } else if (script->options().produceCachedData)
         script->cacheBytecode();
-        // TODO(@heimskr): is there ever a case where bytecode production fails?
-        script->cachedDataProduced(true);
-    }
 
     return JSValue::encode(script);
 }
@@ -217,6 +216,30 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
     return constructScript(globalObject, callFrame, callFrame->newTarget());
 }
 
+JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject* globalObject, JSC::ParserError& error)
+{
+    VM& vm = JSC::getVM(globalObject);
+    OptionSet<JSC::CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+
+    if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode)
+        return m_unlinkedCodeBlock.get();
+
+    // The CodeCache records the parse on the executable it is given (that changes what the executable keys
+    // later lookups with, so m_cachedExecutable is not used for this); every run links its own anyway.
+    JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
+    if (block)
+        m_unlinkedCodeBlock.set(vm, this, block);
+    return block;
+}
+
+JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Exception>& exception)
+{
+    // If the compile fails now (stack overflow, OOM), the block is null and
+    // JSC::evaluate reports the failure the way it always has, by compiling itself.
+    JSC::ParserError ignoredError;
+    return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
+}
+
 JSC::ProgramExecutable* NodeVMScript::createExecutable()
 {
     VM& vm = JSC::getVM(globalObject());
@@ -226,29 +249,26 @@ JSC::ProgramExecutable* NodeVMScript::createExecutable()
 
 void NodeVMScript::cacheBytecode()
 {
-    if (!m_cachedExecutable) {
-        createExecutable();
-    }
-
-    m_cachedBytecode = getBytecode(globalObject(), m_cachedExecutable.get(), m_source);
+    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
     m_cachedDataProduced = m_cachedBytecode != nullptr;
 }
 
 JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
 {
+    auto scope = DECLARE_THROW_SCOPE(vm());
     if (!m_options.produceCachedData) {
         return nullptr;
     }
 
     if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode) {
+        if (!m_cachedBytecode)
             cacheBytecode();
-        }
-
-        ASSERT(m_cachedBytecode);
+        if (!m_cachedBytecode)
+            return nullptr;
 
         std::span<const uint8_t> bytes = m_cachedBytecode->span();
         m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (!m_cachedBytecodeBuffer) {
             return nullptr;
         }
@@ -268,6 +288,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
+    visitor.append(thisObject->m_unlinkedCodeBlock);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
@@ -307,58 +328,6 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
-{
-    if (vm.hasTerminationRequest()) {
-        // The whole VM is being stopped (worker terminate()/exit): that
-        // termination is not ours to consume. The caller rethrows what
-        // evaluate() caught like any other exception.
-        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
-            return false;
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
-        }
-        return true;
-    }
-
-    return false;
-}
-
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
-{
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& dog = vm.ensureWatchdog();
-    dog.enteredVM();
-
-    Seconds oldLimit = dog.getTimeLimit();
-
-    if (oldTimeout) {
-        *oldTimeout = oldLimit.milliseconds();
-    }
-
-    if (oldLimit.isInfinity() || timeout < oldLimit.milliseconds()) {
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
-    } else {
-        timeout = oldLimit.milliseconds();
-    }
-
-    if (newTimeout) {
-        *newTimeout = timeout;
-    }
-}
-
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -381,46 +350,17 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
-
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
-
-    script->setSigintReceived(false);
-
-    // Node performs the afterEvaluate microtask checkpoint inside the
-    // watchdog/SIGINT scope, so a `timeout` also bounds microtasks the script
-    // scheduled on the context's own queue (e.g. promise jobs).
-    auto drainAfterEvaluate = [&] {
+    {
+        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
+        result = script->evaluate(globalObject, exception);
+        // Node performs the afterEvaluate microtask checkpoint inside the timeout/SIGINT scope, so a
+        // `timeout` also bounds microtasks the script scheduled on the context's own queue. A script cut
+        // short before its checkpoint keeps what it queued for the next evaluation's, as in Node.
         if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
             globalObject->drainOwnMicrotasks();
-    };
-
-    if (options.breakOnSigint) {
-        auto holder = SigintWatcher::hold(globalObject, script);
-        run();
-        drainAfterEvaluate();
-    } else {
-        run();
-        drainAfterEvaluate();
+        termination.finish(scope);
     }
-
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
-        return {};
-    }
-
     RETURN_IF_EXCEPTION(scope, {});
-
-    script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
         // Node only decorates the error stack with the source line when
@@ -457,35 +397,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
-    auto run = [&] {
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-    };
-
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
+    {
+        NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
+        result = script->evaluate(globalObject, exception);
+        termination.finish(scope);
     }
-
-    script->setSigintReceived(false);
-
-    if (options.breakOnSigint) {
-        auto holder = SigintWatcher::hold(globalObject, script);
-        vm.ensureTerminationException();
-        run();
-    } else {
-        run();
-    }
-
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
-        return {};
-    }
-
-    script->setSigintReceived(false);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (exception) [[unlikely]] {
         // Node only decorates the error stack with the source line when
@@ -511,20 +428,8 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
+    // Populated by the compile in the constructor (a CodeCache hit copies it over too).
     String url = script->source().provider()->sourceMappingURLDirective();
-
-    if (!url && !script->sourceMapURLParsed()) {
-        // The directive is only populated once the source has been parsed; a
-        // Script that has never run hasn't been. Parse once so sourceMapURL
-        // is available before the first run, like Node where compilation
-        // happens in the Script constructor.
-        script->sourceMapURLParsed(true);
-        ParserError parserError;
-        parseRootNode<ProgramNode>(vm, script->source(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            NoLexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, parserError);
-        url = script->source().provider()->sourceMappingURLDirective();
-    }
-
     if (!url) {
         return encodedJSUndefined();
     }
@@ -670,7 +575,7 @@ public:
 
     static NodeVMScriptPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
     {
-        NodeVMScriptPrototype* ptr = new (NotNull, allocateCell<NodeVMScriptPrototype>(vm)) NodeVMScriptPrototype(vm, structure);
+        NodeVMScriptPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(NodeVMScriptPrototype))) NodeVMScriptPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -684,7 +589,7 @@ public:
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
 private:
@@ -711,8 +616,8 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 void NodeVMScriptPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, NodeVMScript::info(), scriptPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSObject* NodeVMScript::createPrototype(VM& vm, JSGlobalObject* globalObject)

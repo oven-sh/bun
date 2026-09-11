@@ -1656,9 +1656,7 @@ impl Default for WindowsSpawnOptions {
 pub struct WindowsOptions {
     pub verbatim_arguments: bool,
     pub hide_window: bool,
-    /// The child gets a new console without a window and is not put in the
-    /// job object that kills it when this process exits. No effect with
-    /// `detached`.
+    /// New console without a window, and no kill-on-parent-exit job object.
     pub keep_alive: bool,
     pub loop_: EventLoopHandle,
 }

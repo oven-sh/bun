@@ -1184,10 +1184,23 @@ describe("bundler", () => {
           const tail = \`\${id}/mid\` + "dle";
           const foldedHead = \`a\${"b"}c/\${id}\`;
           const foldedTail = \`\${id}/x\${"y"}z\`;
+          const foldedBothEnds = \`p\${"q"}\${id}r\${"s"}\`;
           const joined = \`\${id}/one\` + \`two/\${id}\`;
           const emptyHead = \`\${Route.Users}/\${id}\`;
+          const numberInHead = \`n\${1 + 2}m/\${id}\`;
+          const numberInTail = \`\${id}:\${2 * 3}:\${id}\`;
           return (
-            <a href={head} data-tail={tail} data-fh={foldedHead} data-ft={foldedTail} data-j={joined} data-e={emptyHead}>
+            <a
+              href={head}
+              data-tail={tail}
+              data-fh={foldedHead}
+              data-ft={foldedTail}
+              data-fb={foldedBothEnds}
+              data-j={joined}
+              data-e={emptyHead}
+              data-nh={numberInHead}
+              data-nt={numberInTail}
+            >
               {id}
             </a>
           );
@@ -1219,7 +1232,17 @@ describe("bundler", () => {
     minifySyntax: true,
     run: {
       stdout: [
-        '{"href":"prefix/7","data-tail":"7/middle","data-fh":"abc/7","data-ft":"7/xyz","data-j":"7/onetwo/7","data-e":"users/7"}',
+        JSON.stringify({
+          "href": "prefix/7",
+          "data-tail": "7/middle",
+          "data-fh": "abc/7",
+          "data-ft": "7/xyz",
+          "data-fb": "pq7rs",
+          "data-j": "7/onetwo/7",
+          "data-e": "users/7",
+          "data-nh": "n3m/7",
+          "data-nt": "7:6:7",
+        }),
         '{"data-keys":"ab"}',
         // One memo cache per component: both must have been compiled rather
         // than left as written.

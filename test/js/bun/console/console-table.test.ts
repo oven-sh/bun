@@ -425,6 +425,22 @@ function* endless() {
     expect(exitCode).toBe(0);
   });
 
+  // Only user code can make these iterable, so only the budget bounds the walk.
+  test.concurrent.each([
+    ["a WeakMap", `WeakMap.prototype[Symbol.iterator] = endless;\nconsole.table(new WeakMap());`],
+    ["a WeakSet", `WeakSet.prototype[Symbol.iterator] = endless;\nconsole.table(new WeakSet());`],
+    ["an ArrayBuffer", `ArrayBuffer.prototype[Symbol.iterator] = endless;\nconsole.table(new ArrayBuffer(1 << 20));`],
+  ])("%s that user code made iterable", async (_, source) => {
+    const { lines, stderr, exitCode } = await run(source);
+    expect(stderr).toBe("");
+    // Three header lines, the rows, the bottom border, then the three lines below.
+    expect({ rows: lines.length - 7, tail: lines.slice(-3) }).toEqual({
+      rows: 1000,
+      tail: ["... more rows", "yielded=1001", ""],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("an array whose iterator was replaced", async () => {
     const { lines, stderr, exitCode } = await run(
       `Array.prototype[Symbol.iterator] = endless;\nconsole.table([{ a: 1 }, { a: 2 }]);`,

@@ -1003,14 +1003,15 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                // User code decides when an iterator ends. A Map or a Set is
-                // read from its own storage, and an array has no more rows
-                // than its length. Any other iterable gets a row budget.
+                // User code decides when an iterator ends. An array, a typed
+                // array, a Map or a Set has no more rows than it has elements.
+                // Any other iterable gets a row budget. That includes a WeakMap
+                // or an ArrayBuffer, which only user code can make iterable.
                 let jstype = ctx.this.jstype;
-                let limit = if jstype.is_array_like() {
+                let has_element_count = matches!(jstype, jsc::JSType::Map | jsc::JSType::Set)
+                    || (jstype.is_array_like() && jstype != jsc::JSType::ArrayBuffer);
+                let limit = if has_element_count {
                     u32::try_from(tabular_data.get_length(global_object)?).unwrap_or(u32::MAX)
-                } else if jstype.is_map() || jstype.is_set() {
-                    u32::MAX
                 } else {
                     MAX_ROWS_FROM_ITERATOR
                 };

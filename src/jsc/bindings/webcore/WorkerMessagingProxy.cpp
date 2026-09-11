@@ -39,6 +39,7 @@
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/VMTraps.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -71,6 +72,9 @@ void* WebWorker__create(
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
+// Queue `work` (a heap Bun::VMInterrupts::Work, handed over) for the worker VM and have it run at its
+// next safepoint; kept until its entry module starts if the thread is still starting. Any thread.
+void WebWorker__requestInterrupt(void*, Bun::VMInterrupts::Work*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
 // Release that keep-alive. Parent thread.
@@ -237,6 +241,27 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
         }
     }
     return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, WTF::move(task));
+}
+
+bool WorkerMessagingProxy::postInterruptToWorkerGlobalScope(Bun::VMInterrupts::Work&& work)
+{
+    if (isClosingOrClosed() || !m_workerThread)
+        return false;
+    // Two ways to the worker thread; the first to arrive runs the VM's queue and the other finds it
+    // empty. The trap reaches script that does not return to the loop. The task reaches a worker
+    // that is idle in its loop (a trap is serviced only by running script) or still Pending (queued
+    // until its entry module has evaluated, like any task).
+    WebWorker__requestInterrupt(m_workerThread, new Bun::VMInterrupts::Work(WTF::move(work)));
+    postTaskToWorkerGlobalScope([](ScriptExecutionContext& context) {
+        auto& vm = context.vm();
+        // The trap this request fired has no script left to service it once the queue is empty, and an
+        // unserviced trap keeps JSC's signal sender suspending this thread every 1ms for as long as the
+        // VM holds its API lock, which a worker does for its whole life. Cleared before the drain: a
+        // request that lands after this sets it again and is either drained below or serviced later.
+        vm.traps().clearTrap(JSC::VMTraps::NeedShellTimeoutCheck);
+        WebCore::clientData(vm)->interrupts.service(vm);
+    });
+    return true;
 }
 
 uint64_t WorkerMessagingProxy::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)

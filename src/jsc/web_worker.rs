@@ -96,6 +96,14 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
+    /// `spin()` has started loading the entry module: from here on the VM
+    /// runs user code and `request_interrupt()` reaches it. Before that
+    /// (thread startup, the node bootstrap) the work waits in
+    /// `pending_interrupts` and is made here, so that a worker that never
+    /// reaches user code answers nothing, like one that has not started.
+    /// Both touched under the `vm_handle` lock.
+    entry_started: AtomicBool,
+    pending_interrupts: bun_threading::Guarded<Vec<*mut c_void>>,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -210,6 +218,12 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
 impl Drop for WebWorker {
     fn drop(&mut self) {
         log!("[{}] destroy", self.execution_context_id);
+        // Interrupts the worker never got to (it failed to start, or the
+        // request came after its VM went away) are dropped unrun.
+        for work in self.pending_interrupts.lock().drain(..) {
+            // SAFETY: `work` was handed over to `request_interrupt`.
+            unsafe { crate::vm_handle::Bun__VMInterrupts__drop(work) };
+        }
         debug_assert!(
             self.join_handle.with_mut(|h| h.is_none()),
             "worker thread was never joined"
@@ -422,6 +436,8 @@ impl WebWorker {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
+            entry_started: AtomicBool::new(false),
+            pending_interrupts: bun_threading::Guarded::new(Vec::new()),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
@@ -557,6 +573,24 @@ impl WebWorker {
             // thread notices; a TerminationException is raised at its next
             // safepoint and its loop woken.
             handle.request_termination();
+        }
+    }
+
+    /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over) for
+    /// the worker's VM and have it run at its next safepoint, even in the
+    /// middle of synchronous script ([`VmHandle::request_interrupt`]). Until
+    /// the entry module starts the work is kept and made then, so a request
+    /// made while the thread starts still reaches an entry module that never
+    /// returns. Any thread that holds a ref (the proxy) may call this.
+    #[unsafe(export_name = "WebWorker__requestInterrupt")]
+    pub(crate) extern "C" fn request_interrupt(this: *mut WebWorker, work: *mut c_void) {
+        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        let handle = this.vm_handle.lock();
+        match &*handle {
+            Some(handle) if this.entry_started.load(Ordering::Relaxed) => {
+                handle.request_interrupt(work)
+            }
+            _ => this.pending_interrupts.lock().push(work),
         }
     }
 
@@ -853,6 +887,17 @@ impl WebWorker {
                 self.flush_logs(vm);
                 WebWorker__entrySettled(global);
                 return self.shutdown();
+            }
+        }
+
+        // User code from here on: interrupts requested so far are made now.
+        {
+            let handle = self.vm_handle.lock();
+            self.entry_started.store(true, Ordering::Relaxed);
+            let pending = core::mem::take(&mut *self.pending_interrupts.lock());
+            let handle = handle.as_ref().expect("published by start_vm");
+            for work in pending {
+                handle.request_interrupt(work);
             }
         }
 

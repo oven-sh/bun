@@ -31,6 +31,7 @@
 //! set of call sites and of `unsafe impl Send/Sync` in the VM crates so a new
 //! path around the door needs a justification rather than a reviewer's luck.
 
+use core::ffi::c_void;
 #[cfg(debug_assertions)]
 use core::panic::Location;
 use core::ptr::NonNull;
@@ -44,6 +45,14 @@ use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 
 pub use bun_event_loop::Posted;
+
+// src/jsc/bindings/VMInterrupts.cpp
+unsafe extern "C" {
+    /// Append `work` to the VM's interrupt queue. The VM is alive.
+    fn Bun__VMInterrupts__enqueue(vm: &crate::VM, work: *mut c_void);
+    /// Delete `work` unrun.
+    pub(crate) fn Bun__VMInterrupts__drop(work: *mut c_void);
+}
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -396,6 +405,30 @@ impl VmHandle {
             // read, no `&VirtualMachine` formed off-thread.
             unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
             self.0.loop_of(LoopKind::Regular).wakeup();
+        }
+    }
+
+    /// Queue `work` (a heap C++ `Bun::VMInterrupts::Work`, handed over; null
+    /// to only fire the trap) for the VM's thread and ask it to run its queue
+    /// at its next safepoint, even in the middle of synchronous script
+    /// (Node's `RequestInterrupt`). Any thread (a parent's
+    /// `worker.getHeapSnapshot()`); once closed the work is dropped unrun.
+    pub fn request_interrupt(&self, work: *mut c_void) {
+        if let Some(_a) = self.enter() {
+            // SAFETY: inside the gate before `Closed` ⇒ the VM and its
+            // JSC::VM are alive; the queue is locked on the C++ side and
+            // `notify_need_interrupt` is thread-safe (VMTraps). Raw field
+            // read, no `&VirtualMachine` formed off-thread.
+            unsafe {
+                let jsc_vm = &*(*self.0.hot.vm).jsc_vm.cast_const();
+                if !work.is_null() {
+                    Bun__VMInterrupts__enqueue(jsc_vm, work);
+                }
+                jsc_vm.notify_need_interrupt();
+            }
+        } else if !work.is_null() {
+            // SAFETY: `work` is ours to give up (fn contract).
+            unsafe { Bun__VMInterrupts__drop(work) };
         }
     }
 
@@ -755,6 +788,17 @@ pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
 pub unsafe extern "C" fn Bun__VmHandle__scriptAllowed(r: *const Shared) -> bool {
     // SAFETY: fn contract.
     unsafe { VmHandle::borrow_ref(r) }.script_allowed()
+}
+
+/// Any thread: [`VmHandle::request_interrupt`].
+///
+/// # Safety
+/// `r` is a live reference its holder keeps for the duration of the call;
+/// `work` is a heap `Bun::VMInterrupts::Work` handed over, or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__VmHandle__requestInterrupt(r: *const Shared, work: *mut c_void) {
+    // SAFETY: fn contract.
+    unsafe { VmHandle::borrow_ref(r) }.request_interrupt(work);
 }
 
 /// The address of this handle's state byte, for C++ to test

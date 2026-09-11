@@ -30,6 +30,9 @@ extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::Ev
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
+// Queue `work` (a heap `Bun::VMInterrupts::Work`, handed over; may be null) on the VM's interrupts and have its
+// thread service them at its next safepoint. Dropped unrun once the VM is closed. Any thread.
+extern "C" void Bun__VmHandle__requestInterrupt(const BunVmHandleRef*, void* work);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
 extern "C" const unsigned char* Bun__VmHandle__stateAddress(const BunVmHandleRef*);
 #define BUN_VM_HANDLE_STATE_OPEN 0
@@ -58,6 +61,7 @@ class DOMWrapperWorld;
 #include "ExtendedDOMIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "BunBuiltinNames.h"
+#include "VMInterrupts.h"
 // #include "WebCoreJSBuiltins.h"
 // #include "WorkerThreadType.h"
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
@@ -257,6 +261,8 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
+    // Native work for this VM's thread at its next safepoint (Bun__VmHandle__requestInterrupt).
+    Bun::VMInterrupts interrupts;
 
     // One slot per string of the executable's module-info string table,
     // filled on first use so each name is atomized once however many chunks

@@ -298,6 +298,14 @@ pub struct FilePoll {
     pub(crate) generation_number: KQueueGenerationNumber,
     pub(crate) next_to_free: *mut FilePoll,
 
+    /// The loop that holds this poll's kernel registration and that `activate`
+    /// counted it on; null while the kernel holds none. Re-arm and teardown go
+    /// to this loop, not to the one the caller resolves: `Bun.spawnSync` points
+    /// `vm.event_loop_handle` at a private loop, and a GC that ends inside it
+    /// finalizes polls registered here. A delete sent to the other epoll is
+    /// ENOENT, and the entry then outlives the close of a dup'd fd.
+    pub(crate) registered_loop: *mut Loop,
+
     pub(crate) allocator_type: AllocatorType,
 }
 
@@ -392,6 +400,7 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
+        self.registered_loop = ptr::null_mut();
         // `self` may live inside the `Store.hive` inline array, so a
         // `&mut Store` taken while `&mut self` is live would assert unique
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
@@ -515,6 +524,7 @@ impl FilePoll {
             flags,
             owner,
             next_to_free: ptr::null_mut(),
+            registered_loop: ptr::null_mut(),
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
@@ -592,6 +602,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
+        let loop_ = self.registration_loop(loop_);
         let watcher_fd = loop_.fd;
 
         syslog!(
@@ -833,6 +844,7 @@ impl FilePoll {
             }
         }
 
+        self.registered_loop = ptr::from_mut(loop_);
         self.activate(loop_);
         self.flags.insert(match flag {
             Flags::Readable => Flags::PollReadable,
@@ -866,6 +878,7 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        let loop_ = self.registration_loop(loop_);
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
@@ -1146,8 +1159,23 @@ impl FilePoll {
         self.flags.remove(Flags::PollProcess);
         self.flags.remove(Flags::PollMachport);
         self.flags.remove(Flags::PollMemoryPressure);
+        self.registered_loop = ptr::null_mut();
 
         sys::Result::Ok(())
+    }
+
+    /// The loop that holds this poll's kernel registration, or `current` when
+    /// the kernel holds none yet.
+    #[inline]
+    fn registration_loop<'a>(&self, current: &'a mut Loop) -> &'a mut Loop {
+        if self.registered_loop.is_null() || ptr::eq(self.registered_loop, current) {
+            return current;
+        }
+        // SAFETY: set from a live `&mut Loop` in `register_with_fd_impl`, and a
+        // loop outlives the polls registered on it: the thread's loop lives for
+        // the thread, a spawnSync loop for its VM. It is not `current`, so the
+        // two `&mut` do not alias.
+        unsafe { &mut *self.registered_loop }
     }
 }
 

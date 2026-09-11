@@ -116,6 +116,24 @@ describe("spawnSync", () => {
       exitCode: 0,
     });
   });
+
+  // epoll keeps a registration until the last fd of the file is closed, so only
+  // Linux can be left with one for a closed dup. kqueue drops it with the fd.
+  it.skipIf(!isLinux)("a poll collected by a GC that ends inside spawnSync is taken off the main loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawnSync-gc-stale-poll-fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      // The fixture polls dups of its stderr, so it has to be a pipe.
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: '{"errors":[],"exitCode":0,"stderr":"from the child\\n"}',
+      stderr: "from the child\n",
+      exitCode: 0,
+    });
+  });
 });
 
 // A Buffer holds at most kMaxLength (2^32) bytes. spawnSync hands the captured

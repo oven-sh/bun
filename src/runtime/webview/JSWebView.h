@@ -116,6 +116,12 @@ public:
     uint32_t m_chromeNavigationSeq = 0;
     // Chrome: the URL of the history entry that goBack()/goForward() asked for. A same-document commit elsewhere is the page's own.
     WTF::String m_chromeTraversalUrl;
+    // Chrome: the live main frame document is Chrome's error page for a load that failed.
+    bool m_chromeOnErrorPage = false;
+    // Chrome: how many failures navigate() reported from Page.navigate's errorText whose error page has yet to commit.
+    uint32_t m_chromeErrorPagesDue = 0;
+    // Chrome: the URL whose error page committed. Reported as a failure once that page has loaded.
+    WTF::String m_chromeUnreportedFailure;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

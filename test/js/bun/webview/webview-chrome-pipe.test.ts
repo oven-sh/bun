@@ -366,6 +366,130 @@ test.concurrent("goBack() onto a page restored from the back-forward cache settl
   });
 });
 
+// After a load fails, Chrome commits its own error page
+// (chrome-error://chromewebdata/, with frame.unreachableUrl naming the page it
+// stands in for) and fires that page's load event. Neither is a navigation of
+// the view's: navigate() already rejected with the errorText of its reply, so
+// the error page reports nothing more, and view.url and view.title keep the
+// last real page.
+test.concurrent("a failed navigate() reports one failure and Chrome's error page changes nothing", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    const failed = await outcome(view.navigate("http://fake/unreachable"));
+    // The fake sent the error page's commit and load event behind the reply,
+    // and it answers in order, so both are handled once this resolves.
+    await view.evaluate("1");
+    print({ failed, events, url: view.url, title: view.title, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    title: "fake chrome",
+    loading: false,
+  });
+});
+
+// That error page can land after a retry from onNavigationFailed was answered.
+// It commits under a loader that no reply named (Chromium 139 and older), so
+// only the order says whose it is: the next error page behind a failed
+// navigate() is that failure's. It is not the retry's commit, its load event
+// does not end the retry, and it is not a second failure. The retry's page
+// never loads here, so the retry has to stay pending.
+test.concurrent("the error page of a failed navigate() ends nothing for the retry behind it", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      retry ??= view.navigate("http://fake/never-load");
+    };
+    await outcome(view.navigate("http://fake/unreachable-late"));
+    // This evaluate is behind the retry's command, so the fake has answered
+    // the retry by the time it commits the error page.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late')");
+    const first = await Promise.race([
+      retry.then(() => "retry settled", () => "retry rejected"),
+      view.evaluate("'retry still pending'"),
+    ]);
+    print({ first, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    first: "retry still pending",
+    events: ["failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    loading: true,
+  });
+});
+
+// The retry can fail as well, and Chrome can answer it before the first error
+// page has committed. Then two error pages are due, one per failure that
+// navigate() reported, and neither is a third failure.
+test.concurrent("two failed navigate() calls in a row report two failures, not three", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/before");
+    const events = [];
+    let retry;
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => {
+      events.push("failed:" + error.message);
+      retry ??= outcome(view.navigate("http://fake/unreachable-late-2"));
+    };
+    await outcome(view.navigate("http://fake/unreachable-late-1"));
+    const retried = await retry;
+    // Both replies are in. Now the two error pages commit and load, in order.
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-1')");
+    await view.evaluate("__fake_error_page('http://fake/unreachable-late-2')");
+    print({ retried, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    retried: { rejected: "net::ERR_CONNECTION_REFUSED" },
+    events: ["failed:net::ERR_CONNECTION_REFUSED", "failed:net::ERR_CONNECTION_REFUSED"],
+    url: "http://fake/before",
+    loading: false,
+  });
+});
+
+// A load the page starts itself can fail too. Its error page is the only sign:
+// onNavigationFailed fires once that page has loaded. reload() then loads the
+// failed URL again, fails again, and rejects instead of resolving on the error
+// page's load event.
+test.concurrent("a failed load the page started fires onNavigationFailed, and reload() of it rejects", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/start");
+    const events = [];
+    view.onNavigated = url => events.push("navigated:" + url);
+    view.onNavigationFailed = error => events.push("failed:" + error.message);
+    await view.evaluate("__fake_error_page('http://fake/unreachable-link')");
+    const afterLink = { events: [...events], url: view.url };
+    const reloaded = await outcome(view.reload());
+    print({ afterLink, reloaded, events, url: view.url, loading: view.loading });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterLink: { events: ["failed:Navigation to http://fake/unreachable-link failed"], url: "http://fake/start" },
+    reloaded: { rejected: "Navigation to http://fake/unreachable-link failed" },
+    events: [
+      "failed:Navigation to http://fake/unreachable-link failed",
+      "failed:Navigation to http://fake/unreachable-link failed",
+    ],
+    url: "http://fake/start",
+    loading: false,
+  });
+});
+
 // Page.navigatedWithinDocument was never intercepted, so a listener for it has
 // always heard it. The view's own bookkeeping on it must not end that.
 test.concurrent("Page.navigatedWithinDocument still reaches addEventListener()", async () => {

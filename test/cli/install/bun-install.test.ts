@@ -1090,6 +1090,54 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("--verbose escapes control characters in the tarball URL and response headers it traces", async () => {
+    // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns the
+    // rest of the line red. Header values are byte strings: the two Latin-1 characters below go out as
+    // the bytes C2 9B, the UTF-8 encoding of U+009B.
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("not found", { status: 404, headers: { "x-evil": "a\u00c2\u009b31mb" } });
+      },
+    });
+
+    const origin = `http://127.0.0.1:${server.port}`;
+    using dir = tempDir("install-verbose-escape", {
+      "package.json": Buffer.concat([
+        Buffer.from(`{"name":"app","dependencies":{"csi":"${origin}/csi-\u009b31m.tgz","latin1":"${origin}/latin1-`),
+        // A Latin-1 encoded package.json: a lone 0x9B (the 8-bit CSI) and a stray continuation byte,
+        // neither of which is valid UTF-8.
+        Buffer.from([0x82, 0x41, 0x9b, 0x41]),
+        Buffer.from(`.tgz"}}`),
+      ]),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderrBytes, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+    const stderr = new TextDecoder().decode(stderrBytes);
+
+    const requestedUrls = stderr.split(/\r?\n/).flatMap(line => {
+      const match = /^\s*>?\s*HTTP\/1\.1 GET (.*)$/.exec(line);
+      return match ? [match[1]] : [];
+    });
+    expect(requestedUrls.sort()).toEqual([`${origin}/csi-\\u009b31m.tgz`, `${origin}/latin1-\ufffdA\ufffdA.tgz`]);
+    expect(stderr.split(/\r?\n/).filter(line => line.startsWith("< x-evil:"))).toEqual([
+      "< x-evil: a\\u009b31mb",
+      "< x-evil: a\\u009b31mb",
+    ]);
+    // The lenient decode above also shows U+FFFD for the raw Latin-1 bytes themselves, so check
+    // separately that they were not copied to stderr as-is.
+    expect(() => new TextDecoder("utf-8", { fatal: true }).decode(stderrBytes)).not.toThrow();
+    expect(exitCode).toBe(1);
+  });
+
   it("fails cleanly for a git dependency specifier longer than the path buffer", async () => {
     const longPath = Buffer.alloc(isWindows ? 100_000 : 8192, "a").toString();
     using dir = tempDir("long-git-dep", {

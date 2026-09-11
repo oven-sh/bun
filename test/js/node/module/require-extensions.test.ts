@@ -1,6 +1,6 @@
 import assert from "assert";
-import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { bunRun, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -190,4 +190,109 @@ test("mutating extensions is banned by some files", () => {
     n++;
     expect(globalThis.pass).toBe(n);
   }
+});
+
+// pirates, @babel/register, ts-node and nyc install handlers of this shape.
+describe.concurrent("handler that calls the loader it replaced, for a module that fails to load", () => {
+  const files = {
+    "wrap-fixture.cjs": `
+      const Module = require("module");
+      const path = require("path");
+      const [, , file, shape] = process.argv;
+      const ext = path.extname(file);
+      const original = Module._extensions[ext];
+      let calls = 0;
+      Module._extensions[ext] = function (module, filename) {
+        calls++;
+        if (shape !== "wrap") {
+          const compile = module._compile;
+          module._compile = function (code) {
+            module._compile = compile;
+            if (shape === "pirates-evict") delete require.cache[filename];
+            return module._compile(code, filename);
+          };
+        }
+        return original.call(this, module, filename);
+      };
+      const id = require.resolve("./" + file);
+      try {
+        require(id);
+        console.log("no error");
+      } catch (e) {
+        const message = e.message.replaceAll(id, "<id>");
+        console.log(JSON.stringify({ name: e.name, message, cached: id in require.cache, calls }));
+      }
+    `,
+    "recover-fixture.cjs": `
+      const Module = require("module");
+      const original = Module._extensions[".js"];
+      let calls = 0;
+      Module._extensions[".js"] = function (module, filename) {
+        calls++;
+        try {
+          return original.call(this, module, filename);
+        } catch (e) {
+          module.exports = { recovered: e.message };
+        }
+      };
+      const id = require.resolve("./throws.js");
+      const first = require(id);
+      const cached = require.cache[id]?.exports === first;
+      const second = require(id);
+      console.log(JSON.stringify({ first, cached, sameExports: second === first, calls }));
+    `,
+    "throws.js": `export default 1;\nthrow new Error("boom");\n`,
+    "throws.ts": `export default 1 as number;\nthrow new Error("boom");\n`,
+    "throws.mjs": `export default 1;\nthrow new Error("boom");\n`,
+    "type-module/package.json": `{ "type": "module" }`,
+    "type-module/throws.js": `throw new Error("boom");\n`,
+    "unresolvable-import.js": `import "./does-not-exist.js";\nexport default 1;\n`,
+    // The transpiler classifies a file with neither CommonJS nor ES module syntax as an ES module.
+    "no-module-syntax.js": `nope();\n`,
+    "top-level-await.js": `export default 1;\nawait 0;\n`,
+    "cjs-throws.js": `module.exports = 1;\nthrow new Error("boom");\n`,
+  };
+
+  async function run(fixture: string, ...args: string[]) {
+    using dir = tempDir("require-extensions-load-error", files);
+    return await bunRun([path.join(String(dir), fixture), ...args]);
+  }
+
+  test.each([
+    ["throws.js", "wrap", { name: "Error", message: "boom" }],
+    ["throws.js", "pirates", { name: "Error", message: "boom" }],
+    ["throws.ts", "wrap", { name: "Error", message: "boom" }],
+    ["throws.mjs", "wrap", { name: "Error", message: "boom" }],
+    ["type-module/throws.js", "wrap", { name: "Error", message: "boom" }],
+    [
+      "unresolvable-import.js",
+      "wrap",
+      { name: "ResolveMessage", message: "Cannot find module './does-not-exist.js' imported from <id>" },
+    ],
+    ["no-module-syntax.js", "wrap", { name: "ReferenceError", message: "nope is not defined" }],
+    [
+      "top-level-await.js",
+      "wrap",
+      { name: "TypeError", message: 'require() async module "<id>" is unsupported. use "await import()" instead.' },
+    ],
+    // The module._compile wrapper deletes the require.cache entry before the CommonJS file runs.
+    ["cjs-throws.js", "pirates-evict", { name: "Error", message: "boom" }],
+  ])("%s (%s): require() throws and leaves nothing in require.cache", async (file, shape, error) => {
+    expect(await run("wrap-fixture.cjs", file, shape)).toEqual({
+      stdout: JSON.stringify({ ...error, cached: false, calls: 1 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Node's Module._load removes the cache entry only when the handler throws.
+  test("a handler that catches the error keeps the module in require.cache", async () => {
+    expect(await run("recover-fixture.cjs")).toEqual({
+      stdout: JSON.stringify({ first: { recovered: "boom" }, cached: true, sameExports: true, calls: 1 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

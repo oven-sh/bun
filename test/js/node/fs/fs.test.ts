@@ -3219,9 +3219,7 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
-// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
-// a /dev/fd fallback for environments where /proc is broken (FreeBSD
-// Linuxulator) or absent (minimal containers).
+// Regression guard for realpathSync on POSIX hosts.
 it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
   expect(realpathSync("/")).toBe("/");
 
@@ -3235,13 +3233,105 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
-// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
-// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
-// non-Windows target Bun ships, fd→path resolution is implemented — there is
-// no platform that falls through to ENOSYS. realpathSync on POSIX is
-// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
-it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+it.if(isPosix)("realpath resolves a symlink before a following parent traversal", async () => {
+  using dir = tempDir("fs-realpath-symlink-parent", {});
+  const root = String(dir);
+  const actualDir = join(root, "actual");
+  const nestedDir = join(actualDir, "nested");
+  const expected = join(actualDir, "target.txt");
+  const collision = join(root, "target.txt");
+  const linkPath = join(root, "link");
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(expected, "expected");
+  writeFileSync(collision, "collision");
+  symlinkSync(nestedDir, linkPath);
+  const input = `${linkPath}${path.sep}..${path.sep}target.txt`;
+
+  expect(realpathSync(input)).toBe(expected);
+  expect(realpathSync.native(input)).toBe(expected);
+  expect(await promises.realpath(input)).toBe(expected);
+  expect(await promisify(fs.realpath)(input)).toBe(expected);
+  expect(await promisify(fs.realpath.native)(input)).toBe(expected);
+});
+
+const darwinCc = process.platform === "darwin" ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+it.skipIf(!darwinCc)("realpath preserves process-owned POSIX locks", async () => {
+  using dir = tempDir("fs-realpath-posix-lock", {
+    "lock.c": `
+      #include <fcntl.h>
+      int lock_file(int fd) {
+        struct flock lock = { .l_start = 0, .l_len = 0, .l_pid = 0, .l_type = F_WRLCK, .l_whence = SEEK_SET };
+        return fcntl(fd, F_SETLK, &lock);
+      }
+    `,
+  });
+  const dylibPath = join(String(dir), "lock.dylib");
+  const compile = spawnSync({
+    cmd: [darwinCc!, "-dynamiclib", "-o", dylibPath, join(String(dir), "lock.c")],
+    env: bunEnv,
+  });
+  expect(compile.stderr.toString()).toBe("");
+  expect(compile.exitCode).toBe(0);
+  const { dlopen, FFIType } = await import("bun:ffi");
+  const library = dlopen(dylibPath, {
+    lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
+  });
+  const implementations = [
+    realpathSync,
+    realpathSync.native,
+    promises.realpath,
+    promisify(fs.realpath),
+    promisify(fs.realpath.native),
+  ];
+
+  const probeWriter = (filePath: string) => {
+    const result = spawnSync({
+      cmd: [
+        bunExe(),
+        "--eval",
+        `
+          const { closeSync, openSync } = require("node:fs");
+          const { dlopen, FFIType } = require("bun:ffi");
+          const library = dlopen(process.argv[1], {
+            lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
+          });
+          const fd = openSync(process.argv[2], "r+");
+          console.log(library.symbols.lock_file(fd) === 0 ? "acquired" : "busy");
+          closeSync(fd);
+          library.close();
+        `,
+        dylibPath,
+        filePath,
+      ],
+      env: bunEnv,
+    });
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+    return result.stdout.toString().trim();
+  };
+
+  try {
+    for (const [index, impl] of implementations.entries()) {
+      const filePath = join(String(dir), `${index}.lock`);
+      writeFileSync(filePath, "lock target");
+      const fd = openSync(filePath, "r+");
+      try {
+        expect(library.symbols.lock_file(fd)).toBe(0);
+        expect(probeWriter(filePath)).toBe("busy");
+        expect(await impl(filePath)).toBe(filePath);
+        expect(probeWriter(filePath)).toBe("busy");
+      } finally {
+        closeSync(fd);
+      }
+    }
+  } finally {
+    library.close();
+  }
+});
+
+// The POSIX syscall layer supports every non-Windows target Bun ships, so an
+// ENOSYS result means a platform implementation was dropped.
+it.skipIf(isWindows)("realpathSync is implemented on every POSIX target — never ENOSYS", () => {
   using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
   const probe = join(String(dir), "probe.txt");
 
@@ -3249,9 +3339,6 @@ it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX tar
   try {
     resolved = realpathSync(probe);
   } catch (e: any) {
-    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
-    // value has a real implementation. If this fires, a target (FreeBSD's
-    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
     expect(e?.code).not.toBe("ENOSYS");
     expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
     throw e;
@@ -6894,8 +6981,8 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
-  // The relative path argument is within the per-argument limit, but joining
-  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // The relative path argument is within the per-argument limit, but resolving
+  // it against the (non-root) cwd exceeds the system path limit.
   // Both realpath variants must surface this as a clean ENAMETOOLONG error
   // instead of aborting the process.
   const script = `

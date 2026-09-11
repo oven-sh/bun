@@ -236,21 +236,27 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
         export function quit() { process.exit(0) }`,
     });
     const origPrepare = Error.prepareStackTrace;
-    Bun.gc(true);
-    const before = heapStats().extraMemorySize;
-    for (let i = 0; i < 4; i++) {
-      const m = await ModuleGraph({ env: {} }).import(join(dir, "intr.mjs"));
-      expect(m.patch("g" + i)).toBe(true);
-      m.quit();
+    const earlier: WeakRef<object>[] = [];
+    try {
+      await (async () => {
+        for (let i = 0; i < 4; i++) {
+          const m = await ModuleGraph({ env: {} }).import(join(dir, "intr.mjs"));
+          expect(m.patch("g" + i)).toBe(true);
+          if (i < 3) earlier.push(new WeakRef(m.big));
+          m.quit();
+        }
+      })();
+      expect(([1] as any).__graphTag().startsWith("g3")).toBe(true); // host sees the last graph's patch
+      // The earlier writers' patches were overwritten, so nothing references their modules any more.
+      for (let i = 0; i < 100 && earlier.some(r => r.deref()); i++) {
+        await Bun.sleep(5);
+        Bun.gc(true);
+      }
+      expect(earlier.map(r => r.deref() === undefined)).toEqual([true, true, true]);
+    } finally {
+      delete (Array.prototype as any).__graphTag;
+      Error.prepareStackTrace = origPrepare;
     }
-    expect(([1] as any).__graphTag().startsWith("g3")).toBe(true); // host sees the last graph's patch
-    await Bun.sleep(20);
-    Bun.gc(true);
-    Bun.gc(true);
-    const retained = (heapStats().extraMemorySize - before) / (1024 * 1024);
-    expect(retained).toBeLessThan(10); // ≈ one graph (the last writer), not four
-    delete (Array.prototype as any).__graphTag;
-    Error.prepareStackTrace = origPrepare;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -2323,11 +2329,15 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — specifiers and paths", () 
     const dir = fixture({ "real/x.mjs": `export let n = 0; export const inc = () => ++n` });
     const { symlinkSync } = require("node:fs");
     symlinkSync(join(dir, "real"), join(dir, "link"), "junction");
+    // Same answer as the host's loader gives for the two paths (it resolves symlinks to one module).
+    const hostA = await import(join(dir, "real/x.mjs")),
+      hostB = await import(join(dir, "link/x.mjs"));
     const g = ModuleGraph();
     const a = await g.import(join(dir, "real/x.mjs")),
       b = await g.import(join(dir, "link/x.mjs"));
+    hostA.inc();
     a.inc();
-    expect([a === b, b.n]).toEqual([true, 1]);
+    expect([a === b, b.n, a !== hostA]).toEqual([hostA === hostB, hostB.n, true]);
     rmSync(dir, { recursive: true, force: true });
   });
   test("tsconfig paths / baseUrl in the graph's project resolve for graph imports", async () => {

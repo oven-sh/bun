@@ -176,8 +176,10 @@ extern "C" bool Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIt
         RETURN_IF_EXCEPTION(scope, false);
         double size = sizeValue.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        // `size` is a user-controlled claim once it exceeds what the storage holds, so past that only the budget applies.
+        uint64_t trusted = std::max<uint64_t>(map ? map->size() : set->size(), budget);
         if (size >= 0)
-            bound = size < static_cast<double>(UINT32_MAX) ? static_cast<uint64_t>(size) : UINT32_MAX;
+            bound = size < static_cast<double>(trusted) ? static_cast<uint64_t>(size) : trusted;
     } else if (auto* array = dynamicDowncast<JSC::JSArray>(iterable))
         bound = array->length();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(iterable))

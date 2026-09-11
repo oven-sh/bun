@@ -1098,6 +1098,13 @@ describe("inspect bounds a replaced Map or Set iterator", () => {
     expect(Bun.inspect(new Set(values(150)).values())).toEndWith("  148,\n  149,\n}");
   });
 
+  it("a subclass with more stored entries than the budget prints every entry", () => {
+    class Collection extends Map {}
+    class Bag extends Set {}
+    expect(Bun.inspect(new Collection(entries(1500)))).toEndWith("  1498: 1498,\n  1499: 1499,\n}");
+    expect(Bun.inspect(new Bag(values(1500)))).toEndWith("  1498,\n  1499,\n}");
+  });
+
   // quick-lru is a Map subclass of this shape: it never calls `super.set`, so
   // the inherited storage stays empty.
   class Elsewhere extends Map {
@@ -1245,6 +1252,23 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
     );
     expect({ values: count(output, '"k"'), runaway }).toEqual({ values: 2, runaway: false });
     expect(output).toEndWith("  ... more items\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Map subclass that reports more entries than it can hold", async () => {
+    const { output, runaway, exitCode } = await run(
+      `let yielded = 0;
+       class Lazy extends Map {
+         get size() { return 1e18; }
+         *[Symbol.iterator]() { for (;;) { if (++yielded > 5000) process.exit(2); yield [yielded, yielded]; } }
+       }
+       console.log(new Lazy());
+       console.log("yielded=" + yielded);`,
+      "stdout",
+    );
+    expect(runaway).toBe(false);
+    // The storage is empty, so the claim is trusted up to the budget of 1000 steps.
+    expect(output).toEndWith("  1000: 1000,\n  ... more items\n}\nyielded=1001\n");
     expect(exitCode).toBe(0);
   });
 

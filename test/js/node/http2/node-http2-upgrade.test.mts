@@ -461,6 +461,55 @@ describe("HTTP/2 upgrade — server TLS options", () => {
   });
 });
 
+describe("HTTP/2 upgrade — fatal TLS error after the handshake", () => {
+  test("a record that fails to decrypt reaches the server as sessionError", async () => {
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+    // A clean session 'close' with no error before it is the bug.
+    const outcome = new Promise<{ event: string; code?: string }>(resolve => {
+      h2Server.on("sessionError", (err: NodeJS.ErrnoException) => resolve({ event: "sessionError", code: err.code }));
+      h2Server.on("session", session => session.on("close", () => resolve({ event: "close" })));
+    });
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    // A plain proxy in front of the net.Server, to inject bytes toward it.
+    let toServer: net.Socket | undefined;
+    const proxy = net.createServer(c => {
+      toServer = net.connect((netServer.address() as net.AddressInfo).port, "127.0.0.1");
+      c.pipe(toServer);
+      toServer.pipe(c);
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    let client: http2.ClientHttp2Session | undefined;
+    try {
+      await once(netServer.listen(0, "127.0.0.1"), "listening");
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      client = connectClient((proxy.address() as net.AddressInfo).port);
+      const first = await request(client, "GET", "/");
+      assert.strictEqual(first.status, 200);
+
+      // application_data, 32 bytes of ciphertext that cannot authenticate.
+      toServer!.write(Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]));
+
+      assert.deepStrictEqual(await outcome, {
+        event: "sessionError",
+        code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      });
+    } finally {
+      client?.destroy();
+      toServer?.destroy();
+      proxy.close();
+      netServer.close();
+    }
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

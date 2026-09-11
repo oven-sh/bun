@@ -2970,8 +2970,6 @@ pub mod formatter {
                 } else {
                     writer.add_for_new_line(key.len + 2);
 
-                    // One escaper over the UTF-8 form, so a key prints the same
-                    // whether JSC stores it as Latin-1 or as UTF-16.
                     writer.print(format_args!(
                         "{}{}{}",
                         pfmt!("<r><green>", C),

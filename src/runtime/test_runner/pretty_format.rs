@@ -955,8 +955,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             } else {
                 this.add_for_new_line(key.len + 2);
 
-                // One escaper over the UTF-8 form, so a key prints the same
-                // whether JSC stores it as Latin-1 or as UTF-16.
                 writer.print(format_args!(
                     "{}{}{}:{} ",
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><green>"),

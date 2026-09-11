@@ -3,9 +3,11 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, tls as tlsCerts } from "harness";
 import { createServer } from "http";
+import { Agent as HttpsAgent } from "https";
 import { AddressInfo, connect } from "net";
+import fs from "node:fs";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -1460,5 +1462,86 @@ describe("module loading", () => {
     // HTTPParser structures at load time, this test needs a new marker.
     expect(JSON.parse(stdout)).toEqual({ afterWs: 0, httpMarkerWorks: true });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("client TLS options with a PKCS#12 archive", () => {
+  // agent1.pfx bundles agent1's key, its certificate, and the ca1 root that
+  // signed it. The server requires a client certificate chained to ca1, so a
+  // handshake only succeeds when the archive's identity is presented.
+  const fixtures = path.join(import.meta.dir, "../../node/test/fixtures/keys");
+  const pfx = fs.readFileSync(path.join(fixtures, "agent1.pfx"));
+  const clientCa = fs.readFileSync(path.join(fixtures, "ca1-cert.pem"), "utf8");
+
+  function startMtlsServer() {
+    const clients: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      tls: { ...tlsCerts, ca: clientCa, requestCert: true, rejectUnauthorized: true },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("not a websocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          clients.push("open");
+          ws.send("hello");
+        },
+        message() {},
+      },
+    });
+    return { server, clients };
+  }
+
+  async function firstMessage(ws: WebSocket): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    ws.on("message", data => resolve(String(data)));
+    ws.on("error", reject);
+    ws.on("close", (code, reason) => reject(new Error(`closed before a message: ${code} ${reason}`)));
+    try {
+      return await promise;
+    } finally {
+      ws.close();
+    }
+  }
+
+  const cases: [string, (url: string) => WebSocket][] = [
+    ["tls: { pfx, passphrase }", url => new WebSocket(url, { tls: { pfx, passphrase: "sample", ca: tlsCerts.cert } })],
+    [
+      "tls: { pfx: [{ buf, passphrase }] }",
+      url => new WebSocket(url, { tls: { pfx: [{ buf: pfx, passphrase: "sample" }], ca: tlsCerts.cert } }),
+    ],
+    [
+      "agent: new https.Agent({ pfx, passphrase })",
+      url => new WebSocket(url, { agent: new HttpsAgent({ pfx, passphrase: "sample", ca: tlsCerts.cert }) }),
+    ],
+  ];
+
+  for (const [label, open] of cases) {
+    it(`presents the client certificate from ${label}`, async () => {
+      const { server, clients } = startMtlsServer();
+      using _server = server;
+      const ws = open(`wss://localhost:${server.port}/`);
+      expect(await firstMessage(ws)).toBe("hello");
+      expect(clients).toEqual(["open"]);
+    });
+  }
+
+  it("trusts the server through a CA bundled in the archive when no ca is given", async () => {
+    // agent1-with-server-ca.pfx carries agent1's key and certificate plus the
+    // self-signed certificate the server presents. Node adds archive CAs on top
+    // of the default roots, so a client with only `pfx` verifies this server.
+    const bundled = fs.readFileSync(path.join(import.meta.dir, "fixtures/agent1-with-server-ca.pfx"));
+    const { server, clients } = startMtlsServer();
+    using _server = server;
+    const ws = new WebSocket(`wss://localhost:${server.port}/`, { tls: { pfx: bundled, passphrase: "sample" } });
+    expect(await firstMessage(ws)).toBe("hello");
+    expect(clients).toEqual(["open"]);
+  });
+
+  it("rejects a wrong passphrase before connecting", () => {
+    expect(() => new WebSocket("wss://localhost:1/", { tls: { pfx, passphrase: "wrong" } })).toThrow(
+      /MAC verification failed/,
+    );
   });
 });

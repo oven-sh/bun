@@ -31,6 +31,26 @@ function sendAfterClose(state, cb) {
 }
 
 /**
+ * The native WebSocket only understands PEM key/cert/ca. Unseal a Node `pfx`
+ * (PKCS#12) option into those, the way node:tls does before it crosses into native.
+ */
+function unsealPfx(tls) {
+  if (tls?.pfx == null) return tls;
+  const { processPfxOptions } = require("internal/tls");
+  tls = processPfxOptions(tls);
+  const pfxExtraCAs = tls._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    // Node adds the CAs bundled in the archive on top of the trust store. The
+    // native config has no addCACert hook and an explicit `ca` replaces the
+    // default roots, so seed `ca` with those roots when the caller gave none.
+    const ca = tls.ca ?? require("node:tls").getCACertificates("default");
+    tls.ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+    tls._pfxExtraCACerts = undefined;
+  }
+  return tls;
+}
+
+/**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
  * @returns {{ tls: Object|null, proxy: string|Object|null }}
@@ -45,7 +65,7 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
-    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
+    const { rejectUnauthorized, ca, cert, key, pfx, passphrase } = connectOpts;
     if (rejectUnauthorized !== undefined) {
       newTlsOptions.rejectUnauthorized = rejectUnauthorized;
       hasTlsOptions = true;
@@ -60,6 +80,10 @@ function extractAgentOptions(agent) {
     }
     if (key) {
       newTlsOptions.key = key;
+      hasTlsOptions = true;
+    }
+    if (pfx) {
+      newTlsOptions.pfx = pfx;
       hasTlsOptions = true;
     }
     if (passphrase) {
@@ -219,6 +243,7 @@ class BunWebSocket extends EventEmitter {
           tlsOptions = agentTls;
         }
       }
+      tlsOptions = unsealPfx(tlsOptions);
     }
 
     const finishRequest = options?.finishRequest;

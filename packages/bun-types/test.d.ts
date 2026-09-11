@@ -403,6 +403,10 @@ declare module "bun:test" {
    * Sets the default timeout for all tests in the current file. A timeout set on an
    * individual test overrides this value. The default timeout is 5000ms (5 seconds).
    *
+   * Called from a preload script (`--preload`, or `preload` under `[test]` in
+   * `bunfig.toml`), it sets the default for every test file in the run. A test file
+   * can still call it to change the default for that file only.
+   *
    * @param milliseconds the default timeout in milliseconds
    */
   export function setDefaultTimeout(milliseconds: number): void;

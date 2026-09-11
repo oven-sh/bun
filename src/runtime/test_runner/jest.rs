@@ -131,7 +131,7 @@ pub struct TestRunner<'a> {
 
     pub(crate) default_timeout_ms: u32,
 
-    /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
+    /// from `setDefaultTimeout() or jest.setTimeout()` in the current file. maxInt(u32) means override not set.
     pub(crate) default_timeout_override: u32,
 
     pub(crate) test_options: &'a TestOptions,
@@ -152,6 +152,14 @@ pub struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// The file's `setDefaultTimeout()`, else the preload's, else `--timeout` (0 = unlimited).
+    pub(crate) fn default_timeout(&self) -> u32 {
+        if self.default_timeout_override != u32::MAX {
+            return self.default_timeout_override;
+        }
+        self.bun_test_root.preload_default_timeout_override.unwrap_or(self.default_timeout_ms)
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -508,7 +516,12 @@ pub mod Jest {
             u32::try_from(arguments[0].coerce::<i32>(global_object)?.max(0)).unwrap();
 
         if let Some(test_runner) = runner() {
-            test_runner.default_timeout_override = timeout_ms;
+            // Same split as hooks registered during preload (`generic_hook_impl`).
+            if global_object.bun_vm().is_in_preload {
+                test_runner.bun_test_root.preload_default_timeout_override = Some(timeout_ms);
+            } else {
+                test_runner.default_timeout_override = timeout_ms;
+            }
         }
 
         Ok(JSValue::UNDEFINED)

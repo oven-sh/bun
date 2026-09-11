@@ -11,14 +11,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 
-type ModuleGraphOptions = {
-  env?: Record<string, string>;
-  cwd?: string;
-  onExit?: (code: number) => void;
-  onError?: (error: unknown, kind: string) => void;
-  globals?: Record<string, unknown>;
-};
-type Graph = { import(specifier: string): Promise<any>; dispose(): void; readonly process: NodeJS.Process };
+type ModuleGraphOptions = { globals?: Record<string, unknown>; onError?: (error: unknown, kind: string) => void };
+type Graph = { import(specifier: string): Promise<any>; dispose(): void; readonly mainModule: string | undefined };
 const ModuleGraphClass = (Bun as any).unsafe?.ModuleGraph as { new (opts?: ModuleGraphOptions): Graph } | undefined;
 const enabled = typeof ModuleGraphClass === "function";
 const jsc = require("bun:jsc") as typeof import("bun:jsc");
@@ -32,9 +26,13 @@ function fixture(files: Record<string, string>): string {
   return dir;
 }
 
-/** A graph whose modules see `process.env.WHO === who` and can append to the shared host-side `log`. */
+/** A graph whose modules see `process.env.WHO === who` (a host-made `process` passed in `globals`,
+ *  as a host gives each graph its own process state) and can append to the host-side `log`. */
 function graph(who: string, log: string[], extra: ModuleGraphOptions = {}): Graph {
-  return new ModuleGraphClass!({ env: { ...process.env, WHO: who }, globals: { __log: log }, ...extra });
+  const proc = Object.create(process, {
+    env: { value: { ...process.env, WHO: who }, enumerable: true, writable: true },
+  });
+  return new ModuleGraphClass!({ ...extra, globals: { process: proc, __log: log, ...extra.globals } });
 }
 
 const errorName = (e: unknown) => (e instanceof Error ? e.constructor.name : typeof e);
@@ -49,7 +47,7 @@ const errorName = (e: unknown) => (e instanceof Error ? e.constructor.name : typ
 // namespace identity within an instance can be checked. Importers expose `dyn()` = "do the import() now".
 
 const TARGET_BODY = (name: string) =>
-  `globalThis.__log?.push(${JSON.stringify(name)} + "@" + process.env.WHO);
+  `(typeof __log !== "undefined" ? __log : undefined)?.push(${JSON.stringify(name)} + "@" + process.env.WHO);
    export const who = process.env.WHO; export let n = 0; export const inc = () => ++n;`;
 
 type Target = {
@@ -79,7 +77,7 @@ const targets: Record<string, Target> = {
   },
   cjs: {
     file: "t.cjs",
-    source: `globalThis.__log?.push("cjs@" + process.env.WHO); let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`,
+    source: `(typeof __log !== "undefined" ? __log : undefined)?.push("cjs@" + process.env.WHO); let n = 0; module.exports = { who: process.env.WHO, get n() { return n }, inc: () => ++n };`,
     tag: "cjs",
     who: w => w,
     mutable: true,
@@ -92,7 +90,7 @@ const targets: Record<string, Target> = {
     who: w => w,
     mutable: true,
   },
-  // node builtins are instantiated per graph as well
+  // node builtins are the global's: one instance for everyone
   builtin: { file: "node:path", source: "", tag: null, who: () => undefined, mutable: false },
   missing: {
     file: "does-not-exist.mjs",
@@ -112,15 +110,15 @@ const sites: Record<string, Site> = {
   classMethod: { expr: t => `new (class { m() { return import(${t}) } })().m()` },
   classStatic: { expr: t => `(class { static load() { return import(${t}) } }).load()` },
   directEval: { expr: t => `eval("import(" + JSON.stringify(${t}) + ")")` },
-  newFunction: { expr: t => `new Function("p", "return import(p)")(${t})` },
   timerCallback: { expr: t => `new Promise((res, rej) => setTimeout(() => import(${t}).then(res, rej), 0))` },
   microtask: { expr: t => `Promise.resolve().then(() => import(${t}))` },
   asyncGenerator: { expr: t => `(async function* () { yield await import(${t}) })().next().then(r => r.value)` },
   fromCjs: { expr: t => `require("./dyn-helper.cjs").load(${t})` },
   // import() issued during the importer's own evaluation (top-level await)
   topLevelAwait: { expr: t => `import(${t})`, eager: true },
-  // indirect eval is global code: the host's scope, so it loads through the host, not the graph
+  // indirect eval and Function() code are global code: the host's scope, so they load through the host, not the graph
   indirectEval: { expr: t => `(0, eval)("import(" + JSON.stringify(${t}) + ")")`, hostScope: true },
+  newFunction: { expr: t => `new Function("p", "return import(p)")(${t})`, hostScope: true },
 };
 
 // sequential:               create g0, run its import(), create g1, run it, ...
@@ -324,8 +322,8 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() of cycle members and self", () => {
   const dir = fixture({
-    "a.mjs": `import { bTag } from "./b.mjs"; globalThis.__log.push("a@" + process.env.WHO); export const aTag = "a:" + process.env.WHO; export const readB = () => bTag; export const dynB = () => import("./b.mjs"); export const dynSelf = () => import("./a.mjs"); export let n = 0; export const inc = () => ++n;`,
-    "b.mjs": `import { aTag, inc } from "./a.mjs"; globalThis.__log.push("b@" + process.env.WHO); export const bTag = "b:" + process.env.WHO; export const readA = () => aTag; export const dynA = () => import("./a.mjs"); export const bump = () => inc();`,
+    "a.mjs": `import { bTag } from "./b.mjs"; __log.push("a@" + process.env.WHO); export const aTag = "a:" + process.env.WHO; export const readB = () => bTag; export const dynB = () => import("./b.mjs"); export const dynSelf = () => import("./a.mjs"); export let n = 0; export const inc = () => ++n;`,
+    "b.mjs": `import { aTag, inc } from "./a.mjs"; __log.push("b@" + process.env.WHO); export const bTag = "b:" + process.env.WHO; export const readA = () => aTag; export const dynA = () => import("./a.mjs"); export const bump = () => inc();`,
     "entry-a.mjs": `export * from "./a.mjs"; import * as a from "./a.mjs"; export const ns = a;`,
     "entry-b.mjs": `export * from "./b.mjs"; import * as b from "./b.mjs"; export const ns = b;`,
   });
@@ -545,38 +543,38 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe.skipIf(!enabled)("ModuleGraph matrix: graph shapes × instantiation order", () => {
   const leaf = (name: string) =>
-    `globalThis.__log.push(${JSON.stringify(name)} + "@" + process.env.WHO); export const ${name} = ${JSON.stringify(name)} + ":" + process.env.WHO; export let n_${name} = 0; export const inc_${name} = () => ++n_${name};`;
+    `__log.push(${JSON.stringify(name)} + "@" + process.env.WHO); export const ${name} = ${JSON.stringify(name)} + ":" + process.env.WHO; export let n_${name} = 0; export const inc_${name} = () => ++n_${name};`;
   const dir = fixture({
     // chain: root -> m1 -> m2 -> m3
     "chain/m3.mjs": leaf("m3"),
     "chain/m2.mjs": `import { m3 } from "./m3.mjs"; ${leaf("m2")} export const below = m3;`,
     "chain/m1.mjs": `import { m2, below } from "./m2.mjs"; ${leaf("m1")} export const chain = [m2, below];`,
-    "chain/root.mjs": `import { m1, chain } from "./m1.mjs"; globalThis.__log.push("root@" + process.env.WHO); export const out = [m1, ...chain];`,
+    "chain/root.mjs": `import { m1, chain } from "./m1.mjs"; __log.push("root@" + process.env.WHO); export const out = [m1, ...chain];`,
     // diamond: root -> l, r -> shared
     "diamond/shared.mjs": leaf("shared"),
     "diamond/l.mjs": `import { shared, inc_shared } from "./shared.mjs"; ${leaf("l")} export const viaL = () => inc_shared();`,
     "diamond/r.mjs": `import { shared, n_shared } from "./shared.mjs"; ${leaf("r")} export const seenByR = () => n_shared;`,
-    "diamond/root.mjs": `import { viaL } from "./l.mjs"; import { seenByR } from "./r.mjs"; globalThis.__log.push("root@" + process.env.WHO); export const out = () => { viaL(); viaL(); return seenByR(); };`,
+    "diamond/root.mjs": `import { viaL } from "./l.mjs"; import { seenByR } from "./r.mjs"; __log.push("root@" + process.env.WHO); export const out = () => { viaL(); viaL(); return seenByR(); };`,
     // cycle with hoisted function used across the cycle during evaluation
-    "cycle/a.mjs": `import { fromB } from "./b.mjs"; globalThis.__log.push("a@" + process.env.WHO); export function fromA() { return "A:" + process.env.WHO } export const gotB = fromB();`,
-    "cycle/b.mjs": `import { fromA } from "./a.mjs"; globalThis.__log.push("b@" + process.env.WHO); export function fromB() { return "B:" + process.env.WHO } export const gotA = fromA();`,
-    "cycle/root.mjs": `import { gotB } from "./a.mjs"; import { gotA } from "./b.mjs"; globalThis.__log.push("root@" + process.env.WHO); export const out = [gotA, gotB];`,
+    "cycle/a.mjs": `import { fromB } from "./b.mjs"; __log.push("a@" + process.env.WHO); export function fromA() { return "A:" + process.env.WHO } export const gotB = fromB();`,
+    "cycle/b.mjs": `import { fromA } from "./a.mjs"; __log.push("b@" + process.env.WHO); export function fromB() { return "B:" + process.env.WHO } export const gotA = fromA();`,
+    "cycle/root.mjs": `import { gotB } from "./a.mjs"; import { gotA } from "./b.mjs"; __log.push("root@" + process.env.WHO); export const out = [gotA, gotB];`,
     // star re-exports, renamed re-exports, re-exported namespace, default + named
     "star/x.mjs": `${leaf("x")} export default "dx:" + process.env.WHO;`,
     "star/y.mjs": `${leaf("y")}`,
-    "star/hub.mjs": `export * from "./x.mjs"; export * from "./y.mjs"; export { x as renamed } from "./x.mjs"; export * as yns from "./y.mjs"; export { default } from "./x.mjs"; globalThis.__log.push("hub@" + process.env.WHO);`,
-    "star/root.mjs": `import d, { x, y, renamed, yns } from "./hub.mjs"; import * as hub from "./hub.mjs"; globalThis.__log.push("root@" + process.env.WHO); export const out = [d, x, y, renamed, yns.y, hub.yns === yns, Object.keys(hub).sort().join(",")];`,
+    "star/hub.mjs": `export * from "./x.mjs"; export * from "./y.mjs"; export { x as renamed } from "./x.mjs"; export * as yns from "./y.mjs"; export { default } from "./x.mjs"; __log.push("hub@" + process.env.WHO);`,
+    "star/root.mjs": `import d, { x, y, renamed, yns } from "./hub.mjs"; import * as hub from "./hub.mjs"; __log.push("root@" + process.env.WHO); export const out = [d, x, y, renamed, yns.y, hub.yns === yns, Object.keys(hub).sort().join(",")];`,
     // ambiguous star export: link error, per instance, does not poison a sibling import
     "amb/p.mjs": `export const dup = 1; export const onlyP = "p";`,
     "amb/q.mjs": `export const dup = 2; export const onlyQ = "q";`,
     "amb/hub.mjs": `export * from "./p.mjs"; export * from "./q.mjs";`,
     "amb/bad.mjs": `import { dup } from "./hub.mjs"; export const v = dup;`,
-    "amb/good.mjs": `import { onlyP, onlyQ } from "./hub.mjs"; globalThis.__log.push("good@" + process.env.WHO); export const out = [onlyP, onlyQ];`,
+    "amb/good.mjs": `import { onlyP, onlyQ } from "./hub.mjs"; __log.push("good@" + process.env.WHO); export const out = [onlyP, onlyQ];`,
     // mixed leaves: json, cjs, ts under one root
     "mixed/data.json": `{ "k": "json" }`,
-    "mixed/c.cjs": `globalThis.__log.push("cjs@" + process.env.WHO); module.exports = { c: "cjs:" + process.env.WHO };`,
-    "mixed/t.ts": `globalThis.__log.push("ts@" + process.env.WHO); export const t: string = "ts:" + process.env.WHO;`,
-    "mixed/root.mjs": `import data from "./data.json"; import c from "./c.cjs"; import { t } from "./t.ts"; globalThis.__log.push("root@" + process.env.WHO); export const out = [data.k, c.c, t];`,
+    "mixed/c.cjs": `__log.push("cjs@" + process.env.WHO); module.exports = { c: "cjs:" + process.env.WHO };`,
+    "mixed/t.ts": `__log.push("ts@" + process.env.WHO); export const t: string = "ts:" + process.env.WHO;`,
+    "mixed/root.mjs": `import data from "./data.json"; import c from "./c.cjs"; import { t } from "./t.ts"; __log.push("root@" + process.env.WHO); export const out = [data.k, c.c, t];`,
   });
   type Shape = {
     entry: string;
@@ -698,10 +696,10 @@ describe.skipIf(!enabled)("ModuleGraph matrix: graph shapes × instantiation ord
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () => {
   const dir = fixture({
-    "slow.mjs": `globalThis.__log.push("slow-start@" + process.env.WHO); await new Promise(r => setTimeout(r, 20)); globalThis.__log.push("slow-end@" + process.env.WHO); export const who = process.env.WHO; export const later = () => import("./late.mjs").then(m => m.who);`,
-    "late.mjs": `globalThis.__log.push("late@" + process.env.WHO); export const who = process.env.WHO;`,
-    "throws.mjs": `globalThis.__log.push("throws@" + process.env.WHO); if (process.env.WHO !== "ok") throw new RangeError("boom:" + process.env.WHO); export const who = process.env.WHO;`,
-    "rejects.mjs": `globalThis.__log.push("rejects@" + process.env.WHO); await new Promise((_, rej) => setTimeout(() => rej(new EvalError("nope:" + process.env.WHO)), 1)); export const who = process.env.WHO;`,
+    "slow.mjs": `__log.push("slow-start@" + process.env.WHO); await new Promise(r => setTimeout(r, 20)); __log.push("slow-end@" + process.env.WHO); export const who = process.env.WHO; export const later = () => import("./late.mjs").then(m => m.who);`,
+    "late.mjs": `__log.push("late@" + process.env.WHO); export const who = process.env.WHO;`,
+    "throws.mjs": `__log.push("throws@" + process.env.WHO); if (process.env.WHO !== "ok") throw new RangeError("boom:" + process.env.WHO); export const who = process.env.WHO;`,
+    "rejects.mjs": `__log.push("rejects@" + process.env.WHO); await new Promise((_, rej) => setTimeout(() => rej(new EvalError("nope:" + process.env.WHO)), 1)); export const who = process.env.WHO;`,
     "dep-of-throws.mjs": `import { who } from "./throws.mjs"; export const w = who;`,
   });
 
@@ -912,7 +910,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: many concurrent instances", () =>
   const dir = fixture({
     "entry.mjs": `import { tag } from "./dep.mjs"; export const who = process.env.WHO; export const staticTag = tag; export const dyn = (delay) => new Promise(r => setTimeout(r, delay)).then(() => import("./lazy.mjs")).then(m => m.tag); export const big = new Uint8Array(64 * 1024);`,
     "dep.mjs": `export const tag = "dep:" + process.env.WHO;`,
-    "lazy.mjs": `globalThis.__log.push("lazy@" + process.env.WHO); export const tag = "lazy:" + process.env.WHO;`,
+    "lazy.mjs": `__log.push("lazy@" + process.env.WHO); export const tag = "lazy:" + process.env.WHO;`,
   });
   for (const n of [8, 24]) {
     test(`${n} instances, staggered dynamic imports`, async () => {

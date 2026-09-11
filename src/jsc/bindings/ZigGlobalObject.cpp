@@ -740,7 +740,6 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
 }
 
 namespace Bun {
-JSC_DECLARE_HOST_FUNCTION(functionModuleGraphProcess);
 JSC_DECLARE_HOST_FUNCTION(functionModuleGraphOf);
 }
 
@@ -2895,7 +2894,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_moduleGraphProcess, 0, Bun::functionModuleGraphProcess },
         { BuiltinName::k_moduleGraphOf, 1, Bun::functionModuleGraphOf },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },

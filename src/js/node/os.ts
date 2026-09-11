@@ -3,12 +3,6 @@ var tmpdir = function () {
   var env = Bun.env;
 
   tmpdir = function () {
-    // From code in a Bun.unsafe.ModuleGraph: the graph's env decides.
-    const graphProcess = $moduleGraphProcess();
-    if (graphProcess) return tmpdirFrom(graphProcess.env);
-    return tmpdirFrom(env);
-  };
-  function tmpdirFrom(env) {
     if (process.platform === "win32") {
       // using node implementation
       // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/lib/os.js#L186
@@ -23,7 +17,7 @@ var tmpdir = function () {
     const length = path.length;
     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);
     return path;
-  }
+  };
 
   tmpdir[Symbol.toPrimitive] = tmpdir;
 
@@ -109,16 +103,7 @@ function bound(binding) {
     },
     freemem: binding.freemem,
     getPriority: binding.getPriority,
-    homedir: function () {
-      // From code in a Bun.unsafe.ModuleGraph: HOME as that graph sees it.
-      const graphProcess = $moduleGraphProcess();
-      const home = graphProcess
-        ? process.platform === "win32"
-          ? graphProcess.env.USERPROFILE
-          : graphProcess.env.HOME
-        : undefined;
-      return home ? home : binding.homedir();
-    },
+    homedir: binding.homedir,
     hostname: binding.hostname,
     loadavg: binding.loadavg,
     networkInterfaces: binding.networkInterfaces,
@@ -143,17 +128,7 @@ function bound(binding) {
               : $bundleError("TODO: type");
     },
     uptime: binding.uptime,
-    userInfo: function (options) {
-      const info = binding.userInfo(options);
-      const graphProcess = $moduleGraphProcess();
-      const home = graphProcess
-        ? process.platform === "win32"
-          ? graphProcess.env.USERPROFILE
-          : graphProcess.env.HOME
-        : undefined;
-      if (home && info) info.homedir = options && options.encoding === "buffer" ? Buffer.from(home) : home;
-      return info;
-    },
+    userInfo: binding.userInfo,
     version: binding.version,
     machine: function () {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —

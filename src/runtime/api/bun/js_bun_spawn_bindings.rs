@@ -72,12 +72,6 @@ type SpawnOptionsStdio = spawn::WindowsStdio;
 // `runtime/shell/subproc.rs` so the two extern blocks don't diverge.
 unsafe extern "C" {
     safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
-    /// ModuleGraph.cpp: when called from code of a `Bun.unsafe.ModuleGraph`,
-    /// that graph's `process.env` object; otherwise null.
-    safe fn Bun__ModuleGraph__spawnEnv(global: &JSGlobalObject) -> *mut JSObject;
-    /// ModuleGraph.cpp: inside a Bun.unsafe.ModuleGraph, the graph's process.cwd()
-    /// as a JS string; empty otherwise.
-    safe fn Bun__ModuleGraph__spawnCwd(global: &JSGlobalObject) -> JSValue;
 }
 
 struct Argv0Result {
@@ -345,10 +339,6 @@ fn spawn_maybe_sync(
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut user_specified_cwd = false;
 
-    // Non-null when called from code of a Bun.unsafe.ModuleGraph: its process.env,
-    // used as the default environment instead of the thread-wide loader env.
-    let graph_env: *mut JSObject = Bun__ModuleGraph__spawnEnv(global_this);
-
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
     if is_sync {
@@ -409,7 +399,6 @@ fn spawn_maybe_sync(
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns.
     let cwd_owned: ZBox;
-    let graph_cwd_owned: ZBox;
     {
         if args.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
@@ -425,25 +414,6 @@ fn spawn_maybe_sync(
             cmd_value = cmd_value_;
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
-        }
-
-        // Inside a Bun.unsafe.ModuleGraph the default environment is the graph's own
-        // process.env (applied now so argv[0] resolves against its PATH —
-        // `append_envp_from_js` matches PATH case-insensitively, which matters on
-        // Windows). An explicit `env` option replaces it below as usual.
-        if !graph_env.is_null()
-            && !(args.is_object() && args.get_truthy(global_this, "env")?.is_some())
-        {
-            let mut graph_path: &[u8] = b"";
-            append_envp_from_js(
-                global_this,
-                JSObject::opaque_ref(graph_env),
-                &mut env_array,
-                &mut graph_path,
-                &mut cstr_storage,
-            )?;
-            path = graph_path;
-            override_env = true;
         }
 
         if args.is_object() {
@@ -490,17 +460,6 @@ fn spawn_maybe_sync(
                     cwd = cwd_owned.as_bytes();
                     user_specified_cwd = true;
                 }
-            }
-        }
-
-        // Inside a Bun.unsafe.ModuleGraph the default cwd is the graph's
-        // process.cwd() (its `cwd` option), like the default env above.
-        if !user_specified_cwd {
-            let graph_cwd = Bun__ModuleGraph__spawnCwd(global_this);
-            if !graph_cwd.is_empty() && graph_cwd.is_string() {
-                graph_cwd_owned = graph_cwd.to_bun_string(global_this)?.to_owned_slice_z();
-                cwd = graph_cwd_owned.as_bytes();
-                user_specified_cwd = true;
             }
         }
 

@@ -14,7 +14,7 @@ const enabled = typeof (Bun as any).unsafe?.ModuleGraph === "function";
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
 const sources: Record<string, string> = {
   "dep.ts": `
-    globalThis.__log?.push("dep@" + (process.env.TAG ?? "host"));
+    (typeof __log !== "undefined" ? __log : undefined)?.push("dep@" + (process.env.TAG ?? "host"));
     export let count = 0;
     export function bump(): number { return ++count; }
     function local(n: number) { return n + 1; }
@@ -24,17 +24,17 @@ const sources: Record<string, string> = {
     export default class Thing { static made = 0; #tag = tag; get owner() { return this.#tag } constructor() { Thing.made++; } }
   `,
   "data.json": `{ "kind": "json", "n": 1 }`,
-  "c.cjs": `globalThis.__log?.push("cjs@" + (process.env.TAG ?? "host")); let n = 0; module.exports = { who: process.env.TAG ?? "host", inc: () => ++n, get n() { return n; } };`,
-  "tla.ts": `globalThis.__log?.push("tla@" + (process.env.TAG ?? "host")); await new Promise(r => setTimeout(r, 2)); export const tlaWho = process.env.TAG ?? "host";`,
-  "lazy.ts": `globalThis.__log?.push("lazy@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export let n = 0; export const inc = () => ++n;`,
-  "throws.ts": `globalThis.__log?.push("throws@" + (process.env.TAG ?? "host")); if (process.env.TAG?.startsWith("bad")) throw new RangeError("boom:" + process.env.TAG); export const ok = process.env.TAG ?? "host";`,
+  "c.cjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("cjs@" + (process.env.TAG ?? "host")); let n = 0; module.exports = { who: process.env.TAG ?? "host", inc: () => ++n, get n() { return n; } };`,
+  "tla.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("tla@" + (process.env.TAG ?? "host")); await new Promise(r => setTimeout(r, 2)); export const tlaWho = process.env.TAG ?? "host";`,
+  "lazy.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("lazy@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export let n = 0; export const inc = () => ++n;`,
+  "throws.ts": `(typeof __log !== "undefined" ? __log : undefined)?.push("throws@" + (process.env.TAG ?? "host")); if (process.env.TAG?.startsWith("bad")) throw new RangeError("boom:" + process.env.TAG); export const ok = process.env.TAG ?? "host";`,
   "instance.ts": `
     import Thing, { bump, count, viaLocal, tag, K } from "./dep.ts";
     import * as depNs from "./dep.ts";
     import data from "./data.json";
     import { tlaWho } from "./tla.ts";
     const cjs = require("./c.cjs");
-    globalThis.__log?.push("instance@" + (process.env.TAG ?? "host"));
+    (typeof __log !== "undefined" ? __log : undefined)?.push("instance@" + (process.env.TAG ?? "host"));
     const short = (u: string) => u.replace(/^.*[\\\\/]/, "<embedded>/");
     export async function runInstance(n: number) {
       for (let i = 0; i < n; i++) bump();
@@ -57,8 +57,6 @@ const sources: Record<string, string> = {
     export const throwing = () => import("./throws.ts").then(m => ({ ok: m.ok }), e => ({ err: e.constructor.name, message: e.message }));
     export const missing = () => import("./not-embedded-" + (process.env.TAG ?? "host") + ".ts").then(() => "resolved", e => e.constructor.name);
   `,
-  "ticker.ts": `globalThis.__log?.push("ticker@" + process.env.TAG); let ticks = 0; setInterval(() => { ticks++; }, 5); setTimeout(() => {}, 1 << 30); export const who = process.env.TAG;`,
-  "exits.ts": `globalThis.__log?.push("exits@" + process.env.TAG); export function quit(code) { process.exit(code); } if (process.env.TAG === "exit-at-load") process.exit(7); export const who = process.env.TAG;`,
   "worker.ts": `
     declare var self: Worker;
     const MG = (Bun as any).unsafe.ModuleGraph;
@@ -66,7 +64,7 @@ const sources: Record<string, string> = {
     const log: string[] = [];
     const out: unknown[] = [];
     for (let k = 0; k < 3; k++) {
-      const g = new MG({ env: { ...process.env, TAG: "w" + k }, globals: { __log: log } });
+      const g = new MG({ globals: { process: Object.create(process, { env: { value: { ...process.env, TAG: "w" + k }, enumerable: true } }), __log: log } });
       const ns = await g.import(url);
       out.push(await ns.runInstance(k + 1));
       out.push((await ns.lazy()).who);
@@ -79,7 +77,8 @@ const sources: Record<string, string> = {
     const url = new URL("./instance.js", import.meta.url).href;
     const scenario = process.argv[2];
     const log: string[] = [];
-    const mk = (tag: string) => new MG({ env: { ...process.env, TAG: tag }, globals: { __log: log } });
+    // each graph gets a process of its own through globals (its env carries the graph's TAG)
+    const mk = (tag: string) => new MG({ globals: { process: Object.create(process, { env: { value: { ...process.env, TAG: tag }, enumerable: true } }), __log: log } });
     const errName = (e: any) => e?.constructor?.name ?? typeof e;
     let result: any;
     if (scenario === "instances") {
@@ -152,27 +151,6 @@ const sources: Record<string, string> = {
       const w = new Worker(new URL("./worker.js", import.meta.url).href);
       result = await new Promise((res, rej) => { w.onmessage = e => res(e.data); w.onerror = e => rej(e); });
       w.terminate();
-    } else if (scenario === "timers") {
-      // graphs with live intervals/timeouts are disposed or exited: the executable must still exit on its own
-      const tickerUrl = new URL("./ticker.js", import.meta.url).href;
-      const whos: unknown[] = [];
-      for (let k = 0; k < 4; k++) { const g = mk("tick" + k); whos.push((await g.import(tickerUrl)).who); if (k % 2 === 0) g.dispose(); else g.process.exit(0); }
-      result = { whos, log };
-    } else if (scenario === "exit") {
-      // process.exit inside a graph ends that graph only; onExit observes the code; the executable continues
-      const exitsUrl = new URL("./exits.js", import.meta.url).href;
-      const codes: unknown[] = [];
-      const g1 = new MG({ env: { ...process.env, TAG: "exit-at-load" }, globals: { __log: log }, onExit: (c: number) => codes.push(["g1", c]) });
-      const atLoad = await g1.import(exitsUrl).then(() => "resolved", errName);
-      const g2 = new MG({ env: { ...process.env, TAG: "exit-later" }, globals: { __log: log }, onExit: (c: number) => codes.push(["g2", c]) });
-      const m2 = await g2.import(exitsUrl);
-      const before = m2.who;
-      m2.quit(5);
-      const after = await g2.import(exitsUrl).then(() => "resolved", errName);
-      const g3 = mk("survivor");
-      const survivor = (await g3.import(exitsUrl)).who;
-      result = { atLoad, before, after, survivor, codes, log };
-      g3.dispose();
     } else if (scenario === "external") {
       // a graph loads a module from disk next to the executable, which imports embedded code by URL
       const { join, dirname } = require("node:path");
@@ -239,7 +217,7 @@ for (const combo of combos) {
       dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
         ...sources,
         // not embedded: loaded from disk by the compiled program
-        "external.mjs": `globalThis.__log?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
+        "external.mjs": `(typeof __log !== "undefined" ? __log : undefined)?.push("external@" + (process.env.TAG ?? "host")); export const who = process.env.TAG ?? "host"; export async function describe(instanceUrl) { const t = await import(instanceUrl); const r = await t.runInstance(1); return { who, instanceTag: r.tag, instanceMeta: r.meta }; }`,
       });
       exe = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
       await using proc = Bun.spawn({
@@ -251,8 +229,6 @@ for (const combo of combos) {
           "./entry.ts",
           "./instance.ts",
           "./worker.ts",
-          "./ticker.ts",
-          "./exits.ts",
           "--outfile",
           exe,
         ],
@@ -301,14 +277,18 @@ for (const combo of combos) {
         const skipped = (i: number) => ordering === "onlySome" && i === 1;
         const disposed = (i: number) => ordering === "disposeMiddle" && i === 1;
         const live = tags.filter((_, i) => !skipped(i) && !disposed(i));
+        // Function() code is global code: its import() goes through the global loader, not the graph.
+        const viaHost = ordering === "viaFunction";
         expect(await run("lazy:" + ordering)).toEqual({
           parsed: {
-            got: tags.map((t, i) => (skipped(i) ? "unset" : disposed(i) ? { rejected: "TypeError" } : { who: t })),
+            got: tags.map((t, i) =>
+              skipped(i) ? "unset" : disposed(i) ? { rejected: "TypeError" } : { who: viaHost ? "host" : t },
+            ),
             repeat: tags.map((_, i) => (skipped(i) ? "skipped" : disposed(i) ? "rejected:TypeError" : true)),
-            distinct: live.length,
-            isolation: live.map((_, i) => (i === 0 ? 2 : 0)),
+            distinct: viaHost ? 1 : live.length,
+            isolation: viaHost ? live.map(() => 2) : live.map((_, i) => (i === 0 ? 2 : 0)),
             hostWho: ordering === "hostFirst" || ordering === "hostLast" ? "host" : "not-run",
-            log: live.map(t => `lazy@${t}`),
+            log: viaHost ? [] /* the host load logs nowhere: __log is a graph binding */ : live.map(t => `lazy@${t}`),
           },
           exitCode: 0,
           stderr: "",
@@ -368,35 +348,6 @@ for (const combo of combos) {
         parsed: {
           out: [instanceRun("w0", 1, 1, 1), "w0", instanceRun("w1", 2, 1, 1), "w1", instanceRun("w2", 3, 1, 1), "w2"],
           log: ["w0", "w1", "w2"].flatMap(t => [`dep@${t}`, `tla@${t}`, `cjs@${t}`, `instance@${t}`, `lazy@${t}`]),
-        },
-        exitCode: 0,
-        stderr: "",
-      });
-    });
-
-    test("graphs with live timers are disposed or exited and the executable still exits by itself", async () => {
-      expect(await run("timers")).toEqual({
-        parsed: {
-          whos: ["tick0", "tick1", "tick2", "tick3"],
-          log: ["ticker@tick0", "ticker@tick1", "ticker@tick2", "ticker@tick3"],
-        },
-        exitCode: 0,
-        stderr: "",
-      });
-    });
-
-    test("process.exit inside a graph: at load and later; onExit codes; other graphs and the executable continue", async () => {
-      expect(await run("exit")).toEqual({
-        parsed: {
-          atLoad: "TypeError",
-          before: "exit-later",
-          after: "TypeError",
-          survivor: "survivor",
-          codes: [
-            ["g1", 7],
-            ["g2", 5],
-          ],
-          log: ["exits@exit-at-load", "exits@exit-later", "exits@survivor"],
         },
         exitCode: 0,
         stderr: "",

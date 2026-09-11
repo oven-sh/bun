@@ -525,10 +525,9 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp) */                                                           \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphPreset)                                                    \
     V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                  \
     V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTable)                                        \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTables)                                       \
     V(public, WriteBarrier<Unknown>, m_commonJSWrapperTemplates)                                             \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
@@ -689,8 +688,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
-    visibility:                                             \
-    T name;
+    visibility : T name;
 
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
 

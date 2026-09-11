@@ -21,11 +21,6 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include <JavaScriptCore/JSMapInlines.h>
-#include <JavaScriptCore/JSModuleEnvironment.h>
-#include <JavaScriptCore/JSModuleRecord.h>
-#include <JavaScriptCore/JSLexicalEnvironment.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JIT.h>
 #include <JavaScriptCore/JSBasePrivate.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -978,7 +973,6 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 }
 
 namespace Zig {
-
 DEFINE_NATIVE_MODULE(BunJSC)
 {
     INIT_NATIVE_MODULE(BunJSC, 36);

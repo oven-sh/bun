@@ -932,10 +932,7 @@ function normalizeSpawnArguments(file, args, options) {
   else validateObject(options, "options");
 
   options = { __proto__: null, ...options };
-  // From code in a Bun.unsafe.ModuleGraph: that graph's process (env/cwd).
-  const graphProcess = $moduleGraphProcess();
   let cwd = options.cwd;
-  if (cwd == null && graphProcess) cwd = graphProcess.cwd();
 
   // Validate the cwd, if present.
   if (cwd != null) {
@@ -1022,7 +1019,7 @@ function normalizeSpawnArguments(file, args, options) {
     ArrayPrototypeUnshift.$call(args, file);
   }
 
-  const env = options.env || (graphProcess ? graphProcess.env : process.env);
+  const env = options.env || process.env;
   const bunEnv = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to

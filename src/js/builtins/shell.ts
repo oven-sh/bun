@@ -310,15 +310,9 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
     const parsed_shell_script = createParsedShellScript(first.raw, rest);
 
-    let cwd = BunShell[cwdSymbol];
-    let env = BunShell[envSymbol];
+    const cwd = BunShell[cwdSymbol];
+    const env = BunShell[envSymbol];
     const throws = BunShell[throwsSymbol];
-    // From code in a Bun.unsafe.ModuleGraph, the defaults are that graph's cwd and env.
-    const graphProcess = $moduleGraphProcess();
-    if (graphProcess) {
-      if (!cwd) cwd = graphProcess.cwd();
-      if (env === originalDefaultEnv) env = graphProcess.env;
-    }
 
     // cwd must be set before env or else it will be injected into env as "PWD=/"
     if (cwd) parsed_shell_script.setCwd(cwd);
@@ -336,14 +330,9 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
       const parsed_shell_script = createParsedShellScript(first.raw, rest);
 
-      let cwd = Shell[cwdSymbol];
-      let env = Shell[envSymbol];
+      const cwd = Shell[cwdSymbol];
+      const env = Shell[envSymbol];
       const throws = Shell[throwsSymbol];
-      const graphProcess = $moduleGraphProcess();
-      if (graphProcess) {
-        if (!cwd) cwd = graphProcess.cwd();
-        if (env === originalDefaultEnv) env = graphProcess.env;
-      }
 
       // cwd must be set before env or else it will be injected into env as "PWD=/"
       if (cwd) parsed_shell_script.setCwd(cwd);

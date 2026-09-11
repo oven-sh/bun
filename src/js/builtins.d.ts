@@ -259,8 +259,6 @@ declare function $relative(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
-/** The `process` object of the Bun.unsafe.ModuleGraph whose code is on the stack, or undefined. */
-declare function $moduleGraphProcess(): NodeJS.Process | undefined;
 /** The Bun.unsafe.ModuleGraph a (bound) require function / CommonJS module belongs to, as { mainModule, requireMap, requireCache }, or undefined. */
 declare function $moduleGraphOf(
   requireOrModule: unknown,

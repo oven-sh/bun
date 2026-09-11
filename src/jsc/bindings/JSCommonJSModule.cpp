@@ -1464,10 +1464,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     auto result = fetchBuiltinModuleWithoutResolution(globalObject, &specifierStr, &res);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (result.kind == BuiltinModule::Kind::Exports) {
-        // Inside a Bun.unsafe.ModuleGraph the graph gets its own copy of the
-        // builtin's exports object (graphLocalBuiltin), shared with its ESM view.
-        if (JSModuleGraph* graph = thisObject->moduleGraph())
-            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(graphLocalBuiltin(globalObject, graph, specifier, result.exports)));
         return JSC::JSValue::encode(result.exports);
     }
     throwScope.assertNoExceptionExceptTermination();

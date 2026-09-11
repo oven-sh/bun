@@ -75,8 +75,6 @@
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
-extern "C" JSC::JSObject* Bun__ModuleGraph__workerEnv(JSC::JSGlobalObject*);
-
 namespace WebCore {
 using namespace JSC;
 
@@ -273,9 +271,6 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
             if (envValue && envValue.isCell()) {
                 envObject = dynamicDowncast<JSC::JSObject>(envValue);
-            } else if (JSObject* graphEnv = Bun__ModuleGraph__workerEnv(lexicalGlobalObject)) {
-                // Spawned by code in a Bun.unsafe.ModuleGraph: that graph's env.
-                envObject = graphEnv;
             } else if (globalObject->m_processEnvObject.isInitialized()) {
                 envObject = globalObject->processEnvObject();
             }
@@ -384,25 +379,6 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
-
-    // Spawned by code in a Bun.unsafe.ModuleGraph with no env option: the
-    // worker inherits that graph's env, not the host's.
-    if (!shareEnv && !options.env) {
-        if (JSObject* graphEnv = Bun__ModuleGraph__workerEnv(lexicalGlobalObject)) {
-            JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            graphEnv->methodTable()->getOwnPropertyNames(graphEnv, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            HashMap<String, String> env;
-            for (const auto& key : keys) {
-                JSValue value = graphEnv->get(lexicalGlobalObject, key);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
-                RETURN_IF_EXCEPTION(throwScope, {});
-                env.add(key.impl()->isolatedCopy(), str);
-            }
-            options.env.emplace(WTF::move(env));
-        }
-    }
 
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)

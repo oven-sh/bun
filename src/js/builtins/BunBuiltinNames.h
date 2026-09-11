@@ -81,7 +81,6 @@ using namespace JSC;
     macro(esmRegistryEvaluatedKeys) \
     macro(moduleGraph) \
     macro(moduleGraphOf) \
-    macro(moduleGraphProcess) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \

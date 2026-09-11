@@ -16,39 +16,27 @@ class JSPromise;
 
 namespace Bun {
 
-// Bun.unsafe.ModuleGraph — a module loader of its own in THIS global: the ES
-// modules it imports (and the CommonJS modules they require) are fetched, linked
-// and evaluated again for the graph, with their own state and the graph's own
-// values for `process`, `globalThis`, timers, ... (a lexical environment between
-// the graph's modules and the global scope); compiled code is shared with other
-// loads of the same files. See ModuleGraph.cpp.
-// A graph's own copy of a builtin module's exports object (node:fs, node:http, …):
-// own properties copied from the host's object (functions shared, accessors
-// kept), so monkey-patching by graph code stays inside the graph and goes
-// away with it. Non-object exports are returned as is. `graph` null → host object.
-JSC::JSValue graphLocalBuiltin(JSC::JSGlobalObject*, class JSModuleGraph*, const WTF::String& specifier, JSC::JSValue hostExports);
 class JSModuleGraph;
-// The graph `loader` belongs to; null for the global object's own loader.
+
+// Bun.unsafe.ModuleGraph — further instantiations of ES module graphs in THIS
+// global object: a JSC module loader of its own whose module scope holds the
+// host's `globals` for the graph. Records of the same module in different graphs
+// share executables (CodeBlocks, JIT code); each graph has its own module state,
+// CommonJS require cache and import() / require routing. See ModuleGraph.cpp.
 JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// promiseRejectionTracker hook: remember which graph's code rejected `promise` (no-op without graphs).
+// Rejections of promises by graph code, for attributing unhandled ones (onError).
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
 
-class JSModuleGraph final : public JSC::JSInternalFieldObjectImpl<13> {
+class JSModuleGraph final : public JSC::JSInternalFieldObjectImpl<7> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<13>;
+    using Base = JSC::JSInternalFieldObjectImpl<7>;
     enum class Field : unsigned {
         Loader = 0, // JSModuleLoader: the graph's module loader (registry); null once disposed
-        Overlay, // JSLexicalEnvironment: per-graph values for the overlaid globals; the loader's module scope
+        Overlay, // JSLexicalEnvironment: the loader's module scope, holding the graph's `globals`
         RequireMap, // JSMap: this graph's CommonJS require cache
-        OnExit,
-        OnError,
-        Process, // the per-graph process object
-        PresetDispose, // clears timers the graph armed
-        RequireCache, // lazily created require.cache proxy
-        DispatchError, // preset: graph process listeners first, then host onError
+        RequireCache, // lazily created require.cache proxy over RequireMap
+        OnError, // host callback for uncaught errors / unhandled rejections of the graph's code
         MainPath, // resolved path of the first module import()ed (import.meta.main)
-        Builtins, // JSMap: builtin specifier → this graph's own copy of the builtin's exports object
-        CustomizeBuiltin, // preset: (specifier, copy) → adjusts a fresh builtin copy for this graph (tracked timers, watchers)
         PendingImports, // JSArray: promises returned by import() that may still be pending; rejected by dispose()
     };
 
@@ -64,7 +52,6 @@ public:
     bool disposed() const { return !loader(); }
     JSC::JSScope* overlay() const;
     JSC::JSMap* requireMap() const;
-    JSC::JSMap* builtins() const;
 
 private:
     JSModuleGraph(JSC::VM& vm, JSC::Structure* structure)

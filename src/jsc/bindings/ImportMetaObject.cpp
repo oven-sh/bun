@@ -505,16 +505,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
     return true;
 }
 
-extern "C" JSC::JSObject* Bun__ModuleGraph__envForImportMeta(JSC::JSGlobalObject*, JSC::JSObject* importMeta);
-
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    // A Bun.unsafe.ModuleGraph's import.meta.env is that graph's process.env.
-    if (auto* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue))) {
-        if (JSObject* graphEnv = Bun__ModuleGraph__envForImportMeta(globalObject, thisObject))
-            return JSValue::encode(graphEnv);
-    }
     return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 

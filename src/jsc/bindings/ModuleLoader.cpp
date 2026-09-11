@@ -39,7 +39,6 @@
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
 #include "../modules/_NativeModule.h"
-#include "../modules/NodeProcessModule.h"
 
 #include "JSCommonJSExtensions.h"
 
@@ -47,16 +46,6 @@
 
 namespace Bun {
 using namespace JSC;
-
-// JSON / TOML / JSONC module provider (each loader that fetches the file gets its own value).
-enum class DataModuleShape { Value,
-    DefaultOnly };
-static Ref<JSC::SyntheticSourceProvider> createDataModuleProvider(Zig::GlobalObject* globalObject, JSC::JSValue value, String&& specifier, DataModuleShape shape)
-{
-    auto function = shape == DataModuleShape::Value ? Zig::generateJSValueModuleSourceCode(globalObject, value) : Zig::generateJSValueExportDefaultObjectSourceCode(globalObject, value);
-    return JSC::SyntheticSourceProvider::create(WTF::move(function), JSC::SourceOrigin(), WTF::move(specifier));
-}
-
 using namespace Zig;
 using namespace WebCore;
 
@@ -80,11 +69,9 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 }
 
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
-// `graph`: the Bun.unsafe.ModuleGraph whose loader is fetching the builtin (it gets
-// the exports of ITS copy, the same object its require() sees), or null.
-static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId, Bun::JSModuleGraph* graph)
+static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
 {
-    return [moduleId, graph = JSC::Weak<Bun::JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+    return [moduleId](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> JSC::JSObject* {
@@ -94,10 +81,6 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
 
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        if (graph) {
-            requireResult = Bun::graphLocalBuiltin(globalObject, graph.get(), moduleKey.string(), requireResult);
-            RETURN_IF_EXCEPTION(throwScope, nullptr);
-        }
         auto* object = requireResult.getObject();
         ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
 
@@ -1037,19 +1020,6 @@ static JSValue fetchESMSourceCode(
         }
 
         auto tag = res->result.value.tag;
-        // A Bun.unsafe.ModuleGraph importing node:process gets its own process.
-        if (graph && tag == SyntheticModuleType::NodeProcess) {
-            auto provider = JSC::SyntheticSourceProvider::createWithLazyExports([graph = JSC::Weak<Bun::JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) -> JSC::JSObject* {
-                JSObject* process = defaultGlobalObject(lexicalGlobalObject)->processObject();
-                if (graph) {
-                    if (JSValue graphProcess = graph->field(Bun::JSModuleGraph::Field::Process); graphProcess.isObject())
-                        process = graphProcess.getObject();
-                }
-                return Zig::generateNodeProcessModule(lexicalGlobalObject, process, exportNames, exportValues);
-            },
-                JSC::SourceOrigin(), WTF::move(moduleKey));
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
-        }
         switch (tag) {
         case SyntheticModuleType::ESM: {
             auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
@@ -1092,7 +1062,7 @@ static JSValue fetchESMSourceCode(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
-                auto provider = JSC::SyntheticSourceProvider::createWithLazyExports(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask), graph), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey);
+                auto provider = JSC::SyntheticSourceProvider::createWithLazyExports(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey);
                 auto source = JSC::SourceCode(WTF::move(provider));
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
             } else {
@@ -1198,7 +1168,12 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto source = JSC::SourceCode(createDataModuleProvider(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), DataModuleShape::Value));
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTF::move(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
@@ -1210,7 +1185,12 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto source = JSC::SourceCode(createDataModuleProvider(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), DataModuleShape::Value));
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTF::move(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
@@ -1220,7 +1200,12 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto source = JSC::SourceCode(createDataModuleProvider(globalObject, value, specifier->toWTFString(BunString::ZeroCopy), DataModuleShape::DefaultOnly));
+        auto function = generateJSValueExportDefaultObjectSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTF::move(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }

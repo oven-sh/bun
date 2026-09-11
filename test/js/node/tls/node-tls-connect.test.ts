@@ -1083,6 +1083,8 @@ describe("tls.connect({ socket }) over an established TLSSocket", () => {
         received.resolve(Buffer.concat(chunks));
         inner.end();
       });
+      inner.on("error", received.reject);
+      inner.on("close", () => received.reject(new Error("the server side closed before 'end'")));
     });
     let client: TLSSocket | undefined;
     try {
@@ -1093,8 +1095,7 @@ describe("tls.connect({ socket }) over an established TLSSocket", () => {
       }
       client.resume();
       client.end(payload);
-      await once(client, "close");
-      const bytes = await received.promise;
+      const [bytes] = await Promise.all([received.promise, once(client, "close")]);
       expect({ log, bytes: bytes.length, intact: bytes.equals(payload) }).toEqual({
         log: ["secureConnect", "finish", "end", "close"],
         bytes: payload.length,

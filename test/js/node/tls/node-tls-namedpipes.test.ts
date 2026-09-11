@@ -222,7 +222,10 @@ describe("tls.connect({ socket }) over a named pipe that is already connected", 
         received.resolve(Buffer.concat(chunks).toString());
         socket.end();
       });
+      socket.on("error", received.reject);
+      socket.on("close", () => received.reject(new Error("the server side closed before 'end'")));
     });
+    server.on("tlsClientError", received.reject);
     let client: TLSSocket | undefined;
     try {
       client = connect({ socket: pipe, rejectUnauthorized: false });
@@ -232,8 +235,8 @@ describe("tls.connect({ socket }) over a named pipe that is already connected", 
       }
       client.resume();
       client.end("hello");
-      await once(client, "close");
-      expect({ log, received: await received.promise }).toEqual({
+      const [data] = await Promise.all([received.promise, once(client, "close")]);
+      expect({ log, received: data }).toEqual({
         log: ["secureConnect", "finish", "end", "close"],
         received: "hello",
       });

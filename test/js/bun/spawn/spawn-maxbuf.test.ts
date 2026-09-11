@@ -168,14 +168,14 @@ describe.each(["stdout", "stderr"] as const)("maxBuffer kills the process with l
       killSignal,
     });
     await proc.exited;
-    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-      exitCode: null,
-      signalCode: killSignal,
-    });
     // A late reader still gets what was read up to the limit.
     const bytes = await proc[fd].bytes();
     expect(bytes.length).toBeGreaterThan(1000);
     expect(bytes.length).toBeLessThanOrEqual(1000 + 64 * 1024);
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exitCode: null,
+      signalCode: killSignal,
+    });
   });
 });
 

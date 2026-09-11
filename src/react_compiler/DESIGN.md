@@ -120,6 +120,14 @@ New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is
 registered via `Host::add_import_record`.
 
+Every local of a compiled function is a new symbol, also one the source
+declared. `Host::new_local` registers it in the body scope of that function
+(`Scope::generated`), and once the body is replaced the parser drops the
+symbols it declared for the old one (all but `arguments` and the own name of a
+function expression). The bundler's renamer then numbers the new symbols like
+the locals of any other function. `Host::new_generated` is for a name declared
+at module level, such as an outlined `_temp`.
+
 ### Bail-out semantics
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,

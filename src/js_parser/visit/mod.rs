@@ -1778,6 +1778,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .binding
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| p.load_name_from_ref(r));
+            // `Host::new_local` appends the locals of the compiled function here.
+            let generated_len = p.current_scope().generated.len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1793,6 +1795,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
+                p.drop_symbols_of_replaced_function(pending.binding);
+            } else {
+                p.current_scope_mut().generated.truncate(generated_len);
             }
         }
 

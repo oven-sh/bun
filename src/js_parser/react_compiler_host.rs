@@ -108,6 +108,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn new_local(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
+        // current_scope is the FunctionBody of the function being compiled.
+        VecExt::append(&mut p.current_scope_mut().generated, ref_);
+        ref_
+    }
+
     fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
@@ -150,6 +159,34 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Call when the React Compiler replaced the parameters and the body of the
+    /// function whose FunctionBody scope is `current_scope`. The new ones declare
+    /// only symbols from `Host::new_local`, which are in this scope's `generated`.
+    /// Of the symbols that the parser declared for the old ones, the output still
+    /// prints `arguments` and `name`: a function expression declares its own name
+    /// in its FunctionArgs scope. Nothing prints the others. If they stay, the
+    /// renamer numbers each new local around the old symbol of the same name
+    /// (`count` prints as `count2`).
+    pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
+        let mut body = self.current_scope;
+        debug_assert!(body.kind == js_ast::scope::Kind::FunctionBody);
+        body.members = js_ast::scope::Members::EMPTY;
+        body.children.clear();
+        if let Some(mut args) = body.parent {
+            debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
+            let mut kept = js_ast::scope::Members::EMPTY;
+            for (key, member) in args.members.iter() {
+                let kind = self.symbols[member.ref_.inner_index() as usize].kind;
+                if kind == js_ast::symbol::Kind::Arguments || Some(member.ref_) == name {
+                    // SAFETY: `key` is the key of a member of a live scope.
+                    unsafe { kept.put(key, *member) };
+                }
+            }
+            args.members = kept;
+            args.children.retain(|child| *child == body);
+        }
+    }
+
     /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,

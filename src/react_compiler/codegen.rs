@@ -125,6 +125,7 @@ impl<'h> Codegen<'h> {
         }
     }
 
+    /// The symbol for a name declared at module level ([`Host::new_generated`]).
     fn ref_for_name(&mut self, name: StoreStr) -> Ref {
         if let Some(&r) = self.name_to_ref.get(&name) {
             self.host.record_usage(r);
@@ -135,12 +136,23 @@ impl<'h> Codegen<'h> {
         r
     }
 
+    /// The symbol for a name the compiled function declares ([`Host::new_local`]).
+    fn ref_for_local(&mut self, name: StoreStr) -> Ref {
+        if let Some(&r) = self.name_to_ref.get(&name) {
+            self.host.record_usage(r);
+            return r;
+        }
+        let r = self.host.new_local(name.slice());
+        self.name_to_ref.insert(name, r);
+        r
+    }
+
     fn well_known(&mut self, w: WellKnown, name: &[u8]) -> Ref {
         if let Some(r) = self.well_known[w as usize] {
             self.host.record_usage(r);
             return r;
         }
-        let r = self.host.new_generated(name);
+        let r = self.host.new_local(name);
         self.well_known[w as usize] = Some(r);
         r
     }
@@ -201,7 +213,7 @@ impl<'h> Codegen<'h> {
         let mut cursor = std::io::Cursor::new(&mut buf[..]);
         write!(cursor, "bb{}", id.0).unwrap();
         let len = cursor.position() as usize;
-        let r = self.host.new_generated(&buf[..len]);
+        let r = self.host.new_local(&buf[..len]);
         self.label_to_ref.insert(id, r);
         r
     }
@@ -355,7 +367,13 @@ pub(crate) fn codegen_function(
 
         let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
         let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
-        let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
+        let mut codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
+        // The declaration is hoisted to module level. The same name gives the
+        // `Ref` that the `LoadGlobal` at the use site printed.
+        codegen.id = reactive_fn_mut.id.as_ref().map(|name| LocRef {
+            loc: convert_loc(reactive_fn_mut.loc),
+            ref_: cx.cg.ref_for_name(store_str(name.as_bytes())),
+        });
         outlined.push(OutlinedFunction {
             func: codegen,
             #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
@@ -448,7 +466,7 @@ impl<'a, 'h> Context<'a, 'h> {
             return Err(unnamed_identifier_err(id.0));
         };
         let (IdentifierName::Named(s) | IdentifierName::Promoted(s)) = name;
-        let r = self.cg.ref_for_name(*s);
+        let r = self.cg.ref_for_local(*s);
         self.cg.id_to_ref.insert(id, r);
         Ok(r)
     }
@@ -502,16 +520,8 @@ fn codegen_reactive_function(
     let (memo_blocks, memo_values, pruned_memo_blocks, pruned_memo_values) =
         count_memo_blocks(func, cx.env);
 
-    let id = func.id.as_ref().map(|name| {
-        let r = cx.cg.ref_for_name(store_str(name.as_bytes()));
-        LocRef {
-            loc: convert_loc(func.loc),
-            ref_: r,
-        }
-    });
-
     Ok(CodegenFunction {
-        id,
+        id: None,
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         name_hint: func.name_hint.clone(),
         params,
@@ -2338,7 +2348,7 @@ fn codegen_function_expression(
                 fn_flags |= flags::Function::HasRestArg;
             }
             let fn_name = name.as_ref().map(|n| {
-                let r = cx.cg.ref_for_name(*n);
+                let r = cx.cg.ref_for_local(*n);
                 LocRef { loc, ref_: r }
             });
             Expr::init(

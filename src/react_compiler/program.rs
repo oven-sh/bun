@@ -97,7 +97,16 @@ pub trait Host {
     /// resolved from the current scope the way the visit pass resolves it.
     fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
 
+    /// A new symbol declared at module level: the name of an outlined
+    /// function, or of a binding the compiler imports.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// A new symbol declared by the function being compiled (or by a function
+    /// outlined from it): a local, a parameter, a label, or the name of a
+    /// nested function expression. The host registers it with that function's
+    /// scope, so the renamer keeps it apart from each top-level name the
+    /// function reads.
+    fn new_local(&mut self, name: &[u8]) -> Ref;
 
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)

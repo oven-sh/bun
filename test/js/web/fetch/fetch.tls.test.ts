@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
+import { ipConstraintCases, ipConstraintCertificates } from "../../node/tls/fixtures/ip-name-constraints.fixture";
 
 type TLSOptions = {
   cert: string;
@@ -36,6 +37,28 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 }
 
 describe.concurrent("fetch-tls", () => {
+  it.each(ipConstraintCases)("enforces IP name constraints: %s / %s", async (authority, family, error) => {
+    const { ca, ...tls } = ipConstraintCertificates(authority, family);
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      fetch: () => new Response("verified"),
+    });
+    const host = family === "ipv4" ? "127.0.0.1" : "localhost";
+    const response = fetch(`https://${host}:${server.port}/`, {
+      keepalive: false,
+      tls: { ca, rejectUnauthorized: true },
+    });
+    if (error) {
+      await expect(response).rejects.toMatchObject({
+        code: error === "permitted subtree violation" ? "PERMITTED_VIOLATION" : "EXCLUDED_VIOLATION",
+      });
+    } else {
+      expect(await (await response).text()).toBe("verified");
+    }
+  });
+
   it("drops a caller-supplied Host header on a cross-origin redirect and never verifies TLS against it", async () => {
     // The redirect target records the Host header it actually receives.
     const receivedHostHeaders: (string | null)[] = [];

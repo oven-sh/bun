@@ -6,6 +6,7 @@ import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
 import tls from "node:tls";
+import { ipConstraintCases, ipConstraintCertificates } from "./fixtures/ip-name-constraints.fixture";
 
 // Server presents a cert for CN=agent1 (no SAN), signed by ca1.
 // A client connecting to host "localhost" with ca1 trusted will pass chain
@@ -14,6 +15,40 @@ const fixturesDir = path.join(import.meta.dirname, "fixtures");
 const serverKey = fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"));
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));
 const ca = fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"));
+
+describe("tls.connect IP name constraints", () => {
+  for (const [authority, family, expectedError] of ipConstraintCases) {
+    test(`${authority} / ${family}`, async () => {
+      const { ca, ...credentials } = ipConstraintCertificates(authority, family);
+      const server = tls.createServer(credentials, socket => socket.end());
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const address = server.address();
+        assert.ok(address && typeof address !== "string");
+        const socket = tls.connect({
+          host: "127.0.0.1",
+          servername: "localhost",
+          port: address.port,
+          ca,
+          rejectUnauthorized: true,
+        });
+        try {
+          if (expectedError) {
+            await assert.rejects(once(socket, "secureConnect"), { message: expectedError });
+          } else {
+            await once(socket, "secureConnect");
+            assert.strictEqual(socket.authorized, true);
+          }
+        } finally {
+          socket.destroy();
+        }
+      } finally {
+        server.close();
+      }
+    });
+  }
+});
 
 async function withServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
   const server = tls.createServer({ key: serverKey, cert: serverCert }, c => c.end());

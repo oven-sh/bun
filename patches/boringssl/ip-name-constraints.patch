@@ -1,0 +1,108 @@
+Implement IP address name constraints using RFC 5280 section 4.2.1.10.
+BoringSSL's nc_match_single otherwise rejects GEN_IPADD as unsupported.
+
+--- a/crypto/x509/v3_ncons.cc
++++ b/crypto/x509/v3_ncons.cc
+@@ -507,6 +507,26 @@
+   return X509_V_OK;
+ }
+ 
++int nc_ip(const ASN1_OCTET_STRING *ip, const ASN1_OCTET_STRING *base) {
++  // RFC 5280, section 4.2.1.10 encodes an IP constraint as address || mask.
++  if (ip->length != 4 && ip->length != 16) {
++    return X509_V_ERR_UNSUPPORTED_NAME_SYNTAX;
++  }
++  if (base->length != 8 && base->length != 32) {
++    return X509_V_ERR_UNSUPPORTED_CONSTRAINT_SYNTAX;
++  }
++  if (ip->length * 2 != base->length) {
++    return X509_V_ERR_PERMITTED_VIOLATION;
++  }
++  const uint8_t *mask = base->data + ip->length;
++  for (int i = 0; i < ip->length; i++) {
++    if (((ip->data[i] ^ base->data[i]) & mask[i]) != 0) {
++      return X509_V_ERR_PERMITTED_VIOLATION;
++    }
++  }
++  return X509_V_OK;
++}
++
+ int nc_match_single(const GENERAL_NAME *gen, const GENERAL_NAME *base,
+                     bool excluding, bool case_insensitive_local_part) {
+   switch (base->type) {
+@@ -524,6 +544,9 @@
+       return nc_uri(gen->d.uniformResourceIdentifier,
+                     base->d.uniformResourceIdentifier);
+ 
++    case GEN_IPADD:
++      return nc_ip(gen->d.ip, base->d.ip);
++
+     default:
+       return X509_V_ERR_UNSUPPORTED_CONSTRAINT_TYPE;
+   }
+--- a/crypto/x509/x509_test.cc
++++ b/crypto/x509/x509_test.cc
+@@ -1994,6 +1994,16 @@
+ 
+ static bssl::UniquePtr<GENERAL_NAME> MakeGeneralName(int type,
+                                                      std::string_view value) {
++  if (type == GEN_IPADD) {
++    UniquePtr<ASN1_OCTET_STRING> ip(ASN1_OCTET_STRING_new());
++    UniquePtr<GENERAL_NAME> name(GENERAL_NAME_new());
++    if (!ip || !name || !ASN1_STRING_set(ip.get(), value.data(), value.size())) {
++      return nullptr;
++    }
++    name->type = type;
++    name->d.ip = ip.release();
++    return name;
++  }
+   if (type != GEN_EMAIL && type != GEN_DNS && type != GEN_URI) {
+     // This function only supports the IA5String types.
+     return nullptr;
+@@ -2199,6 +2209,46 @@
+     int permit_result;
+     SpecialCase special_case = SpecialCase::kNormal;
+   } kTests[] = {
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4), std::string(8, '\0'), X509_V_OK},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4),
++       std::string("\x7f\0\0\0\xff\xff\xff\0", 8), X509_V_OK},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4),
++       std::string("\xc0\0\2\0\xff\xff\xff\0", 8),
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4),
++       std::string("\x7f\0\0\1\xff\xff\xff\xff", 8), X509_V_OK},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4),
++       std::string("\x7f\0\0\0\xff\xff\xff\xfe", 8), X509_V_OK},
++      {GEN_IPADD, std::string("\x7f\0\0\2", 4),
++       std::string("\x7f\0\0\0\xff\xff\xff\xfe", 8),
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4),
++       std::string("\x7f\0\0\x09\xff\xff\xff\0", 8), X509_V_OK},
++      {GEN_IPADD, std::string(15, '\0') + '\1', std::string(32, '\0'), X509_V_OK},
++      {GEN_IPADD, std::string(15, '\0') + '\1',
++       std::string(15, '\0') + '\1' + std::string(16, '\xff'), X509_V_OK},
++      {GEN_IPADD, std::string(15, '\0') + '\2',
++       std::string(15, '\0') + '\1' + std::string(16, '\xff'),
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string(15, '\0') + '\1',
++       std::string(16, '\0') + std::string(15, '\xff') + '\xfe', X509_V_OK},
++      {GEN_IPADD, std::string(15, '\0') + '\2',
++       std::string(16, '\0') + std::string(15, '\xff') + '\xfe',
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string("\x7f\0\0\1", 4), std::string(32, '\0'),
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string(15, '\0') + '\1', std::string(8, '\0'),
++       X509_V_ERR_PERMITTED_VIOLATION},
++      {GEN_IPADD, std::string(3, '\0'), std::string(8, '\0'),
++       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
++      {GEN_IPADD, std::string(), std::string(8, '\0'),
++       X509_V_ERR_UNSUPPORTED_NAME_SYNTAX},
++      {GEN_IPADD, std::string(4, '\0'), std::string(7, '\0'),
++       X509_V_ERR_UNSUPPORTED_CONSTRAINT_SYNTAX},
++      {GEN_IPADD, std::string(16, '\0'), std::string(31, '\0'),
++       X509_V_ERR_UNSUPPORTED_CONSTRAINT_SYNTAX},
++      {GEN_IPADD, std::string(4, '\0'), std::string(),
++       X509_V_ERR_UNSUPPORTED_CONSTRAINT_SYNTAX},
+       // Empty string matches everything.
+       {GEN_DNS, "foo.example.com", "", X509_V_OK},
+       // Name constraints match the entire subtree.

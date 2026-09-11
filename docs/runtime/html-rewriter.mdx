@@ -344,11 +344,13 @@ Every method that inserts content (`before`, `after`, `prepend`, `append`, `repl
 - Without it, the string is text. `<`, `>` and `&` are written as `&lt;`, `&gt;` and `&amp;`, so the string can never add markup to the page.
 - With `{ html: true }`, the string is written as is.
 
-The escaping is the same in every element, `<script>` and `<style>` included (this matches Cloudflare Workers). A browser does not decode entities inside `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` or `<plaintext>`, so text inserted there keeps the entities: `el.append("if (a < b) run()")` on a `<script>` produces `if (a &lt; b) run()`, a syntax error. To insert script or style source, pass `{ html: true }` and make sure the string cannot close the element early:
+The escaping is the same in every element, `<script>` and `<style>` included (this matches Cloudflare Workers). A browser does not decode entities inside an HTML `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` or `<plaintext>`, so text inserted there keeps the entities: `el.append("if (a < b) run()")` on a `<script>` produces `if (a &lt; b) run()`, a syntax error. To insert script or style source, pass `{ html: true }` and make sure the string cannot end the element early:
 
 ```ts
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+
 // JSON state: "<" only occurs inside JSON strings, where "\u003c" means the same
-// thing, so this is lossless and rules out "</script>" and "<!--".
+// thing. This is lossless and leaves no "<" at all, so nothing can end the element.
 rewriter.on('script[type="application/json"]', {
   element(el) {
     el.setInnerContent(JSON.stringify(state).replaceAll("<", "\\u003c"), { html: true });
@@ -358,13 +360,21 @@ rewriter.on('script[type="application/json"]', {
 // CSS or JavaScript source has no lossless escape. Refuse input that could end the element.
 rewriter.on("style", {
   element(el) {
+    // A tag selector also matches <svg><style> and <math><style>. To the HTML parser
+    // their contents are ordinary markup, so the default escaping is the right one there.
+    if (el.namespaceURI !== HTML_NS) {
+      el.append(css);
+      return;
+    }
     if (/<\/style/i.test(css)) throw new Error("CSS must not contain </style");
     el.append(css, { html: true });
   },
 });
 ```
 
-For JavaScript source, refuse `</script` and `<!--` (ASCII case-insensitive) the same way. `<textarea>` and `<title>` decode entities like ordinary elements, so the default escaping is correct there.
+Keep the `namespaceURI` check. Inside `<svg>` or `<math>` the parser reads the contents of `<style>` and `<script>` as markup and decodes entities, so a string written there with `{ html: true }` can add elements whichever end tags it avoids.
+
+For JavaScript source in an HTML `<script>`, refuse `</script`, `<script` and `<!--` (ASCII case-insensitive) the same way. After `<!--` and `<script` the parser no longer treats the next `</script>` as the end of the element, so the rest of the page becomes script text (see the [restrictions for contents of script elements](https://html.spec.whatwg.org/multipage/scripting.html#restrictions-for-contents-of-script-elements)). `<textarea>` and `<title>` decode entities like ordinary elements, so the default escaping is correct there.
 
 ### Response Handling
 

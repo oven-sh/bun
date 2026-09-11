@@ -653,6 +653,18 @@ JSValue fetchCommonJSModule(
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     ErrorableResolvedSource* res = &resValue;
+    // An ES module reached from here is the requiring module's loader's (a
+    // Bun.unsafe.ModuleGraph has its own); so is "already loaded as ESM". A disposed
+    // graph has no loader: plain CommonJS still loads, anything that needs the
+    // loader throws.
+    JSC::JSModuleLoader* moduleLoader = target && target->moduleGraph() ? target->moduleGraph()->loader() : globalObject->moduleLoader();
+#define REQUIRE_MODULE_LOADER_OR_THROW()                                            \
+    do {                                                                            \
+        if (!moduleLoader) [[unlikely]] {                                           \
+            throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s); \
+            RELEASE_AND_RETURN(scope, {});                                          \
+        }                                                                           \
+    } while (0)
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -689,10 +701,11 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
+                    REQUIRE_MODULE_LOADER_OR_THROW();
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -758,10 +771,11 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
+                    REQUIRE_MODULE_LOADER_OR_THROW();
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -773,7 +787,7 @@ JSValue fetchCommonJSModule(
     }
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        auto* entry = moduleLoader ? moduleLoader->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString)) : nullptr;
         return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
 
@@ -792,10 +806,11 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, target);
                 }
             } else {
+                REQUIRE_MODULE_LOADER_OR_THROW();
                 JSC::VM::SynchronousModuleQueue queue;
                 queue.prev = vm.m_synchronousModuleQueue;
                 vm.m_synchronousModuleQueue = &queue;
-                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
                 if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                 vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
@@ -806,6 +821,7 @@ JSValue fetchCommonJSModule(
 
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
+#undef REQUIRE_MODULE_LOADER_OR_THROW
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
@@ -890,10 +906,15 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // private queue instead of leaving them on the user microtask queue we're
     // currently inside of.
     {
+        JSC::JSModuleLoader* moduleLoader = target && target->moduleGraph() ? target->moduleGraph()->loader() : globalObject->moduleLoader();
+        if (!moduleLoader) [[unlikely]] {
+            throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
+            RELEASE_AND_RETURN(scope, {});
+        }
         JSC::VM::SynchronousModuleQueue queue;
         queue.prev = vm.m_synchronousModuleQueue;
         vm.m_synchronousModuleQueue = &queue;
-        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        moduleLoader->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
         vm.m_synchronousModuleQueue = queue.prev;
     }

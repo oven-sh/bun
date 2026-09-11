@@ -213,7 +213,7 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     const after = heapStats().objectTypeCounts;
     const d = (n: string) => (after[n] ?? 0) - (before[n] ?? 0);
     expect(d("FunctionExecutable")).toBeLessThan(10); // not K × N
-    expect(d("FunctionCodeBlock")).toBeLessThan(10);
+    expect(d("FunctionCodeBlock")).toBeLessThan(4 * N); // one per tier the shared functions reach, not K × N
     // one module environment per graph (±1: a transient from linking the template may be collected in between)
     expect(d("JSModuleEnvironment")).toBeGreaterThanOrEqual(K - 1);
     expect(d("JSModuleEnvironment")).toBeLessThanOrEqual(K + 1);
@@ -238,14 +238,20 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     const origPrepare = Error.prepareStackTrace;
     const earlier: WeakRef<object>[] = [];
     try {
-      await (async () => {
-        for (let i = 0; i < 4; i++) {
-          const m = await ModuleGraph({ env: {} }).import(join(dir, "intr.mjs"));
+      // A throwaway function (its code, with whatever its call sites cached about the graphs, is garbage afterwards).
+      const AsyncFunction = (async () => {}).constructor as FunctionConstructor;
+      await new AsyncFunction(
+        "ModuleGraph",
+        "file",
+        "earlier",
+        "expect",
+        `for (let i = 0; i < 4; i++) {
+          const m = await ModuleGraph({ env: {} }).import(file);
           expect(m.patch("g" + i)).toBe(true);
           if (i < 3) earlier.push(new WeakRef(m.big));
           m.quit();
-        }
-      })();
+        }`,
+      )(ModuleGraph, join(dir, "intr.mjs"), earlier, expect);
       expect(([1] as any).__graphTag().startsWith("g3")).toBe(true); // host sees the last graph's patch
       // The earlier writers' patches were overwritten, so nothing references their modules any more.
       for (let i = 0; i < 100 && earlier.some(r => r.deref()); i++) {
@@ -1275,6 +1281,31 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CommonJS surface per graph
       { viaMetaRequire: "A", main: true },
       { viaMetaRequire: "B", main: true },
     ]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("ESM import of CommonJS packages where one require()s the other (react-dom/server + react shape), after the host loaded them: each graph gets its own instances", async () => {
+    // b is imported before a and require()s a while the graph's own ESM import of a is still in flight;
+    // that require must be answered by the graph's loader state, not the host's (which has a loaded).
+    const filler = Array.from({ length: 2000 }, (_, i) => `exports.f${i} = function () { return ${i} };`).join("\n");
+    const d = fixture({
+      "a/index.js": `${filler}\nlet n = 0; exports.tag = typeof marker === "undefined" ? "host" : marker; exports.inc = () => ++n;`,
+      "b/index.js": `const a = require("../a/index.js"); exports.viaB = () => [a.tag, a.inc()];`,
+      "entry.mjs": `import b from "./b/index.js"; import a from "./a/index.js"; export const run = () => [a.tag, a.inc(), ...b.viaB()];`,
+    });
+    const host = await import(join(d, "entry.mjs"));
+    expect(host.run()).toEqual(["host", 1, "host", 2]);
+    const results = [];
+    for (let i = 0; i < 6; i++) {
+      const g = new ModuleGraphClass!({ globals: { marker: "g" + i } });
+      results.push(
+        await g.import(join(d, "entry.mjs")).then(
+          m => m.run(),
+          e => String(e.message),
+        ),
+      );
+    }
+    expect(results).toEqual(Array.from({ length: 6 }, (_, i) => ["g" + i, 1, "g" + i, 2]));
+    expect(host.run()).toEqual(["host", 3, "host", 4]);
     rmSync(d, { recursive: true, force: true });
   });
   test("a require() that throws inside a graph leaves neither the graph's nor the host's cache holding the module; the next require re-evaluates", async () => {

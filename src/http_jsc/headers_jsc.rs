@@ -25,18 +25,12 @@ fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
 /// content-type (callers gate on `has_content_type_from_user()` before passing
 /// `content_type()`); `None` means no body or no user-set content-type.
 ///
-/// `Headers` addresses its buffer through `u32` `StringPointer`s. Throws a
-/// `RangeError` when the names and values pass `u32::MAX` bytes in total.
+/// Throws a `RangeError` when the total passes `u32::MAX` bytes, the range of a `StringPointer`.
 pub fn from_fetch_headers(
     global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     body_content_type: Option<&[u8]>,
 ) -> JsResult<Headers> {
-    // `FetchHeaders::fast_has_` takes `&mut self` but is a read-only FFI shim;
-    // cast through `*mut` (matching the prior `link_interface!` impl which did
-    // `from_ref(h).cast_mut()`).
-    let h_ptr: Option<*mut FetchHeaders> = fetch_headers.map(|h| core::ptr::from_ref(h).cast_mut());
-
     let (fetch_header_count, buf_len_before_content_type) =
         match fetch_headers.map(FetchHeaders::count) {
             None => (0, 0),
@@ -50,10 +44,8 @@ pub fn from_fetch_headers(
     };
     let needs_content_type = 'brk: {
         if let Some(body_ct) = body_content_type {
-            // SAFETY: `h` is a valid `&FetchHeaders` for the call; FFI is read-only.
-            let has_ct_header = h_ptr
-                .map(|h| unsafe { (*h).fast_has_(HTTPHeaderName::ContentType as u8) })
-                .unwrap_or(false);
+            let has_ct_header =
+                fetch_headers.is_some_and(|h| h.fast_has_(HTTPHeaderName::ContentType as u8));
             if !has_ct_header {
                 let Some((new_count, new_len)) = header_count.checked_add(1).zip(
                     u32::try_from(b"Content-Type".len() + body_ct.len())
@@ -99,8 +91,7 @@ pub fn from_fetch_headers(
         core::ptr::write_bytes(values_ptr, 0, header_count as usize);
     }
     if let Some(h) = fetch_headers {
-        // SAFETY: both columns hold `header_count >= fetch_header_count` slots, zeroed
-        // above, and nothing else borrows them.
+        // SAFETY: each column holds `header_count >= fetch_header_count` zeroed, unborrowed slots.
         let (names, values) = unsafe {
             (
                 core::slice::from_raw_parts_mut(names_ptr, fetch_header_count as usize),

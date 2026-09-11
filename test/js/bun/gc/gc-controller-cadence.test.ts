@@ -152,6 +152,41 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     // Observed ~128 before the fix (env var ignored).
     expect(eden).toBeLessThan(5);
   });
+
+  // 30 ticks that allocate next to nothing put the timer on its 30 s tick. Work that starts then must get the fast
+  // tick back at once, not half a minute later: with a 20 ms tick that shows as dozens of requested collections in the
+  // second after a 15 MB burst instead of the one or two JSC decides on by itself.
+  test.concurrent("a burst of allocation during the 30 s tick brings the fast tick back", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          setTimeout(() => {
+            const fill = Buffer.alloc(80, "x").toString();
+            let n = 0;
+            for (let i = 0; i < 180_000; i++) n += { i, s: fill + i }.s.length;
+            globalThis.sink = n;
+            console.error("MARK");
+            setTimeout(() => { console.error("DONE"); process.exit(0); }, 1000);
+          }, 1500);
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: "20",
+        BUN_IDLE_GC_SECONDS: "0",
+        BUN_JSC_logGC: "true",
+      },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const afterBurst = stderr.slice(stderr.indexOf("MARK")).split("DONE")[0];
+    expect((afterBurst.match(/=> EdenCollection/g) ?? []).length).toBeGreaterThan(10);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // After BUN_IDLE_GC_SECONDS in which the program did no real work, the controller requests a full collection (so JSC can

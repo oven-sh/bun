@@ -460,10 +460,26 @@ impl GarbageCollectionController {
     }
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
+    /// On the 30 s tick it also puts the timer back on the fast one as soon as the program has allocated a burst's worth:
+    /// work that starts then would otherwise run for up to half a minute without the collections requested every second.
     #[inline]
     pub(crate) fn process_gc_timer(&self) {
-        if self.disabled.get() || self.gc_repeating_timer.get().state != TimerState::PENDING {
+        if self.disabled.get() {
             return;
+        }
+        match self.gc_repeating_timer.get().state {
+            TimerState::PENDING => {}
+            TimerState::ACTIVE if !self.gc_repeating_timer_fast.get() => {
+                let allocated = VirtualMachine::get()
+                    .jsc_vm()
+                    .total_bytes_allocated()
+                    .saturating_sub(self.bytes_allocated_at_last_tick.get());
+                if allocated <= Self::QUIET_BURST_BYTES {
+                    return;
+                }
+                self.gc_repeating_timer_fast.set(true);
+            }
+            _ => return,
         }
         self.arm(
             VirtualMachine::get_mut_ptr(),

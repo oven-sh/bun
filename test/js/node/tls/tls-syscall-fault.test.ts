@@ -221,6 +221,44 @@ describe.skipIf(skip)("fatal SSL_write after the handshake", () => {
     await clientClosed;
   });
 
+  test("node:tls fails a write whose second 16 KiB chunk is the one that fails", async () => {
+    // us_internal_ssl_write seals a large write one 16 KiB record at a time.
+    // A fatal error on a later record used to come back as a plain partial
+    // write: the first record's bytes were reported consumed and the socket
+    // was left neither fatal nor armed for writable, so the remainder the
+    // caller buffered never moved and nothing ever closed the connection.
+    using p = await connectedTLSPair();
+    const events: string[] = [];
+    p.client.on("error", () => {});
+    // Keep the client reading: the first record does reach it, and an unread
+    // record would hold its 'close' back.
+    let clientReceived = 0;
+    p.client.on("data", chunk => (clientReceived += chunk.length));
+    const clientClosed = new Promise<void>(resolve => p.client.on("close", () => resolve()));
+    const serverClosed = Promise.withResolvers<boolean>();
+    p.serverSock.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    p.serverSock.on("close", hadError => {
+      events.push("close");
+      serverClosed.resolve(hadError);
+    });
+
+    const writeCallback = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    // Skip the first SSL_write call (the first record) and fail the second.
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", after: 1 });
+    p.serverSock.write(Buffer.alloc(3 * 16384, "w"), err => writeCallback.resolve(err));
+
+    const [err, hadError] = await Promise.all([writeCallback.promise, serverClosed.promise]);
+    await clientClosed;
+    expect({ code: err?.code, syscall: err?.syscall, events, hadError, clientReceived }).toEqual({
+      code: "EPROTO",
+      syscall: "write",
+      events: ["error:EPROTO", "close"],
+      hadError: true,
+      // Only the record sealed before the failure went out.
+      clientReceived: 16384,
+    });
+  });
+
   test("node:tls reports a failure of the flush retried from the writable dispatch the same way", async () => {
     using p = await connectedTLSPair();
     p.client.on("error", () => {});

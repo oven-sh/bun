@@ -2853,7 +2853,9 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
 #if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
-    if (total == 0) {
+    {
+      /* One check per SSL_write call, so a rule's after_n_calls can target a
+       * later chunk of a multi-chunk write. */
       ssize_t injected = 0;
       int unused = 0;
       if (US_FAULT_CHECK(US_FAULT_SSL_WRITE, us_poll_fd(&s->p), injected, unused)) {
@@ -2892,22 +2894,25 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (batching) {
     ssl_flush_write_batch(loop_ssl_data, s);
   }
-  if (!s->ssl_fatal_error) {
-    if (total > 0) return total;
-    if (last_ssl_written > 0) return 0;
+  if (!s->ssl_fatal_error && last_ssl_written <= 0) {
+    /* Classify the failing chunk whether or not earlier chunks went through.
+     * Only the bytes before it are reported as consumed, and the caller
+     * buffers the rest; a WANT_READ or fatal error on a later chunk has to
+     * be recorded exactly like one on the first, or that remainder waits for
+     * an event nothing would produce. */
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
-      return 0;
+    } else if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+      /* SSL_write drives the handshake when it has not finished, so this is
+       * where a handshake-configuration failure (impossible version window,
+       * no shared cipher) surfaces for a caller that wrote before
+       * 'secureConnect'. Park the reason: the handshake dispatch this failure
+       * triggers reports it instead of a bare verification verdict. */
+      ssl_park_fatal_reason(s);
     }
-    if (err != SSL_ERROR_SSL && err != SSL_ERROR_SYSCALL) return 0;
-    /* SSL_write drives the handshake when it has not finished, so this is
-     * where a handshake-configuration failure (impossible version window,
-     * no shared cipher) surfaces for a caller that wrote before
-     * 'secureConnect'. Park the reason: the handshake dispatch this failure
-     * triggers reports it instead of a bare verification verdict. */
-    ssl_park_fatal_reason(s);
   }
+  if (!s->ssl_fatal_error) return total;
   /* The connection is dead (BoringSSL latched the error, or sealed records
    * were lost to an allocation failure), but every caller reads the 0 below as
    * backpressure and waits for a writable event that nothing would otherwise

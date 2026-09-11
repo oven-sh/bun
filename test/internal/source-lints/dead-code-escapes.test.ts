@@ -31,9 +31,21 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // after the allow, e.g. `#[cfg_attr(test, allow(dead_code), derive(Debug))]`
 // (`[^\]]*\]` tail). Neither `[^\]]` class can cross a `]`, so a match is always
 // fenced inside a single attribute and cannot span from one `#[...]` to the next.
-// Module-level `#![allow(...)]` blocks (codegen surfaces such as
-// `runtime/generated_classes.rs` and `jsc/cpp.rs`) are intentionally not counted.
+// Module-level `#![allow(...)]` blocks are not part of this inventory; see
+// `MODULE_ESCAPE` below.
 const ESCAPE = /#\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)[^\]]*\]/g;
+
+// A module-level `#![allow(dead_code)]` hides a whole file from rustc, and the
+// cross-crate hawk analysis treats every item under it as a reachability root.
+const MODULE_ESCAPE = /#!\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^\]]*?(?<![\w:])dead_code\b[^\]]*\]/;
+const MODULE_ESCAPE_ALLOWED = new Set([
+  // Generated extern surfaces: most declarations are unused by design.
+  "src/jsc/cpp.rs",
+  "src/runtime/generated_classes.rs",
+  // Shares files with bun_install; each of the two builds uses a different half.
+  "src/install/windows-shim/main.rs",
+  "src/react_compiler/diagnostics/mod.rs",
+]);
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 
@@ -55,6 +67,7 @@ const tracked: Set<string> | null = (() => {
 })();
 
 const counts: Record<string, number> = {};
+const moduleLevel: string[] = [];
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
   // `src/cli` is a symlink into `src/runtime/cli`; count each file once
@@ -67,6 +80,7 @@ for (const abs of rustSources) {
   const stripped = content.replace(/^\s*\/\/.*$/gm, "");
   const n = [...stripped.matchAll(ESCAPE)].length;
   if (n > 0) counts[source] = n;
+  if (MODULE_ESCAPE.test(stripped)) moduleLevel.push(source);
 }
 
 if (typeof describe === "undefined") {
@@ -99,4 +113,10 @@ describe("#[allow(dead_code)] escapes", () => {
       }
     });
   }
+});
+
+describe("module-level #![allow(dead_code)] escapes", () => {
+  test("only generated surfaces and the standalone shim opt a whole file out", () => {
+    expect(moduleLevel.filter(source => !MODULE_ESCAPE_ALLOWED.has(source))).toEqual([]);
+  });
 });

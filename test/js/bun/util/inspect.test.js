@@ -590,8 +590,8 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
 
 // JSC has three kinds of arguments objects: DirectArguments (sloppy function), ScopedArguments
 // (sloppy function with a parameter captured by a closure) and ClonedArguments (strict function).
-// The first two keep the arguments outside the regular indexed property storage. `new Function`
-// bodies are sloppy even though this module is strict.
+// The first two keep the arguments outside the regular indexed property storage. This file is a
+// module, so its own functions are strict; the body of a `new Function` is sloppy regardless.
 const argumentsObjectKinds = [
   ["direct", new Function("return arguments")],
   ["scoped", new Function("a", "const f = () => a; return arguments")],
@@ -602,8 +602,12 @@ const argumentsObjectKinds = [
     },
   ],
 ];
+// Only a sloppy function's arguments object has `callee` as a data property (a strict one has a
+// throwing accessor), so this tells the first two kinds from the third.
+const isSloppyArguments = a => "value" in Object.getOwnPropertyDescriptor(a, "callee");
 
 it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and extra indexes", (kind, args) => {
+  expect(isSloppyArguments(args())).toBe(kind !== "cloned");
   let a = args(1, 2, 3);
   delete a[1];
   expect(Bun.inspect(a)).toBe("[ 1, empty item, 3 ]");
@@ -636,12 +640,15 @@ it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and ex
 // anything at all (past 2^32 - 1, a getter) with only a handful of elements behind it, so it must
 // not drive an index-by-index probe either. In a child for the same reason as above.
 it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
+  // Code given to -e without a require() is a module as well, so the same three definitions.
   const code = `
-    function direct() { return arguments; }
-    function scoped(a) { scoped.f = () => a; return arguments; }
+    const direct = new Function("return arguments");
+    const scoped = new Function("a", "const f = () => a; return arguments");
     class K { static cloned() { return arguments; } }
+    const isSloppyArguments = ${isSloppyArguments};
     for (const args of [direct, scoped, K.cloned]) {
       const a = args(1, 2, 3);
+      console.log(isSloppyArguments(a));
       a.length = 2 ** 32;
       console.log(a);
       const b = args(1, 2, 3);
@@ -659,11 +666,11 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const formatted =
+    "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
+    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n';
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: (
-      "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
-      '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n'
-    ).repeat(3),
+    stdout: "true\n" + formatted + "true\n" + formatted + "false\n" + formatted,
     stderr: "",
     exitCode: 0,
   });

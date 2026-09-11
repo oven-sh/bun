@@ -61,13 +61,13 @@ export const libuv: Dependency = {
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
   //
-  // win-pipe-read-req-count-across-callback: uv__process_pipe_read_req keeps
-  // the completed read counted in reqs_pending until it is done with the
-  // handle, like the tcp and tty read paths. Bun re-enters uv_run() from JS
-  // that runs inside read_cb; with upstream's early decrement a uv_close()
-  // from that JS let the nested uv_run() run the close callback and free the
-  // uv_pipe_t under uv__process_pipe_read_req. For oven-sh/libuv's `bun`
-  // branch, not upstream (upstream forbids re-entering uv_run).
+  // win-pipe-read-req-count-across-callback: interim, delete when #40023
+  // lands. uv__process_pipe_read_req decrements reqs_pending last, like every
+  // other DECREASE_PENDING_REQ_COUNT user (libuv/libuv#1843 moved this one
+  // up). JS that runs inside read_cb can still re-enter the loop (#33261, a
+  // bug that #40023 removes). Until then a uv_close() from that JS plus the
+  // nested uv_run() ran the close callback early and freed the uv_pipe_t
+  // under uv__process_pipe_read_req.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",

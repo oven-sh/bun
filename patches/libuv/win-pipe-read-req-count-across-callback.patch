@@ -8,7 +8,7 @@
    eof_timer_stop(handle);
  
    if (handle->read_req.wait_handle != INVALID_HANDLE_VALUE) {
-@@ -2191,11 +2190,23 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
+@@ -2191,11 +2190,26 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
      handle->read_req.wait_handle = INVALID_HANDLE_VALUE;
    }
  
@@ -16,16 +16,19 @@
 -   * reading the pipe in the meantime, there is nothing left to do, since there
 -   * is no callback that we can call. */
 -  if (!(handle->flags & UV_HANDLE_READING))
-+  /* The completed zero-read stays counted in reqs_pending until this function
-+   * is done with the handle. Every other request processor in this file, and
-+   * the tcp and tty read paths, decrement last for the same reason; the read
-+   * one moved its decrement up here in libuv/libuv#1843. While the request is
-+   * counted, a uv_close() from alloc_cb or read_cb cannot reach
-+   * uv__want_endgame(), so the close callback - where the owner frees the
-+   * handle - cannot run before this function returns, even when the read
-+   * callback runs the loop again (Bun re-enters uv_run() from JS that runs
-+   * inside read_cb). With the decrement at the top such a nested uv_run() ran
-+   * the endgame and the handle was freed while it is still used below. */
++  /* Keep the completed zero-read counted in reqs_pending until this function
++   * is done with the handle, like every other user of
++   * DECREASE_PENDING_REQ_COUNT (the other pipe processors, tcp, udp, tty).
++   * libuv/libuv#1843 moved this one to the top as part of a rewrite. While the
++   * request is counted, a uv_close() from alloc_cb or read_cb cannot queue the
++   * endgame, so the close callback, where the owner frees the handle, cannot
++   * run while the handle is still used below.
++   *
++   * Stock libuv runs endgames only at the end of a loop iteration, so the
++   * order does not matter there. It matters in Bun today because JS that runs
++   * inside read_cb can still run the loop again (oven-sh/bun#33261). That
++   * re-entry is a bug, and oven-sh/bun#40023 removes it. Delete this patch
++   * when it lands. */
 +
 +  /* If the user has stopped reading the pipe in the meantime, there is nothing
 +   * left to do, since there is no callback that we can call. */
@@ -36,7 +39,7 @@
  
    if (!REQ_SUCCESS(req)) {
      /* An error occurred doing the zero-read. */
-@@ -2226,11 +2237,17 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
+@@ -2226,11 +2240,17 @@ void uv__process_pipe_read_req(uv_loop_t* loop,
      }
    }
  

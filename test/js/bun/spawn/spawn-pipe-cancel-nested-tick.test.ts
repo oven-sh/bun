@@ -13,6 +13,11 @@
 // memory, queues another read on the freed handle. That crashed `bun test`
 // itself in test/cli/inspect/inspect.test.ts, in uv_timer_stop through
 // eof_timer_start and in the zero-read worker thread, both on a freed pipe.
+//
+// The nesting here comes from the un-awaited `expect().resolves`, which waits
+// for its promise in place (#33261). Once matchers stop doing that (#33289),
+// or pipe reads are dispatched outside libuv callbacks (#40023), this sequence
+// no longer re-enters the loop and the test only checks the plain cancel path.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 

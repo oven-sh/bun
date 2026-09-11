@@ -6915,6 +6915,12 @@ declare module "bun" {
     readonly bytesWritten: number;
 
     /**
+     * The total number of bytes received on the socket since it was established.
+     * On a TLS socket this counts the decrypted bytes.
+     */
+    readonly bytesRead: number;
+
+    /**
      * Alias for `socket.end()`. Allows the socket to be used with `using` declarations
      * for automatic resource management.
      * @example

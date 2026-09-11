@@ -107,6 +107,9 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
+      bytesRead: {
+        getter: "getBytesRead",
+      },
       fd: {
         getter: "getFD",
       },

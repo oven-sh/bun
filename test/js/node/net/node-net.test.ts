@@ -3100,3 +3100,84 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// bytesRead comes from the native handle, like node. The handle counts what it
+// reads even when a JS 'data' handler never runs (the onread path, an h2
+// session), and the count is kept once the handle is gone.
+describe("net.Socket bytesRead", () => {
+  async function listen(onConnection: (c: Socket) => void) {
+    const server = createServer(onConnection);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { server, port: (server.address() as import("node:net").AddressInfo).port };
+  }
+
+  it("equals the bytes the peer wrote and survives 'close'", async () => {
+    const { server, port } = await listen(c => c.end(Buffer.alloc(100_000, "x")));
+    try {
+      const client = createConnection({ port, host: "127.0.0.1" });
+      const duringData: number[] = [];
+      let total = 0;
+      client.on("data", chunk => {
+        total += chunk.length;
+        duringData.push(client.bytesRead);
+      });
+      const [hadError] = await once(client, "close");
+      // Each 'data' sees the count of every byte read so far, including the chunk it got.
+      expect({ hadError, total, lastDuringData: duringData.at(-1), afterClose: client.bytesRead }).toEqual({
+        hadError: false,
+        total: 100_000,
+        lastDuringData: 100_000,
+        afterClose: 100_000,
+      });
+      expect(client._handle).toBeNull();
+    } finally {
+      server.close();
+    }
+  });
+
+  it("onread: counts one slice per callback, and stops at a false return until resume()", async () => {
+    const peer = Promise.withResolvers<Socket>();
+    const { server, port } = await listen(c => {
+      c.write(Buffer.alloc(1024, "a"));
+      peer.resolve(c);
+    });
+    let client: Socket | undefined;
+    try {
+      const seen: number[] = [];
+      const paused = Promise.withResolvers<void>();
+      const done = Promise.withResolvers<void>();
+      client = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(256),
+          callback(n: number) {
+            seen.push(client!.bytesRead);
+            if (seen.length === 1) {
+              paused.resolve();
+              return false;
+            }
+            if (seen.length === 5) done.resolve();
+            return true;
+          },
+        },
+      });
+      client.on("error", done.reject);
+      await paused.promise;
+      // The peer's second write lands in the handle while the callback is stopped.
+      const serverSocket = await peer.promise;
+      await new Promise<void>(resolve => serverSocket.end(Buffer.alloc(16, "b"), () => resolve()));
+      for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+      // node v26.3.0: the handle reads at most one onread buffer per callback, so the
+      // count is the bytes the callback has received, not the bytes in the kernel.
+      expect({ seen, whilePaused: client.bytesRead }).toEqual({ seen: [256], whilePaused: 256 });
+      client.resume();
+      await done.promise;
+      await once(client, "close");
+      expect({ seen, afterClose: client.bytesRead }).toEqual({ seen: [256, 512, 768, 1024, 1040], afterClose: 1040 });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});

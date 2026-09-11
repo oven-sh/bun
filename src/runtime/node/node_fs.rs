@@ -4279,7 +4279,7 @@ pub struct Null;
 pub mod ret {
     use super::*;
 
-    pub(crate) type Access = Null;
+    pub(crate) type Access = ();
     pub(crate) type AppendFile = ();
     pub type Close = ();
     pub(crate) type CopyFile = ();
@@ -4443,7 +4443,7 @@ impl NodeFS {
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
                     return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
                 }
-                return Ok(Null);
+                return Ok(());
             }
         }
         // The `bun_sys::access` Windows
@@ -4457,7 +4457,7 @@ impl NodeFS {
         };
         match Syscall::access(path, args.mode.as_int()) {
             Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(Null),
+            Ok(_) => Ok(()),
         }
     }
 

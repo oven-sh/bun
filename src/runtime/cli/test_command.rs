@@ -1013,7 +1013,11 @@ impl CommandLineReporter {
             match sequence.timed_out_hook {
                 Some(hook) => {
                     let name: &'static str = hook.tag.map_or("hook", Into::into);
-                    let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                    let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                        "an"
+                    } else {
+                        "a"
+                    };
                     let label = if hook.tag.is_some_and(|tag| tag.is_per_test()) {
                         format!("{article} {name} hook for this test")
                     } else {

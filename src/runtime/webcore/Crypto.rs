@@ -4,6 +4,44 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, Str
 
 use crate::node::Encoding;
 
+// UUIDv7 and ULID both encode a 48-bit Unix timestamp in milliseconds.
+const MAX_48_BIT_TIMESTAMP: i64 = (1i64 << 48) - 1;
+
+fn timestamp_range_options() -> bun_jsc::RangeErrorOptions<'static> {
+    bun_jsc::RangeErrorOptions {
+        min: 0,
+        max: MAX_48_BIT_TIMESTAMP,
+        field_name: b"timestamp",
+        ..Default::default()
+    }
+}
+
+fn parse_48_bit_timestamp(global: &JSGlobalObject, value: JSValue) -> JsResult<u64> {
+    if value.is_date() {
+        let timestamp = value.get_unix_timestamp();
+        if !timestamp.is_finite() || timestamp < 0.0 || timestamp > MAX_48_BIT_TIMESTAMP as f64 {
+            return Err(global.throw_range_error(timestamp, timestamp_range_options()));
+        }
+        return Ok(timestamp as u64);
+    }
+
+    if value.is_number() && value.as_number().is_nan() {
+        return Err(global.throw_range_error(f64::NAN, timestamp_range_options()));
+    }
+
+    Ok(u64::try_from(global.validate_integer_range::<i64>(
+        value,
+        0,
+        bun_jsc::IntegerRange {
+            min: 0,
+            max: i128::from(MAX_48_BIT_TIMESTAMP),
+            field_name: b"timestamp",
+            ..Default::default()
+        },
+    )?)
+    .unwrap())
+}
+
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
 // provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
@@ -171,36 +209,8 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         };
 
         if !timestamp_value.is_undefined() {
-            // UUIDv7's unix_ts_ms field is 48 bits (RFC 9562 §5.7).
-            const MAX_TIMESTAMP: i64 = (1i64 << 48) - 1;
-            let range_opts = bun_jsc::RangeErrorOptions {
-                min: 0,
-                max: MAX_TIMESTAMP,
-                field_name: b"timestamp",
-                ..Default::default()
-            };
-            if timestamp_value.is_date() {
-                let date = timestamp_value.get_unix_timestamp();
-                if !date.is_finite() || date < 0.0 || date > MAX_TIMESTAMP as f64 {
-                    return Err(global.throw_range_error(date, range_opts));
-                }
-                break 'brk (date as u64, uuid::TimestampSource::Explicit);
-            }
-            if timestamp_value.is_number() && timestamp_value.as_number().is_nan() {
-                return Err(global.throw_range_error(f64::NAN, range_opts));
-            }
             break 'brk (
-                u64::try_from(global.validate_integer_range::<i64>(
-                    timestamp_value,
-                    0,
-                    bun_jsc::IntegerRange {
-                        min: 0,
-                        max: i128::from(MAX_TIMESTAMP),
-                        field_name: b"timestamp",
-                        ..Default::default()
-                    },
-                )?)
-                .unwrap(),
+                parse_48_bit_timestamp(global, timestamp_value)?,
                 uuid::TimestampSource::Explicit,
             );
         }
@@ -231,6 +241,38 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
+}
+
+#[bun_jsc::host_fn(export = "Bun__randomULID")]
+fn bun_random_ulid(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let timestamp_value = callframe.argument(0);
+    let timestamp = if timestamp_value.is_undefined() {
+        let timestamp = bun_core::time::milli_timestamp().max(0);
+        if timestamp > MAX_48_BIT_TIMESTAMP {
+            return Err(global.throw_range_error(timestamp, timestamp_range_options()));
+        }
+        timestamp as u64
+    } else {
+        parse_48_bit_timestamp(global, timestamp_value)?
+    };
+
+    let (str, bytes) = BunString::create_uninitialized_latin1(uuid::ULID_STRING_LENGTH);
+    if str.is_dead() {
+        return str.into_js(global);
+    }
+
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+    let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
+    let randomness: &[u8; 10] = (&*entropy).try_into().expect("infallible: size matches");
+    uuid::print_ulid(
+        timestamp,
+        randomness,
+        (&mut bytes[..uuid::ULID_STRING_LENGTH])
+            .try_into()
+            .expect("infallible: size matches"),
+    );
+
+    str.into_js(global)
 }
 
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]

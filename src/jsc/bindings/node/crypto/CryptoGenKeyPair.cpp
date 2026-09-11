@@ -78,7 +78,7 @@ KeyEncodingConfig parseKeyEncodingConfig(JSGlobalObject* globalObject, ThrowScop
         // defaults and output key object
         publicKeyEncoding.output_key_object = true;
     } else if (JSObject* publicKeyEncodingObj = publicKeyEncodingValue.getObject()) {
-        parsePublicKeyEncoding(globalObject, scope, publicKeyEncodingObj, keyTypeValue, "publicKeyEncoding"_s, publicKeyEncoding);
+        parsePublicKeyEncoding(globalObject, scope, publicKeyEncodingObj, keyTypeValue, "options.publicKeyEncoding"_s, publicKeyEncoding);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.publicKeyEncoding"_s, publicKeyEncodingValue);
@@ -89,7 +89,7 @@ KeyEncodingConfig parseKeyEncodingConfig(JSGlobalObject* globalObject, ThrowScop
         // defaults and output key object
         privateKeyEncoding.output_key_object = true;
     } else if (JSObject* privateKeyEncodingObj = privateKeyEncodingValue.getObject()) {
-        parsePrivateKeyEncoding(globalObject, scope, privateKeyEncodingObj, keyTypeValue, "privateKeyEncoding"_s, privateKeyEncoding);
+        parsePrivateKeyEncoding(globalObject, scope, privateKeyEncodingObj, keyTypeValue, "options.privateKeyEncoding"_s, privateKeyEncoding);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKeyEncoding"_s, privateKeyEncodingValue);

@@ -66,6 +66,14 @@ function assertApproximateSize(key: any, expectedSize: number) {
   expect(key.length).toBeGreaterThanOrEqual(min);
   expect(key.length).toBeLessThanOrEqual(max);
 }
+// The error node's ERR_INVALID_ARG_VALUE(name, value) produces; `received` is util.inspect(value).
+function invalidArgValue(name: string, received: string) {
+  return expect.objectContaining({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The property '${name}' is invalid. Received ${received}`,
+  });
+}
+
 // Tests that a key pair can be used for encryption / decryption.
 function testEncryptDecrypt(publicKey: any, privateKey: any) {
   const message = "Hello Node.js world!";
@@ -328,7 +336,70 @@ describe("crypto.KeyObjects", () => {
     expect(() => createPrivateKey({ key: "" })).toThrow();
   });
   test("This should not abort either: https://github.com/nodejs/node/issues/29904", async () => {
-    expect(() => createPrivateKey({ key: Buffer.alloc(0), format: "der", type: "spki" })).toThrow();
+    expect(() => createPrivateKey({ key: Buffer.alloc(0), format: "der", type: "spki" })).toThrow(
+      invalidArgValue("key.type", "'spki'"),
+    );
+  });
+
+  // Node names a rejected encoding option after the object it was read from (nodejs/node#62527, v26.1.0):
+  // `key.<option>` for a `{ key, format, type, ... }` argument, `options.<option>` for KeyObject#export and
+  // `options.<public|private>KeyEncoding.<option>` for generateKeyPair.
+  describe("encoding option names in ERR_INVALID_ARG_VALUE messages", () => {
+    const privateDer = createPrivateKey(privatePem).export({ format: "der", type: "pkcs8" }) as Buffer;
+    const keyMaterial = {
+      string: () => privatePem,
+      Buffer: () => privateDer,
+      ArrayBuffer: () => privateDer.buffer.slice(privateDer.byteOffset, privateDer.byteOffset + privateDer.byteLength),
+    };
+    const data = Buffer.from("hello");
+    const consumers = {
+      createPrivateKey: (key: any) => createPrivateKey(key),
+      createPublicKey: (key: any) => createPublicKey(key),
+      sign: (key: any) => sign("sha256", data, key),
+      verify: (key: any) => verify("sha256", data, key, data),
+      "Verify#verify": (key: any) => createVerify("sha256").update(data).verify(key, data),
+      publicEncrypt: (key: any) => publicEncrypt(key, data),
+      publicDecrypt: (key: any) => publicDecrypt(key, data),
+    };
+
+    describe.each(Object.entries(consumers))("%s", (_, consume) => {
+      test.each(Object.entries(keyMaterial))("names the options key.<option> (%s key material)", (_, material) => {
+        const key = material();
+        expect(() => consume({ key, format: "bogus" })).toThrow(invalidArgValue("key.format", "'bogus'"));
+        expect(() => consume({ key, format: "der", type: "bogus" })).toThrow(invalidArgValue("key.type", "'bogus'"));
+        expect(() => consume({ key, format: "der" })).toThrow(invalidArgValue("key.type", "undefined"));
+        expect(() => consume({ key, passphrase: 123 })).toThrow(invalidArgValue("key.passphrase", "123"));
+      });
+    });
+
+    test("KeyObject#export names the options options.<option>", () => {
+      const privateKey = createPrivateKey(privatePem);
+      const exportWith = (options: any) => () => privateKey.export(options);
+      expect(exportWith({ format: "bogus" })).toThrow(invalidArgValue("options.format", "'bogus'"));
+      expect(exportWith({ format: "der", type: "bogus" })).toThrow(invalidArgValue("options.type", "'bogus'"));
+      expect(exportWith({ format: "pem", type: "pkcs8", cipher: 5, passphrase: "secret" })).toThrow(
+        invalidArgValue("options.cipher", "5"),
+      );
+      expect(exportWith({ format: "pem", type: "pkcs8", cipher: "aes-128-cbc", passphrase: 5 })).toThrow(
+        invalidArgValue("options.passphrase", "5"),
+      );
+    });
+
+    test("generateKeyPairSync names the options options.<public|private>KeyEncoding.<option>", () => {
+      const generateWith = (options: any) => () => generateKeyPairSync("ed25519", options);
+      expect(generateWith({ publicKeyEncoding: { format: "bogus", type: "spki" } })).toThrow(
+        invalidArgValue("options.publicKeyEncoding.format", "'bogus'"),
+      );
+      expect(generateWith({ privateKeyEncoding: { format: "pem", type: "bogus" } })).toThrow(
+        invalidArgValue("options.privateKeyEncoding.type", "'bogus'"),
+      );
+      expect(
+        generateWith({ privateKeyEncoding: { format: "pem", type: "pkcs8", cipher: 5, passphrase: "secret" } }),
+      ).toThrow(invalidArgValue("options.privateKeyEncoding.cipher", "5"));
+      expect(
+        generateWith({ privateKeyEncoding: { format: "pem", type: "pkcs8", cipher: "aes-128-cbc", passphrase: 5 } }),
+      ).toThrow(invalidArgValue("options.privateKeyEncoding.passphrase", "5"));
+    });
   });
 
   test("BoringSSL will not parse PKCS#1", async () => {

@@ -6,14 +6,40 @@
 # 4. I don't know how to write fish completions well
 # Contributions very welcome!!
 
+function __fish__bun_extract_cwd
+    set -l tokens (commandline -cop)
+    for i in (seq 1 (count $tokens))
+        if test "$tokens[$i]" = "--cwd"
+            set -l next_idx (math $i + 1)
+            if test $next_idx -le (count $tokens)
+                eval echo $tokens[$next_idx]
+                return
+            end
+        else if string match -q -- "--cwd=*" "$tokens[$i]"
+            eval echo (string replace -- "--cwd=" "" "$tokens[$i]")
+            return
+        end
+    end
+    echo "."
+end
+
 function __fish__get_bun_bins
-	string split ' ' (bun getcompletes b)
+    set -l target_cwd (__fish__bun_extract_cwd)
+    if test -d "$target_cwd"
+        builtin cd "$target_cwd"
+        string split " " (bun getcompletes b 2>/dev/null)
+    end
 end
 
 function __fish__get_bun_scripts
-	set -lx SHELL bash
-	set -lx MAX_DESCRIPTION_LEN 40
-	string trim (string split '\n' (string split '\t' (bun getcompletes z)))
+    set -l target_cwd (__fish__bun_extract_cwd)
+    if test -d "$target_cwd"
+        builtin cd "$target_cwd"
+        set -lx SHELL bash
+        set -lx MAX_DESCRIPTION_LEN 40
+        string trim (string split "
+" (string split '\t' (bun getcompletes z 2>/dev/null)))
+    end
 end
 
 function __fish__get_bun_packages

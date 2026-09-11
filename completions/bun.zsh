@@ -1100,8 +1100,23 @@ _bun_list_bunfig_toml() {
 
 _bun_run_param_script_completion() {
     local -a scripts_list bins
-    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
+    local target_cwd="${PWD}"
+    local i
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+            target_cwd="${(e)words[i+1]}"
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            target_cwd="${(e)words[i]#--cwd=}"
+        fi
+    done
+
+    () {
+        builtin cd -q "${target_cwd}" 2>/dev/null || return 0
+        IFS=$'
+' scripts_list=($(SHELL=zsh bun getcompletes s 2>/dev/null))
+        IFS=$'
+' bins=($(SHELL=zsh bun getcompletes b 2>/dev/null))
+    }
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
@@ -1120,17 +1135,37 @@ _bun_link_param_package_completion() {
 }
 
 _bun_remove_param_package_completion() {
-    if ! command -v jq &>/dev/null; then
-        return
-    fi
+    local pkg_dir="${PWD}"
+    local i
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+            pkg_dir="${(e)words[i+1]}"
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            pkg_dir="${(e)words[i]#--cwd=}"
+        fi
+    done
 
-    # TODO: move to "bun getcompletes"
-    if [ -f "package.json" ]; then
-        local -a dependencies dev_dependencies
-        IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
-        IFS=$'\n' dev_dependencies=($(jq -r '.devDependencies | keys[]' package.json))
-        _alternative "deps:dependency:compadd -a dependencies"
-        _alternative "deps:dependency:compadd -a dev_dependencies"
+    local pkg_file="${pkg_dir}/package.json"
+    if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
+        local -a deps
+        local in_dep_block=0 line
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+            if (( ! in_dep_block )); then
+                if [[ "${line}" =~ \"(dependencies|devDependencies|peerDependencies|optionalDependencies)\"[[:space:]]*:[[:space:]]*\{? ]]; then
+                    in_dep_block=1
+                fi
+            else
+                if [[ "${line}" =~ \}[[:space:]]*,? ]]; then
+                    in_dep_block=0
+                elif [[ "${line}" =~ \"([^\"\]+)\"[[:space:]]*: ]]; then
+                    deps+=( "${match[1]}" )
+                fi
+            fi
+        done < "${pkg_file}"
+
+        if (( ${#deps} > 0 )); then
+            _alternative "deps:dependency:compadd -a deps"
+        fi
     fi
 }
 

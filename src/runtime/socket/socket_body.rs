@@ -326,8 +326,7 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
     pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
-    /// Payload bytes this wrapper delivered through `on_data` (plaintext on a
-    /// TLS view). Node's `socket.bytesRead` reads the handle's counter.
+    /// Bytes delivered through `on_data` (plaintext on a TLS view).
     pub(crate) bytes_read: Cell<u64>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
@@ -2206,9 +2205,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        // Counted before any consumer sees the bytes, so `bytesRead` is
-        // right whether a native consumer (an h2 session) or the JS `data`
-        // handler takes them.
         this.bytes_read
             .set(this.bytes_read.get() + data.len() as u64);
         if this.native_callback.get().on_data(data)? {
@@ -3668,9 +3664,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
-            // Same fd as the retired TCP wrapper: the bytes read before the
-            // upgrade stay with the raw view, like node's TCP handle under a
-            // TLSWrap.
+            // Same fd as the retired TCP wrapper: its count moves to the raw view.
             bytes_read: Cell::new(this.bytes_read.get()),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),

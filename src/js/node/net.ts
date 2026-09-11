@@ -189,10 +189,8 @@ function onUpgradeWriteClose(callback) {
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
 const kOnreadTail = Symbol("kOnreadTail");
-// Bytes the handle read that the onread callback has not received yet: the
-// tail plus the rest of the buffer deliver() is slicing. bytesRead leaves them
-// out, because node's handle reads at most one onread buffer per callback.
-const kOnreadUndelivered = Symbol("kOnreadUndelivered");
+// Bytes of the chunk deliver() is slicing that the onread callback has not received yet.
+const kOnreadSlicing = Symbol("kOnreadSlicing");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
@@ -267,8 +265,10 @@ function closeAdoptedTLSRawNowNT(handle, self, isException) {
   handle.close(onSocketHandleClosed);
   setImmediate(emitCloseNT, self, isException);
 }
+// An onread socket leaves out what the handle read but the callback has not received: node's
+// handle reads at most one onread buffer per callback.
 function handleBytesRead(self, handle) {
-  return handle.bytesRead - (self[kOnreadUndelivered] || 0);
+  return handle.bytesRead - (self[kOnreadTail]?.length ?? 0) - (self[kOnreadSlicing] ?? 0);
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -1703,7 +1703,7 @@ function Socket(options?) {
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
-    this[kOnreadUndelivered] = 0;
+    this[kOnreadSlicing] = 0;
     // Node calls the factory once at initSocketHandle time, then once after
     // every callback (stream_base_commons onStreamRead): the first delivery
     // already has a real buffer, and a non-Uint8Array result leaves the prior
@@ -1721,12 +1721,20 @@ function Socket(options?) {
     // native read in this loop, so the catch is per-slice.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
     this[kOnreadDeliver] = function deliver(buffer) {
+      self[kOnreadSlicing] = buffer.length;
+      try {
+        deliverSlices(buffer);
+      } finally {
+        self[kOnreadSlicing] = 0;
+      }
+    };
+    function deliverSlices(buffer) {
       let offset = 0;
       const total = buffer.length;
       while (offset < total) {
         const dest = self[kOnreadBuffer];
         if (dest === true) {
-          self[kOnreadUndelivered] -= total - offset;
+          self[kOnreadSlicing] = 0;
           let ret;
           try {
             ret = onreadCallback(total - offset, true);
@@ -1758,7 +1766,7 @@ function Socket(options?) {
         const n = MathMin(dest.length, total - offset);
         dest.set(buffer.subarray(offset, offset + n));
         offset += n;
-        self[kOnreadUndelivered] -= n;
+        self[kOnreadSlicing] = total - offset;
         let ret;
         try {
           ret = onreadCallback(n, dest);
@@ -1779,7 +1787,7 @@ function Socket(options?) {
           return;
         }
       }
-    };
+    }
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -1787,7 +1795,6 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        self[kOnreadUndelivered] += buffer.length;
         const tail = self[kOnreadTail];
         if (tail !== undefined) {
           self[kOnreadTail] = Buffer.concat([tail, buffer]);
@@ -1857,9 +1864,7 @@ Object.defineProperty(Socket.prototype, "_bytesDispatched", {
   },
 });
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L896-L900: the handle
-// counts every byte it reads, so a native consumer of the socket (an h2
-// session) is counted too. The count moves to kBytesRead when the handle goes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L896-L900
 Object.defineProperty(Socket.prototype, "bytesRead", {
   get: function () {
     const handle = this._handle;

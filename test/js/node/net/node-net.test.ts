@@ -3162,7 +3162,10 @@ describe("net.Socket bytesRead", () => {
           },
         },
       });
-      client.on("error", done.reject);
+      client.on("error", err => {
+        paused.reject(err);
+        done.reject(err);
+      });
       await paused.promise;
       // The peer's second write lands in the handle while the callback is stopped.
       const serverSocket = await peer.promise;

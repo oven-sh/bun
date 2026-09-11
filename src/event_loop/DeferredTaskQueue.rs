@@ -87,7 +87,8 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        // Every entry present now gets its turn in this pass; only ones posted during it can miss.
+        // Every entry present now runs in this pass. Only an entry posted during the pass can
+        // miss it.
         self.unrun = false;
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and

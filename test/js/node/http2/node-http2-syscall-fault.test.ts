@@ -3,6 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
+import { constants as osConstants } from "node:os";
 import path from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -20,7 +22,7 @@ async function makeServer(handler: (stream: http2.ServerHttp2Stream, headers: ht
   server.on("sessionError", () => {});
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  const port = (server.address() as import("node:net").AddressInfo).port;
+  const port = (server.address() as net.AddressInfo).port;
   return {
     port,
     url: `http://127.0.0.1:${port}`,
@@ -183,6 +185,49 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     } finally {
       fault.clear();
       client.close();
+    }
+  });
+
+  // A send the kernel rejects latches the parser's fatal-write flag, and a deferred tick decides
+  // what to do about it. When the next send goes through, the transport has recovered and the
+  // tick only clears the latch. It used to return right there, although it is the same tick the
+  // corked HEADERS frame was registered for, so the frame stayed in the cork. macOS hit this on
+  // every connect while the preface was still written to a connecting socket (ENOTCONN there,
+  // EAGAIN on Linux). The peer below stays silent until it has the HEADERS, so nothing else
+  // pushes them out.
+  test.each([
+    ["a request that ends with its HEADERS", {}, undefined],
+    ["a request that stays open", { ":method": "POST" }, { endStream: false }],
+  ])("send → one ENOTCONN, then recovery: HEADERS of %s still reach the peer", async (_, headers, options) => {
+    const gotHeaders = Promise.withResolvers<void>();
+    let received = Buffer.alloc(0);
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        // Skip the 24-byte preface, then walk the frames looking for HEADERS (type 1) on stream 1.
+        for (let at = 24; at + 9 <= received.length; at += 9 + received.readUIntBE(at, 3)) {
+          if (received[at + 3] === 1 && (received.readUInt32BE(at + 5) & 0x7fffffff) === 1) gotHeaders.resolve();
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    // The first send is the preface, flushed when the socket connects. The session flushes again
+    // right after, and that send drains what the first one left buffered.
+    fault.set({ syscall: "send", action: "errno", errno: osConstants.errno.ENOTCONN, repeat: 1 });
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", gotHeaders.reject);
+    client.on("close", () => gotHeaders.reject(new Error("session closed before its HEADERS left")));
+    try {
+      const req = client.request({ ":path": "/", ...headers }, options);
+      req.on("error", () => {});
+      await gotHeaders.promise;
+    } finally {
+      fault.clear();
+      client.destroy();
+      server.close();
     }
   });
 

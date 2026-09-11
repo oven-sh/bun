@@ -242,9 +242,12 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
-    case "/stop":
-      setTimeout(() => server.stop(), 0);
+    case "/stop": {
+      // ?exit: leave once the stop() promise resolves, that is once every connection is gone.
+      const exit = url.searchParams.has("exit");
+      setTimeout(() => server.stop().then(() => exit && process.exit(0)), 0);
       return new Response("stopping");
+    }
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },

@@ -2174,6 +2174,107 @@ describe("bundler", () => {
     minifySyntax: false, // intentionally disabled. enum inlining always happens
     dce: true,
   });
+  // Only a read is inlined. A write or a `delete` keeps the property access:
+  // `1 = 10` is a SyntaxError.
+  itBundled("ts/EnumCrossModuleInliningWriteTargets", {
+    files: {
+      "/entry.js": /* js */ `
+        import { E } from './enums'
+        import * as ns from './enums'
+        console.log(E.A, ns.E['B']);
+        E.A = 10;
+        E.B++;
+        ns.E.C += 5;
+        [E.D] = [40];
+        ({ v: E.F } = { v: 50 });
+        for (ns.E.G of [60]);
+        for (E['H'] in { key: 0 });
+        delete E.I;
+        E.J ||= 0;
+        E.J &&= 90;
+        [E.K = 11, ...E.L] = [, 1, 2];
+        ({ v: [E.M] } = { v: [13] });
+        // "delete NaN" is a SyntaxError in strict mode.
+        delete E.N;
+        E['P'] = 70;
+        delete ns.E['Q'];
+        E['r-s']++;
+        const read = key => E[key];
+        console.log(...['A', 'B', 'C', 'D', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'P', 'Q', 'r-s'].map(read));
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { A = 1, B, C, D, F, G, H, I, J, K, L, M, N = 0 / 0, P = 5, Q, 'r-s' }
+      `,
+    },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
+    run: { stdout: "1 2\n10 3 8 40 50 60 key undefined 90 11 [ 1, 2 ] 13 undefined 70 undefined 8" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("console.log(1 /* A */, 2 /* B */);");
+      api.expectFile("/out.js").toContain("E.A = 10;");
+      api.expectFile("/out.js").toContain("delete E.I;");
+      api.expectFile("/out.js").toContain('E["P"] = 70;');
+    },
+  });
+  // The parser reads the key of "E[Key.first]" through the inlined "Key.first"
+  // and drops "E", so the printer has to read it the same way.
+  itBundled("ts/EnumCrossModuleInliningIndexedByInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E_DROP } from './enums'
+        enum Key { first = 'A', second = 'B' }
+        console.log(E_DROP[Key.first], E_DROP[Key.second])
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E_DROP { A = 1, B = 'two' }
+      `,
+    },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
+    dce: true,
+    run: { stdout: "1 two" },
+  });
+  // With minifySyntax the parser turns "E[key]" into "E.A" once the key folds to
+  // a string, after it visited "E". That node is still a counted read.
+  itBundled("ts/EnumCrossModuleInliningFoldedIndexMinify", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E_DROP } from './enums'
+        enum Key { first = 'A' }
+        function viaConst() {
+          const second = 'B'
+          return E_DROP[second]
+        }
+        console.log(E_DROP[Key.first], E_DROP['A' + ''], viaConst())
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E_DROP { A = 1, B = 'two' }
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    run: { stdout: "1 1 two" },
+  });
+  // "logger.ts" runs before "levels.ts" has created the enum object, so the
+  // read only works inlined.
+  itBundled("ts/EnumCrossModuleInliningFoldedIndexInCycle", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { LogLevel } from './levels'
+        import { level } from './logger'
+        console.log(level, Object.keys(LogLevel).length)
+      `,
+      "/levels.ts": /* ts */ `
+        import './logger'
+        export enum LogLevel { production = 'warn', development = 'debug' }
+      `,
+      "/logger.ts": /* ts */ `
+        import { LogLevel } from './levels'
+        export const level = LogLevel[process.env.NODE_ENV]
+      `,
+    },
+    minifySyntax: true,
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "warn 2" },
+  });
   itBundled("ts/EnumCrossModuleInliningDefinitions", {
     files: {
       "/entry.ts": /* ts */ `

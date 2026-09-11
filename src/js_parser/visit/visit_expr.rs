@@ -1003,15 +1003,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // A folded `"a" + "b"` is a rope whose `data` is only "a".
                         s.resolve_rope_if_needed(p.arena);
 
+                        let opts = IdentifierOpts::default()
+                            .with_is_call_target(is_call_target)
+                            .with_is_template_tag(is_template_tag)
+                            .with_is_delete_target(is_delete_target)
+                            .with_assign_target(in_.assign_target);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
                         if p.options.features.minify_syntax && s.is_identifier(p.arena) {
+                            let is_import_property_use = e_.optional_chain.is_none()
+                                && p.record_import_property_use(&e_.target, s.data.slice(), opts);
                             let dot = p.new_expr(
                                 E::Dot {
                                     name: s.data,
                                     name_loc: unwrapped.loc,
                                     target: e_.target,
                                     optional_chain: e_.optional_chain,
+                                    is_import_property_use,
                                     ..Default::default()
                                 },
                                 expr.loc,
@@ -1034,11 +1043,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
-                            let opts = IdentifierOpts::default()
-                                .with_is_call_target(is_call_target)
-                                .with_is_template_tag(is_template_tag)
-                                .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,

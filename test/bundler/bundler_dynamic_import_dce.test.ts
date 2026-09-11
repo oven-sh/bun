@@ -4117,6 +4117,66 @@ describe("bundler", () => {
     stdout: "1 2",
   });
 
+  // Only a read of an enum member prints as its value. A write or a `delete`
+  // keeps the property access: `1 = 10` is a SyntaxError.
+  itElides("EnumMemberWriteTargets", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { E } = await import("./x.ts");
+          const { E: fromRequire } = require("./x.ts");
+          const ns = await import("./x.ts");
+          E.A = 10;
+          fromRequire.B++;
+          ns.E.C += 5;
+          [E.D] = [40];
+          ({ v: fromRequire.F } = { v: 50 });
+          for (ns.E.G of [60]);
+          for (E["H"] in { key: 0 });
+          delete fromRequire.I;
+          await import("./x.ts").then(({ E: fromThen }) => {
+            fromThen.J ||= 0;
+            fromThen.J &&= 90;
+          });
+          [E.K = 11, ...fromRequire.L] = [, 1, 2];
+          ({ v: [ns.E.M] } = { v: [13] });
+          // Not an identifier, so it stays an index when minified too.
+          fromRequire["n-o"] = 14;
+          delete E["p-q"];
+          const read = key => E[key];
+          console.log(...["A", "B", "C", "D", "F", "G", "H", "I", "J", "K", "L", "M", "n-o", "p-q"].map(read));
+        }
+        main();
+      `,
+      "/x.ts": `export enum E { A = 1, B, C, D, F, G, H, I, J, K, L, M, "n-o", "p-q" } export const d = "DROPPED";`,
+    },
+    stdout: "10 3 8 40 50 60 key undefined 90 11 [ 1, 2 ] 13 14 undefined",
+    output(out) {
+      expect(out).toContain("E.A = 10;");
+      expect(out).toContain("delete E.I;");
+      expect(out).toContain('E["n-o"] = 14;');
+    },
+  });
+
+  // The parser reads the key of `E[Key.first]` through the inlined `Key.first`
+  // and drops `E`, so the printer has to read it the same way. `F`'s key is
+  // not an identifier, so it stays an index when minified too.
+  itElides("EnumIndexedByInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        enum Key { first = "A", second = "B", third = "c-d" }
+        async function main() {
+          const { E, F } = await import("./x.ts");
+          const { E: fromRequire } = require("./x.ts");
+          console.log(E[Key.first], fromRequire[Key.second], F[Key.third]);
+        }
+        main();
+      `,
+      "/x.ts": `export enum E { A = 1, B = "two" } export enum F { "c-d" = 3 } export const d = "DROPPED";`,
+    },
+    stdout: "1 two 3",
+  });
+
   // An importer of the file that destructured the name must not bind
   // through it: that would load the split chunk eagerly.
   itBundled("dynamic_import_dce/ReexportedDestructuredNameStaysLazy", {

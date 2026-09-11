@@ -29,16 +29,47 @@ namespace Bun {
 // user controlled and can pass `WTF::String::MaxLength` (2^31 - 1 characters).
 // A default-constructed `WTF::StringBuilder` calls `CRASH()` on that append,
 // and on a failed allocation, which aborts the process instead of reporting
-// the error it was building. This builder records the overflow, and
-// `createError`/`throwError` report a message that did not fit as `RangeError:
-// Out of memory`, which is what JSC reports for a string it cannot create.
+// the error it was building. This builder records the overflow. A message that
+// did not fit is reported as `RangeError: Out of memory`, which is what JSC
+// reports for a string it cannot create.
+//
+// Pass the builder to `Bun::createError` or `Bun::throwError`. For any other
+// sink (`JSC::throwTypeError`, a `WebCore::Exception`) build the message with
+// `tryMakeString` and use `throwTypeErrorOrOutOfMemory` or
+// `Exception { OutOfMemoryError }`.
 class MessageBuilder final : public WTF::StringBuilder {
 public:
     MessageBuilder()
         : WTF::StringBuilder(WTF::OverflowPolicy::RecordOverflow)
     {
     }
+
+    // The message, or a null string when it did not fit.
+    WTF::String tryToString()
+    {
+        if (hasOverflowed()) [[unlikely]]
+            return {};
+        return WTF::StringBuilder::toString();
+    }
+
+    // The message. When it did not fit, throws `RangeError: Out of memory` and
+    // returns a null string.
+    WTF::String finish(JSC::JSGlobalObject*, JSC::ThrowScope&);
+
+private:
+    // These assert that the builder did not overflow, so they abort on the
+    // input this type exists for. Use `tryToString` or `finish`.
+    using WTF::StringBuilder::capacity;
+    using WTF::StringBuilder::length;
+    using WTF::StringBuilder::toAtomString;
+    using WTF::StringBuilder::toString;
+    using WTF::StringBuilder::toStringPreserveCapacity;
 };
+
+// Throws a TypeError whose message was built with `tryMakeString`. A null
+// `message` means the text did not fit in a string. That is reported as
+// `RangeError: Out of memory`.
+void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& message);
 
 class ErrorCodeCache : public JSC::JSInternalFieldObjectImpl<NODE_ERROR_COUNT> {
 public:

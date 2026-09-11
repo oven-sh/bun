@@ -200,7 +200,7 @@ static ConvertedUnderlyingSource convertUnderlyingSource(JSC::VM& vm, JSGlobalOb
         } else if (typeString == "direct"_s)
             result.type = BunUnderlyingSourceType::Direct;
         else
-            throwTypeError(globalObject, scope, makeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s));
+            Bun::throwTypeErrorOrOutOfMemory(globalObject, scope, tryMakeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s));
     }
     return result;
 }

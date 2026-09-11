@@ -39,12 +39,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     // default formatting
     size_t framesCount = callSites->length();
 
-    // The message and the frames come from JS, so the text can pass
-    // `String::MaxLength`. A default-constructed `StringBuilder` calls
-    // `CRASH()` on that append; this one records the overflow.
-    WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
+    WTF::StringBuilder sb;
 
-    JSC::JSString* messageString = nullptr;
     auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
     RETURN_IF_EXCEPTION(scope, {});
     if (errorMessage) {
@@ -53,7 +49,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         if (str->length() > 0) {
             auto value = str->view(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            messageString = str;
             sb.append("Error: "_s);
             sb.append(value.data);
         } else {
@@ -81,13 +76,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             RETURN_IF_EXCEPTION(scope, {});
             sb.append(value.data);
         }
-    }
-
-    if (sb.hasOverflowed()) [[unlikely]] {
-        // The frames do not fit in one string. Report the message alone, which
-        // needs no copy, instead of aborting. A `.stack` read has to produce a
-        // string.
-        return messageString ? messageString : jsNontrivialString(vm, "Error"_s);
     }
 
     return jsString(vm, sb.toString());
@@ -150,22 +138,6 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
 }
 
-// The header of a stack trace whose frames do not fit in one string: the error
-// itself, without the frames. A `.stack` read must produce a string, and it
-// runs on paths that cannot throw (`ErrorInstance::finalizeUnconditionally`
-// calls this during a GC), so the text degrades instead.
-static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::String& message)
-{
-    if (name.isEmpty())
-        return message;
-    if (message.isEmpty())
-        return name;
-    WTF::String header = tryMakeString(name, ": "_s, message);
-    if (header.isNull()) [[unlikely]]
-        return message;
-    return header;
-}
-
 WTF::String formatStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
@@ -179,11 +151,7 @@ WTF::String formatStackTrace(
     JSC::JSObject* errorInstance)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The error's message and each frame's source URL come from JS, so the
-    // whole trace can pass `String::MaxLength`. A default-constructed
-    // `StringBuilder` calls `CRASH()` on that append; this one records the
-    // overflow and the frames are dropped (see `stackTraceHeaderOnly`).
-    WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
+    WTF::StringBuilder sb;
 
     if (!name.isEmpty()) {
         sb.append(name);
@@ -265,8 +233,6 @@ WTF::String formatStackTrace(
 
     if (framesCount == 0) {
         ASSERT(stackTrace.isEmpty());
-        if (sb.hasOverflowed()) [[unlikely]]
-            return stackTraceHeaderOnly(name, message);
         return sb.toString();
     }
 
@@ -422,9 +388,6 @@ WTF::String formatStackTrace(
             sb.append("\n"_s);
         }
     }
-
-    if (sb.hasOverflowed()) [[unlikely]]
-        return stackTraceHeaderOnly(name, message);
 
     return sb.toString();
 }

@@ -81,12 +81,10 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
     builder.append(codeView);
     builder.append("]: "_s);
     builder.append(messageView);
-    if (builder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
+    auto result = builder.finish(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(JSC::jsString(vm, builder.toString()));
+    return JSC::JSValue::encode(JSC::jsString(vm, result));
 }
 
 // clang-format on
@@ -276,11 +274,28 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
+WTF::String MessageBuilder::finish(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    auto message = tryToString();
+    if (message.isNull()) [[unlikely]]
+        JSC::throwOutOfMemoryError(globalObject, scope);
+    return message;
+}
+
+void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& message)
+{
+    if (message.isNull()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    JSC::throwTypeError(globalObject, scope, message);
+}
+
 JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message)
 {
-    if (message.hasOverflowed()) [[unlikely]]
+    auto built = message.tryToString();
+    if (built.isNull()) [[unlikely]]
         return JSC::createOutOfMemoryError(globalObject);
-    const WTF::String& built = message.toString();
     return createError(globalObject, code, built);
 }
 
@@ -541,11 +556,9 @@ extern "C" BunString Bun__ErrorCode__determineSpecificType(JSC::JSGlobalObject* 
     MessageBuilder builder;
     determineSpecificType(JSC::getVM(globalObject), globalObject, builder, jsValue);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    if (builder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return Zig::BunStringEmpty;
-    }
-    return Bun::toStringRef(builder.toString());
+    auto result = builder.finish(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
+    return Bun::toStringRef(result);
 }
 
 // Node's ERR_INVALID_ARG_VALUE renders the value with `util.inspect` ('w'),
@@ -557,11 +570,9 @@ extern "C" BunString Bun__ErrorCode__inspectForErrorMessage(JSC::JSGlobalObject*
     MessageBuilder builder;
     JSValueToStringSafe(globalObject, builder, JSValue::decode(value), true);
     RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
-    if (builder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return Zig::BunStringEmpty;
-    }
-    return Bun::toStringRef(builder.toString());
+    auto result = builder.finish(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
+    return Bun::toStringRef(result);
 }
 
 // Port of Node's addNumericalSeparator: groups digits in threes from the right
@@ -618,19 +629,6 @@ static void appendOutOfRangeReceived(JSC::JSGlobalObject* globalObject, MessageB
 }
 
 namespace Message {
-
-// Returns the built message. A message that overflowed cannot be reported as
-// itself, so this throws `RangeError: Out of memory` and returns a null string.
-// Every caller of these message builders returns when the scope has an
-// exception.
-static WTF::String finishMessage(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, MessageBuilder& builder)
-{
-    if (builder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    return builder.toString();
-}
 
 void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
 {
@@ -707,7 +705,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
-    return finishMessage(scope, globalObject, result);
+    return result.finish(globalObject, scope);
 }
 
 // Matches Node's kTypes list: primitive type names accepted by ERR_INVALID_ARG_TYPE.
@@ -800,7 +798,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return finishMessage(scope, globalObject, result);
+    return result.finish(globalObject, scope);
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue val_arg_name, JSValue val_expected_type, JSValue val_actual_value)
@@ -839,7 +837,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     appendOutOfRangeReceived(globalObject, builder, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return finishMessage(scope, globalObject, builder);
+    return builder.finish(globalObject, scope);
 }
 
 }
@@ -1087,13 +1085,11 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     JSValueToStringSafe(globalObject, builder, value, true);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (builder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, throwScope);
-        return {};
-    }
+    auto message = builder.finish(globalObject, throwScope);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
-    auto error = JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
+    auto error = JSC::ErrorInstance::create(vm, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true);
     throwScope.throwException(globalObject, error);
     throwScope.release();
     return {};
@@ -1123,11 +1119,8 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     MessageBuilder nameBuilder;
     JSValueToStringSafe(globalObject, nameBuilder, name);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-    if (nameBuilder.hasOverflowed()) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, throwScope);
-        return {};
-    }
-    auto nameString = nameBuilder.toString();
+    auto nameString = nameBuilder.finish(globalObject, throwScope);
+    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
     MessageBuilder builder;
     builder.append("The "_s);

@@ -2522,6 +2522,18 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
+        // `bun add x@1.0.0` or `bun update x` names `x` explicitly. If no
+        // resolved candidate satisfies the requested range, the fallback
+        // below would bind the peer to the version the user asked to move
+        // off of. Skip the fallback for update targets so they resolve
+        // fresh through `find_best_version`. The satisfies scan still runs
+        // first. After the run saves the lockfile, the fresh resolution is
+        // a satisfying candidate, so the replay scan in `bun.lock`
+        // (`resolve_peer_dep_version_based`) picks the same package.
+        let explicit_update_target = this
+            .update_requests
+            .iter()
+            .any(|request| request.name_hash == dependency.name_hash);
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {
@@ -2540,12 +2552,13 @@ fn get_or_put_resolved_package(
 
                         let res_tag = resolutions[existing_id as usize].tag;
                         let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
+                        if !explicit_update_target
+                            && ((res_tag == ResolutionTag::Npm
+                                && ver_tag == dependency::version::Tag::Npm)
+                                || (res_tag == ResolutionTag::Git
+                                    && ver_tag == dependency::version::Tag::Git)
+                                || (res_tag == ResolutionTag::Github
+                                    && ver_tag == dependency::version::Tag::Github))
                         {
                             let existing_package = this.lockfile.packages.get(existing_id as usize);
                             this.log_mut().add_warning_fmt(
@@ -2589,12 +2602,13 @@ fn get_or_put_resolved_package(
                     if (list[0] as usize) < resolutions.len() {
                         let res_tag = resolutions[list[0] as usize].tag;
                         let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
+                        if !explicit_update_target
+                            && ((res_tag == ResolutionTag::Npm
+                                && ver_tag == dependency::version::Tag::Npm)
+                                || (res_tag == ResolutionTag::Git
+                                    && ver_tag == dependency::version::Tag::Git)
+                                || (res_tag == ResolutionTag::Github
+                                    && ver_tag == dependency::version::Tag::Github))
                         {
                             let existing_package_id = list[0];
                             let existing_package =

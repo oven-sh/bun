@@ -2884,6 +2884,23 @@ impl TestCommand {
             // it for the loop body.
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
+            // Per-file spy teardown; a guard so the Rejected early return is covered too.
+            unsafe extern "C" {
+                fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
+            }
+            let restore_isolation = vm.test_isolation_enabled;
+            let restore_global = vm.global().as_ptr();
+            let restore_vm = core::ptr::from_mut::<VirtualMachine>(vm);
+            scopeguard::defer! {
+                // SAFETY: single-threaded; `restore_vm` and `restore_global` outlive this frame.
+                unsafe {
+                    (*restore_vm).is_running_preload_hook = false;
+                    if !restore_isolation {
+                        JSMock__restoreTransientSpies(restore_global);
+                    }
+                }
+            }
+
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows

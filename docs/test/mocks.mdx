@@ -238,6 +238,12 @@ test("spy with mock implementation", async () => {
 });
 ```
 
+### Spy lifetime across test files
+
+Spies created by `spyOn()` are automatically restored at the end of each test file, so a spy installed in one file does not leak into the next. Spies installed from a `--preload` script (at the top level or inside a preload `beforeAll`/`afterAll`) are kept for the whole run.
+
+If you want a spy to apply to every test file, install it from `--preload` (or `test.preload` in `bunfig.toml`) rather than from a helper module that each test file imports. Because Bun shares a single module graph across test files by default, an imported helper only evaluates once, and its spy would be restored after the first file.
+
 ## Module Mocks with mock.module()
 
 Use `mock.module(path: string, callback: () => Object)` to override the behavior of a module.

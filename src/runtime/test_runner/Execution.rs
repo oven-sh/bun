@@ -1028,6 +1028,10 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
+        // Overwritten per entry (not scoped) so it spans an async hook's macrotask gap.
+        global_this.bun_vm().as_mut().is_running_preload_hook =
+            next_item.added_in_phase == AddedInPhase::Preload && sequence.test_entry.is_none();
+
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

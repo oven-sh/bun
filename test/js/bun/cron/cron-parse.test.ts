@@ -39,6 +39,9 @@ describe.concurrent("Bun.cron.parse — algorithm (pinned TZ=UTC)", () => {
   });
 
   test("impossible day/month (Feb 30) returns null quickly", () => {
+    // The first date conversion in a process pays a one-time setup cost
+    // (about 150 ms in a debug build). Pay it before the walk is timed.
+    Bun.cron.parse("* * * * *", 0, { tz: "UTC" });
     const t = performance.now();
     expect(Bun.cron.parse("0 0 30 2 *", new Date("2026-01-01T00:00:00Z"), { tz: "UTC" })).toBeNull();
     expect(performance.now() - t).toBeLessThan(50);
@@ -128,5 +131,94 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Invalid date value", stderr: "", exitCode: 0 });
+  });
+});
+
+// 8.64e15 ms is +275760-09-13T00:00:00Z, the last instant a Date holds. JSC
+// converts no time value more than a day past it to a calendar date. A debug
+// build asserts. Newer JSC returns year 0, which made the walk start over and
+// never stop. Both tests spawn, with a kill switch on the child.
+describe("Bun.cron — end of the Date range", () => {
+  test("Bun.cron.parse stops the walk at the last day", async () => {
+    // [tz, schedule for the wall-clock minute of 8.64e15 in that zone, one minute later]
+    const zones = [
+      [null, "0 0 13 9 *", "1 0 13 9 *"], // local time, TZ=UTC
+      ["UTC", "0 0 13 9 *", "1 0 13 9 *"],
+      ["America/New_York", "0 20 12 9 *", "1 20 12 9 *"],
+      ["Pacific/Kiritimati", "0 14 13 9 *", "1 14 13 9 *"],
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const max = 8.64e15, day = 86_400_000;
+         const out = {};
+         for (const [tz, lastMinute, oneMinuteLater] of ${JSON.stringify(zones)}) {
+           const next = (expr, from) => Bun.cron.parse(expr, from, tz ? { tz } : undefined)?.getTime() ?? null;
+           const first = next("* * * * *", -max);
+           out[tz ?? "local"] = [
+             // Every minute after max is past the range.
+             next("* * * * *", max),
+             next("0 0 1 1 *", max),
+             // One minute inside the range lands on the end of it.
+             next("* * * * *", max - 60_000),
+             // Feb 30 never exists: the walk runs into the end of the range.
+             next("0 0 30 2 *", max - 400 * day),
+             // The next Jan 1 is in year 275761.
+             next("0 0 1 1 *", max - 10 * day),
+             next("0 0 14 9 *", max - 10 * day),
+             // The last minute of the range still matches. One minute later does not.
+             next(lastMinute, max - 10 * day),
+             next(oneMinuteLater, max - 10 * day),
+             // The walk only moves forward, so the lower end needs no bound.
+             first > -max && first <= -max + 60_000,
+           ];
+         }
+         process.stdout.write(JSON.stringify(out));`,
+      ],
+      env: { ...bunEnv, TZ: "UTC" },
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = [null, null, 8.64e15, null, null, null, 8.64e15, null, true];
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: { local: expected, UTC: expected, "America/New_York": expected, "Pacific/Kiritimati": expected },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun.cron.parse rejects a `from` outside the range. The scheduler reads the
+  // clock, and fake timers can set the clock to any number.
+  test("Bun.cron() finds no occurrence when the clock is past the range", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers();
+         jest.setSystemTime(8.64e15 + 2 * 86_400_000);
+         let result;
+         try {
+           Bun.cron("* * * * *", () => {}).stop();
+           result = "scheduled";
+         } catch (e) {
+           result = e.message;
+         }
+         process.stdout.write(result);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Cron expression '* * * * *' has no future occurrences",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

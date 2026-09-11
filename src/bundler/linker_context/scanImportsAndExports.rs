@@ -540,6 +540,7 @@ pub(crate) fn scan_imports_and_exports(
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
             let mut member_resolutions =
                 crate::linker_context_mod::ImportMemberResolutions::default();
+            let mut import_cycles = crate::linker_context_mod::ImportCycles::default();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -558,6 +559,7 @@ pub(crate) fn scan_imports_and_exports(
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
                         &mut member_resolutions,
+                        &mut import_cycles,
                     );
 
                     if this.log().errors > 0 {

@@ -1714,6 +1714,97 @@ pub(crate) struct ImportMemberResolution {
 pub(crate) type ImportMemberResolutions =
     bun_collections::HashMap<(crate::IndexInt, bun_ast::StoreStr), Option<ImportMemberResolution>>;
 
+/// The import cycle each file is in: its strongly connected component in the
+/// graph of import records of every kind. Step 4 finds them for the first item
+/// that asks.
+#[derive(Default)]
+pub(crate) struct ImportCycles {
+    cycle_of_file: Option<Vec<u32>>,
+}
+
+impl ImportCycles {
+    /// `importer` imports `importee`. Does `importee` import it back, directly
+    /// or through other files?
+    fn is_cycle(
+        &mut self,
+        import_records: &[bun_ast::import_record::List<'_>],
+        importer: crate::IndexInt,
+        importee: crate::IndexInt,
+    ) -> bool {
+        let cycle_of_file = self
+            .cycle_of_file
+            .get_or_insert_with(|| Self::find(import_records));
+        cycle_of_file[importer as usize] == cycle_of_file[importee as usize]
+    }
+
+    /// Tarjan's algorithm, with the recursion kept in `path`.
+    fn find(import_records: &[bun_ast::import_record::List<'_>]) -> Vec<u32> {
+        const UNSET: u32 = u32::MAX;
+        let file_count = import_records.len();
+        let mut visit_order = vec![UNSET; file_count];
+        // The first visited file each file reaches, among those still in `open`.
+        let mut earliest = vec![UNSET; file_count];
+        let mut cycle_of_file = vec![UNSET; file_count];
+        // The visited files whose cycle is not complete yet.
+        let mut open: Vec<usize> = Vec::new();
+        // The files from the root to the current one, each with its next record.
+        let mut path: Vec<(usize, usize)> = Vec::new();
+        let mut visited: u32 = 0;
+        let mut cycle_count: u32 = 0;
+
+        for root in 0..file_count {
+            if visit_order[root] != UNSET {
+                continue;
+            }
+            let mut entering = Some(root);
+            loop {
+                if let Some(file) = entering.take() {
+                    visit_order[file] = visited;
+                    earliest[file] = visited;
+                    visited += 1;
+                    open.push(file);
+                    path.push((file, 0));
+                }
+                let Some(top) = path.last_mut() else {
+                    break;
+                };
+                let file = top.0;
+                if let Some(record) = import_records[file].as_slice().get(top.1) {
+                    top.1 += 1;
+                    // An invalid index is out of range too.
+                    let target = record.source_index.get() as usize;
+                    if target >= file_count {
+                        continue;
+                    }
+                    if visit_order[target] == UNSET {
+                        entering = Some(target);
+                    } else if cycle_of_file[target] == UNSET {
+                        earliest[file] = earliest[file].min(visit_order[target]);
+                    }
+                    continue;
+                }
+
+                path.pop();
+                if let Some(&(parent, _)) = path.last() {
+                    earliest[parent] = earliest[parent].min(earliest[file]);
+                }
+                // `file` is the first visited file of its cycle. The files
+                // above it in `open` are the other ones.
+                if earliest[file] == visit_order[file] {
+                    while let Some(member) = open.pop() {
+                        cycle_of_file[member] = cycle_count;
+                        if member == file {
+                            break;
+                        }
+                    }
+                    cycle_count += 1;
+                }
+            }
+        }
+        cycle_of_file
+    }
+}
+
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
 #[derive(Clone, Default)]
@@ -4326,7 +4417,14 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Whether the export an item of such a record matched can stand in for it.
-    fn binds_call_item(&self, import_ref: Ref, result: &MatchImport) -> bool {
+    fn binds_call_item(
+        &self,
+        source_index: crate::IndexInt,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+        import_cycles: &mut ImportCycles,
+    ) -> bool {
         // A lifted CommonJS export changes through `exports.x = …`, which the
         // parser does not record as an assignment.
         if !matches!(result.kind, MatchImportKind::Normal)
@@ -4342,15 +4440,31 @@ impl<'a> LinkerContext<'a> {
             .symbols
             .get_const(import_ref)
             .is_some_and(|symbol| symbol.namespace_alias.is_none());
-        !is_pattern_local
-            || !self
-                .graph
-                .symbols
-                .get_const(result.r#ref)
-                .is_some_and(|symbol| {
-                    // A direct `eval` in the exporting file can assign it too.
-                    symbol.has_been_assigned_to() || symbol.must_not_be_renamed()
-                })
+        if !is_pattern_local {
+            return true;
+        }
+        let Some(export) = self.graph.symbols.get_const(result.r#ref) else {
+            return true;
+        };
+        // A direct `eval` in the exporting file can assign it too. An import
+        // that matching cannot follow is a binding of an external module,
+        // which changes out of sight.
+        if export.has_been_assigned_to()
+            || export.must_not_be_renamed()
+            || export.kind == bun_ast::symbol::Kind::Import
+        {
+            return false;
+        }
+        // Its own declaration changes it too, while the importee initializes.
+        // `import()` settles after that, but a `require()` in an import cycle
+        // can return in the middle of it. Only a function declaration has its
+        // value from the start.
+        let import_records = self.graph.ast.items_import_records();
+        let record = &import_records[source_index as usize].as_slice()
+            [named_import.import_record_index as usize];
+        record.kind != ImportKind::Require
+            || export.kind.is_function()
+            || !import_cycles.is_cycle(import_records, source_index, record.source_index.get())
     }
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
@@ -4520,6 +4634,7 @@ impl<'a> LinkerContext<'a> {
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
+        import_cycles: &mut ImportCycles,
     ) {
         // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
         // non-Clone (owns a `Vec`), so we sort an index vector over the live
@@ -4579,7 +4694,15 @@ impl<'a> LinkerContext<'a> {
                 &mut re_exports,
             );
 
-            if is_call_item && !self.binds_call_item(import_ref, &result) {
+            if is_call_item
+                && !self.binds_call_item(
+                    source_index,
+                    import_ref,
+                    named_import,
+                    &result,
+                    import_cycles,
+                )
+            {
                 continue;
             }
 

@@ -3341,12 +3341,12 @@ impl H2FrameParser {
         }
     }
 
-    /// Whether `dispatch*` has a JS wrapper with a context to call into; it no-ops otherwise.
-    fn can_dispatch(&self) -> bool {
-        self.strong_this
-            .get()
-            .try_get()
-            .is_some_and(|this_value| JSH2FrameParser::Gc::context.get(this_value).is_some())
+    /// Whether `dispatch*(event, ..)` reaches JS: the wrapper, its context and the handler exist.
+    fn can_dispatch(&self, event: JSH2FrameParser::Gc) -> bool {
+        self.strong_this.get().try_get().is_some_and(|this_value| {
+            JSH2FrameParser::Gc::context.get(this_value).is_some()
+                && event.get(this_value).is_some()
+        })
     }
 
     /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1665-L1689
@@ -3745,7 +3745,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_too_many_invalid_frames(&self) {
         // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
         // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
-        if !self.can_dispatch() {
+        if !self.can_dispatch(JSH2FrameParser::Gc::onError) {
             return;
         }
         let global = self.global();
@@ -3912,7 +3912,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
-        if !self.can_dispatch() {
+        if !self.can_dispatch(JSH2FrameParser::Gc::onAltSvc) {
             return;
         }
         let Some(origin_js) = self.or_stop(self.latin1_to_js(origin)) else {
@@ -3964,7 +3964,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_origin(&self, payload: &[u8]) {
         // Match the legacy dispatch shape: a single origin is passed as a string, multiple origins
         // as an array — one onOrigin dispatch per ORIGIN frame.
-        if !self.can_dispatch() {
+        if !self.can_dispatch(JSH2FrameParser::Gc::onOrigin) {
             return;
         }
         let g = self.global();

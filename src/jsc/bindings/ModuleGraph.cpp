@@ -1,6 +1,8 @@
 #include "root.h"
 
 #include "ModuleGraph.h"
+#include "ModuleGraphCommonJSTemplates.h"
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include "NodeValidator.h"
@@ -35,6 +37,7 @@
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/HexNumber.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 
@@ -549,7 +552,7 @@ void JSModuleGraphPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject
 // binds @moduleLoader (what import() compiles to a lookup of), which sends import()
 // from ANY code scoped to the graph — CommonJS wrappers too, not only its ES
 // modules — to the graph's loader.
-static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObject, JSObject* globals, JSModuleLoader*& loader)
+static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObject, JSObject* globals, JSModuleLoader*& loader, JSString*& sourceSuffix)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -564,9 +567,10 @@ static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObje
             names.append(name);
         std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
     }
+    // One text per name set: each name as <length>:<name>, so no two sets share a key.
     StringBuilder joined;
     for (auto& name : names)
-        joined.append(name.string(), '\n');
+        joined.append(name.length(), ':', name.string());
     JSMap* symbolTables = zigGlobal->m_moduleGraphOverlaySymbolTables.get() ? uncheckedDowncast<JSMap>(zigGlobal->m_moduleGraphOverlaySymbolTables.get()) : nullptr;
     if (!symbolTables) {
         symbolTables = JSMap::create(vm, globalObject->mapStructure());
@@ -574,6 +578,23 @@ static JSLexicalEnvironment* createModuleGraphOverlay(JSGlobalObject* globalObje
         zigGlobal->m_moduleGraphOverlaySymbolTables.set(vm, zigGlobal, symbolTables);
     }
     JSString* namesKey = jsString(vm, joined.toString());
+    // Classic code compiled to run in this overlay (CommonJS wrappers) carries this comment,
+    // so the code cache keeps it apart from the same text compiled for the global scope or
+    // for another overlay shape: names percent-encoded onto one line.
+    {
+        StringBuilder suffix;
+        suffix.append("\n// ModuleGraph scope:"_s);
+        for (auto& name : names) {
+            suffix.append(' ');
+            for (auto codeUnit : StringView(name.string()).codeUnits()) {
+                if (isASCIIAlphanumeric(codeUnit) || codeUnit == '_' || codeUnit == '$')
+                    suffix.append(static_cast<char>(codeUnit));
+                else
+                    suffix.append('%', hex(codeUnit, 4));
+            }
+        }
+        sourceSuffix = jsString(vm, suffix.toString());
+    }
     JSValue existing = symbolTables->get(globalObject, namesKey);
     RETURN_IF_EXCEPTION(scope, nullptr);
     SymbolTable* symbolTable = existing ? dynamicDowncast<SymbolTable>(existing) : nullptr;
@@ -671,7 +692,8 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
         RETURN_IF_EXCEPTION(scope, {});
     }
     JSModuleLoader* loader = nullptr;
-    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, loader);
+    JSString* overlaySourceSuffix = nullptr;
+    JSLexicalEnvironment* overlay = createModuleGraphOverlay(globalObject, globals, loader, overlaySourceSuffix);
     RETURN_IF_EXCEPTION(scope, {});
     JSMap* requireMap = JSMap::create(vm, globalObject->mapStructure());
     RETURN_IF_EXCEPTION(scope, {});
@@ -679,6 +701,7 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
     JSModuleGraph* graph = JSModuleGraph::create(vm, structure);
     graph->setField(vm, JSModuleGraph::Field::Loader, loader);
     graph->setField(vm, JSModuleGraph::Field::Overlay, overlay);
+    graph->setField(vm, JSModuleGraph::Field::OverlaySourceSuffix, overlaySourceSuffix);
     graph->setField(vm, JSModuleGraph::Field::RequireMap, requireMap);
     graph->setField(vm, JSModuleGraph::Field::OnError, onError);
 
@@ -708,3 +731,10 @@ extern "C" JSC::EncodedJSValue Bun__ModuleGraph__getConstructor(JSC::JSGlobalObj
 }
 
 } // namespace Bun
+
+Bun::ModuleGraphCommonJSTemplates& Zig::GlobalObject::moduleGraphCommonJSTemplates()
+{
+    if (!m_moduleGraphCommonJSTemplates)
+        m_moduleGraphCommonJSTemplates = makeUnique<Bun::ModuleGraphCommonJSTemplates>(vm());
+    return *m_moduleGraphCommonJSTemplates;
+}

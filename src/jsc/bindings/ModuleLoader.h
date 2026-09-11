@@ -16,6 +16,7 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
+class JSModuleLoader;
 }
 
 namespace Bun {

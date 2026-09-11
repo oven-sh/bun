@@ -38,6 +38,7 @@ class NapiHandleScopeImpl;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
+class ModuleGraphCommonJSTemplates;
 class GCProfilerObserver;
 } // namespace Bun
 
@@ -528,7 +529,6 @@ public:
     V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                  \
     V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                \
     V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTables)                                       \
-    V(public, WriteBarrier<Unknown>, m_commonJSWrapperTemplates)                                             \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -688,8 +688,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
-    visibility:                                             \
-    T name;
+    visibility : T name;
 
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
 
@@ -803,6 +802,10 @@ public:
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // CommonJS wrapper executables shared by Bun.unsafe.ModuleGraphs (JSCommonJSModule.cpp).
+    std::unique_ptr<Bun::ModuleGraphCommonJSTemplates> m_moduleGraphCommonJSTemplates;
+    Bun::ModuleGraphCommonJSTemplates& moduleGraphCommonJSTemplates();
 
     // Backs node:v8's GCProfiler. Lazily created on first start(); its
     // destructor detaches from the heap so a worker that exits mid-profile

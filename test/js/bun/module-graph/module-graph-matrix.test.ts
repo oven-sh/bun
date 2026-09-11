@@ -6,24 +6,20 @@
 // lifecycle/error orderings. Each test records everything it observes into one value and compares it
 // against the fully spelled-out expectation.
 //
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { numberOfDFGCompiles } from "bun:jsc";
+import { afterAll, describe, expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "fs";
+import { tempDir } from "harness";
 import { join } from "path";
 
 type ModuleGraphOptions = { globals?: Record<string, unknown>; onError?: (error: unknown, kind: string) => void };
 type Graph = { import(specifier: string): Promise<any>; dispose(): void; readonly mainModule: string | undefined };
 const ModuleGraphClass = (Bun as any).unsafe?.ModuleGraph as { new (opts?: ModuleGraphOptions): Graph } | undefined;
 const enabled = typeof ModuleGraphClass === "function";
-const jsc = require("bun:jsc") as typeof import("bun:jsc");
 
+/** A temporary directory with `files` (harness tempDir), as a plain path. */
 function fixture(files: Record<string, string>): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "module-graph-matrix-")));
-  for (const [name, source] of Object.entries(files)) {
-    mkdirSync(join(dir, name, ".."), { recursive: true });
-    writeFileSync(join(dir, name), source);
-  }
-  return dir;
+  return String(tempDir("module-graph-matrix-", files));
 }
 
 /** A graph whose modules see `process.env.WHO === who` (a host-made `process` passed in `globals`,
@@ -313,7 +309,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() site × target �
       }
     }
   }
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -375,7 +371,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dynamic import() of cycle members
       });
     }
   }
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -509,9 +505,9 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
       mods[0].d2(HOT);
       mods[0].viaNamespace(HOT);
       const compilesAfterTwo = {
-        d0: jsc.numberOfDFGCompiles(mods[0].d0),
-        d2: jsc.numberOfDFGCompiles(mods[0].d2),
-        viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace),
+        d0: numberOfDFGCompiles(mods[0].d0),
+        d2: numberOfDFGCompiles(mods[0].d2),
+        viaNamespace: numberOfDFGCompiles(mods[0].viaNamespace),
       };
       const reads: unknown[] = [];
       for (let i = 2; i < whos.length; i++) {
@@ -521,9 +517,9 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
         reads.push([mods[i].d0(n), mods[i].d2(n), mods[i].viaNamespace(n), mods[i].setThenRead(i, 10)]);
       }
       const compilesAfterEight = {
-        d0: jsc.numberOfDFGCompiles(mods[0].d0),
-        d2: jsc.numberOfDFGCompiles(mods[0].d2),
-        viaNamespace: jsc.numberOfDFGCompiles(mods[0].viaNamespace),
+        d0: numberOfDFGCompiles(mods[0].d0),
+        d2: numberOfDFGCompiles(mods[0].d2),
+        viaNamespace: numberOfDFGCompiles(mods[0].viaNamespace),
       };
       expect({ reads, compilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
         reads: whos.slice(2).map((w, k) => [`${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:${k + 2}|K:${w}`]),
@@ -534,7 +530,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: hot code across instances", () =>
     });
   }
 
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -687,7 +683,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: graph shapes × instantiation ord
       for (const g of graphs) g.dispose();
     });
   }
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -721,7 +717,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () =
         aOutcome = await p.then(() => "resolved", errorName);
       } else if (when === "duringDependencyTla") {
         const p = a.import(join(dir, "slow.mjs"));
-        await new Promise(r => setTimeout(r, 5));
+        while (!log.includes("slow-start@a")) await new Promise<void>(r => setImmediate(r)); // a is now parked in its TLA
         a.dispose();
         aOutcome = await p.then(() => "resolved", errorName);
       } else if (when === "afterImport") {
@@ -804,7 +800,7 @@ describe.skipIf(!enabled)("ModuleGraph matrix: lifecycle and error timing", () =
       });
     }
   }
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -835,7 +831,8 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
   ] as const) {
     for (const heat of ["heatBeforeEdit", "noHeat"] as const) {
       test(`dependency ${sequence.join("→")} × ${heat}`, async () => {
-        const dir = fixture({ "importer.mjs": importer, "dep.mjs": versions.v1 });
+        using tmp = tempDir("module-graph-matrix-", { "importer.mjs": importer, "dep.mjs": versions.v1 });
+        const dir = String(tmp);
         const log: string[] = [];
         const graphs: Graph[] = [];
         const mods: any[] = [];
@@ -863,14 +860,14 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
           again: sequence.map(v => expectedFor(v)),
         });
         for (const g of graphs) g.dispose();
-        rmSync(dir, { recursive: true, force: true });
       });
     }
   }
 
   for (const when of ["afterFirstInstance", "afterSecondInstance", "twice"] as const) {
     test(`all compiled code deleted ${when}; later instances link afresh and work`, async () => {
-      const dir = fixture({ "importer.mjs": importer, "dep.mjs": versions.v1 });
+      using tmp = tempDir("module-graph-matrix-", { "importer.mjs": importer, "dep.mjs": versions.v1 });
+      const dir = String(tmp);
       const log: string[] = [];
       const graphs: Graph[] = [];
       const mods: any[] = [];
@@ -897,7 +894,6 @@ describe.skipIf(!enabled)("ModuleGraph matrix: dependency edits and code deletio
         again: Array(4).fill(["x1:1", "x1:1"]),
       });
       for (const g of graphs) g.dispose();
-      rmSync(dir, { recursive: true, force: true });
     });
   }
 });
@@ -938,5 +934,5 @@ describe.skipIf(!enabled)("ModuleGraph matrix: many concurrent instances", () =>
       for (const g of graphs) g.dispose();
     });
   }
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });

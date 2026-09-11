@@ -79,8 +79,6 @@ using namespace JSC;
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
-    macro(moduleGraph) \
-    macro(moduleGraphOf) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -128,6 +126,8 @@ using namespace JSC;
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
+    macro(moduleGraph) \
+    macro(moduleGraphOf) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \

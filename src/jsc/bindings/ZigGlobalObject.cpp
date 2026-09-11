@@ -71,6 +71,7 @@
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
+#include "ModuleGraphCommonJSTemplates.h"
 #include "NodeV8.h"
 #include "ProcessIdentifier.h"
 #include "GlobalEventScope.h"

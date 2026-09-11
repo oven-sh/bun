@@ -4,7 +4,7 @@
 // every ordering, hot shared code across instances, TLA / JSON / CommonJS / throwing modules, churn, and
 // a Worker that does the same, and prints one JSON document that the test compares in full.
 //
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -213,7 +213,8 @@ for (const combo of combos) {
       return { parsed, exitCode, stderr: stderr.trim() };
     };
 
-    test("build", async () => {
+    let buildResult: unknown;
+    beforeAll(async () => {
       dir = tempDir("module-graph-compile-" + combo.name.replace(/\W/g, "_"), {
         ...sources,
         // not embedded: loaded from disk by the compiled program
@@ -238,12 +239,21 @@ for (const combo of combos) {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({
+      buildResult = {
         exitCode,
         built: await Bun.file(exe).exists(),
         stderrHasError: /error:/i.test(stderr) ? stderr : "",
-      }).toEqual({ exitCode: 0, built: true, stderrHasError: "" });
+      };
     }, 60_000);
+    afterAll(() => {
+      try {
+        rmSync(String(dir), { recursive: true, force: true });
+      } catch {}
+    });
+
+    test("build", () => {
+      expect(buildResult).toEqual({ exitCode: 0, built: true, stderrHasError: "" });
+    });
 
     test("several instances of an embedded module: isolation, identity, host unaffected", async () => {
       expect(await run("instances")).toEqual({
@@ -367,12 +377,6 @@ for (const combo of combos) {
         exitCode: 0,
         stderr: "",
       });
-    });
-
-    test("cleanup", () => {
-      try {
-        rmSync(String(dir), { recursive: true, force: true });
-      } catch {}
     });
   });
 }

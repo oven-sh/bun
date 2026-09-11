@@ -1224,6 +1224,45 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — CommonJS surface per graph
     await expect(g.import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-x");
     await expect(ModuleGraph({ env: { T: "y" } }).import(join(dir, "throws.cjs"))).rejects.toThrow("cjs-throws-y");
   });
+  test("a require() that throws inside a graph leaves neither the graph's nor the host's cache holding the module; the next require re-evaluates", async () => {
+    const d = fixture({
+      "flaky.cjs": `attempts.n++; if (attempts.n < 3) throw new Error("attempt " + attempts.n); module.exports = { ok: attempts.n }`,
+      "user.cjs": `exports.tryOnce = () => { try { return require("./flaky.cjs").ok } catch (e) { return e.message } }; exports.cached = () => Object.keys(require.cache).filter(k => k.endsWith("flaky.cjs")).length`,
+    });
+    const attempts = { n: 0 };
+    const u = await ModuleGraph({ globals: { attempts } }).import(join(d, "user.cjs"));
+    expect([u.tryOnce(), u.cached(), u.tryOnce(), u.cached(), u.tryOnce(), u.cached(), u.tryOnce()]).toEqual([
+      "attempt 1",
+      0,
+      "attempt 2",
+      0,
+      3,
+      1,
+      3,
+    ]);
+    expect(Object.keys(require.cache).filter(k => k.endsWith("flaky.cjs"))).toEqual([]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("CommonJS code in graphs with different globals name sets resolves each graph's own names (one wrapper executable per name set)", async () => {
+    const d = fixture({
+      "w.cjs": `module.exports = { a: typeof alpha === "undefined" ? "-" : alpha, b: typeof beta === "undefined" ? "-" : beta, p: typeof process.pid }`,
+    });
+    const load = (globals: Record<string, unknown>) =>
+      new ModuleGraphClass!({ globals }).import(join(d, "w.cjs")).then(m => m.default);
+    const r1 = await load({ alpha: "A1" }),
+      r2 = await load({ beta: "B2" }),
+      r3 = await load({ alpha: "A3" }),
+      r4 = await load({ beta: "B4", alpha: "A4" }),
+      r5 = await load({});
+    expect([r1, r2, r3, r4, r5]).toEqual([
+      { a: "A1", b: "-", p: "number" },
+      { a: "-", b: "B2", p: "number" },
+      { a: "A3", b: "-", p: "number" },
+      { a: "A4", b: "B4", p: "number" },
+      { a: "-", b: "-", p: "number" },
+    ]);
+    rmSync(d, { recursive: true, force: true });
+  });
 });
 
 describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — binding forms, one per test (instance vs instance vs host)", () => {

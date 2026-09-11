@@ -27,12 +27,13 @@ JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 // Rejections of promises by graph code, for attributing unhandled ones (onError).
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
 
-class JSModuleGraph final : public JSC::JSInternalFieldObjectImpl<7> {
+class JSModuleGraph final : public JSC::JSInternalFieldObjectImpl<8> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<7>;
+    using Base = JSC::JSInternalFieldObjectImpl<8>;
     enum class Field : unsigned {
         Loader = 0, // JSModuleLoader: the graph's module loader (registry); null once disposed
         Overlay, // JSLexicalEnvironment: the loader's module scope, holding the graph's `globals`
+        OverlaySourceSuffix, // JSString: a comment naming the overlay's names, appended to source compiled for this overlay shape (CommonJS wrappers)
         RequireMap, // JSMap: this graph's CommonJS require cache
         RequireCache, // lazily created require.cache proxy over RequireMap
         OnError, // host callback for uncaught errors / unhandled rejections of the graph's code

@@ -46,4 +46,9 @@ test.skipIf(!isASAN || isWindows)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   },
+  // Worker boot + VM teardown alone take ~5s under debug+ASAN on a loaded
+  // machine, and when LSan does find a leak, symbolizing the report against
+  // the debug binary adds several seconds more; the 5s default turned both
+  // into a timeout.
+  90_000,
 );

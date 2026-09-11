@@ -32,7 +32,7 @@ queueMicrotask(common.mustCall(function() {
 
 {
   const q = [];
-  Promise.resolve().then(() => q.push('a'));
+  Promise.resolve().then(() => q.push('a')).then(common.mustCall());
   queueMicrotask(common.mustCall(() => q.push('b')));
   Promise.reject().catch(() => q.push('c'));
 
@@ -50,7 +50,7 @@ process.on('exit', () => {
   assert.strictEqual(eq.length, 2);
   assert.strictEqual(eq[0].message, 'E1');
   assert.strictEqual(
-    eq[1].message, 'Cannot call a class constructor without |new|');
+    eq[1].message, 'Class constructor  cannot be invoked without \'new\'');
 });
 
 queueMicrotask(common.mustCall(() => {

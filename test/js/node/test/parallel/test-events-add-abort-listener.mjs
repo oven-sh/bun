@@ -1,7 +1,7 @@
-import * as assert from 'node:assert';
-import * as events from 'node:events';
-import { describe, it } from 'node:test';
 import * as common from '../common/index.mjs';
+import * as events from 'node:events';
+import * as assert from 'node:assert';
+import { describe, it } from 'node:test';
 
 describe('events.addAbortListener', () => {
   it('should throw if signal not provided', () => {

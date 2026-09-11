@@ -282,7 +282,6 @@ const { PassThrough, Transform } = require('stream');
       pt.write(Buffer.from('ef'), common.mustCall(function() {
         pt.end();
       }));
-      // read() with no size returns one buffered chunk at a time.
       assert.strictEqual(pt.read().toString(), 'abc');
       assert.strictEqual(pt.read().toString(), 'd');
       assert.strictEqual(pt.read().toString(), 'ef');

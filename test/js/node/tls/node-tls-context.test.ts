@@ -5,8 +5,9 @@ import { describe, expect, it } from "bun:test";
 
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { AddressInfo } from "node:net";
+import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -356,6 +357,84 @@ describe("tls.Server", () => {
       true,
       "chain.example.com",
     );
+  });
+
+  // server.close() keeps the connections it already accepted. One that starts
+  // its handshake afterwards still selects its context by server name.
+  describe.each(["addContext"] as ("addContext" | "SNICallback")[])("a handshake that starts after close() resolves %s", mode => {
+    it("like one that starts before it", async () => {
+      // agent1 chains to ca1, the client's agent3 to ca2: the default context
+      // authorizes the client, the a.example.com context does not.
+      const tenant = { key: agent1Key, cert: agent1Cert, ca: [ca1] };
+      const names: string[] = [];
+      const server = tls.createServer(
+        {
+          key: agent2Key,
+          cert: agent2Cert,
+          ca: [ca2],
+          requestCert: true,
+          rejectUnauthorized: false,
+          SNICallback:
+            mode === "SNICallback"
+              ? (name, cb) => {
+                  names.push(name);
+                  if (name === "a.example.com") cb(null, tls.createSecureContext(tenant));
+                  else cb(new Error("unknown tenant"));
+                }
+              : undefined,
+        },
+        socket => {
+          socket.on("error", () => {});
+          //@ts-ignore
+          socket.end(`${socket.servername} authorized=${socket.authorized}`);
+        },
+      );
+      server.on("tlsClientError", () => {});
+      if (mode === "addContext") server.addContext("a.example.com", tenant);
+
+      const servernames = ["a.example.com", "a.example.com", "a.example.com", "unknown.example.com"];
+      let accepted = 0;
+      const allAccepted = Promise.withResolvers<void>();
+      server.on("connection", () => {
+        if (++accepted === servernames.length) allAccepted.resolve();
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+      const raws = servernames.map(() => net.connect({ host: "127.0.0.1", port }));
+      for (const raw of raws) raw.on("error", () => {});
+      await Promise.all(raws.map(raw => once(raw, "connect")));
+      await allAccepted.promise;
+
+      // No TLS byte has been sent yet.
+      server.close();
+
+      const outcomes = await Promise.all(
+        raws.map((raw, i) => {
+          const { promise, resolve } = Promise.withResolvers<{ certificate: string; received: string }>();
+          let certificate = "no handshake";
+          let received = "";
+          const socket = tls.connect(
+            { socket: raw, servername: servernames[i], rejectUnauthorized: false, key: agent3Key, cert: agent3Cert },
+            () => (certificate = socket.getPeerCertificate().subject.CN),
+          );
+          socket.on("data", chunk => (received += chunk));
+          socket.on("error", () => {});
+          socket.on("close", () => resolve({ certificate, received }));
+          return promise;
+        }),
+      );
+
+      const tenantOutcome = { certificate: "agent1", received: "a.example.com authorized=false" };
+      expect(outcomes.slice(0, 3)).toEqual([tenantOutcome, tenantOutcome, tenantOutcome]);
+      if (mode === "SNICallback") {
+        // The callback is the allow-list: a name it rejects gets no session.
+        expect(outcomes[3]).toEqual({ certificate: "no handshake", received: "" });
+        expect(names.toSorted()).toEqual(servernames.toSorted());
+      } else {
+        expect(outcomes[3].certificate).toBe("agent2");
+      }
+    });
   });
 });
 

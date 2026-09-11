@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { once } from "node:events";
+import net from "node:net";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -252,5 +254,61 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       defaultResumed: "HTTP/1.1 200 OK",
       gatedResumed: "connection closed without a response",
     });
+  });
+
+  test("a handshake still queued at a graceful stop() is served under its serverName entry", async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          // A certificate of its own (CN=agent1), so the client can tell which entry answered.
+          ...untrustedClient,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: () => new Response("members only"),
+    });
+    try {
+      // The loop runs a few handshakes per iteration and queues the rest, so
+      // ClientHellos sent in one go are not all processed when the first
+      // handshake completes.
+      const raws = Array.from({ length: 32 }, () => net.connect({ host: "127.0.0.1", port: server.port }));
+      for (const raw of raws) raw.on("error", () => {});
+      await Promise.all(raws.map(raw => once(raw, "connect")));
+
+      const firstHandshake = Promise.withResolvers<void>();
+      // No client presents a certificate.
+      const outcomes = raws.map(raw => {
+        const { promise, resolve } = Promise.withResolvers<{ certificate: string; status: string }>();
+        let certificate = "no handshake";
+        let received = "";
+        const socket = tls.connect({ socket: raw, servername: "admin.example.com", rejectUnauthorized: false }, () => {
+          certificate = socket.getPeerCertificate().subject.CN;
+          firstHandshake.resolve();
+          socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\nConnection: close\r\n\r\n");
+        });
+        socket.on("data", chunk => (received += chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => resolve({ certificate, status: received.split("\r\n")[0] || "no response" }));
+        return promise;
+      });
+      await firstHandshake.promise;
+      server.stop();
+
+      const settled = await Promise.all(outcomes);
+      // Graceful stop may close a connection that has not started its
+      // handshake ("no handshake"). It must not answer one under another entry.
+      expect(
+        settled.filter(o => o.status !== "no response" || !["agent1", "no handshake"].includes(o.certificate)),
+      ).toEqual([]);
+      expect(settled.filter(o => o.certificate === "agent1").length).toBeGreaterThan(0);
+    } finally {
+      server.stop(true);
+    }
   });
 });

@@ -151,10 +151,10 @@ long us_ssl_ctx_live_count(void) {
  *   - us_sni_ex_idx (SSL_CTX): per-domain userdata (uWS HttpRouter*).
  *   - us_ssl_reneg_state_idx (SSL): per-connection reneg counter, malloc'd on
  *     first reneg attempt only — never on the hot path.
- *   - us_ssl_listener_ex_idx (SSL): the accepting us_listen_socket_t*. The
- *     SSL_CTX is shared and can outlive any one listener, so storing ls as the
- *     CTX-level servername_arg is a UAF after listener close (and overwritten
- *     on multi-listen).
+ *   - us_ssl_server_names_ex_idx (SSL): one reference to the accepting listen
+ *     socket's us_server_names_t, released on SSL_free. Per SSL and not the
+ *     CTX-level servername_arg because the SSL_CTX is shared across listeners
+ *     and outlives them.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -172,7 +172,7 @@ static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
-static int us_ssl_listener_ex_idx = -1;
+static int us_ssl_server_names_ex_idx = -1;
 /* Per-SSL socket-level SNI resolver (us_socket_sni_resolver_t), used when the
  * SSL has no listen socket behind it. */
 static int us_ssl_socket_sni_ex_idx = -1;
@@ -249,6 +249,17 @@ static void us_socket_sni_resolver_free(void *parent, void *ptr, CRYPTO_EX_DATA 
                                         int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   if (ptr) us_free(ptr);
+}
+
+/* us_server_names_t lives in the SNI section below. */
+struct us_server_names_t;
+static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *ls);
+static void us_server_names_unref(struct us_server_names_t *names);
+
+static void us_ssl_server_names_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                     int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_server_names_unref(ptr);
 }
 
 struct us_ssl_reneg_state_t {
@@ -453,7 +464,7 @@ static void us_ex_idx_init(void) {
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
-  us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_server_names_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_server_names_free);
   us_ssl_socket_sni_ex_idx =
       SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -1799,9 +1810,13 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   } else {
     SSL_set_accept_state(ssl);
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_never);
-    /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
+    /* sni_cb recovers the listener's server names per-SSL — never via the
+     * shared SSL_CTX. */
     us_ex_idx_ensure();
-    SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
+    struct us_server_names_t *names = listener ? us_server_names_ref(listener) : NULL;
+    if (names && !SSL_set_ex_data(ssl, us_ssl_server_names_ex_idx, names)) {
+      us_server_names_unref(names);
+    }
   }
 
   s->ssl = ssl;
@@ -3029,9 +3044,51 @@ static void sni_node_destructor(void *user) {
   us_free(node);
 }
 
-static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, const char *hostname) {
-  if (!ls->sni) return NULL;
-  return (struct sni_node_t *)sni_find(ls->sni, hostname);
+/* The server names of a TLS listen socket: the static SNI tree and the dynamic
+ * resolver. A connection selects its certificate when its ClientHello is
+ * processed, and that can be after the listen socket closed: server.close()
+ * and a graceful server.stop() keep accepted connections, and a handshake can
+ * still be parked in the low-priority queue or waiting for its ClientHello.
+ * So the listen socket does not own this alone. It holds one reference, and
+ * every SSL it accepted holds one (us_ssl_server_names_ex_idx) until SSL_free.
+ * Loop-thread only, like the listen socket. */
+struct us_server_names_t {
+  unsigned int refs;
+  /* NULL once the listen socket closed. */
+  struct us_listen_socket_t *ls;
+  /* hostname -> sni_node_t. NULL until the first name is added. */
+  void *tree;
+  /* Returns the SSL_CTX to serve for `hostname` on the in-flight handshake
+   * only (the caller does not cache it), or NULL to fall through to the tree. */
+  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+};
+
+static struct us_server_names_t *us_listen_socket_server_names(struct us_listen_socket_t *ls) {
+  if (!ls->server_names && ls->ssl_ctx) {
+    struct us_server_names_t *names = us_calloc(1, sizeof(*names));
+    if (!names) return NULL;
+    names->refs = 1;
+    names->ls = ls;
+    ls->server_names = names;
+  }
+  return ls->server_names;
+}
+
+static struct us_server_names_t *us_server_names_ref(struct us_listen_socket_t *ls) {
+  struct us_server_names_t *names = us_listen_socket_server_names(ls);
+  if (names) names->refs++;
+  return names;
+}
+
+static void us_server_names_unref(struct us_server_names_t *names) {
+  if (--names->refs) return;
+  if (names->tree) sni_free(names->tree, sni_node_destructor);
+  us_free(names);
+}
+
+static struct sni_node_t *us_server_names_find(struct us_server_names_t *names, const char *hostname) {
+  if (!names || !names->tree) return NULL;
+  return (struct sni_node_t *)sni_find(names->tree, hostname);
 }
 
 #define US_SNI_POLICY_REQUEST_CERT ((uintptr_t)1)
@@ -3127,7 +3184,11 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
  * through to the default context. us_socket_sni_resolve() resumes it. */
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
   SSL *ssl = hello->ssl;
-  if (!ssl || us_ssl_listener_ex_idx < 0) return ssl_select_cert_success;
+  if (!ssl || us_ssl_server_names_ex_idx < 0) return ssl_select_cert_success;
+
+  /* NULL on an SSL with no listen socket behind it. Valid whether or not that
+   * listen socket is still open: this SSL holds a reference. */
+  struct us_server_names_t *names = SSL_get_ex_data(ssl, us_ssl_server_names_ex_idx);
 
   /* A previous suspension being resumed: consume the stored result. */
   struct us_ssl_sni_pending_t *pending =
@@ -3144,16 +3205,14 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
      * through to the static SNI tree below, exactly like a synchronous
      * resolver returning null - the resume must not skip the tree fallback
      * the sync path gets. */
-    struct us_listen_socket_t *resumed_ls =
-        (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
-    if (resumed_ls) {
+    if (names) {
       /* Read the servername from the raw ClientHello, same as the first-call
        * path below: that is the read the early-callback contract guarantees
        * (SSL_get_servername happens to be populated by the resume re-drive
        * today, but the raw parse does not depend on that). */
       char resumed_host[256];
       if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
-        struct sni_node_t *resumed_node = resolve_listener_ctx(resumed_ls, resumed_host);
+        struct sni_node_t *resumed_node = us_server_names_find(names, resumed_host);
         if (resumed_node) {
           us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
         }
@@ -3170,11 +3229,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_retry;
   }
 
-  struct us_listen_socket_t *ls =
-      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
   /* With no listener resolver, the SSL may still carry a socket-level one: a
    * server-side socket adopted into TLS with its own SNICallback. */
-  const int no_listener_resolver = (!ls || !ls->on_server_name);
+  const int no_listener_resolver = (!names || !names->on_server_name);
   struct us_socket_sni_resolver_t *socket_resolver = NULL;
   if (no_listener_resolver && us_ssl_socket_sni_ex_idx >= 0) {
     socket_resolver = SSL_get_ex_data(ssl, us_ssl_socket_sni_ex_idx);
@@ -3205,9 +3262,11 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
+  /* names->ls is NULL once the listen socket closed: the listener resolver
+   * then resolves from cb_socket alone. */
   SSL_CTX *dyn =
       socket_resolver ? socket_resolver->cb(cb_socket, hostname, &abort_handshake)
-                      : ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);
+                      : names->on_server_name(names->ls, hostname, &abort_handshake, cb_socket);
   us_internal_ssl_loop_state_restore(saved_loop_state);
 
   if (abort_handshake == 1) {
@@ -3239,24 +3298,21 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   /* No dynamic selection: fall back to the static SNI tree (the bind
    * hostname and addContext() entries). An adopted socket has no tree. */
-  if (ls) {
-    struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
-    if (node) {
-      us_ssl_apply_selected_ctx(ssl, node->ctx);
-    }
+  struct sni_node_t *node = us_server_names_find(names, hostname);
+  if (node) {
+    us_ssl_apply_selected_ctx(ssl, node->ctx);
   }
   return ssl_select_cert_success;
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
   (void)al; (void)arg;
-  if (!ssl || us_ssl_listener_ex_idx < 0) return SSL_TLSEXT_ERR_NOACK;
-  /* The listener is per-SSL (set at accept), not the CTX-level arg — the
-   * SSL_CTX is shared and may outlive any one listener. */
-  struct us_listen_socket_t *ls =
-      (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
-  if (!ls) return SSL_TLSEXT_ERR_OK;
-  if (ls->on_server_name) {
+  if (!ssl || us_ssl_server_names_ex_idx < 0) return SSL_TLSEXT_ERR_NOACK;
+  /* The listener's server names are per-SSL (set at accept), not the CTX-level
+   * arg — the SSL_CTX is shared and may outlive any one listener. */
+  struct us_server_names_t *names = SSL_get_ex_data(ssl, us_ssl_server_names_ex_idx);
+  if (!names) return SSL_TLSEXT_ERR_OK;
+  if (names->on_server_name) {
     /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
      * ran it - and the static-tree fallback - at the earlier
      * select-certificate stage. Consulting the tree again here would
@@ -3269,7 +3325,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   if (hostname && hostname[0]) {
     /* Static SNI tree only (no dynamic resolver registered for this
      * listener). */
-    struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
+    struct sni_node_t *node = us_server_names_find(names, hostname);
     if (node) {
       us_ssl_apply_selected_ctx(ssl, node->ctx);
     }
@@ -3283,10 +3339,12 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   SSL_CTX *default_ctx = ls->ssl_ctx;
   if (!default_ctx) return -1;
 
-  if (!ls->sni) {
-    ls->sni = sni_new();
+  struct us_server_names_t *names = us_listen_socket_server_names(ls);
+  if (!names) return -1;
+  if (!names->tree) {
+    names->tree = sni_new();
     /* Idempotent across listeners sharing this SSL_CTX — the callback reads
-     * the listener off the SSL, not the arg. */
+     * the listener's server names off the SSL, not the arg. */
     SSL_CTX_set_tlsext_servername_callback(default_ctx, sni_cb);
   }
 
@@ -3299,7 +3357,7 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
-  if (sni_add(ls->sni, hostname_pattern, node)) {
+  if (sni_add(names->tree, hostname_pattern, node)) {
     /* Duplicate hostname — propagate so App.h's `if (result != 0)` rollback
      * (which frees the per-domain HttpRouter it just built) actually fires. */
     sni_node_destructor(node);
@@ -3310,15 +3368,14 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
                                          const char *hostname_pattern) {
-  if (!ls->sni) return;
-  struct sni_node_t *node = (struct sni_node_t *)sni_remove(ls->sni, hostname_pattern);
+  if (!ls->server_names || !ls->server_names->tree) return;
+  struct sni_node_t *node = (struct sni_node_t *)sni_remove(ls->server_names->tree, hostname_pattern);
   sni_node_destructor(node);
 }
 
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
                                                  const char *hostname_pattern) {
-  if (!ls->sni) return NULL;
-  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
+  struct sni_node_t *node = us_server_names_find(ls->server_names, hostname_pattern);
   return node ? node->user : NULL;
 }
 
@@ -3329,8 +3386,7 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
  * tree's reference must not be handed out as a borrow. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
                                                          const char *hostname_pattern) {
-  if (!ls->sni) return NULL;
-  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
+  struct sni_node_t *node = us_server_names_find(ls->server_names, hostname_pattern);
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
@@ -3338,15 +3394,15 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
                                      struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *, int *, struct us_socket_t *)) {
-  ls->on_server_name = cb;
+  struct us_server_names_t *names = us_listen_socket_server_names(ls);
+  if (!names) return;
+  names->on_server_name = cb;
   /* The dynamic resolver may need to suspend the handshake (async
    * SNICallback); only the early select-certificate callback supports retry,
    * so register it on the listener's default context. The servername-stage
    * sni_cb stays registered for the static SNI tree (it is a no-op when the
    * early callback already installed a context). */
-  if (ls->ssl_ctx) {
-    SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
-  }
+  SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
 }
 
 /* Register a socket-level SNI resolver on an already-attached server-side SSL.
@@ -3383,37 +3439,18 @@ const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {
 }
 
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
-  /* Accepted sockets carry `ls` in per-SSL ex_data so sni_cb can reach the
-   * listener's SNI tree. Those sockets may outlive the listener (server.close()
-   * keeps existing connections per Node semantics), so wipe the back-ref now —
-   * sni_cb returns OK on NULL. Walk only sockets accepted INTO this listener's
-   * group; uWS apps with multiple listeners on one group are scoped by the
-   * `== ls` check. */
-  if (us_ssl_listener_ex_idx >= 0 && ls->accept_group) {
-    for (struct us_socket_t *s = ls->accept_group->head_sockets; s; s = s->next) {
-      if (s->ssl && SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
-        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
-      }
-    }
-    /* Mid-handshake sockets (SSL_in_init → low_prio) are *unlinked* from
-     * head_sockets while parked in loop->data.low_prio_head, and they're
-     * exactly the population that will run sni_cb on the next tick. Miss them
-     * here and sni_cb dereferences `ls` after it's freed. Same group-filter as
-     * close_all's drain. */
-    for (struct us_socket_t *s = ls->accept_group->loop->data.low_prio_head; s; s = s->next) {
-      if (s->group == ls->accept_group && s->ssl &&
-          SSL_get_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx) == ls) {
-        SSL_set_ex_data((SSL *)s->ssl, us_ssl_listener_ex_idx, NULL);
-      }
-    }
-  }
   if (ls->ssl_ctx) {
     us_internal_ssl_ctx_unref(ls->ssl_ctx);
     ls->ssl_ctx = NULL;
   }
-  if (ls->sni) {
-    sni_free(ls->sni, sni_node_destructor);
-    ls->sni = NULL;
+  if (ls->server_names) {
+    /* Accepted sockets may outlive the listener (server.close() keeps existing
+     * connections per Node semantics), and the ones that have not processed
+     * their ClientHello yet still have to select a certificate. They hold
+     * their own reference, and none of them holds `ls`. */
+    ls->server_names->ls = NULL;
+    us_server_names_unref(ls->server_names);
+    ls->server_names = NULL;
   }
 }
 

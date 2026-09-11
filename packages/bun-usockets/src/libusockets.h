@@ -399,8 +399,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
-/* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). user may be NULL. */
+/* SNI: the listen socket shares its server names with the connections it
+ * accepted, so one that selects its certificate after us_listen_socket_close()
+ * still sees them. ssl_ctx is up_ref'd; user is opaque (uWS stores a
+ * per-domain HttpRouter*). user may be NULL. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
@@ -416,6 +418,9 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
+/* Dynamic SNI resolver. It keeps running for the connections `ls` accepted
+ * after us_listen_socket_close(ls), and then receives NULL in place of `ls`:
+ * resolve from `socket`. */
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver

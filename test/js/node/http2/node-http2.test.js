@@ -6135,9 +6135,14 @@ describe.concurrent("frames written after the native transport closed count as s
         server.once("connection", socket => socket.once("end", resolve).once("close", resolve)),
       );
       const socket = net.connect(server.address().port, "127.0.0.1", () => {
-        socket.write(http2utils.kClientMagic);
-        socket.write(new http2utils.SettingsFrame().data);
-        socket.write(new http2utils.HeadersFrame(1, requestBlock, 0, true, !openBody).data);
+        // One write, so one segment is on the wire before the RST. Nagle cannot hold a part back.
+        socket.write(
+          Buffer.concat([
+            http2utils.kClientMagic,
+            new http2utils.SettingsFrame().data,
+            new http2utils.HeadersFrame(1, requestBlock, 0, true, !openBody).data,
+          ]),
+        );
         socket.resetAndDestroy();
       });
       socket.on("error", () => {});
@@ -6180,8 +6185,7 @@ describe.concurrent("frames written after the native transport closed count as s
           // The request's HEADERS frame: from here on the request is open on both sides.
           if (received[offset + 3] === 1) {
             socket.off("data", onData);
-            socket.write(new http2utils.SettingsFrame().data);
-            socket.write(new http2utils.PingFrame().data);
+            socket.write(Buffer.concat([new http2utils.SettingsFrame().data, new http2utils.PingFrame().data]));
             socket.resetAndDestroy();
             return;
           }

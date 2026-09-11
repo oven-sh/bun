@@ -767,6 +767,10 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
+void us_internal_poll_close_fd(struct us_poll_t *p) {
+    bsd_close_socket(us_poll_fd(p));
+}
+
 size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 #ifdef LIBUS_USE_EPOLL
     int fd = us_poll_fd(p);

@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, closeSync, copyFileSync, fsyncSync, openSync, statfsSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { tmpdir } from "os";
+import { join } from "path";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -191,6 +194,85 @@ describe("idle release", () => {
   test.concurrent("BUN_IDLE_GC_SECONDS=0 disables it", async () => {
     const { fulls, exitCode } = await run("0");
     expect(fulls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A tick after the second idle collection the controller also has the kernel reclaim the executable's own read-only
+// pages if the process was idle on the CPU too. MADV_PAGEOUT skips pages another process maps (the test runner is the
+// same executable) and tmpfs pages are not file-backed, so the child runs from a copy on a disk-backed temp dir.
+// Debug and ASAN executables are too big to copy per test, and their collections alone use more CPU than "idle" allows.
+const TMPFS_MAGIC = 0x01021994;
+const cannotObservePageOut = !isLinux || isDebug || isASAN || statfsSync(tmpdir()).type === TMPFS_MAGIC;
+describe.skipIf(cannotObservePageOut)("idle release pages out the executable image", () => {
+  // Reports file-backed resident memory at start and once it fell under 60% of that, or at the deadline.
+  const script = (busy: boolean, waitMs: number) => /* js */ `
+    const { readFileSync } = require("fs");
+    const fileResident = () => Number(/^RssFile:\\s+(\\d+) kB/m.exec(readFileSync("/proc/self/status", "utf8"))[1]);
+    const before = fileResident();
+    const deadline = Date.now() + ${waitMs};
+    const timer = setInterval(() => {
+      const now = fileResident();
+      if (now < before * 0.6 || Date.now() > deadline) {
+        clearInterval(timer);
+        console.log(JSON.stringify({ before, now }));
+      }
+      // A quarter of one core, without growing the heap.
+      for (const end = performance.now() + ${busy ? 60 : 0}; performance.now() < end; );
+    }, 250);
+  `;
+
+  // Each child needs its own copy (see above), made up front so that copying does not count against the tests' clocks.
+  // Only clean pages can be reclaimed; a copy that was not reflinked is all dirty page cache until written back.
+  let dir: ReturnType<typeof tempDir>;
+  let copies: string[];
+  beforeAll(() => {
+    dir = tempDir("idle-page-out", {});
+    copies = [0, 1, 2].map(i => {
+      const exe = join(String(dir), "bun-copy-" + i);
+      copyFileSync(bunExe(), exe);
+      chmodSync(exe, 0o755);
+      const fd = openSync(exe, "r+");
+      fsyncSync(fd);
+      closeSync(fd);
+      return exe;
+    });
+  });
+  afterAll(() => dir[Symbol.dispose]());
+
+  async function run(busy: boolean, env: Record<string, string>, waitMs = 4200) {
+    const exe = copies.pop()!;
+    await using proc = Bun.spawn({
+      cmd: [exe, "-e", script(busy, waitMs)],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: "1,1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { ...(JSON.parse(stdout) as { before: number; now: number }), exitCode };
+  }
+
+  test.concurrent("file-backed resident memory drops once the process is idle", async () => {
+    const { before, now, exitCode } = await run(false, {}, 15_000);
+    expect(now).toBeLessThan(before * 0.6);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("not while the process is using the CPU with a heap that has stopped growing", async () => {
+    const { before, now, exitCode } = await run(true, {});
+    expect(now).toBeGreaterThan(before * 0.6);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1 disables it", async () => {
+    const { before, now, exitCode } = await run(false, { BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" });
+    expect(now).toBeGreaterThan(before * 0.6);
     expect(exitCode).toBe(0);
   });
 });

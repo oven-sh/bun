@@ -8379,9 +8379,36 @@ pub mod net {
     }
 }
 
+/// `madvise(MADV_PAGEOUT)` over the whole pages inside `[ptr, ptr + len)`: clean file-backed pages are dropped and read
+/// back from the file on the next access; dirtied ones go to swap if there is any and otherwise stay.
+///
+/// # Safety
+/// The range must be mapped for the duration of the call.
+#[cfg(target_os = "linux")]
+pub unsafe fn page_out_range(ptr: *const u8, len: usize) {
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
+        .unwrap_or(false)
+    {
+        return;
+    }
+    // A few MB per call: the kernel holds mmap_lock (for read) for the whole of one, and an mmap/mprotect on another
+    // thread queues behind it.
+    const CHUNK: usize = 4 * 1024 * 1024;
+    let page = bun_alloc::page_size();
+    let mut lo = (ptr as usize + page - 1) & !(page - 1);
+    let hi = (ptr as usize).wrapping_add(len) & !(page - 1);
+    while lo < hi {
+        let n = (hi - lo).min(CHUNK);
+        // SAFETY: caller guarantees the range is mapped; MADV_PAGEOUT neither reads nor writes through it.
+        unsafe { libc::madvise(lo as *mut core::ffi::c_void, n, libc::MADV_PAGEOUT) };
+        lo += n;
+    }
+}
+
 /// `std.elf` constants (just what `bun_exe_format`/`bun_crash` need).
 pub mod elf {
     pub const PT_LOAD: u32 = 1;
+    pub const PF_W: u32 = 2;
     pub const PT_INTERP: u32 = 3;
 
     /// Result of [`find_loaded_module`]: the loaded ELF object whose `PT_LOAD`
@@ -8396,21 +8423,18 @@ pub mod elf {
         pub name: Box<[u8]>,
     }
 
-    /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
-    /// `PT_LOAD` segment contains `address` (matched by address, so it does not
-    /// depend on how a libc names or orders the main program).
+    /// Calls `f(info)` for the loaded ELF object one of whose `PT_LOAD` segments contains `address`
+    /// (matched by address, so it does not depend on how a libc names or orders the main program). `f` runs inside
+    /// `dl_iterate_phdr`, i.e. with the loader lock held: keep it short.
     #[cfg(not(any(windows, target_os = "macos")))]
-    pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
+    fn with_loaded_module_containing(address: usize, f: &mut dyn FnMut(&libc::dl_phdr_info)) {
         use core::ffi::{c_int, c_void};
 
-        struct Ctx {
+        struct Ctx<'a> {
             address: usize,
-            result: Option<LoadedModule>,
+            f: &'a mut dyn FnMut(&libc::dl_phdr_info),
         }
-        let mut ctx = Ctx {
-            address,
-            result: None,
-        };
+        let mut ctx = Ctx { address, f };
 
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type `dl_iterate_phdr` expects — never callable by name
@@ -8421,7 +8445,7 @@ pub mod elf {
             data: *mut c_void,
         ) -> c_int {
             // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { bun_core::callback_ctx::<Ctx>(data) };
+            let context = unsafe { bun_core::callback_ctx::<Ctx<'_>>(data) };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
             // The base address is too high
@@ -8440,21 +8464,7 @@ pub mod elf {
                 let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
                 let seg_end = seg_start + phdr.p_memsz as usize;
                 if context.address >= seg_start && context.address < seg_end {
-                    // Android libc uses NULL instead of an empty string to mark
-                    // the main program.
-                    let name = if info.dlpi_name.is_null() {
-                        Box::default()
-                    } else {
-                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
-                            .to_bytes()
-                            .to_vec()
-                            .into_boxed_slice()
-                    };
-                    context.result = Some(LoadedModule {
-                        base_address: info.dlpi_addr as usize,
-                        name,
-                    });
+                    (context.f)(info);
                     return 1; // error.Found → stop iteration
                 }
             }
@@ -8463,7 +8473,60 @@ pub mod elf {
 
         // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
         unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
-        ctx.result
+    }
+
+    /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
+    /// `PT_LOAD` segment contains `address`.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {
+        let mut result = None;
+        with_loaded_module_containing(address, &mut |info| {
+            // Android libc uses NULL instead of an empty string to mark
+            // the main program.
+            let name = if info.dlpi_name.is_null() {
+                Box::default()
+            } else {
+                // SAFETY: dlpi_name is a valid NUL-terminated C string.
+                unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
+                    .to_bytes()
+                    .to_vec()
+                    .into_boxed_slice()
+            };
+            result = Some(LoadedModule {
+                base_address: info.dlpi_addr as usize,
+                name,
+            });
+        });
+        result
+    }
+
+    /// Reclaims the resident pages of this executable's read-only segments (code, constants). Clean file-backed pages:
+    /// read back from the file when next touched, so only for an idle process. May block; call off the JS thread. The
+    /// kernel leaves alone pages that another process maps too (a second instance of the same executable), and all of
+    /// them if the caller neither owns the file nor may write it.
+    #[cfg(target_os = "linux")]
+    pub fn page_out_program_image() {
+        let mut image: Option<(usize, *const libc::Elf64_Phdr, usize)> = None;
+        with_loaded_module_containing(page_out_program_image as *const () as usize, &mut |info| {
+            image = Some((
+                info.dlpi_addr as usize,
+                info.dlpi_phdr,
+                info.dlpi_phnum as usize,
+            ));
+        });
+        let Some((base, phdr, phnum)) = image else {
+            return;
+        };
+        // SAFETY: the main program's header table stays mapped for the life of the process.
+        let phdrs = unsafe { core::slice::from_raw_parts(phdr, phnum) };
+        // After dl_iterate_phdr returned: it holds the loader lock, and the reclaim can take a while.
+        for phdr in phdrs {
+            if phdr.p_type == PT_LOAD && phdr.p_flags & PF_W == 0 {
+                let start = base.wrapping_add(phdr.p_vaddr as usize);
+                // SAFETY: a mapped read-only segment of this image, which is never unmapped.
+                unsafe { super::page_out_range(start as *const u8, phdr.p_memsz as usize) };
+            }
+        }
     }
 }
 

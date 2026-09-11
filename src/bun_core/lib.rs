@@ -1154,6 +1154,8 @@ pub mod time {
         NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp,
         milli_timestamp_allow_mocked_time, nano_timestamp, timestamp,
     };
+    #[cfg(unix)]
+    pub use crate::util::time::process_cpu_time_ms;
 
     #[derive(Clone, Copy)]
     pub struct Timer {

@@ -2825,6 +2825,17 @@ pub mod time {
     // s
     pub const S_PER_DAY: u32 = 86_400;
 
+    /// CPU time (user + system, every thread) this process has used so far, in milliseconds.
+    #[cfg(unix)]
+    pub fn process_cpu_time_ms() -> u64 {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        super::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts);
+        ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
+    }
+
     /// Wall-clock nanoseconds since the Unix epoch.
     #[inline]
     pub fn nano_timestamp() -> i128 {

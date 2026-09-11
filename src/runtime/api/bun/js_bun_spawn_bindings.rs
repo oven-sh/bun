@@ -1696,9 +1696,7 @@ fn spawn_maybe_sync(
         }
     }
 
-    // `maxBuffer` is charged only as bytes are read. A reader that waits for the
-    // first JS pull never counts the child's output, so it never kills the
-    // child. The budget itself bounds what an eager reader can buffer.
+    // `maxBuffer` is charged as bytes are read, so a paused reader would never enforce it.
     let lazy = !is_sync && lazy && max_buffer.is_none();
 
     // Start the readers before the Writable::Buffer stdin writer so that if

@@ -1,7 +1,7 @@
 // fs.watchFile and fs.unwatchFile are lazily loaded so that the StatWatcher
 // machinery is not set up until it is actually used.
 const EventEmitter = require("node:events");
-const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/validators");
+const { getValidatedPath } = require("internal/validators");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -80,7 +80,7 @@ function unwatchFile(filename, listener) {
   filename = getValidatedPath(filename);
 
   var stat = statWatchers.get(filename);
-  if (!stat) return throwIfNullBytesInFileName(filename);
+  if (!stat) return;
   if (listener) {
     stat.removeListener("change", listener);
     if (stat.listenerCount("change") !== 0) {

@@ -30,12 +30,19 @@ pub struct ModuleLoader {
     pub interactive_eval_script: Option<Box<[u8]>>,
 }
 
-pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
+static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
-pub(crate) fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
+pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
     IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `bun:internal-for-testing` resolves: `--expose-internals` in release builds, always in debug builds.
+#[inline]
+pub fn is_allowed_to_use_internal_testing_apis() -> bool {
+    bun_core::env::IS_DEBUG
+        || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 impl ModuleLoader {

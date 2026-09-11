@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { checkGraph, run } from "./splitting-fuzz";
 
 const env = {
   ...bunEnv,
@@ -2531,6 +2532,336 @@ describe("bundler", () => {
     },
     run: { file: "/out/main.js", stdout: "tool:shared shared" },
   });
+
+  // A split require() evaluates its target in the middle of the file making the call. Where the target imports its
+  // way back to that file, whatever else it needs must be a chunk that can be evaluated on demand at that moment,
+  // not code sitting further down the caller's own chunk. Each graph runs unbundled and bundled; the output must match.
+  const requireCycleGraphs: Record<string, { files: Record<string, string>; todo?: string; folding?: true }> = {
+    // base.ts is needed by tool.ts and imports registry.ts, which require()s tool.ts. `other` (loaded after main) is
+    // redundant in registry.ts's key, and dropping it must not fold base.ts into registry.ts's chunk.
+    "a file the target needs imports the caller": {
+      todo: "folding puts base.ts in registry.ts's chunk, after the call",
+      folding: true,
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          export const later = () => import('./other.ts')
+          console.log(tools[0].name, base.kind)
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool:" + base.kind)
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x") }
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
+    // The same with a leaf that shares the caller's key and is imported ahead of the call: it is the caller's group
+    // that has to stay out, not whichever group comes second.
+    "the caller shares its chunk with a leaf": {
+      todo: "folding puts base.ts in registry.ts's chunk, after the call",
+      folding: true,
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          export const a = () => import('./other.ts')
+          export const b = () => import('./foo.ts')
+          console.log(tools[0].name, base.kind)
+        `,
+        "registry.ts": `
+          import { leaf } from './leaf.ts'
+          import { x } from './x.ts'
+          export function buildTool(name: string) { return { name: name + leaf + x } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "leaf.ts": `export const leaf = "+leaf"`,
+        "x.ts": `export const x = "+x"`,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool:" + base.kind)
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x") }
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+        "foo.ts": `
+          import { x } from './x.ts'
+          export const foo = x
+        `,
+      },
+    },
+    // The call is in base.ts, one require() further along than the one that starts the chain.
+    "a chain of two calls": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          import { shared2 } from './shared2.ts'
+          const later = () => import('./other.ts')
+          console.log(tools[0].name, base.kind, base.extra, shared2.name, typeof later)
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = { get name() { return buildTool("tool:" + base.kind).name } }
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x"), extra: require('./tool2.ts').T2 }
+        `,
+        "tool2.ts": `
+          import { shared2 } from './shared2.ts'
+          export const T2 = "t2:" + shared2.name
+        `,
+        "shared2.ts": `export const shared2 = { name: "s2" }`,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
+    // One call inside a function nobody calls while loading, one at the top level of another file.
+    "a call in a function and a call at the top level": {
+      files: {
+        "main.ts": `
+          import "./a.ts"
+          import "./b.ts"
+          import "./g.ts"
+        `,
+        "a.ts": `
+          export const a = 1
+          export function later() { return require("./x.ts") }
+          console.log("a")
+        `,
+        "b.ts": `
+          export function bfn() { return 2 }
+          const x = require("./x.ts")
+          console.log("b got", x.v)
+        `,
+        "f.ts": `
+          import { a } from "./a.ts"
+          export const fval = a + 10
+          console.log("f")
+        `,
+        "g.ts": `
+          import { fval } from "./f.ts"
+          import { later } from "./a.ts"
+          globalThis.later = later
+          console.log("g", fval)
+        `,
+        "x.ts": `
+          import { fval } from "./f.ts"
+          import { bfn } from "./b.ts"
+          export const v = fval + 1
+          export const w = () => bfn()
+          console.log("x")
+        `,
+      },
+    },
+    "a class extends one from a file with a call in a function": {
+      files: {
+        "main.ts": `
+          import "./a.ts"
+          import { Z } from "./z.ts"
+          import "./f.ts"
+          console.log(new Z().tag())
+        `,
+        "a.ts": `
+          export class Base { tag() { return "base" } }
+          export const lazy = () => require("./x.ts")
+        `,
+        "x.ts": `
+          import { l2 } from "./f.ts"
+          export const x = typeof l2
+        `,
+        "f.ts": `export const l2 = () => require("./x2.ts")`,
+        "x2.ts": `
+          import { Z } from "./z.ts"
+          export const x2 = Z.name
+        `,
+        "z.ts": `
+          import { Base } from "./a.ts"
+          export class Z extends Base { tag() { return "z<" + super.tag() } }
+        `,
+      },
+    },
+    "the target requires a CommonJS file the entry point imports too": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import cjs from './cjs.cjs'
+          console.log(tools[0].n, cjs.x)
+        `,
+        "registry.ts": `export const tools = [require('./tool.ts').Tool]`,
+        "tool.ts": `
+          const c = require('./cjs.cjs')
+          export const Tool = { n: c.x }
+        `,
+        "cjs.cjs": `exports.x = "cjs"`,
+      },
+    },
+    "the caller's own imports run before the target": {
+      todo: "the code registry.ts shares with tool.ts is hoisted ahead of registry.ts's import of setup.ts",
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { shared } from './shared.ts'
+          console.log(tools[0].name, shared.name)
+        `,
+        "registry.ts": `
+          import './setup.ts'
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "setup.ts": `globalThis.X = "set"`,
+        "shared.ts": `export const shared = { name: "shared:" + globalThis.X }`,
+        "tool.ts": `
+          import { shared } from './shared.ts'
+          export const Tool = { name: "tool:" + shared.name }
+        `,
+      },
+    },
+    "a file the target needs shares the caller's chunk and comes after it": {
+      todo: "files reached by the same entry points share a chunk, and nothing orders helper.ts ahead of registry.ts",
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { viaMain } from './via-main.ts'
+          console.log(tools.map(t => t.name).join(","), viaMain())
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { buildTool } from './registry.ts'
+          import { viaTool } from './via-tool.ts'
+          export const Tool = buildTool("tool+" + viaTool())
+        `,
+        "via-main.ts": `
+          import { helperName } from './mid.ts'
+          export function viaMain() { return helperName() }
+        `,
+        "via-tool.ts": `
+          import { helperName } from './mid.ts'
+          export function viaTool() { return helperName() }
+        `,
+        "mid.ts": `
+          import { helper } from './helper.ts'
+          export function helperName() { return helper.name }
+        `,
+        "helper.ts": `export const helper = { name: "helper" }`,
+      },
+    },
+  };
+  for (const [name, { files, todo, folding }] of Object.entries(requireCycleGraphs)) {
+    // `folding`: the graph goes wrong because of a fold, so the build without folding has to get it right.
+    for (const fold of folding ? [true, false] : [true]) {
+      test
+        .todoIf(!!todo && fold)
+        .concurrent(`splitting/SplitRequireCycle: ${name}${fold ? "" : " (without folding)"}`, async () => {
+          using dir = tempDir("splitting-require-cycle", files);
+          const cwd = String(dir);
+          const [unbundled, build] = await Promise.all([
+            run([bunExe(), "main.ts"], cwd, env),
+            Bun.build({
+              entrypoints: [join(String(dir), "main.ts")],
+              outdir: join(String(dir), "out"),
+              splitting: true,
+              target: "bun",
+              format: "esm",
+              // @ts-expect-error internal to Bun's tests
+              foldChunksForTesting: fold,
+            }),
+          ]);
+          expect(unbundled.stdout).not.toBe("");
+          expect(unbundled.exitCode).toBe(0);
+          expect(build.logs).toEqual([]);
+          expect(await run([bunExe(), join("out", "main.js")], cwd, env)).toEqual(unbundled);
+        });
+    }
+  }
+
+  // Without folding, the chunk that a fold would have removed is kept; the program prints the same.
+  for (const foldChunks of [undefined, false]) {
+    itBundled(`splitting/FoldChunksForTesting/${foldChunks === false ? "off" : "on"}`, {
+      backend: "api",
+      files: {
+        "/main.js": `import { shared } from "./shared.js"; console.log("main", shared); import("./lazy.js");`,
+        "/lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
+        "/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/main.js"],
+      splitting: true,
+      foldChunks,
+      outdir: "/out",
+      run: { file: "/out/main.js", stdout: "main shared\nlazy shared" },
+      onAfterBundle(api) {
+        const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".js"));
+        expect(chunks.length).toBe(foldChunks === false ? 3 : 2);
+      },
+    });
+  }
+
+  // `foldChunksForTesting` is read only where `bun:internal-for-testing` resolves (always, in a debug build).
+  test.skipIf(isDebug).concurrent("splitting/FoldChunksForTesting is ignored without --expose-internals", async () => {
+    using dir = tempDir("splitting-fold-chunks-gate", {
+      "main.js": `import { shared } from "./shared.js"; console.log("main", shared); import("./lazy.js");`,
+      "lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
+      "shared.js": `export const shared = "shared";`,
+      "build.js": `
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/main.js"],
+          splitting: true,
+          foldChunksForTesting: false,
+        });
+        console.log(result.outputs.length);
+      `,
+    });
+    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env;
+    const chunks = async (...flags: string[]) => {
+      const { stdout, ...rest } = await run([bunExe(), ...flags, "build.js"], String(dir), withoutInternals);
+      return { stdout: stdout.trim(), ...rest };
+    };
+    expect(await Promise.all([chunks(), chunks("--expose-internals")])).toEqual([
+      { stdout: "2", stderr: "", exitCode: 0 },
+      { stdout: "3", stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // Random graphs, each run unbundled, bundled without folding and bundled with it (splitting-fuzz.ts). Folding may
+  // not lose a value or an order of top-level effects that the unfolded bundle and the source agree on. Folding
+  // changes the bundle of about one graph in sixteen; these are from those.
+  for (const [seed, todo] of [
+    [3, ""],
+    [47, ""],
+    [25, "f3 and f3:done run after f6 and f9 once folded"],
+  ] as const) {
+    test.todoIf(!!todo).concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed}`, async () => {
+      expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded: true, problems: [] });
+    });
+  }
 
   // Browser-side files of a server build (an imported HTML page's scripts)
   // cannot call import.meta.require; their require() keeps the wrapper.

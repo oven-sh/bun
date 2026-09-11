@@ -1397,6 +1397,7 @@ pub struct LinkerOptions {
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    pub(crate) fold_chunks: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
@@ -1443,6 +1444,7 @@ impl Default for LinkerOptions {
             footer: b"",
             css_chunking: false,
             min_chunk_size: 0,
+            fold_chunks: true,
             module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,

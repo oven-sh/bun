@@ -141,9 +141,10 @@ function makeScenario(
   return { timeZone, sweep, daily, offsetAt, nameAt, offsetOracle, primingStarts };
 }
 
-// One Date for all the UTC-to-local checks: the cost of a zone change grows
-// with the number of Dates in the heap.
+// One Date for all the UTC-to-local checks and one for all the local-to-UTC
+// checks: the cost of a zone change grows with the number of Dates in the heap.
 const date = new Date();
+const localDate = new Date(0);
 
 // Compares every instant of `order` with the oracles and returns what differs.
 function checkWindow(scenario: Scenario, order: number[]) {
@@ -165,17 +166,12 @@ function checkWindow(scenario: Scenario, order: number[]) {
 
     // The local time to UTC direction has a cache of its own with the same
     // logic. Where the offset is steady for four hours either side, the local
-    // time of `time` exists exactly once, so a Date built from its fields has
-    // to give `time` back.
+    // time of `time` exists exactly once, so a Date set to its fields has to
+    // give `time` back.
     if (offsetAt.get(time - step) !== expectedOffset || offsetAt.get(time + step) !== expectedOffset) continue;
     date.setTime(time + expectedOffset * msPerMinute);
-    const fromFields = new Date(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-      date.getUTCHours(),
-      date.getUTCMinutes(),
-    ).getTime();
+    localDate.setFullYear(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    const fromFields = localDate.setHours(date.getUTCHours(), date.getUTCMinutes(), 0, 0);
     if (fromFields !== time)
       mismatches.push(`${date.toISOString().slice(0, 16)} local time is ${iso(fromFields)}, expected ${iso(time)}`);
   }

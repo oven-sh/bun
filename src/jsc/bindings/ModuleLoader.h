@@ -46,6 +46,8 @@ struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
     bool wasMock;
+    // The bytes `value.sourceText.string` points to when `contents` was a typed array.
+    WTF::Vector<uint8_t> sourceTextCopy;
 };
 
 extern "C" bool isBunTest;

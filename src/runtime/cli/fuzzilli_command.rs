@@ -88,6 +88,26 @@ impl FuzzilliCommand {
 
             bun_core::pretty_errorln!("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>");
 
+            // A fuzz program can call `require("a")`. With no node_modules above the wrapper, that
+            // auto-installs. The fuzzer must still reach that code, but it must not download or
+            // run packages. So the defaults are a registry that nothing listens on and a cache
+            // that starts empty. Child processes inherit both. A campaign that has a fixture
+            // registry sets BUN_CONFIG_REGISTRY itself.
+            // SAFETY: main thread during startup, before any concurrent reader of the environment
+            // exists. setenv copies the NUL-terminated strings.
+            unsafe {
+                libc::setenv(
+                    c"BUN_CONFIG_REGISTRY".as_ptr(),
+                    c"http://127.0.0.1:1/".as_ptr(),
+                    0,
+                );
+                libc::setenv(
+                    c"BUN_INSTALL_CACHE_DIR".as_ptr(),
+                    c"/tmp/bun-fuzzilli-install-cache".as_ptr(),
+                    0,
+                );
+            }
+
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the

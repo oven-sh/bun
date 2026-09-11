@@ -298,6 +298,11 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                 i += 1;
             }
             b'{' => {
+                if fmt.get(i + 1) == Some(&b'{') {
+                    out.extend_from_slice(b"{{");
+                    i += 2;
+                    continue;
+                }
                 while i < fmt.len() && fmt[i] != b'}' {
                     out.push(fmt[i]);
                     i += 1;

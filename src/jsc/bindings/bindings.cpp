@@ -2536,8 +2536,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
                 // we don't have that information here, so map.addUncommonHeaderCloneName exists
                 added = map.addUncommonHeaderCloneName(nameView, value);
             }
-            // picohttpparser caps the header count at 256, far below the map's limit.
-            ASSERT_UNUSED(added, added);
+            // Every transport caps one response's header block, so only a failed allocation gets here.
+            RELEASE_ASSERT(added);
         }
 
         headers->setInternalHeaders(WTF::move(map));
@@ -2564,8 +2564,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         bool added = WebCore::findHTTPHeaderName(nameView, name)
             ? map.add(name, WTF::move(value))
             : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        // The parser caps the header count at UWS_HTTP_MAX_HEADERS_COUNT, far below the map's limit.
-        ASSERT_UNUSED(added, added);
+        // The parser caps the header count at UWS_HTTP_MAX_HEADERS_COUNT, so only a failed allocation gets here.
+        RELEASE_ASSERT(added);
     }
     headers->setInternalHeaders(WTF::move(map));
     return headers;
@@ -2588,8 +2588,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         bool added = WebCore::findHTTPHeaderName(nameView, hn)
             ? map.add(hn, WTF::move(value))
             : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        // One request's header block is size-limited, so its count stays far below the map's limit.
-        ASSERT_UNUSED(added, added);
+        // es_max_header_list_size caps one request's headers at 64 KiB, so only a failed allocation gets here.
+        RELEASE_ASSERT(added);
     });
     headers->setInternalHeaders(WTF::move(map));
     return headers;

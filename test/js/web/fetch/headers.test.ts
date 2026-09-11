@@ -741,8 +741,11 @@ describe("Headers", () => {
     // most min(INT32_MAX, the synthetic allocation limit) / 8 entries.
     // setSyntheticAllocationLimitForTesting floors at 1 MiB, which puts the bound at
     // 131072 values. Without it the bound is 262343954 values and about 2 GB.
+    // 131072 append() calls take about 4 s on a debug ASAN build (milliseconds on a
+    // release build), which is too close to the 5 s default, so the test names a timeout.
     const LIMIT_BYTES = 1024 * 1024;
     const MAX_SET_COOKIE = LIMIT_BYTES / 8;
+    const TIMEOUT_MS = 30_000;
 
     test("append('set-cookie') throws a RangeError past the vector's largest size", () => {
       const setLimit = internalForTesting.setSyntheticAllocationLimitForTesting;
@@ -770,6 +773,6 @@ describe("Headers", () => {
       } finally {
         setLimit(previousLimit);
       }
-    });
+    }, TIMEOUT_MS);
   });
 });

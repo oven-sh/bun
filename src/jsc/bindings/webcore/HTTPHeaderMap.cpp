@@ -289,9 +289,9 @@ bool HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
         return header.key == name;
     });
     if (index == notFound)
-        return tryAppendHeader(m_commonHeaders, CommonHeader { name, value });
-
-    m_commonHeaders[index].value = value;
+        m_commonHeaders.append(CommonHeader { name, value });
+    else
+        m_commonHeaders[index].value = value;
     return true;
 }
 
@@ -339,10 +339,10 @@ bool HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
-    if (index == notFound)
-        return tryAppendHeader(m_commonHeaders, CommonHeader { name, value });
-
-    m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
+    if (index != notFound)
+        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
+    else
+        m_commonHeaders.append(CommonHeader { name, value });
     return true;
 }
 

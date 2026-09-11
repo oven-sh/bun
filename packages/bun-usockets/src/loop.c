@@ -317,6 +317,13 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         }
 
         us_internal_socket_group_link_socket(s->group, s);
+        if (s->flags.is_paused) {
+            /* us_socket_pause found the reads already off and only set the flag. Hand back an
+             * ordinary paused socket: us_socket_resume arms the reads, and the readable dispatch
+             * gates it again. */
+            s->flags.low_prio_state = 0;
+            continue;
+        }
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;

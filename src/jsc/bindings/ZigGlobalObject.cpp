@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
 #include "MessagePort.h"
@@ -760,21 +761,38 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// A key that is not an atom already names no module, and does not become one.
+static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue)
+{
+    if (!keyValue.isString())
+        return nullptr;
+    auto atom = asString(keyValue)->toExistingAtomString(globalObject);
+    if (!atom.data)
+        return nullptr;
+    auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromUid(globalObject->vm(), atom.data));
+    return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue keyValue = callFrame->argument(0);
-    if (!keyValue.isString())
-        return JSValue::encode(jsUndefined());
-    auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
+    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    auto* entry = globalObject->moduleLoader()->registryEntry(key);
-    if (!entry || !isModuleEvaluated(entry->record()))
+    if (!record)
         return JSValue::encode(jsUndefined());
-    auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+    auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(!!record));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -800,11 +818,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
-    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
-        if (!key.first || !entry || !isModuleEvaluated(entry->record()))
-            continue;
-        keys.append(jsString(vm, String { key.first }));
-    }
+    Bun::forEachModuleRegistrySpecifier(globalObject->moduleLoader(), [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
+        if (isModuleEvaluated(entry->record()))
+            keys.append(jsString(vm, String { specifier }));
+    });
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -2892,6 +2909,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmNamespaceForCjs, 1, functionEsmNamespaceForCjs },
         { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
+        { BuiltinName::k_esmRegistryHasEvaluated, 1, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_esmLoadSync, 1, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },

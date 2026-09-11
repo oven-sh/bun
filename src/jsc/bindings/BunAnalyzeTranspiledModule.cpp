@@ -41,7 +41,7 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
     return identifierArray[n];
 }
 
-extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
+extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, JSModuleLoader*, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len);
 
 // AtomStringImpl::add copies the characters; the record they came from is freed once the JSModuleRecord is built.
@@ -93,9 +93,9 @@ extern "C" void JSC__IdentifierArray__destroy(Identifier* identifiers, size_t co
     WTF::fastFree(identifiers);
 }
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA, uint32_t requestedModuleCount, uint32_t importCount, uint32_t exportCount)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, JSModuleLoader* moduleLoader, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA, uint32_t requestedModuleCount, uint32_t importCount, uint32_t exportCount)
 {
-    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
+    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), moduleLoader, *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
     result->reserveCapacity(requestedModuleCount, importCount, exportCount);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
@@ -197,8 +197,10 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
     });
 }
 
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
-extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
+extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&);
+
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader*, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
+extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -211,12 +213,19 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
     if (provider->m_moduleInfo == nullptr) {
-        dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
+        // A module of the executable's pre-resolved graph carries no module_info of its own: the graph is its record.
+        JSModuleRecord* prelinked = Bun__createPrelinkedModuleRecordForPipeline(uncheckedDowncast<Zig::GlobalObject>(globalObject), moduleLoader, moduleKey, sourceCode);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        if (prelinked) {
+            promise->resolve(globalObject, vm, prelinked);
+            RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+        }
+        // Neither: analyze the source text.
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
     auto* moduleInfo = provider->m_moduleInfo;
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, moduleInfo);
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
@@ -229,13 +238,13 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
 #if BUN_DEBUG
-    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
+    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
 #else
     promise->resolve(globalObject, vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 #endif
 }
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -252,7 +261,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, moduleLoader, moduleKey, sourceCode, moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);

@@ -411,6 +411,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -498,6 +499,60 @@ pub unsafe extern "C" fn Bun__standaloneModuleHasModuleInfo(name: *const u8, len
     let name = unsafe { bun_core::ffi::slice(name, len) };
     bun_options_types::standalone_path::is_bun_standalone_file_path(name)
         && standalone_module_graph().is_some_and(|graph| graph.has_module_info(name))
+}
+
+/// The executable's pre-resolved module graph blob and module-info slot table (`JSVMClientData::prelinkedModuleGraph`);
+/// false when there is none. Both spans live as long as the process.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleGraph(
+    blob: *mut *const u8,
+    blob_len: *mut usize,
+    slot_table: *mut *const u8,
+    slot_table_len: *mut usize,
+) -> bool {
+    let Some((graph, slots)) =
+        standalone_module_graph().map(|graph| graph.prelinked_module_graph())
+    else {
+        return false;
+    };
+    if graph.is_empty() || slots.is_empty() {
+        return false;
+    }
+    // SAFETY: the caller's writable out-parameters.
+    unsafe {
+        *blob = graph.as_ptr();
+        *blob_len = graph.len();
+        *slot_table = slots.as_ptr();
+        *slot_table_len = slots.len();
+    }
+    true
+}
+
+/// The graph module index of an embedded module key, or `u32::MAX` when it is not a module of the pre-resolved graph.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, len: usize) -> u32 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+    let name = unsafe { bun_core::ffi::slice(name, len) };
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return u32::MAX;
+    }
+    standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
+}
+
+/// The module key (canonical embedded name) of graph module `index`; null if out of range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standalonePrelinkedModuleName(
+    index: u32,
+    out_len: *mut usize,
+) -> *const u8 {
+    match standalone_module_graph().and_then(|graph| graph.prelinked_module_name(index)) {
+        Some(name) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
+            unsafe { *out_len = name.len() };
+            name.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2779,6 +2834,13 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
+        // `Bun__standaloneInternalModuleBytecode` serves the executable's embedded bytecode to every VM in the
+        // process, so every VM needs the executable's string table (the debugger thread's VM included).
+        if let Some(graph) = standalone_module_graph() {
+            // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
+            unsafe { &*vm }.install_bytecode_string_table(graph);
+        }
+
         Ok(vm)
     }
 
@@ -4098,7 +4160,6 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
-        vm_ref.install_bytecode_string_table(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
@@ -4146,9 +4207,6 @@ impl VirtualMachine {
         // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
-        if let Some(graph) = opts.graph {
-            vm_ref.install_bytecode_string_table(graph);
-        }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
@@ -5177,6 +5235,9 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
+        // The outgoing file's exit: work it left in flight (thread-pool jobs,
+        // the children just killed) lands later and must not resume its script.
+        Zig__GlobalObject__retireForTestIsolation(self.global());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // Generation-stale JS timers would otherwise release their pins only
@@ -6445,6 +6506,7 @@ impl VirtualMachine {
                     own_properties_only: true,
                     observable: false,
                     only_non_index_properties: true,
+                    include_symbols: true,
                 },
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);

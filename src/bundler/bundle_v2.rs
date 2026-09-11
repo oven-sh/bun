@@ -1449,6 +1449,7 @@ pub mod bv2_impl {
                 source: &[u8],
                 source_provider_url: &bun_core::String,
                 depth: u32,
+                optimize: bool,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
@@ -1481,6 +1482,14 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 wtf8: &[u8],
             ) -> u32;
+            /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
+            safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
+        }
+
+        /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
+        #[inline]
+        pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
+            __bun_jsc_wtf_string_hash(wtf8)
         }
 
         unsafe extern "Rust" {
@@ -1519,6 +1528,7 @@ pub mod bv2_impl {
             source: &[u8],
             source_provider_url: &bun_core::String,
             depth: u32,
+            optimize: bool,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
             // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
@@ -1531,6 +1541,7 @@ pub mod bv2_impl {
                 source,
                 source_provider_url,
                 depth,
+                optimize,
                 external_strings,
             )
         }
@@ -3141,6 +3152,7 @@ pub mod bv2_impl {
                     _ => None,
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
+            this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

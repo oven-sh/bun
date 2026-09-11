@@ -13,6 +13,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
+            ("setJITPolicy", __jsc_host_set_jit_policy, 1),
         ],
     )
 }
@@ -74,6 +75,27 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     }
     Ok(JSValue::js_number(bytes as f64))
+}
+
+#[bun_jsc::host_fn]
+fn set_jit_policy(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [value] = frame.arguments_as_array::<1>();
+    if !value.is_number() {
+        return Err(global.throw_invalid_argument_type_value("scale", "number", value));
+    }
+    let scale = value.as_number();
+    if !(scale.is_finite() && scale >= 1.0) {
+        return Err(global.throw_range_error(
+            scale,
+            jsc::RangeErrorOptions {
+                field_name: b"scale",
+                msg: b"a finite number >= 1",
+                ..Default::default()
+            },
+        ));
+    }
+    global.vm().set_startup_jit_deferral_scale(scale);
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

@@ -659,8 +659,7 @@ function finishSocketEnd(self) {
   }
 }
 
-// A new connection replaces the handle, and the bytes the old handle read but
-// the onread callback declined go with it, as in node.
+// The declined bytes belong to the handle that read them: a new connection starts without them.
 function dropOnreadTail(self) {
   if (self[kOnreadBuffer] === undefined) return;
   self[kOnreadTail] = undefined;

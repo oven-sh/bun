@@ -2880,10 +2880,10 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
-            // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-            // raw-ptr escape so the closure does not hold a borrowck lock on
-            // it for the loop body.
             scopeguard::defer! {
+                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
+                // raw-ptr escape so the closure does not hold a borrowck lock on
+                // it for the loop body.
                 unsafe { (*bun_test_root_ptr).exit_file(); }
                 // A mock.module() patch still pending must not hold up the next file.
                 bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);

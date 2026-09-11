@@ -315,10 +315,28 @@ pub(crate) fn lower_expression(
             value: PrimitiveValue::Boolean(lit.value),
             loc,
         }),
+        // `require("x")` evaluates a module and `require.resolve("x")` can throw.
+        // Like `import()` above, both lower as a call whose callee loads the
+        // node, so no pass drops, moves or merges them as it does a constant.
+        Data::ERequireString(_) | Data::ERequireResolveString(_) => {
+            let callee = lower_value_to_temporary(
+                builder,
+                InstructionValue::LoadGlobal {
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::BunOpaque(*expr),
+                    },
+                    loc,
+                },
+            )?;
+            Ok(InstructionValue::CallExpression {
+                callee,
+                args: AstAlloc::vec(),
+                loc,
+            })
+        }
         Data::ERequireCallTarget
         | Data::ERequireResolveCallTarget
-        | Data::ERequireString(_)
-        | Data::ERequireResolveString(_)
         | Data::EImportMetaMain(_)
         | Data::ERequireMain => Ok(InstructionValue::LoadGlobal {
             binding: NonLocalBinding {

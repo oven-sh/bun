@@ -1447,6 +1447,10 @@ pub enum NonLocalKind {
     /// constant. The original `Expr` is carried whole so codegen emits it
     /// unchanged and the bundler keeps any `import_record_index` / `Ref` /
     /// variant tag it holds.
+    ///
+    /// `import()`, `require("x")` and `require.resolve("x")` are calls, not
+    /// constants. Lowering emits a `CallExpression` whose callee loads the node,
+    /// and codegen emits the node for that call.
     BunOpaque(bun_ast::Expr),
 }
 
@@ -1515,6 +1519,23 @@ impl NonLocalBinding {
             Some(self.ref_)
         } else {
             None
+        }
+    }
+
+    /// The `require("x")` or `require.resolve("x")` node this binding is the
+    /// callee of, or `None` for every other binding.
+    pub fn require_call_node(&self) -> Option<bun_ast::Expr> {
+        use bun_ast::expr::Tag;
+        match self.kind {
+            NonLocalKind::BunOpaque(e)
+                if matches!(
+                    e.data.tag(),
+                    Tag::ERequireString | Tag::ERequireResolveString
+                ) =>
+            {
+                Some(e)
+            }
+            _ => None,
         }
     }
 }

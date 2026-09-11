@@ -807,4 +807,12 @@ const JSC::ClassInfo NodeVMModule::s_info = { "NodeVMModule"_s, &Base::s_info, n
 const JSC::ClassInfo NodeVMModulePrototype::s_info = { "NodeVMModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModulePrototype) };
 const JSC::ClassInfo NodeVMModuleConstructor::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMModuleConstructor) };
 
+JSC::JSModuleLoader* NodeVMModule::moduleLoader(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    NodeVMGlobalObject* contextGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return (contextGlobalObject ? contextGlobalObject : globalObject)->moduleLoader();
+}
+
 } // namespace Bun

@@ -118,6 +118,7 @@ public:
 
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* moduleGraph = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
+    void setModuleGraph(JSC::VM&, JSModuleGraph*);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,

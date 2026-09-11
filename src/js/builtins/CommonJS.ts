@@ -2,10 +2,9 @@
 
 $getter;
 export function main() {
-  // Inside a Bun.unsafe.ModuleGraph: that graph's entry module, from its cache.
-  const graph = $moduleGraphOf(this);
-  if (graph) return graph.requireMap.$get(graph.mainModule) ?? graph.requireCache?.[graph.mainModule];
-  return $requireMap.$get(Bun.main);
+  // require.main inside a Bun.unsafe.ModuleGraph: that graph's first import, from its cache.
+  const graphMain = $moduleGraphMainOf(this);
+  return graphMain === undefined ? $requireMap.$get(Bun.main) : $requireMapOf(this).$get(graphMain);
 }
 
 // This function is bound when constructing instances of CommonJSModule
@@ -20,11 +19,13 @@ $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  // The cache this module reads and writes: its Bun.unsafe.ModuleGraph's, or the global one.
+  const requireMap = (this && this.$requireMap) || $requireMap;
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
-      const existing = this.$requireMap.$get(originalId);
+      const existing = requireMap.$get(originalId);
       if (existing) {
         const c = $evaluateCommonJSModule(existing, this);
         if (c && c.indexOf(existing) === -1) {
@@ -36,7 +37,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
     return this.$requireNativeModule(id);
   } else {
-    const existing = this.$requireMap.$get(id);
+    const existing = requireMap.$get(id);
     if (existing) {
       // Scenario where this is necessary:
       //
@@ -77,7 +78,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false, this);
-  this.$requireMap.$set(id, mod);
+  requireMap.$set(id, mod);
 
   var out: LoaderModule | -1;
 
@@ -100,10 +101,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
         $argument(1),
       );
     } catch (E) {
-      $assert(
-        this.$requireMap.$get(id) === undefined,
-        "Module " + JSON.stringify(id) + " should no longer be in the map",
-      );
+      $assert(requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
       throw E;
     }
   } else {
@@ -116,7 +114,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       out = $requireESM.$call(this, id);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
-      this.$requireMap.$delete(id);
+      requireMap.$delete(id);
       throw exception;
     }
 
@@ -197,10 +195,8 @@ $visibility = "Private";
 export function requireESM(this, resolved: string) {
   // `$esmLoadSync` answers from the registry for a record that is already
   // Evaluated, or still Evaluating because this require() sits inside its own
-  // evaluation (a require cycle), before it loads anything. Inside a
-  // Bun.unsafe.ModuleGraph, the graph's already-instantiated instance answers first.
-  let exports = this && $moduleGraphOf(this) ? $esmNamespaceForCjs(resolved, this) : undefined;
-  if (exports === undefined) exports = $loadEsmIntoCjs(resolved, this);
+  // evaluation (a require cycle), before it loads anything.
+  const exports = $loadEsmIntoCjs(resolved, this);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
@@ -214,7 +210,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     namespace = $requireESM.$call(this, id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
-    this.$requireMap.$delete(id);
+    ((this && this.$requireMap) || $requireMap).$delete(id);
     throw exception;
   }
 

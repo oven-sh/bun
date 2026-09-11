@@ -10,8 +10,10 @@ class GlobalObject;
 }
 
 namespace JSC {
+class JSMap;
 class JSModuleLoader;
 class JSPromise;
+class ThrowScope;
 }
 
 namespace Bun {
@@ -23,7 +25,19 @@ class JSModuleGraph;
 // host's `globals` for the graph. Records of the same module in different graphs
 // share executables (CodeBlocks, JIT code); each graph has its own module state,
 // CommonJS require cache and import() / require routing. See ModuleGraph.cpp.
+class JSCommonJSModule;
+
 JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
+// The graph whose code is running (nearest graph frame on the stack), or null.
+JSModuleGraph* ambientModuleGraph(JSC::JSGlobalObject*);
+// The require cache of a graph's CommonJS modules, or the global one.
+JSC::JSMap* requireMapFor(Zig::GlobalObject*, JSModuleGraph*);
+// The loader a CommonJS module's require() loads ES modules with: its graph's, or
+// the global object's. Null when the graph has been disposed.
+JSC::JSModuleLoader* moduleLoaderForRequirer(JSC::JSGlobalObject*, JSCommonJSModule* requirer);
+void throwModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&);
+JSC_DECLARE_HOST_FUNCTION(functionModuleGraphMainOf);
+JSC_DECLARE_HOST_FUNCTION(functionRequireMapOf);
 // Rejections of promises by graph code, for attributing unhandled ones (onError).
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
 
@@ -53,6 +67,7 @@ public:
     bool disposed() const { return !loader(); }
     JSC::JSScope* overlay() const;
     JSC::JSMap* requireMap() const;
+    JSC::JSValue mainPath() const; // the first module import()ed (import.meta.main / mainModule), or undefined
 
 private:
     JSModuleGraph(JSC::VM& vm, JSC::Structure* structure)

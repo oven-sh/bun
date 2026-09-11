@@ -53,7 +53,6 @@
 
 #include "ModuleGraph.h"
 #include "BunClientData.h"
-extern "C" JSC::EncodedJSValue Bun__ModuleGraph__mainPath(Bun::JSModuleGraph*);
 
 namespace Zig {
 using namespace JSC;
@@ -535,7 +534,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     // (the first module import()ed into it), not the process entry point.
     if (JSValue graphValue = thisObject->getDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName())) {
         if (auto* graph = dynamicDowncast<Bun::JSModuleGraph>(graphValue))
-            bunMain = JSValue::decode(Bun__ModuleGraph__mainPath(graph));
+            bunMain = graph->mainPath();
         else
             bunMain = jsUndefined();
     }

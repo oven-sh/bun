@@ -741,17 +741,6 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
 }
 
 namespace Bun {
-JSC_DECLARE_HOST_FUNCTION(functionModuleGraphOf);
-}
-
-// The loader a CommonJS module's require() loads ES modules with: its
-// Bun.unsafe.ModuleGraph's, or the global object's. Null for a disposed graph.
-static JSC::JSModuleLoader* moduleLoaderForRequirer(JSC::JSGlobalObject* globalObject, JSValue requirer)
-{
-    auto* module = dynamicDowncast<Bun::JSCommonJSModule>(requirer);
-    if (module && module->moduleGraph())
-        return module->moduleGraph()->loader();
-    return globalObject->moduleLoader();
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -763,7 +752,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * glob
         return JSValue::encode(jsUndefined());
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSModuleLoader* loader = moduleLoaderForRequirer(globalObject, callFrame->argument(1));
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
     auto* entry = loader ? loader->registryEntry(key) : nullptr;
     if (!entry || !isModuleEvaluated(entry->record()))
         return JSValue::encode(jsUndefined());
@@ -781,7 +770,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
         return JSValue::encode(jsBoolean(false));
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSModuleLoader* moduleLoader = moduleLoaderForRequirer(globalObject, callFrame->argument(1));
+    JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
     if (!moduleLoader)
         return JSValue::encode(jsBoolean(false));
     return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself
@@ -792,7 +781,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer keys;
-    if (JSC::JSModuleLoader* loader = moduleLoaderForRequirer(globalObject, callFrame->argument(0))) {
+    if (JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(0)))) {
         for (auto& [key, entry] : loader->moduleMap()) {
             if (!key.first || !entry || !isModuleEvaluated(entry->record()))
                 continue;
@@ -820,9 +809,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 
     // require(esm) from a CommonJS module that belongs to a Bun.unsafe.ModuleGraph
     // loads into that graph's loader.
-    JSC::JSModuleLoader* loader = moduleLoaderForRequirer(globalObject, callFrame->argument(1));
+    JSC::JSModuleLoader* loader = Bun::moduleLoaderForRequirer(globalObject, dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1)));
     if (!loader) {
-        throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
+        Bun::throwModuleGraphDisposed(globalObject, scope);
         return {};
     }
 
@@ -983,6 +972,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
         &moduleLoaderFetch, // moduleLoaderFetch
@@ -1011,6 +1001,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
         &moduleLoaderFetch, // moduleLoaderFetch
@@ -1039,6 +1030,7 @@ const JSC::GlobalObjectMethodTable& StandaloneGlobalObject::globalObjectMethodTa
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
+        nullptr, // moduleTypeIsAllowed
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &StandaloneGlobalObject::moduleLoaderResolve,
         &StandaloneGlobalObject::moduleLoaderFetch,
@@ -2895,7 +2887,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_moduleGraphOf, 1, Bun::functionModuleGraphOf },
+        { BuiltinName::k_moduleGraphMainOf, 1, Bun::functionModuleGraphMainOf },
+        { BuiltinName::k_requireMapOf, 1, Bun::functionRequireMapOf },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3578,7 +3571,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // import() from code of a disposed Bun.unsafe.ModuleGraph rejects rather than
     // loading into the graph's (dropped) registry.
     if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(globalObject, loader); graph && graph->disposed()) {
-        throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
+        Bun::throwModuleGraphDisposed(globalObject, scope);
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
@@ -4241,7 +4234,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(lexicalGlobalObject, scope, "ModuleGraph has been disposed"_s);
+        Bun::throwModuleGraphDisposed(lexicalGlobalObject, scope);
         return {};
     }
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
@@ -4263,7 +4256,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.unsafe.ModuleGraph.
     if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) {
-        throwTypeError(lexicalGlobalObject, scope, "ModuleGraph has been disposed"_s);
+        Bun::throwModuleGraphDisposed(lexicalGlobalObject, scope);
         return {};
     }
     noteModuleEvaluation(globalObject, moduleLoader);

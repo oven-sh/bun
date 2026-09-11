@@ -311,8 +311,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
-        JSMap* requireMap = m_moduleGraph ? m_moduleGraph->requireMap() : globalObject->requireMap();
-        bool wasRemoved = requireMap && requireMap->remove(globalObject, this->filename());
+        bool wasRemoved = requireMapFor(globalObject, m_moduleGraph.get())->remove(globalObject, this->filename());
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(wasRemoved);
 
@@ -864,17 +863,6 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
 };
 
-JSC_DECLARE_CUSTOM_GETTER(jsCommonJSModuleRequireMapGetter);
-JSC_DEFINE_CUSTOM_GETTER(jsCommonJSModuleRequireMapGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (auto* module = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
-        if (JSModuleGraph* graph = module->moduleGraph())
-            return JSValue::encode(graph->requireMap());
-    }
-    return JSValue::encode(globalObject->requireMap());
-}
-
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -919,9 +907,9 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
-        // `module.@requireMap`: the require cache this module reads/writes — its
-        // ModuleGraph's when it belongs to one, else the global one.
-        this->putDirectCustomAccessor(vm, clientData(vm)->builtinNames().requireMapPrivateName(), JSC::CustomGetterSetter::create(vm, jsCommonJSModuleRequireMapGetter, nullptr), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor);
+        // `module.@requireMap`: the require cache this module reads/writes. A module of a
+        // Bun.unsafe.ModuleGraph shadows this with its graph's (setModuleGraph).
+        this->putDirect(vm, clientData(vm)->builtinNames().requireMapPrivateName(), defaultGlobalObject(globalObject)->requireMap(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
 
         this->putDirectNativeFunction(
             vm,
@@ -1022,7 +1010,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
             if (JSModuleGraph* graph = parentModule->m_moduleGraph.get())
-                out->m_moduleGraph.set(vm, out, graph);
+                out->setModuleGraph(vm, graph);
             out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
         } else {
             out->m_overriddenParent.set(vm, out, parent);
@@ -1273,6 +1261,13 @@ Structure* createCommonJSModuleStructure(
     return JSCommonJSModule::createStructure(globalObject);
 }
 
+void JSCommonJSModule::setModuleGraph(JSC::VM& vm, JSModuleGraph* graph)
+{
+    m_moduleGraph.set(vm, this, graph);
+    // Shadows the prototype's `@requireMap` (the global cache) with the graph's.
+    putDirect(vm, WebCore::clientData(vm)->builtinNames().requireMapPrivateName(), graph->requireMap(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
+}
+
 template<typename Visitor>
 void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -1373,8 +1368,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
 
     // On error, remove the module from the require map (the referrer's: a
     // Bun.unsafe.ModuleGraph has its own) so that it can be re-evaluated on the next require.
-    JSMap* requireMap = referrerModule->moduleGraph() ? referrerModule->moduleGraph()->requireMap() : globalObject->requireMap();
-    bool wasRemoved = requireMap && requireMap->remove(globalObject, specifierValue);
+    bool wasRemoved = requireMapFor(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT(wasRemoved);
 
@@ -1571,13 +1565,6 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
 
-// ESM `import` of a CommonJS file by a Bun.unsafe.ModuleGraph's loader: the
-// CommonJS module object lives in (and is tagged with) that graph.
-static JSMap* requireMapForLoading(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
-{
-    return graph && graph->requireMap() ? graph->requireMap() : globalObject->requireMap();
-}
-
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* loadingGraph,
@@ -1590,7 +1577,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
-    JSMap* targetRequireMap = requireMapForLoading(globalObject, loadingGraph);
+    JSMap* targetRequireMap = requireMapFor(globalObject, loadingGraph);
     JSValue entry = targetRequireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
@@ -1633,7 +1620,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
         if (loadingGraph)
-            moduleObject->m_moduleGraph.set(vm, moduleObject, loadingGraph);
+            moduleObject->setModuleGraph(vm, loadingGraph);
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1666,7 +1653,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             // (a graph's or the global one). Created here when that cache has
             // not seen the file yet.
             JSModuleGraph* loadingGraph = graph.get();
-            JSMap* targetRequireMap = requireMapForLoading(globalObject, loadingGraph);
+            JSMap* targetRequireMap = requireMapFor(globalObject, loadingGraph);
             JSValue entry = targetRequireMap->get(globalObject, keyValue);
             RETURN_IF_EXCEPTION(scope, {});
             // A placeholder a require() in this cache made for the file (no
@@ -1686,7 +1673,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                     fresh = JSCommonJSModule::create(globalObject, keyString, constructEmptyObject(globalObject), false, jsUndefined());
                     RETURN_IF_EXCEPTION(scope, {});
                     if (loadingGraph)
-                        fresh->m_moduleGraph.set(vm, fresh, loadingGraph);
+                        fresh->setModuleGraph(vm, loadingGraph);
                     targetRequireMap->set(globalObject, keyString, fresh);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -1761,7 +1748,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     WTF::String sourceURL = sourceProvider->sourceURL();
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
 
-    JSMap* targetRequireMap = requireMapForLoading(globalObject, loadingGraph);
+    JSMap* targetRequireMap = requireMapFor(globalObject, loadingGraph);
     JSValue entry = targetRequireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1789,7 +1776,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             globalObject->CommonJSModuleObjectStructure(),
             requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
         if (loadingGraph)
-            moduleObject->m_moduleGraph.set(vm, moduleObject, loadingGraph);
+            moduleObject->setModuleGraph(vm, loadingGraph);
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1826,7 +1813,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->CommonJSModuleObjectStructure(),
         filename, filename, dirname, SourceCode());
     if (moduleGraph)
-        moduleObject->m_moduleGraph.set(vm, moduleObject, moduleGraph);
+        moduleObject->setModuleGraph(vm, moduleGraph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

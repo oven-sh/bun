@@ -44,9 +44,6 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 
 namespace Bun {
-JSC_DECLARE_HOST_FUNCTION(functionModuleGraphOf);
-extern "C" JSC::EncodedJSValue Bun__ModuleGraph__mainPath(JSModuleGraph*);
-
 using namespace JSC;
 
 extern "C" JSC::EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject*);
@@ -69,6 +66,23 @@ JSModuleGraph* moduleGraphForLoader(JSGlobalObject* globalObject, JSModuleLoader
     if (!loader || loader == globalObject->moduleLoader())
         return nullptr;
     return moduleGraphForOverlay(defaultGlobalObject(globalObject), loader->moduleScope());
+}
+
+JSMap* requireMapFor(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+{
+    return graph ? graph->requireMap() : globalObject->requireMap();
+}
+
+JSModuleLoader* moduleLoaderForRequirer(JSGlobalObject* globalObject, JSCommonJSModule* requirer)
+{
+    if (requirer && requirer->moduleGraph())
+        return requirer->moduleGraph()->loader();
+    return globalObject->moduleLoader();
+}
+
+void throwModuleGraphDisposed(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
 }
 
 // The graph whose code created `scope` (a function / module / CommonJS scope),
@@ -104,7 +118,7 @@ static bool isHostCommonJSModuleCode(JSFunction* function)
 // the current stack (vm.topCallFrame) whose callee/module scope belongs to a
 // graph. Used to attribute promise rejections (moduleGraphNoteRejection) and to
 // give createRequire() called from graph code the graph's require.
-static JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
+JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -137,31 +151,29 @@ static JSModuleGraph* ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
     return found;
 }
 
-extern "C" JSModuleGraph* Bun__ambientModuleGraph(JSGlobalObject* lexicalGlobalObject)
+// $moduleGraphMainOf / $requireMapOf (CommonJS.ts): `owner` is a CommonJS module
+// object or a require function bound to one.
+static JSCommonJSModule* commonJSModuleForRequire(JSValue owner)
 {
-    return ambientModuleGraph(lexicalGlobalObject);
+    if (auto* bound = dynamicDowncast<JSBoundFunction>(owner))
+        owner = bound->boundThis();
+    return dynamicDowncast<JSCommonJSModule>(owner);
 }
 
-// $moduleGraphOf(require | module): { mainModule, requireMap, requireCache } of
-// the graph a bound require function / CommonJS module belongs to (builtin JS).
-JSC_DEFINE_HOST_FUNCTION(functionModuleGraphOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(functionModuleGraphMainOf, (JSGlobalObject*, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
-    JSValue value = callFrame->argument(0);
-    if (auto* bound = dynamicDowncast<JSBoundFunction>(value))
-        value = bound->boundThis();
-    auto* module = dynamicDowncast<JSCommonJSModule>(value);
+    auto* module = commonJSModuleForRequire(callFrame->argument(0));
     JSModuleGraph* graph = module ? module->moduleGraph() : nullptr;
     if (!graph)
         return JSValue::encode(jsUndefined());
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* result = constructEmptyObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "mainModule"_s), JSValue::decode(Bun__ModuleGraph__mainPath(graph)));
-    result->putDirect(vm, Identifier::fromString(vm, "requireMap"_s), graph->requireMap());
-    JSValue cache = graph->field(JSModuleGraph::Field::RequireCache);
-    result->putDirect(vm, Identifier::fromString(vm, "requireCache"_s), cache ? cache : jsUndefined());
-    return JSValue::encode(result);
+    JSValue main = graph->mainPath();
+    return JSValue::encode(main.isUndefined() ? jsNull() : main);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequireMapOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* module = commonJSModuleForRequire(callFrame->argument(0));
+    return JSValue::encode(requireMapFor(defaultGlobalObject(globalObject), module ? module->moduleGraph() : nullptr));
 }
 
 // The ModuleGraph whose code produced `error`, if any: the innermost JS frame
@@ -498,10 +510,10 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose, (JSGlobalObject * global
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue Bun__ModuleGraph__mainPath(JSModuleGraph* graph)
+JSValue JSModuleGraph::mainPath() const
 {
-    JSValue path = graph->field(JSModuleGraph::Field::MainPath);
-    return JSValue::encode(path ? path : jsUndefined());
+    JSValue path = field(Field::MainPath);
+    return path ? path : jsUndefined();
 }
 
 JSC_DECLARE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule);
@@ -511,7 +523,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphGetter_mainModule, (JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleGraph* graph = thisModuleGraph(globalObject, scope, JSValue::decode(thisValue), "mainModule"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    return Bun__ModuleGraph__mainPath(graph);
+    return JSValue::encode(graph->mainPath());
 }
 
 class JSModuleGraphPrototype final : public JSNonFinalObject {

@@ -657,13 +657,13 @@ JSValue fetchCommonJSModule(
     // Bun.unsafe.ModuleGraph has its own); so is "already loaded as ESM". A disposed
     // graph has no loader: plain CommonJS still loads, anything that needs the
     // loader throws.
-    JSC::JSModuleLoader* moduleLoader = target && target->moduleGraph() ? target->moduleGraph()->loader() : globalObject->moduleLoader();
-#define REQUIRE_MODULE_LOADER_OR_THROW()                                            \
-    do {                                                                            \
-        if (!moduleLoader) [[unlikely]] {                                           \
-            throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s); \
-            RELEASE_AND_RETURN(scope, {});                                          \
-        }                                                                           \
+    JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, target);
+#define REQUIRE_MODULE_LOADER_OR_THROW()                        \
+    do {                                                        \
+        if (!moduleLoader) [[unlikely]] {                       \
+            Bun::throwModuleGraphDisposed(globalObject, scope); \
+            RELEASE_AND_RETURN(scope, {});                      \
+        }                                                       \
     } while (0)
 
     BunString specifier = Bun::toString(specifierWtfString);
@@ -906,9 +906,9 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // private queue instead of leaving them on the user microtask queue we're
     // currently inside of.
     {
-        JSC::JSModuleLoader* moduleLoader = target && target->moduleGraph() ? target->moduleGraph()->loader() : globalObject->moduleLoader();
+        JSC::JSModuleLoader* moduleLoader = Bun::moduleLoaderForRequirer(globalObject, target);
         if (!moduleLoader) [[unlikely]] {
-            throwTypeError(globalObject, scope, "ModuleGraph has been disposed"_s);
+            Bun::throwModuleGraphDisposed(globalObject, scope);
             RELEASE_AND_RETURN(scope, {});
         }
         JSC::VM::SynchronousModuleQueue queue;

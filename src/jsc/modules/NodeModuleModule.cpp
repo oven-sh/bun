@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -27,7 +28,6 @@
 namespace Bun {
 class JSModuleGraph;
 }
-extern "C" Bun::JSModuleGraph* Bun__ambientModuleGraph(JSC::JSGlobalObject*);
 
 namespace Bun {
 
@@ -274,7 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     }
 
     // From code running in a Bun.unsafe.ModuleGraph: that graph's require.
-    Bun::JSModuleGraph* moduleGraph = Bun__ambientModuleGraph(globalObject);
+    Bun::JSModuleGraph* moduleGraph = Bun::ambientModuleGraph(globalObject);
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, moduleGraph)));
 }
@@ -1192,7 +1192,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                ->hasOverriddenModuleResolveFilenameFunction));
+                      ->hasOverriddenModuleResolveFilenameFunction));
 }
 
 extern "C" bool Bun__streamIterEnabled();

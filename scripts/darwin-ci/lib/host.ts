@@ -35,6 +35,10 @@ export async function setHostname(name: string): Promise<void> {
 export async function brewInstall(formula: string): Promise<void> {
   const name = formula.split("/").pop()!;
   if (await succeeds($`${brew} list ${name}`)) return;
+  // Third-party taps must be trusted as a whole: trusting only the formula
+  // still fails on its dependencies from the same tap.
+  const tap = formula.includes("/") ? formula.split("/").slice(0, 2).join("/") : undefined;
+  if (tap) await $`${brew} trust ${tap}`.quiet();
   await $`${brew} install ${formula}`;
 }
 

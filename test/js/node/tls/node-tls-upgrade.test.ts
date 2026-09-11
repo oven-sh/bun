@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { once } from "events";
-import { tls as certs } from "harness";
+import { tls as certs, isWindows, tempDir } from "harness";
 import net from "net";
+import { join } from "path";
 import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
@@ -103,6 +104,115 @@ test.each([
       expect(raw.readableLength).toBe(0);
       tlsSocket.destroy();
       await closed;
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// The wrap takes the fd of the wrapped socket over one tick after the constructor, the same tick
+// the wrapped socket's end() shuts the fd down in. Node v26.3.0 reports the same client events.
+test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
+  ["end()", raw => raw.end()],
+  ["destroySoon()", raw => raw.destroySoon()],
+  [
+    "end() before the TLSSocket's end()",
+    (raw, tlsSocket) => {
+      raw.end();
+      tlsSocket.end();
+    },
+  ],
+])(
+  "the wrapped socket's %s in the tick of new tls.TLSSocket(socket, { isServer: true }) sends the FIN",
+  async (_, endWrapped) => {
+    const server = net.createServer(raw => {
+      raw.on("error", () => {});
+      const tlsSocket = new tls.TLSSocket(raw, { isServer: true, ...certs });
+      tlsSocket.on("error", () => {});
+      endWrapped(raw, tlsSocket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = tls.connect({
+        port: (server.address() as net.AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+      });
+      const events: string[] = [];
+      const { promise, resolve } = Promise.withResolvers<string[]>();
+      // Reached only when the FIN never arrives: the handshake completes and the connection stays open.
+      client.on("secureConnect", () => {
+        events.push("secureConnect");
+        client.destroy();
+      });
+      client.on("end", () => events.push("end"));
+      client.on("error", err => events.push(`error ${(err as NodeJS.ErrnoException).code}`));
+      client.on("close", () => resolve(events));
+      expect(await promise).toEqual(["end", "error ECONNRESET"]);
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// tls.connect({ socket }) takes the fd over at once, or in the 'connect' listener it adds after the
+// one end() added. Either way the takeover lands between end() and the shutdown that end() deferred.
+test.each(["connected", "connecting"])(
+  "end() on a %s socket before tls.connect({ socket }) in the same tick sends the FIN",
+  async state => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const server = tls.createServer(certs, socket => {
+      // Reached only when the FIN never arrives.
+      socket.on("error", () => {});
+      socket.destroy();
+      resolve("secureConnection");
+    });
+    server.on("tlsClientError", err => resolve(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+      raw.on("error", () => {});
+      if (state === "connected") await once(raw, "connect");
+      raw.end();
+      const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+      tlsSocket.on("error", () => {});
+      const closed = new Promise(resolve => tlsSocket.on("close", resolve));
+      expect(await promise).toBe("tlsClientError ECONNRESET");
+      tlsSocket.destroy();
+      await closed;
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// Only a TLS wrap moves the deferred shutdown to the handle that replaced the one end() saw.
+// connect(path) also installs a new handle at once, for a connection that end() did not close.
+test.skipIf(isWindows)(
+  "end(), destroy() and connect(path) in one tick do not half-close the new connection",
+  async () => {
+    using dir = tempDir("net-reconnect", {});
+    const path = join(String(dir), "s.sock");
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let connections = 0;
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      const id = ++connections;
+      socket.on("error", () => {});
+      socket.on("end", () => {
+        if (id === 2) resolve("the new connection received a FIN");
+      });
+      socket.resume();
+    });
+    await once(server.listen(path), "listening");
+    try {
+      const client = net.connect(path);
+      client.on("error", () => {});
+      await once(client, "connect");
+      client.end();
+      client.destroy();
+      client.connect(path, () => resolve("connect"));
+      expect(await promise).toBe("connect");
+      client.destroy();
     } finally {
       server.close();
     }

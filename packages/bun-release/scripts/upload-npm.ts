@@ -18,10 +18,16 @@ import { spawn } from "../src/spawn";
 const module = "bun";
 const owner = "@oven";
 
+type Asset = Awaited<ReturnType<typeof getRelease>>["assets"][number];
+
 const [tag, action] = process.argv.slice(2);
 
 const release = await getRelease(tag);
 const version = await getSemver(release.tag_name);
+// Only "publish" handles every platform; the other actions build and pack the host's packages.
+const targets = platforms.filter(
+  ({ os, arch }) => action === "publish" || (os === process.platform && arch === process.arch),
+);
 
 if (action !== "test-only") await build();
 
@@ -40,21 +46,35 @@ if (action === "publish") {
 process.exit(0); // HACK
 
 async function build(): Promise<void> {
+  const assets: [Platform, Asset][] = [];
+  const missing: string[] = [];
+  for (const platform of targets) {
+    const name = `${platform.bin}.zip`;
+    const asset = release.assets.find(asset => asset.name === name);
+    if (asset) {
+      assets.push([platform, asset]);
+    } else {
+      missing.push(name);
+    }
+  }
+  // The root package pins every platform package at this exact version, so publishing without one breaks it too.
+  if (missing.length) {
+    throw new Error(
+      `Release "${release.tag_name}" is missing assets: ${missing.join(", ")}\n` +
+        "Nothing was published: every platform in src/platform.ts must have its zip on the release before any package is published.",
+    );
+  }
   await buildRootModule();
-  for (const platform of platforms) {
-    if (action !== "publish" && (platform.os !== process.platform || platform.arch !== process.arch)) continue;
-    await buildModule(release, platform);
+  for (const [platform, asset] of assets) {
+    await buildModule(platform, asset);
   }
 }
 
 async function publish(dryRun?: boolean): Promise<void> {
-  const modules = platforms
-    .filter(({ os, arch }) => action === "publish" || (os === process.platform && arch === process.arch))
-    .map(({ bin }) => `${owner}/${bin}`);
-  modules.push(module);
-  for (const module of modules) {
-    publishModule(module, dryRun);
+  for (const { bin } of targets) {
+    publishModule(`${owner}/${bin}`, dryRun);
   }
+  publishModule(module, dryRun);
 }
 
 async function buildRootModule(dryRun?: boolean) {
@@ -140,17 +160,9 @@ without *requiring* a postinstall script.
   }
 }
 
-async function buildModule(
-  release: Awaited<ReturnType<typeof getRelease>>,
-  { bin, exe, os, arch, abi }: Platform,
-): Promise<void> {
+async function buildModule({ bin, exe, os, arch, abi }: Platform, asset: Asset): Promise<void> {
   const module = `${owner}/${bin}`;
   log("Building:", `${module}@${version}`);
-  const asset = release.assets.find(({ name }) => name === `${bin}.zip`);
-  if (!asset) {
-    error(`No asset found: ${bin}`);
-    return;
-  }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
   const cwd = join("npm", module);
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });

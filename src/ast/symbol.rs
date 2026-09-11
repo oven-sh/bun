@@ -413,8 +413,7 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 /// clones are owned for the link lifetime — global allocator, no arena tag.
 pub type NestedList = Vec<Vec<Symbol>>;
 
-/// [`Map::follow`], with the same path compression, for the parser's flat
-/// per-file table (indexed by `Ref::inner_index`).
+/// [`Map::follow`] (path compression included) for the parser's flat per-file symbol table.
 pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
     let mut root = ref_;
     loop {

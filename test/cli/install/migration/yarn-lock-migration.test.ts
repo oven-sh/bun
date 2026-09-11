@@ -903,6 +903,74 @@ needs-node-types@1.0.0:
     expect([...requestedManifests].sort()).toStrictEqual(["@types/node", "needs-node-types"]);
   });
 
+  test("package names are only read from the path of default registry tarball URLs", async () => {
+    // Dependencies declared as tarball URLs. A tarball on registry.npmjs.org / registry.yarnpkg.com
+    // is named after the path segment(s) before "/-/"; every other URL keeps the dependency's name.
+    const tarballs = {
+      "host-after-separator": "https://evil.example/-/registry.npmjs.org/x.tgz",
+      "nothing-before-separator": "https://registry.npmjs.org/-/y.tgz",
+      "empty-segment-before-separator": "https://registry.npmjs.org//-/z.tgz",
+      "mirror-with-registry-in-path": "https://registry.mirror.example/registry.npmjs.org/other/-/other-1.0.0.tgz",
+      "dash-package": "https://registry.npmjs.org/-/-/--0.0.1.tgz",
+      "scoped-npmjs-https": "https://registry.npmjs.org/@scope/real/-/real-1.0.0.tgz",
+      "npmjs-http": "http://registry.npmjs.org/real-a/-/real-a-1.0.0.tgz",
+      "yarnpkg-https": "https://registry.yarnpkg.com/real-b/-/real-b-1.0.0.tgz",
+      "yarnpkg-http": "http://registry.yarnpkg.com/real-c/-/real-c-1.0.0.tgz",
+    };
+
+    await using tmpDir = tempDir("yarn-migration-tarball-names", {
+      "package.json": JSON.stringify({ name: "tarball-names-test", version: "1.0.0", dependencies: tarballs }, null, 2),
+      "yarn.lock":
+        "# yarn lockfile v1\n\n\n" +
+        Object.entries(tarballs)
+          .map(([name, url]) => `"${name}@${url}":\n  version "1.0.0"\n  resolved "${url}"\n`)
+          .join("\n"),
+    });
+
+    // Every entry is a tarball package, so the migration has no registry manifests to fetch.
+    const registryRequests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        registryRequests.push(new URL(req.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode, stdout + stderr).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    expect(lock.packages).toStrictEqual({
+      "host-after-separator": [`host-after-separator@${tarballs["host-after-separator"]}`, {}],
+      "nothing-before-separator": [`nothing-before-separator@${tarballs["nothing-before-separator"]}`, {}],
+      "empty-segment-before-separator": [
+        `empty-segment-before-separator@${tarballs["empty-segment-before-separator"]}`,
+        {},
+      ],
+      "mirror-with-registry-in-path": [`mirror-with-registry-in-path@${tarballs["mirror-with-registry-in-path"]}`, {}],
+      "dash-package": [`-@${tarballs["dash-package"]}`, {}],
+      "scoped-npmjs-https": [`@scope/real@${tarballs["scoped-npmjs-https"]}`, {}],
+      "npmjs-http": [`real-a@${tarballs["npmjs-http"]}`, {}],
+      "yarnpkg-https": [`real-b@${tarballs["yarnpkg-https"]}`, {}],
+      "yarnpkg-http": [`real-c@${tarballs["yarnpkg-http"]}`, {}],
+    });
+    expect(registryRequests).toStrictEqual([]);
+  });
+
   test("yarn.lock with resolutions", async () => {
     await using tmpDir = tempDir("yarn-migration-resolutions", {
       "package.json": JSON.stringify(

@@ -7797,6 +7797,9 @@ declare module "bun" {
        * This can improve performance when you don't need to read output
        * immediately.
        *
+       * Has no effect when `maxBuffer` is set. Output is counted against
+       * `maxBuffer` as it is read, so reading starts right away.
+       *
        * @default false
        *
        * @example

@@ -148,6 +148,37 @@ describe.each(["stdout", "stderr"] as const)("maxBuffer kills the process after 
   });
 });
 
+// `lazy: true` defers the pipe reads until JS first pulls, and `maxBuffer` is
+// only charged as bytes are read. `maxBuffer` must still count the output of a
+// child whose pipes nothing has read yet.
+describe.each(["stdout", "stderr"] as const)("maxBuffer kills the process with lazy: true and .%s unread", fd => {
+  // The child writes well past `maxBuffer` and then blocks forever. Without the
+  // kill, `proc.exited` never resolves and the test times out.
+  const firehose = `process.${fd}.write(Buffer.alloc(300000, 65).toString()); setInterval(() => {}, 1e9);`;
+  const killSignal = isWindows ? "SIGKILL" : "SIGHUP";
+
+  test.concurrent("Bun.spawn", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", firehose],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      lazy: true,
+      maxBuffer: 1000,
+      killSignal,
+    });
+    await proc.exited;
+    expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exitCode: null,
+      signalCode: killSignal,
+    });
+    // A late reader still gets what was read up to the limit.
+    const bytes = await proc[fd].bytes();
+    expect(bytes.length).toBeGreaterThan(1000);
+    expect(bytes.length).toBeLessThanOrEqual(1000 + 64 * 1024);
+  });
+});
+
 describe("maxBuffer infinity does not limit the number of bytes", () => {
   const sample = "this is a long example string\n";
   const sample_repeat_count = 10000;

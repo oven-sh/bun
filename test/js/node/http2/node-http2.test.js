@@ -2648,6 +2648,39 @@ it("http2 connect supports various URL formats", async done => {
   });
 });
 
+// The client corks its connection preface before the socket has connected. A write on a
+// connecting socket consumes the kernel's pending connect error, and the refused connect
+// is then reported as ECONNRESET. The fixture prints the error shape; Node.js and Bun must
+// print the same line.
+it("http2 client reports ECONNREFUSED for a refused connect, like Node.js", async () => {
+  const fixture = path.join(import.meta.dir, "http2-connect-refused.fixture.js");
+  async function run(exe) {
+    await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const expected = {
+    code: "ECONNREFUSED",
+    syscall: "connect",
+    address: "127.0.0.1",
+    portMatches: true,
+    message: "connect ECONNREFUSED 127.0.0.1:<port>",
+  };
+
+  const bunRun = await run(bunExe());
+  expect(bunRun.stderr).toBe("");
+  expect(JSON.parse(bunRun.stdout)).toEqual(expected);
+  expect(bunRun.exitCode).toBe(0);
+
+  const node = nodeExe();
+  if (node) {
+    const nodeRun = await run(node);
+    expect(JSON.parse(nodeRun.stdout)).toEqual(expected);
+    expect(nodeRun.stdout).toBe(bunRun.stdout);
+    expect(nodeRun.exitCode).toBe(0);
+  }
+});
+
 it("http2 request.close() validates input and manages stream state", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer();

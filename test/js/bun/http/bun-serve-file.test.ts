@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1513,4 +1513,245 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// Linux file responses >= 1MB go through sendfile(2), which writes straight to
+// the socket fd. When the response header block only partially reaches the
+// kernel (its tail parked in the userspace socket buffer), the first sendfile
+// round must wait for that tail to flush; otherwise file bytes overtake it and
+// the client sees file bytes interleaved before the end of the headers. The
+// big x-pad header makes the partial header send happen on most iterations,
+// and the separate client process supplies the concurrent reads that open
+// kernel buffer space between the header write and the sendfile call.
+test.skipIf(!isLinux)(
+  "sendfile does not overtake a buffered response header tail",
+  async () => {
+    const FILE_SIZE = 4 * 1024 * 1024;
+    const PAD_SIZE = 16 * 1024 * 1024;
+    // The race hinges on scheduler placement of the reader relative to the
+    // server thread, which is sticky per process; fresh client processes re-roll
+    // it, so several short-lived clients catch what one long-lived client can
+    // miss.
+    const ITERATIONS_PER_CLIENT = 16;
+    const CLIENTS_PER_WAVE = 3;
+    const WAVES = 3;
+
+    using dir = tempDir("serve-sendfile-tail", {
+      "client-fixture.ts": `
+      // One GET per fresh connection. Reads with plain blocking recv(2) via
+      // FFI: when response bytes land, the kernel wakes the parked task and
+      // sends the window-update ACK from kernel context within microseconds,
+      // which is what opens kernel send-buffer space right after the server's
+      // partial header write. The file is all 0xEE; headers are ASCII, so any
+      // 0xEE before the header terminator means sendfile bytes jumped ahead of
+      // the header tail.
+      import { dlopen, ptr } from "bun:ffi";
+
+      const port = Number(process.env.PORT);
+      const padSize = Number(process.env.PAD_SIZE);
+      const fileSize = Number(process.env.FILE_SIZE);
+      const iterations = Number(process.env.ITERATIONS);
+
+      const spec = {
+        socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+        connect: { args: ["i32", "ptr", "u32"], returns: "i32" },
+        send: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
+        recv: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
+        setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+        close: { args: ["i32"], returns: "i32" },
+      } as const;
+      function openLibc() {
+        for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1"]) {
+          try {
+            return dlopen(name, spec).symbols;
+          } catch {}
+        }
+        throw new Error("could not dlopen libc");
+      }
+      const libc = openLibc();
+
+      // struct sockaddr_in { u16 family; u16 port (BE); u32 addr (BE); pad }
+      const addr = new Uint8Array(16);
+      new DataView(addr.buffer).setUint16(0, 2, true); // AF_INET
+      new DataView(addr.buffer).setUint16(2, port, false);
+      addr.set([127, 0, 0, 1], 4);
+
+      // struct timeval { i64 sec; i64 usec } for SO_RCVTIMEO (SOL_SOCKET=1, 20)
+      const timeo = new Uint8Array(16);
+      new DataView(timeo.buffer).setBigInt64(0, 10n, true);
+
+      const request = Buffer.from("GET /file HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      const recvBuf = new Uint8Array(256 * 1024);
+
+      function iteration(): { kind: string; detail?: string } {
+        const fd = libc.socket(2, 1, 0); // AF_INET, SOCK_STREAM
+        if (fd < 0) return { kind: "socket-failed" };
+        try {
+          if (libc.setsockopt(fd, 1, 20, ptr(timeo), 16) !== 0) {
+            return { kind: "setsockopt-failed" };
+          }
+          if (libc.connect(fd, ptr(addr), 16) !== 0) {
+            return { kind: "connect-failed" };
+          }
+          if (libc.send(fd, ptr(request), request.length, 0) !== BigInt(request.length)) {
+            return { kind: "send-failed" };
+          }
+
+          // Read until header terminator + fileSize body bytes. The terminator
+          // is found incrementally (in corrupt runs it shows up after file
+          // bytes, but the byte count still adds up). The keep-alive socket
+          // never closes on its own, so an exact byte target is required.
+          const terminator = Buffer.from("\\r\\n\\r\\n");
+          const chunks: Buffer[] = [];
+          let total = 0;
+          let hdrEnd = -1;
+          let expected = padSize + fileSize; // lower bound until hdrEnd is known
+          let earlyFileByte = -1;
+          while (total < expected) {
+            const n = Number(libc.recv(fd, ptr(recvBuf), recvBuf.length, 0));
+            if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
+            const chunk = Buffer.from(recvBuf.subarray(0, n));
+            if (hdrEnd === -1) {
+              // A file byte before the header terminator already proves the
+              // corruption; stop here or the exact-length accounting below
+              // would wait out the receive timeout on the scrambled stream.
+              const fileByte = chunk.indexOf(0xee);
+              // Search for the terminator across the previous chunk boundary.
+              const prev = chunks.length > 0 ? chunks[chunks.length - 1] : Buffer.alloc(0);
+              const tail = prev.subarray(prev.length - Math.min(prev.length, 3));
+              const window = Buffer.concat([tail, chunk]);
+              const found = window.indexOf(terminator);
+              // Legit only when the body start (terminator end) is at or
+              // before the first file byte.
+              if (found !== -1 && (fileByte === -1 || found + 4 - tail.length <= fileByte)) {
+                hdrEnd = total - tail.length + found;
+                expected = hdrEnd + 4 + fileSize;
+              } else if (fileByte !== -1) {
+                earlyFileByte = total + fileByte;
+                chunks.push(chunk);
+                total += n;
+                break;
+              }
+            }
+            chunks.push(chunk);
+            total += n;
+          }
+
+          if (earlyFileByte !== -1) {
+            return {
+              kind: "corrupt",
+              detail: "file byte at " + earlyFileByte + " before the header terminator, read " + total,
+            };
+          }
+          const buf = Buffer.concat(chunks);
+          if (hdrEnd === -1) return { kind: "no-header-end", detail: "got " + total };
+          const firstFile = buf.indexOf(0xee);
+          if (firstFile !== -1 && firstFile < hdrEnd) {
+            return {
+              kind: "corrupt",
+              detail: "file byte at " + firstFile + " before header end at " + hdrEnd + ", total " + total,
+            };
+          }
+          const body = buf.subarray(hdrEnd + 4);
+          if (body.length !== fileSize) {
+            return { kind: "bad-body-length", detail: body.length + " of " + fileSize + ", total " + total };
+          }
+          for (let o = 0; o < body.length; o += 65536) {
+            if (body[o] !== 0xee) return { kind: "bad-body-byte", detail: "offset " + o + " is " + body[o] };
+          }
+          return { kind: "ok" };
+        } finally {
+          libc.close(fd);
+        }
+      }
+
+      const failures: { kind: string; detail?: string }[] = [];
+      let ok = 0;
+      for (let i = 0; i < iterations; i++) {
+        const r = iteration();
+        if (r.kind === "ok") ok++;
+        else failures.push(r);
+        if (r.kind === "corrupt") break; // one corruption decides the verdict
+      }
+      console.log(JSON.stringify({ ok, failures }));
+    `,
+    });
+    await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
+
+    const pad = Buffer.alloc(PAD_SIZE, "p").toString();
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        return new Response(Bun.file(join(String(dir), "file.bin")), {
+          headers: { "x-pad": pad },
+        });
+      },
+    });
+
+    const problems: unknown[] = [];
+    let cleanClients = 0;
+    for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
+      const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
+        Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
+          env: {
+            ...bunEnv,
+            PORT: String(server.port),
+            PAD_SIZE: String(PAD_SIZE),
+            FILE_SIZE: String(FILE_SIZE),
+            ITERATIONS: String(ITERATIONS_PER_CLIENT),
+          },
+          stderr: "pipe",
+        }),
+      );
+      const results = await Promise.all(
+        procs.map(async proc => {
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stdout: stdout.trim(), stderr, exitCode };
+        }),
+      );
+      for (const { stdout, stderr, exitCode } of results) {
+        // Combined assert first, so a crashed client reports its exit code
+        // and raw output instead of a JSON parse error. stderr rides along
+        // for diagnostics but is not required to be empty.
+        expect({ exitCode, stdout, stderr }).toMatchObject({
+          exitCode: 0,
+          stdout: expect.stringContaining("{"),
+        });
+        const verdict = JSON.parse(stdout);
+        if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
+          problems.push(verdict);
+        } else {
+          cleanClients++;
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
+  },
+  90_000,
+);
+
+// Unix-socket listeners reach the same Linux sendfile path as TCP (the
+// response handle is transport-agnostic), so pin body integrity for a >=1MB
+// file over AF_UNIX too.
+test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket listener", async () => {
+  using dir = tempDir("serve-sendfile-unix", {});
+  const data = Buffer.alloc(2 * 1024 * 1024, 0xee);
+  await Bun.write(join(String(dir), "file.bin"), data);
+
+  const unix = join(String(dir), "s.sock");
+  await using server = Bun.serve({
+    unix,
+    fetch() {
+      return new Response(Bun.file(join(String(dir), "file.bin")));
+    },
+  });
+
+  const res = await fetch("http://localhost/file", { unix });
+  expect(res.status).toBe(200);
+  const body = Buffer.from(await res.arrayBuffer());
+  expect(body.length).toBe(data.length);
+  expect(body.compare(data)).toBe(0);
 });

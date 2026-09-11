@@ -80,9 +80,8 @@ void WebWorker__releaseParentPollRef(void*);
 void WebWorker__join(void*);
 // Drop one ref on the thread object; the last one frees it.
 void WebWorker__deref(void*);
-// The thread's CPU times in microseconds, read from the parent thread. False before its VM exists
-// and once it has begun shutting down.
-bool WebWorker__threadCpuUsage(void*, double* user, double* system);
+// One worker.cpuUsage() answer, read by the parent thread; `measured` offers the worker's own reading.
+bool WebWorker__cpuUsage(void*, bool measured, double* userMicroseconds, double* systemMicroseconds);
 
 } // extern "C"
 
@@ -258,26 +257,32 @@ JSC::Strong<JSC::JSPromise> WorkerMessagingProxy::takeCrossVMRequest(uint64_t id
 
 WorkerMessagingProxy::HeapStatistics WorkerMessagingProxy::HeapStatistics::measure(JSC::Heap& heap)
 {
-    // Heap::size() counts what the last collection marked: nothing before the first one, when
-    // nothing has been freed either and every block counts as used (as process.memoryUsage() does).
+    // Heap::size() counts what the last collection marked. Before the first one every block counts as used.
     size_t size = heap.size();
     return { size ? size : heap.blockBytesAllocated(), heap.capacity(), heap.extraMemorySize() };
 }
 
+bool WorkerMessagingProxy::answersOnParentThread() const
+{
+    return m_sawThreadStart && !m_askedToTerminate && !isClosingOrClosed();
+}
+
 std::optional<WorkerMessagingProxy::HeapStatistics> WorkerMessagingProxy::heapStatistics()
 {
-    if (!m_sawThreadStart || m_askedToTerminate || isClosingOrClosed())
+    if (!answersOnParentThread())
         return std::nullopt;
     Locker locker { m_heapStatisticsLock };
     return m_heapStatistics;
 }
 
-std::optional<WorkerMessagingProxy::CpuUsage> WorkerMessagingProxy::cpuUsage()
+std::optional<WorkerMessagingProxy::CpuUsage> WorkerMessagingProxy::cpuUsage(std::optional<CpuUsage> measuredByWorker)
 {
-    if (!m_sawThreadStart || m_askedToTerminate || isClosingOrClosed() || !m_workerThread)
+    if (!measuredByWorker && !answersOnParentThread())
         return std::nullopt;
-    CpuUsage usage;
-    if (!WebWorker__threadCpuUsage(m_workerThread, &usage.userMicroseconds, &usage.systemMicroseconds))
+    if (!m_workerThread)
+        return measuredByWorker;
+    CpuUsage usage = measuredByWorker.value_or(CpuUsage {});
+    if (!WebWorker__cpuUsage(m_workerThread, measuredByWorker.has_value(), &usage.userMicroseconds, &usage.systemMicroseconds))
         return std::nullopt;
     return usage;
 }
@@ -421,7 +426,7 @@ void WorkerMessagingProxy::workerThreadStarted()
         if (m_state.load() != State::Pending)
             return;
     }
-    // The heap as the entry point finds it. From here each collection publishes (JSVMClientData).
+    // The heap as the entry point finds it; from here the end of each collection publishes.
     publishHeapStatistics(HeapStatistics::measure(defaultGlobalObject()->vm().heap));
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         protectedThis->m_sawThreadStart = true;
@@ -436,6 +441,7 @@ void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlo
 {
     auto& context = *workerGlobalObject.scriptExecutionContext();
     ASSERT(context.identifier() == m_workerContextIdentifier);
+    publishHeapStatistics(HeapStatistics::measure(workerGlobalObject.vm().heap));
 
     // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
     Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;

@@ -563,29 +563,30 @@ impl WebWorker {
         }
     }
 
-    /// `worker.cpuUsage()`, answered without the worker thread's help so that a
-    /// worker which never returns to its loop still answers. Parent thread.
-    /// `false` before the VM exists and once the thread is in `shutdown()`.
-    #[unsafe(export_name = "WebWorker__threadCpuUsage")]
-    pub(crate) extern "C" fn thread_cpu_usage(
+    /// One `worker.cpuUsage()` answer in microseconds. `measured`: the worker's own reading is in.
+    #[unsafe(export_name = "WebWorker__cpuUsage")]
+    pub(crate) extern "C" fn cpu_usage(
         this: *mut WebWorker,
+        measured: bool,
         user_micros: &mut f64,
         system_micros: &mut f64,
     ) -> bool {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        // shutdown() takes this lock to unpublish the handle, so while it is
-        // held and `Some` the thread has not exited.
-        let handle = this.vm_handle.lock();
-        if handle.is_none() {
-            return false;
-        }
-        let Some(now) = this
-            .join_handle
-            .get()
-            .as_ref()
-            .and_then(bun_sys::ThreadCpuUsage::of)
-        else {
-            return false;
+        let read = {
+            // `shutdown()` unpublishes the handle under this lock, so `Some` is a live thread.
+            let handle = this.vm_handle.lock();
+            handle
+                .as_ref()
+                .and(this.join_handle.get().as_ref())
+                .and_then(bun_sys::ThreadCpuUsage::of)
+        };
+        let now = match read {
+            Some(read) => read,
+            None if measured => bun_sys::ThreadCpuUsage {
+                user: *user_micros as u64,
+                system: *system_micros as u64,
+            },
+            None => return false,
         };
         let usage = now.never_below(this.last_cpu_usage.get());
         this.last_cpu_usage.set(usage);
@@ -594,8 +595,7 @@ impl WebWorker {
         true
     }
 
-    /// The calling thread's CPU times, for a `worker.cpuUsage()` that the worker
-    /// itself answers. Worker thread.
+    /// The calling thread's CPU times in microseconds. Worker thread.
     #[unsafe(export_name = "WebWorker__currentThreadCpuUsage")]
     pub(crate) extern "C" fn current_thread_cpu_usage(
         user_micros: &mut f64,

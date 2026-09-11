@@ -705,6 +705,19 @@ static void resolveCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, S
     handle->resolve(parentCtx.globalObject(), parentCtx.vm(), buildValue(parentCtx.vm(), parentCtx.globalObject()));
 }
 
+// An answer the parent has already. It settles after the loop has polled, as one from the worker does.
+template<typename BuildValue>
+static JSPromise* resolveCrossVMRequestAfterYield(Zig::GlobalObject* globalObject, WorkerMessagingProxy& proxy, BuildValue&& buildValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = proxy.registerCrossVMRequest(vm, promise);
+    globalObject->scriptExecutionContext()->postTaskAfterYield([reqId, protectedProxy = Ref { proxy }, buildValue = std::forward<BuildValue>(buildValue)](ScriptExecutionContext& context) {
+        resolveCrossVMRequest(protectedProxy.get(), reqId, context, buildValue);
+    });
+    return promise;
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -747,6 +760,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
+    // Runs on the worker's event loop, as the CPU profile's start and stop do: a worker busy in JavaScript waits (#42354).
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
@@ -799,8 +813,9 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     auto& worker = castedThis->wrapped();
 
     if (auto statistics = worker.contextProxy().heapStatistics()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, createHeapStatisticsObject(vm, globalObject, *statistics))));
+        return JSValue::encode(resolveCrossVMRequestAfterYield(globalObject, worker.contextProxy(), [statistics = *statistics](VM& pvm, JSGlobalObject* go) -> JSValue {
+            return createHeapStatisticsObject(pvm, go, statistics);
+        }));
     }
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
@@ -890,8 +905,9 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     auto& worker = castedThis->wrapped();
 
     if (auto usage = worker.contextProxy().cpuUsage()) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, createCpuUsageObject(vm, globalObject, *usage))));
+        return JSValue::encode(resolveCrossVMRequestAfterYield(globalObject, worker.contextProxy(), [usage = *usage](VM& pvm, JSGlobalObject* go) -> JSValue {
+            return createCpuUsageObject(pvm, go, usage);
+        }));
     }
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
@@ -903,8 +919,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
         WebWorker__currentThreadCpuUsage(&measured.userMicroseconds, &measured.systemMicroseconds);
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), measured](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                // One source for every answer, where there is one, so that no answer is below an earlier one.
-                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage().value_or(measured));
+                return createCpuUsageObject(pvm, go, protectedProxy->cpuUsage(measured).value_or(measured));
             });
         });
     });

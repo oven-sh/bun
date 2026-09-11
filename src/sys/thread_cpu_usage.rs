@@ -15,14 +15,12 @@ impl ThreadCpuUsage {
         imp::current()
     }
 
-    /// `thread`'s, read from any thread. `None` once it has exited, and where
-    /// the platform has no way to ask.
+    /// `thread`'s, from any thread. `None` once it has exited or where the platform cannot say.
     pub fn of<T>(thread: &JoinHandle<T>) -> Option<Self> {
         imp::of(thread)
     }
 
-    /// `self` with neither time below what `previous` reported. On Linux the
-    /// split of another thread's time is an estimate that moves between reads.
+    /// Neither time below `previous`: on Linux another thread's split is an estimate that moves.
     #[must_use]
     pub fn never_below(self, previous: Self) -> Self {
         let total = self.user + self.system;
@@ -80,8 +78,7 @@ mod imp {
                 &raw mut runtime_clock,
             )
         };
-        // musl and bionic clear the tid of a thread that has exited and answer with the clock of
-        // tid 0, which is the calling thread's.
+        // For an exited thread musl and bionic give the clock of tid 0, the calling thread's.
         let tid = !(runtime_clock >> 3);
         if status != 0 || tid == 0 {
             return None;
@@ -98,9 +95,7 @@ mod imp {
         let user_ticks = nanos((runtime_clock & !WHICH_MASK) | USER_TICKS)?;
         let system_ticks = nanos((runtime_clock & !WHICH_MASK) | USER_AND_SYSTEM_TICKS)?
             .saturating_sub(user_ticks);
-        // getrusage(RUSAGE_THREAD) only answers for the calling thread. It reports the exact
-        // runtime, split in the ratio of the tick-sampled times (cputime_adjust(),
-        // kernel/sched/cputime.c).
+        // Like getrusage(RUSAGE_THREAD): the exact runtime, split as the tick-sampled times are.
         let system = match (user_ticks, system_ticks) {
             (_, 0) => 0,
             (0, _) => runtime,

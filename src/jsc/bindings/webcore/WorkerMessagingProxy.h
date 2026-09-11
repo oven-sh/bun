@@ -98,9 +98,6 @@ public:
     uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
-    // Answered on the parent thread, so a worker that never returns to its event loop still answers.
-    // Empty until the parent has seen the thread start and once it was asked to stop or has exited:
-    // the caller then goes through postTaskToWorkerGlobalScope().
     struct HeapStatistics {
         size_t size { 0 };
         size_t capacity { 0 };
@@ -108,12 +105,14 @@ public:
         // The thread that owns `heap`.
         static HeapStatistics measure(JSC::Heap&);
     };
-    std::optional<HeapStatistics> heapStatistics();
     struct CpuUsage {
         double userMicroseconds { 0 };
         double systemMicroseconds { 0 };
     };
-    std::optional<CpuUsage> cpuUsage();
+    // What the worker last published; empty when the caller has to ask the worker.
+    std::optional<HeapStatistics> heapStatistics();
+    // Never below an earlier answer. Given the worker's own reading it answers whenever the worker did.
+    std::optional<CpuUsage> cpuUsage(std::optional<CpuUsage> measuredByWorker = std::nullopt);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
     // Before the entry point loads: posts 'online' to the parent, as node does before user code.
@@ -126,8 +125,7 @@ public:
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
     void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&);
-    // The worker heap's counters as of its last collection (the worker or its collector thread);
-    // nullopt when its VM is going away.
+    // The worker's heap as of its last collection, or nothing once its VM goes away. Also its collector thread.
     void publishHeapStatistics(std::optional<HeapStatistics>);
 
     // -- Either thread ---------------------------------------------------------------------------
@@ -147,6 +145,8 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
+    // The parent answers by itself once it has seen the thread start and until it asks it to stop.
+    bool answersOnParentThread() const;
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 

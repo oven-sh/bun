@@ -1584,6 +1584,11 @@ describe("a worker that does not return to its event loop", () => {
         expect(since.user).toBeGreaterThanOrEqual(0);
         expect(since.system).toBeGreaterThanOrEqual(0);
 
+        // Each answer lets the parent's event loop turn, so a loop that polls does not starve it.
+        let turned = false;
+        setImmediate(() => (turned = true));
+        while (!turned) await worker.cpuUsage();
+
         expect(Atomics.load(flag, 0)).toBe(0);
       } finally {
         Atomics.store(flag, 0, 1);
@@ -1591,6 +1596,30 @@ describe("a worker that does not return to its event loop", () => {
       }
     },
   );
+
+  test.concurrent("getHeapStatistics() follows the heap as the worker collects", async () => {
+    const flag = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(
+      `const { parentPort, workerData } = require("node:worker_threads");
+      parentPort.postMessage("spinning");
+      const retained = [];
+      while (Atomics.load(workerData, 0) === 0) {
+        const chunk = new Array(1024).fill(retained.length);
+        if (retained.length < 4096) retained.push(chunk);
+      }`,
+      { eval: true, workerData: flag },
+    );
+    try {
+      await once(worker, "message");
+      const { used_heap_size: before } = await worker.getHeapStatistics();
+      let after = before;
+      while (after < before + 16 * 1024 * 1024) after = (await worker.getHeapStatistics()).used_heap_size;
+      expect(Atomics.load(flag, 0)).toBe(0);
+    } finally {
+      Atomics.store(flag, 0, 1);
+      await worker.terminate();
+    }
+  });
 });
 
 test("*Internal introspection methods are DontEnum on Worker.prototype", () => {

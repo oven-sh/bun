@@ -13,8 +13,7 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
-// Bytes. On macOS both read the phys_footprint ledger (Activity Monitor's
-// number), not resident_size.
+// Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
 extern "C" int getPeakRSS(size_t* peak);
 

@@ -4806,17 +4806,12 @@ pub use bun_core::Timespec;
 pub use bun_core::time;
 
 unsafe extern "C" {
-    // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
-    // only writes the slot and returns a status code — no other preconditions.
+    // safe: the out-param is a valid `&mut usize`; C++ only writes it and returns a status code.
     safe fn getRSS(rss: &mut usize) -> ::core::ffi::c_int;
     safe fn getPeakRSS(peak: &mut usize) -> ::core::ffi::c_int;
 }
 
-/// `bun.sys.selfProcessMemoryUsage()` — the memory usage of the current
-/// process in bytes, as `process.memoryUsage().rss` reports it, or `None` on
-/// failure. On macOS this is the `phys_footprint` ledger (Activity Monitor's
-/// number) rather than `resident_size`. Thin wrapper around the C++ `getRSS`
-/// shim in `src/jsc/bindings/BunProcess.cpp`.
+/// What `process.memoryUsage().rss` reports, in bytes (C++ `getRSS` in `BunProcess.cpp`), or `None` on failure.
 pub fn self_process_memory_usage() -> Option<usize> {
     let mut rss: usize = 0;
     if getRSS(&mut rss) != 0 {

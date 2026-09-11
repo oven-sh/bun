@@ -61,9 +61,8 @@ unsafe extern "C" {
     safe fn Bun__memoryFootprint() -> usize;
 }
 
-/// Per-process memory footprint in bytes. Backed by
-/// `task_info(TASK_VM_INFO).phys_footprint` (Darwin, the same number
-/// `process.memoryUsage().rss` reports there), `Pss:` from
+/// Accurate per-process memory footprint in bytes.
+/// Backed by `task_info(TASK_VM_INFO).phys_footprint` (Darwin), `Pss:` from
 /// `/proc/self/smaps_rollup` (Linux), `PrivateUsage` (Windows). Returns
 /// `undefined` when no platform-specific accessor is available so the caller
 /// can `?? process.memoryUsage.rss()`.

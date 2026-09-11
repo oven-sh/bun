@@ -430,9 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 
-    // The numbers process.memoryUsage().rss and process.resourceUsage().maxRSS
-    // report. On macOS that is phys_footprint, where mi_process_info reads
-    // resident_size.
+    // Match process.memoryUsage().rss and resourceUsage().maxRSS: mi_process_info reads resident_size on macOS.
     Bun::getRSS(&current_rss);
     Bun::getPeakRSS(&peak_rss);
 

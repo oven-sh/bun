@@ -146,13 +146,11 @@ extern "C" void dump_zone_malloc_stats()
 
 #endif
 
-// Per-process memory footprint, in bytes: the memory this process alone keeps
-// the machine from reusing. Returns 0 when no platform-specific accessor is
-// available; the JS caller falls back to process.memoryUsage.rss().
+// Accurate per-process memory footprint, in bytes. Returns 0 when the platform has no accessor; the
+// JS caller falls back to process.memoryUsage.rss().
 //
 // Darwin:  task_info(TASK_VM_INFO).phys_footprint — Activity Monitor's number;
-//          counts dirty + compressed, NOT reusable. process.memoryUsage().rss
-//          reads the same ledger on Darwin (getRSS in BunProcess.cpp).
+//          counts dirty + compressed, NOT reusable.
 // Linux:   /proc/self/smaps_rollup Pss: — proportional set size, attributes
 //          shared pages by share count instead of fully to every mapper.
 // Windows: GetProcessMemoryInfo PrivateUsage — commit charge for this process.

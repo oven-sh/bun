@@ -1219,9 +1219,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
             // Keep the selected path alive for the process-global SQLite handle.
             sqlite3_lib_path_storage = requestedPathUTF8;
             sqlite3_lib_path = sqlite3_lib_path_storage.data();
-            if (lazyLoadSQLiteUnlocked() == -1) {
-                sqlite3_handle = nullptr;
-                WTF::String msg = WTF::String::fromUTF8(dlerror());
+            WTF::String msg;
+            if (lazyLoadSQLiteUnlocked(&msg) == -1) {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
                 return {};
             }
@@ -1277,8 +1276,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
@@ -1775,8 +1774,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        WTF::String msg = WTF::String::fromUTF8(dlerror());
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }

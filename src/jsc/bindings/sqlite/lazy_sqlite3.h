@@ -340,7 +340,17 @@ inline WTF::Lock sqlite3_handle_lock;
 // APIs must be runtime-gated on this instead of compiled out.
 inline bool lazy_sqlite3_has_session = false;
 
-inline int lazyLoadSQLiteUnlocked()
+inline void unloadSQLiteHandleUnlocked()
+{
+#if OS(WINDOWS)
+    FreeLibrary(sqlite3_handle);
+#else
+    dlclose(sqlite3_handle);
+#endif
+    sqlite3_handle = nullptr;
+}
+
+inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
 {
     if (sqlite3_handle)
         return 0;
@@ -351,10 +361,17 @@ inline int lazyLoadSQLiteUnlocked()
 #endif
 
     if (!sqlite3_handle) {
+        if (errorMessage)
+            *errorMessage = WTF::String::fromUTF8(dlerror());
         return -1;
     }
     lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
-    if (!lazy_sqlite3_open_v2) return -1;
+    if (!lazy_sqlite3_open_v2) {
+        if (errorMessage)
+            *errorMessage = WTF::String::fromUTF8(dlerror());
+        unloadSQLiteHandleUnlocked();
+        return -1;
+    }
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_blob64 = (lazy_sqlite3_bind_blob64_type)dlsym(sqlite3_handle, "sqlite3_bind_blob64");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
@@ -493,10 +510,10 @@ inline int lazyLoadSQLiteUnlocked()
     return 0;
 }
 
-inline int lazyLoadSQLite()
+inline int lazyLoadSQLite(WTF::String* errorMessage = nullptr)
 {
     WTF::Locker locker { sqlite3_handle_lock };
-    return lazyLoadSQLiteUnlocked();
+    return lazyLoadSQLiteUnlocked(errorMessage);
 }
 
 #if OS(WINDOWS)

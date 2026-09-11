@@ -16,10 +16,10 @@ A tagged pointer union containing various async task types (file I/O, network re
 
 Two separate queues for `setImmediate()`:
 
-- **`immediate_tasks`**: Tasks to run on the current tick
-- **`next_immediate_tasks`**: Tasks to run on the next tick
+- **`immediate_tasks`**: What `setImmediate()` queued since the last immediates phase
+- **`immediate_batch`** (+ `immediate_batch_next`): The batch the current immediates phase is running
 
-This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
+Each `tickImmediateTasks()` swaps the queued callbacks into the batch and runs the batch, so a `setImmediate` called from a `setImmediate` callback waits for the next loop iteration instead of extending the current phase forever. The batch lives on the loop so that a callback which runs the loop itself (`expect().resolves`, `waitForPromise`) continues the same batch: the callbacks queued alongside it still run while it waits.
 
 ### 3. Concurrent Task Queue (`event_loop.rs:17`)
 

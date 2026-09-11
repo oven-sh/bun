@@ -10715,6 +10715,266 @@ it("installs the transitive file: dependency of a file: dependency", async () =>
   }
 });
 
+// The link: form of the file: containment rule tested above. A link: target with
+// ".." or an absolute path names a directory of the machine running the install
+// (bun resolves it against the project and links it from the global link dir),
+// which only the package.json files read from the project can mean to do. A
+// package installed from the cache (registry, git, tarball) declaring one used
+// to get the directory's package.json read and recorded in bun.lock, and, when
+// the path was valid from both base directories, the directory symlinked into
+// node_modules under a name of its choosing.
+describe.concurrent("link: paths with .. or an absolute path declared by a dependency", () => {
+  // The project is <root>/project so that `../outside` stays inside the temp dir.
+  // `climbing` only climbs out after normalization.
+  function declaredLinks(root: string): Record<string, string> {
+    return {
+      outside: "link:../outside",
+      climbing: "link:x/../../climbing",
+      absolute: `link:${join(root, "absolute").replaceAll("\\", "/")}`,
+    };
+  }
+
+  // Every target exists, so resolving one of them is observable in bun.lock.
+  function linkTargets(): Record<string, string> {
+    return {
+      "outside/package.json": JSON.stringify({ name: "outside-dir", version: "1.0.0" }),
+      "climbing/package.json": JSON.stringify({ name: "climbing-dir", version: "1.0.0" }),
+      "absolute/package.json": JSON.stringify({ name: "absolute-dir", version: "1.0.0" }),
+    };
+  }
+
+  function rootPackageJson(dependencies: Record<string, string>, extra: object = {}) {
+    return JSON.stringify({ name: "my-app", version: "1.0.0", dependencies, ...extra });
+  }
+
+  // <root>/project depends on `bar@0.0.2` from the dummy registry, whose manifest
+  // for it carries `barManifest`.
+  async function writeRegistryProject(ctx: TestContext, root: string, barManifest: object, rootExtra: object = {}) {
+    setContextHandler(ctx, dummyRegistryForContext(ctx, [], { "0.0.2": barManifest }));
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: "0.0.2" }, rootExtra));
+    await write(join(root, "project", "bunfig.toml"), `[install]\nregistry = "${ctx.registry_url}"\n`);
+  }
+
+  // Packs <root>/tb-src into <root>/project/tb-1.0.0.tgz.
+  async function packDeclarer(root: string, manifest: object) {
+    await write(join(root, "tb-src", "package.json"), JSON.stringify({ name: "tb", version: "1.0.0", ...manifest }));
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--destination", join(root, "project")],
+      cwd: join(root, "tb-src"),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [packErr, packExitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(packErr).not.toContain("error:");
+    expect(packExitCode).toBe(0);
+  }
+
+  async function install(root: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: join(root, "project"),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache"), BUN_INSTALL_GLOBAL_DIR: join(root, "global") },
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { err, out, exitCode };
+  }
+
+  // `declarer` is how bun prints the package declaring the dependency.
+  function refusal(name: string, spec: string, declarer: string) {
+    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: link: paths with ".." or an absolute path are only allowed in the package.json files of this project`;
+  }
+
+  // The rest of stderr is progress output ("Resolving dependencies", ...).
+  function errorLines(stderr: string) {
+    return stderr.split(/\r?\n/).filter(line => line.startsWith("error:"));
+  }
+
+  async function expectRefused(root: string, declarer: string) {
+    const { err, out, exitCode } = await install(root);
+
+    const refused = Object.entries(declaredLinks(root));
+    const expected = [
+      ...refused.map(([name, spec]) => refusal(name, spec, declarer)),
+      ...refused.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
+    ];
+    // Reported in the declaring package's dependency order, which differs between
+    // a registry manifest and a package.json.
+    expect(errorLines(err).sort()).toEqual(expected.sort());
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).not.toContain("installed");
+    expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+    expect(await exists(join(root, "project", "node_modules"))).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+
+  it("are refused when a tarball dependency declares them", async () => {
+    using dir = tempDir("escaping-links-of-tarball-dep", {
+      ...linkTargets(),
+      "project/package.json": rootPackageJson({ tb: "file:./tb-1.0.0.tgz" }),
+    });
+    const root = String(dir);
+    await packDeclarer(root, { dependencies: declaredLinks(root) });
+
+    await expectRefused(root, "tb@./tb-1.0.0.tgz");
+  });
+
+  it("are refused when a git dependency declares them", async () => {
+    using dir = tempDir("escaping-links-of-git-dep", linkTargets());
+    const root = String(dir);
+    await write(
+      join(root, "work", "package.json"),
+      JSON.stringify({ name: "bar", version: "0.0.2", dependencies: declaredLinks(root) }),
+    );
+    const sha = await createDumbHttpGitRepo(root, {});
+    using server = serveDirectory(root);
+    const repo = `git+http://localhost:${server.port}/repo.git`;
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: repo }));
+
+    await expectRefused(root, `bar@${repo}#${sha}`);
+  });
+
+  it("are refused when a registry package declares them", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("escaping-links-of-registry-dep", linkTargets());
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { dependencies: declaredLinks(root) });
+
+      await expectRefused(root, "bar@0.0.2");
+    });
+  });
+
+  it("are refused when a registry package declares one as a peer dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("escaping-peer-link-of-registry-dep", linkTargets());
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { peerDependencies: { outside: "link:../outside" } });
+
+      // An unresolved peer is not reported a second time as "failed to resolve"
+      // and does not stop bar itself from being installed; the error still fails
+      // the install before the lockfile is saved.
+      const { err, exitCode } = await install(root);
+      expect(errorLines(err)).toEqual([refusal("outside", "link:../outside", "bar@0.0.2")]);
+      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+      expect(await exists(join(root, "project", "node_modules", "outside"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it("stay uninstalled when a registry package declares one as an optional dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("escaping-optional-link-of-registry-dep", linkTargets());
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { optionalDependencies: { outside: "link:../outside" } });
+
+      const { err, out, exitCode } = await install(root);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual(["bar"]);
+      const lockfile = await file(join(root, "project", "bun.lock")).text();
+      expect(lockfile).toContain('"bar": ["bar@0.0.2"');
+      expect(lockfile).not.toContain("outside-dir");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // What stays allowed. These only assert the resolution (`--lockfile-only`):
+  // bun currently creates the link for a target with ".." relative to the global
+  // link dir rather than the directory it resolved the target from, which is a
+  // separate problem of the root-declared form.
+  it("are still resolved when the root package.json or a workspace declares them", async () => {
+    using dir = tempDir("escaping-links-of-root-and-workspace", {
+      ...linkTargets(),
+      "project/package.json": rootPackageJson({ outside: "link:../outside" }, { workspaces: ["packages/*"] }),
+      "project/packages/ws/package.json": JSON.stringify({
+        name: "ws",
+        version: "1.0.0",
+        dependencies: { climbing: "link:../climbing" },
+      }),
+    });
+    const root = String(dir);
+
+    const { err, exitCode } = await install(root, "--lockfile-only");
+    expect(err).not.toContain("error:");
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain('"outside": ["outside-dir@link:../outside"');
+    expect(lockfile).toContain('"climbing": ["climbing-dir@link:../climbing"');
+    expect(exitCode).toBe(0);
+  });
+
+  // `overrides` / `resolutions` are written in the root package.json, so a link:
+  // path coming from there is the project's own even when it replaces the
+  // dependency of a registry package.
+  for (const field of ["resolutions", "overrides"]) {
+    it(`are still resolved when a root "${field}" entry puts one on a registry package's dependency`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir(`${field}-escaping-link-on-registry-dep`, linkTargets());
+        const root = String(dir);
+        await writeRegistryProject(
+          ctx,
+          root,
+          { dependencies: { vendored: "0.0.1" } },
+          { [field]: { vendored: "link:../outside" } },
+        );
+
+        const { err, exitCode } = await install(root, "--lockfile-only");
+        expect(err).not.toContain("error:");
+        const lockfile = await file(join(root, "project", "bun.lock")).text();
+        expect(lockfile).toContain('"vendored": ["outside-dir@link:../outside"');
+        expect(exitCode).toBe(0);
+      });
+    });
+  }
+
+  // A file: directory's package.json is read from the project like a workspace's,
+  // so it may declare one. The target is planted both where bun reads the path
+  // from today (the project) and next to the declaring directory; which of the
+  // two it reads is not what this pins.
+  it("are still resolved when a file: directory dependency declares them", async () => {
+    using dir = tempDir("escaping-link-of-folder-dep", {
+      ...linkTargets(),
+      "project/outside/package.json": linkTargets()["outside/package.json"],
+      "project/package.json": rootPackageJson({ lib: "file:./lib" }),
+      "project/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { outside: "link:../outside" },
+      }),
+    });
+    const root = String(dir);
+
+    const { err, exitCode } = await install(root, "--lockfile-only");
+    expect(err).not.toContain("error:");
+    expect(await file(join(root, "project", "bun.lock")).text()).toContain('"outside": ["outside-dir@link:');
+    expect(exitCode).toBe(0);
+  });
+
+  // The documented form: `link:<name>` is looked up in the global link dir that
+  // `bun link` populates, whoever declares it.
+  it("do not affect a registry package linking a package by name", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("named-link-of-registry-dep", {
+        "global/node_modules/linked-pkg/package.json": JSON.stringify({ name: "linked-pkg", version: "2.0.0" }),
+      });
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { dependencies: { "linked-pkg": "link:linked-pkg" } });
+
+      const { err, out, exitCode } = await install(root);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual(["bar", "linked-pkg"]);
+      expect(await file(join(root, "project", "node_modules", "linked-pkg", "package.json")).json()).toEqual({
+        name: "linked-pkg",
+        version: "2.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
 const fileDepCycleFixture = {
   "package.json": JSON.stringify({
     name: "my-app",

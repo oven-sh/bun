@@ -575,7 +575,8 @@ interface Subprocess extends AsyncDisposable {
   readonly stdin: FileSink | number | undefined | null;
   readonly stdout: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
   readonly stderr: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
-  readonly readable: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly writable: Subprocess["stdin"]; // the same value as stdin
+  readonly readable: Subprocess["stdout"]; // the same value as stdout
   readonly terminal: Terminal | undefined;
   readonly pid: number;
   readonly exited: Promise<number>;

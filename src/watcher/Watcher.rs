@@ -449,7 +449,11 @@ impl Watcher {
                 if (item as usize) < self.watchlist.len() {
                     let moved_fd = self.watchlist.items_fd()[item as usize];
                     if moved_fd.is_valid() {
-                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item as usize);
+                        self.add_file_descriptor_to_kqueue_without_checks(
+                            moved_fd,
+                            item as usize,
+                            self.watchlist.items_kind()[item as usize],
+                        );
                     }
                 }
             }
@@ -485,9 +489,10 @@ impl Watcher {
         &mut self,
         fd: Fd,
         watchlist_id: usize,
+        kind: WatchItemKind,
     ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
+        use libc::{NOTE_ATTRIB, NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -496,7 +501,15 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
+        // NOTE_ATTRIB is requested for files only. A directory vnode reports it
+        // solely for changes to the directory's own metadata — entry-level
+        // `chmod`/`touch` raise nothing on the parent — and no consumer acts on
+        // that, so requesting it there only adds wakeups.
+        let mut fflags = NOTE_WRITE | NOTE_RENAME | NOTE_DELETE;
+        if kind == WatchItemKind::File {
+            fflags |= NOTE_ATTRIB;
+        }
+        event.fflags = fflags as _;
 
         // id
         event.ident = usize::try_from(fd.native()).expect("int cast");
@@ -548,7 +561,7 @@ impl Watcher {
         };
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id, WatchItemKind::File);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             // inotify needs a trailing NUL. When
@@ -626,7 +639,11 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(
+            fd,
+            watchlist_id,
+            WatchItemKind::Directory,
+        );
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -996,13 +1013,16 @@ impl WatchEvent {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Op: u8 {
-        const DELETE   = 1 << 0;
-        const METADATA = 1 << 1;
-        const RENAME   = 1 << 2;
-        const WRITE    = 1 << 3;
-        const MOVE_TO  = 1 << 4;
-        const CREATE   = 1 << 5;
-        // bits 6..7 = _padding
+        const DELETE    = 1 << 0;
+        const METADATA  = 1 << 1;
+        const RENAME    = 1 << 2;
+        const WRITE     = 1 << 3;
+        const MOVE_TO   = 1 << 4;
+        const CREATE    = 1 << 5;
+        /// An entry left a watched directory (moved out, or the source half of
+        /// a rename). The mirror of [`Op::MOVE_TO`].
+        const MOVE_FROM = 1 << 6;
+        // bit 7 = _padding
     }
 }
 
@@ -1020,6 +1040,7 @@ pub(crate) const OP_NAMES: &[(Op, &str)] = &[
     (Op::WRITE, "write"),
     (Op::MOVE_TO, "move_to"),
     (Op::CREATE, "create"),
+    (Op::MOVE_FROM, "move_from"),
 ];
 
 impl fmt::Display for Op {

@@ -529,16 +529,15 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
 }
 
 fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
-    let mut op = Op::empty();
-    if event.action == Action::Removed {
-        op |= Op::DELETE;
-    }
-    if event.action == Action::RenamedOld {
-        op |= Op::RENAME;
-    }
-    if event.action == Action::Modified {
-        op |= Op::WRITE;
-    }
+    // `RenamedOld` carries both `RENAME` and `MOVE_FROM`: consumers key on
+    // `RENAME`, and `MOVE_FROM` names which half of the rename this is.
+    let op = match event.action {
+        Action::Added => Op::CREATE,
+        Action::Removed => Op::DELETE,
+        Action::Modified => Op::WRITE,
+        Action::RenamedOld => Op::RENAME | Op::MOVE_FROM,
+        Action::RenamedNew => Op::MOVE_TO,
+    };
     WatchEvent {
         op,
         index,

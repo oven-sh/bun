@@ -1,6 +1,8 @@
-import { describe, expect, it, test } from "bun:test";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
+import os from "node:os";
 import util from "node:util";
 
 describe("url", () => {
@@ -685,4 +687,186 @@ describe("object URL prefix check", () => {
       signalCode: null,
     });
   }, 60_000);
+});
+
+describe("URL setters at the string length limit", () => {
+  // A setter throws ERR_STRING_TOO_LONG when the serialized URL would be longer
+  // than String::MaxLength (2^31 - 1). The synthetic allocation limit lowers
+  // that bound (1 MiB is the smallest value the hook accepts), so only the last
+  // test needs a 2 GB string.
+  const limit = 1024 * 1024;
+  let previousLimit: number;
+  beforeAll(() => {
+    previousLimit = setSyntheticAllocationLimitForTesting(limit);
+  });
+  afterAll(() => {
+    setSyntheticAllocationLimitForTesting(previousLimit);
+  });
+
+  const tooLong = expect.objectContaining({
+    name: "Error",
+    code: "ERR_STRING_TOO_LONG",
+    message: "Cannot create a string longer than 2147483647 characters",
+  });
+  // `count` copies of `unit`, as an 8-bit string and as a 16-bit string.
+  const build = {
+    latin1: (unit: string, count: number) => Buffer.alloc(count, unit, "latin1").toString("latin1"),
+    utf16: (unit: string, count: number) => Buffer.alloc(count * unit.length * 2, unit, "utf16le").toString("utf16le"),
+  };
+  const ascii = (count: number) => build.latin1("a", count);
+
+  type Property = "protocol" | "username" | "password" | "host" | "hostname" | "pathname" | "search" | "hash";
+  // [setter, URL, kind of string, repeated unit, length of one unit in the
+  //  serialized URL, change in href.length besides the value]
+  const cases: [Property, string, keyof typeof build, string, number, number][] = [
+    ["pathname", "https://h/", "latin1", "a", 1, 0],
+    ["pathname", "https://h/", "latin1", " ", 3, 0],
+    ["pathname", "https://h/", "latin1", "{", 3, 0],
+    ["pathname", "https://h/", "latin1", "\xe9", 6, 0],
+    ["pathname", "https://h/", "utf16", "\u20ac", 9, 0],
+    ["pathname", "https://h/", "utf16", "\u{1f600}", 12, 0],
+    ["search", "https://h/", "latin1", "#", 3, 1],
+    ["search", "https://h/", "latin1", "{", 1, 1],
+    ["search", "https://h/", "latin1", "'", 3, 1],
+    ["search", "foo://h/", "latin1", "'", 1, 1],
+    ["hash", "https://h/", "latin1", "`", 3, 1],
+    ["hash", "https://h/", "latin1", "{", 1, 1],
+    ["username", "https://h/", "latin1", ":", 3, 1],
+    ["password", "https://h/", "latin1", "@", 3, 2],
+    ["hostname", "foo://h/", "latin1", "\x7f", 3, -1],
+    ["hostname", "foo://h/", "latin1", "\xe9", 6, -1],
+    ["host", "foo://h/", "utf16", "\u20ac", 9, -1],
+    ["protocol", "foo://h/", "latin1", "a", 1, -3],
+  ];
+
+  test.each(cases)("%s of %s, %s string of %j", (property, base, kind, unit, unitLength, change) => {
+    // The value alone is as long as the limit once serialized: the setter throws and the URL keeps its value.
+    const url = new URL(base);
+    expect(() => {
+      url[property] = build[kind](unit, Math.ceil(limit / unitLength));
+    }).toThrow(tooLong);
+    expect(url.href).toBe(base);
+
+    // A value that stays 4 KiB below the limit is set, and is as long as expected.
+    const count = Math.floor((limit - 4096) / unitLength);
+    url[property] = build[kind](unit, count);
+    expect(url.href.length).toBe(base.length + change + count * unitLength);
+  });
+
+  // WTF::URL copies the host of a special URL into a Vector<char16_t>, which
+  // holds half as many characters as a string (and as the lowered limit).
+  test.each(["host", "hostname"] as const)("%s of a special URL", property => {
+    const url = new URL("https://h/");
+    for (const count of [limit, limit / 2 + 1]) {
+      expect(() => {
+        url[property] = ascii(count);
+      }).toThrow(tooLong);
+      expect(url.href).toBe("https://h/");
+    }
+    url[property] = ascii(limit / 2);
+    expect(url.href.length).toBe("https://".length + limit / 2 + "/".length);
+  });
+
+  test("the bound is the limit itself", () => {
+    // "foo://h/" + "#" + fragment
+    const url = new URL("foo://h/");
+    expect(() => {
+      url.hash = ascii(limit - 8);
+    }).toThrow(tooLong);
+    expect(url.href).toBe("foo://h/");
+    url.hash = ascii(limit - 9);
+    expect(url.href.length).toBe(limit);
+    // Now every setter that makes the URL longer throws.
+    expect(() => {
+      url.pathname = "/ab";
+    }).toThrow(tooLong);
+    expect(() => {
+      url.port = "1";
+    }).toThrow(tooLong);
+    // One that makes it shorter does not.
+    url.hash = "";
+    expect(url.href).toBe("foo://h/");
+  });
+
+  test("port", () => {
+    const url = new URL("foo://h/" + ascii(limit - 8 - 6));
+    expect(url.href.length).toBe(limit - 6);
+    url.port = "8080";
+    expect(url.port).toBe("8080");
+    expect(url.href.length).toBe(limit - 1);
+    expect(() => {
+      url.port = "65535";
+    }).toThrow(tooLong);
+    expect(url.port).toBe("8080");
+  });
+
+  test("a special URL ignores a long protocol, which cannot be a special scheme", () => {
+    const url = new URL("https://h/");
+    url.protocol = ascii(limit);
+    expect(url.href).toBe("https://h/");
+  });
+
+  test("a host is measured up to the character that ends it", () => {
+    const url = new URL("https://h/");
+    url.hostname = "example.com/" + ascii(limit);
+    expect(url.href).toBe("https://example.com/");
+    url.host = "example.org:8080?" + ascii(limit);
+    expect(url.href).toBe("https://example.org:8080/");
+  });
+
+  // The real bound, with the value that used to abort the process. The 2 GB
+  // string stays in a child process (it peaks near 2.3 GB of RSS), and the test
+  // runs only where that fits. Inside a container os.totalmem() reports the
+  // host's RAM and process.constrainedMemory() the cgroup limit.
+  const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+  test.skipIf(memory < 8 * 1024 ** 3)(
+    "a value near String::MaxLength throws instead of aborting",
+    async () => {
+      const fixture = `
+        // One repeated character is the fast case of repeat(), in debug builds too.
+        const value = "a".repeat(2147483645);
+        const results = {};
+        for (const [property, base] of [
+          ["pathname", "https://e.com/"],
+          ["search", "https://e.com/"],
+          ["hash", "https://e.com/"],
+          ["username", "https://e.com/"],
+          ["password", "https://e.com/"],
+          ["protocol", "foo://e.com/"],
+        ]) {
+          const url = new URL(base);
+          try {
+            url[property] = value;
+            results[property] = "no error";
+          } catch (e) {
+            results[property] = e.code;
+          }
+          if (url.href !== base) results[property] += ", changed";
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Everything the child produced goes into one assertion, so an abort shows its signal and stderr.
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({
+          pathname: "ERR_STRING_TOO_LONG",
+          search: "ERR_STRING_TOO_LONG",
+          hash: "ERR_STRING_TOO_LONG",
+          username: "ERR_STRING_TOO_LONG",
+          password: "ERR_STRING_TOO_LONG",
+          protocol: "ERR_STRING_TOO_LONG",
+        }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    90_000,
+  );
 });

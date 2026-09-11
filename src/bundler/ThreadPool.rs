@@ -570,9 +570,24 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    pub(crate) fn deinit_soon(&mut self) {
-        if let Some(thread) = self.thread {
-            thread.push_idle_task(&raw mut self.deinit_task);
+    /// Takes `*mut Self`, not `&mut self`: `*this` is freed during this call
+    /// (below, or by the pool thread as soon as `deinit_task` is pushed), and a
+    /// `&mut self` argument would have to stay allocated until it returned.
+    ///
+    /// # Safety
+    /// `this` is a live `Worker` from [`ThreadPool::get_worker`] that nothing
+    /// touches afterwards; called once per `Worker`.
+    pub(crate) unsafe fn deinit_soon(this: *mut Self) {
+        // SAFETY: caller contract; `thread` is `Copy`, the read ends here.
+        let thread = unsafe { (*this).thread };
+        if let Some(thread) = thread {
+            // SAFETY: caller contract. Projected from the allocation's own
+            // pointer so `from_field_ptr!` in `deinit_callback` gets whole-
+            // `Worker` provenance. The pool thread drains idle tasks between
+            // batches, not only on `wake_for_idle_events`, so `*this` may be
+            // freed as soon as it is pushed; nothing touches it after that.
+            let task = unsafe { &raw mut (*this).deinit_task };
+            thread.push_idle_task(task);
         } else {
             // `thread` is `ThreadPoolLib::Thread::current()` captured at
             // creation. When null, the Worker was created on a non-pool thread
@@ -584,10 +599,9 @@ impl Worker {
             // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
-            // SAFETY: `self` is the heap-allocated Worker; sole owner now that
-            // the caller is about to `clear_retaining_capacity()` the
-            // `workers_assignments` map.
-            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
+            // SAFETY: caller contract; `this` is the heap-allocated Worker and
+            // nothing else holds it once the caller clears `workers_assignments`.
+            unsafe { Self::deinit(this) };
         }
     }
 

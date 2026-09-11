@@ -898,8 +898,7 @@ pub(crate) fn upload_stream(
         );
     }
 
-    // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
-    // objects which keep the task alive).
+    // JSC_BORROW: `global_this` outlives the stream wrapper that stores it.
     let global_static = GlobalRef::from(global_this);
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         root: Cell::new(None),

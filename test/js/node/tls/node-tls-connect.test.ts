@@ -584,6 +584,130 @@ for (const { name, connect } of tests) {
   });
 }
 
+// A TLS record that fails after the handshake is a fatal protocol error. Node
+// surfaces it as the socket's ERR_SSL_<REASON> 'error' (and leaves the socket
+// open). Over a generic Duplex the TLS engine is SSLWrapper, a separate
+// SSL_read driver from the uSockets one, so it gets its own coverage. A TCP
+// proxy between the Duplex and the server injects the bytes once the
+// handshake has completed on both sides. Every assertion here also holds on
+// Node.js; only the alert's code name depends on the SSL library.
+describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", () => {
+  // application_data, legacy version TLS 1.2, 32 bytes of ciphertext that
+  // cannot authenticate: the receiver fails the AEAD open and alerts
+  // bad_record_mac.
+  const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+  // BoringSSL names the bad_record_mac alert SSLV3_ALERT_BAD_RECORD_MAC,
+  // OpenSSL 3 names it SSL/TLS_ALERT_BAD_RECORD_MAC.
+  const ALERT_BAD_RECORD_MAC = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+    ? "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC"
+    : "ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC";
+
+  type Scenario = {
+    toClient: net.Socket;
+    toServer: net.Socket;
+    serverSocket: TLSSocket;
+    client: TLSSocket;
+    // Append `bytes` to the next chunk the proxy forwards from the server.
+    appendToNextServerChunk(bytes: Buffer): void;
+  };
+
+  async function run(inject: (s: Scenario) => void | Promise<void>) {
+    let toClient: net.Socket | undefined;
+    let toServer: net.Socket | undefined;
+    let raw: net.Socket | undefined;
+    let client: TLSSocket | undefined;
+    let serverSocket: TLSSocket | undefined;
+    let appendOnce: Buffer | undefined;
+    const server = tls.createServer(COMMON_CERT_);
+    server.on("secureConnection", s => s.on("error", () => {}));
+    const proxy = net.createServer(c => {
+      toClient = c;
+      toServer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      c.pipe(toServer);
+      toServer.on("data", chunk => {
+        if (appendOnce) {
+          chunk = Buffer.concat([chunk, appendOnce]);
+          appendOnce = undefined;
+        }
+        c.write(chunk);
+      });
+      toServer.on("end", () => c.end());
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const serverSecure = once(server, "secureConnection") as Promise<[TLSSocket]>;
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+      raw = net.connect((proxy.address() as AddressInfo).port, "127.0.0.1");
+      await once(raw, "connect");
+      client = tls.connect({ socket: new SocketProxy(raw), rejectUnauthorized: false });
+      // Settle on whichever comes first: the 'error' (expected), or a 'close'
+      // with no 'error' before it (the bug). Node emits no 'close' at all here.
+      const outcome = new Promise<{ event: string; code?: string; library?: string }>(resolve => {
+        client!.once("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+          resolve({ event: "error", code: err.code, library: err.library }),
+        );
+        client!.once("close", () => resolve({ event: "close" }));
+      });
+      await once(client, "secureConnect");
+      [serverSocket] = await serverSecure;
+
+      await inject({
+        toClient: toClient!,
+        toServer: toServer!,
+        serverSocket,
+        client,
+        appendToNextServerChunk: bytes => (appendOnce = bytes),
+      });
+      return await outcome;
+    } finally {
+      for (const s of [client, raw, serverSocket, toClient, toServer]) s?.destroy();
+      proxy.close();
+      server.close();
+    }
+  }
+
+  it("a record that fails to decrypt surfaces as ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", async () => {
+    const result = await run(({ toClient }) => void toClient.write(BAD_RECORD));
+    expect(result).toEqual({
+      event: "error",
+      code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      library: "SSL routines",
+    });
+  });
+
+  it("the peer's bad_record_mac alert surfaces as an ERR_SSL_*_ALERT_BAD_RECORD_MAC error", async () => {
+    // The bad record goes to the server, whose SSL_read fails and sends a
+    // bad_record_mac alert back. The client's SSL_read fails on that alert.
+    const result = await run(({ toServer }) => void toServer.write(BAD_RECORD));
+    expect(result).toEqual({
+      event: "error",
+      code: ALERT_BAD_RECORD_MAC,
+      library: "SSL routines",
+    });
+  });
+
+  it("a 'data' listener that writes back does not hide the error", async () => {
+    // Good data and the bad record arrive in one chunk. The engine delivers
+    // the data first, the listener's write hits the now-fatal SSL, and the
+    // read's reason must still be the error that surfaces.
+    const result = await run(async ({ serverSocket, client, appendToNextServerChunk }) => {
+      client.on("data", () => client.write("back"));
+      serverSocket.write("first");
+      await once(client, "data");
+      appendToNextServerChunk(BAD_RECORD);
+      serverSocket.write("second");
+    });
+    expect(result).toEqual({
+      event: "error",
+      code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      library: "SSL routines",
+    });
+  });
+});
+
 it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {
   // d2i_SSL_SESSION returns an owned SSL_SESSION; SSL_set_session takes its own
   // reference ("the caller retains ownership"), so the caller's reference must

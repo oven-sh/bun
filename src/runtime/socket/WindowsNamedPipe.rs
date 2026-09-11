@@ -135,6 +135,8 @@ pub struct Handlers {
     pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut c_void, &[u8]),
     pub on_close: fn(*mut c_void),
+    /// See `ssl_wrapper::Handlers::on_ssl_error`.
+    pub(crate) on_ssl_error: fn(*mut c_void, u32),
     pub(crate) on_end: fn(*mut c_void),
     pub(crate) on_writable: fn(*mut c_void),
     pub(crate) on_error: fn(*mut c_void, bun_sys::Error),
@@ -359,6 +361,11 @@ impl WindowsNamedPipe {
         (self.handlers.on_keylog)(self.handlers.ctx, line);
     }
 
+    fn on_ssl_error(&self, err: u32) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onSslError");
+        (self.handlers.on_ssl_error)(self.handlers.ctx, err);
+    }
+
     // ── SSLWrapper trampolines ───────────────────────────────────────────────
     // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots.
     // SAFETY (all): `this` is the `ctx` set in `wrapper_handlers`; the engine
@@ -383,6 +390,10 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_keylog(d)
     }
+    fn ssl_on_ssl_error(this: *mut Self, err: u32) {
+        // SAFETY: see block note above.
+        unsafe { &*this }.on_ssl_error(err)
+    }
     fn ssl_on_close(this: *mut Self) {
         // SAFETY: see block note above.
         unsafe { &*this }.on_close()
@@ -400,6 +411,7 @@ impl WindowsNamedPipe {
             on_handshake: Self::ssl_on_handshake,
             on_data: Self::ssl_on_data,
             on_close: Self::ssl_on_close,
+            on_ssl_error: Some(Self::ssl_on_ssl_error),
             write: Self::ssl_write,
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),

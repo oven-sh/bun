@@ -176,3 +176,78 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+// Same contract as "tls.connect over a Duplex reports a fatal post-handshake
+// SSL error" in node-tls-connect.test.ts, with both TLS peers on a named pipe.
+// A plain pipe proxy between them injects a record that cannot authenticate
+// once the handshake has completed on both sides.
+describe("a fatal post-handshake SSL error over a named pipe", () => {
+  const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+  // BoringSSL and OpenSSL 3 name the bad_record_mac alert differently.
+  const ALERT_BAD_RECORD_MAC = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+    ? "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC"
+    : "ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC";
+
+  type Outcome = { event: string; code?: string; library?: string };
+  // Settles on the 'error' (expected), or on a 'close' with no 'error' before it (the bug).
+  function firstErrorOrClose(socket: net.Socket): Promise<Outcome> {
+    return new Promise(resolve => {
+      socket.once("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+        resolve({ event: "error", code: err.code, library: err.library }),
+      );
+      socket.once("close", () => resolve({ event: "close" }));
+    });
+  }
+
+  async function run(inject: (toClient: net.Socket, toServer: net.Socket) => void) {
+    let toClient: net.Socket | undefined;
+    let toServer: net.Socket | undefined;
+    let client: ReturnType<typeof connect> | undefined;
+    let serverSocket: ReturnType<typeof connect> | undefined;
+    const serverPipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    const proxyPipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    const server = createServer(tls);
+    const serverOutcome = Promise.withResolvers<Outcome>();
+    server.on("secureConnection", s => firstErrorOrClose(s).then(serverOutcome.resolve));
+    const proxy = net.createServer(c => {
+      toClient = c;
+      toServer = net.connect(serverPipe);
+      c.pipe(toServer);
+      toServer.pipe(c);
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    try {
+      await once(server.listen(serverPipe), "listening");
+      const serverSecure = once(server, "secureConnection");
+      await once(proxy.listen(proxyPipe), "listening");
+
+      client = connect({ path: proxyPipe, rejectUnauthorized: false });
+      const clientOutcome = firstErrorOrClose(client);
+      await once(client, "secureConnect");
+      [serverSocket] = await serverSecure;
+
+      inject(toClient!, toServer!);
+      return { client: await clientOutcome, server: await serverOutcome.promise };
+    } finally {
+      for (const s of [client, serverSocket, toClient, toServer]) s?.destroy();
+      proxy.close();
+      server.close();
+    }
+  }
+
+  it.if(isWindows)("a record that fails to decrypt on the client", async () => {
+    expect(await run(toClient => void toClient.write(BAD_RECORD))).toEqual({
+      client: { event: "error", code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", library: "SSL routines" },
+      // The client's bad_record_mac alert reaches the server as its own error.
+      server: { event: "error", code: ALERT_BAD_RECORD_MAC, library: "SSL routines" },
+    });
+  });
+
+  it.if(isWindows)("a record that fails to decrypt on the server", async () => {
+    expect(await run((_toClient, toServer) => void toServer.write(BAD_RECORD))).toEqual({
+      client: { event: "error", code: ALERT_BAD_RECORD_MAC, library: "SSL routines" },
+      server: { event: "error", code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", library: "SSL routines" },
+    });
+  });
+});

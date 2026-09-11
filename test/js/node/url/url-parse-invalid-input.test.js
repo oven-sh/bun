@@ -1,4 +1,5 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import assert from "node:assert";
 import url from "node:url";
 
@@ -119,28 +120,36 @@ describe("url.parse", () => {
     }
   });
 
-  test.each(["nope", 1, null, undefined, Symbol.for("nope")])(
-    "rethrows %p thrown while describing the argument",
-    thrown => {
-      const arg = {
-        get constructor() {
-          throw thrown;
-        },
-      };
-      for (const fn of [() => url.parse(arg), () => url.resolve(arg, "/a"), () => url.resolve("/a", arg)]) {
-        let caught;
-        let didThrow = false;
-        try {
-          fn();
-        } catch (e) {
-          didThrow = true;
-          caught = e;
+  test("rethrows a primitive thrown while describing the argument", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const url = require("node:url");
+        for (const thrown of ["nope", 1, null, undefined, Symbol.for("nope")]) {
+          const arg = { get constructor() { throw thrown; } };
+          for (const fn of [() => url.parse(arg), () => url.resolve(arg, "/a"), () => url.resolve("/a", arg)]) {
+            try {
+              fn();
+              console.log("did not throw");
+            } catch (e) {
+              console.log(e === thrown ? "rethrown" : "wrong value", String(thrown));
+            }
+          }
         }
-        assert.strictEqual(didThrow, true);
-        assert.strictEqual(caught, thrown);
-      }
-    },
-  );
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      ["nope", "1", "null", "undefined", "Symbol(nope)"].flatMap(v => Array(3).fill(`rethrown ${v}\n`)).join(""),
+    );
+    expect(exitCode).toBe(0);
+  });
 
   test("only ERR_INVALID_URL carries the input", () => {
     assert.throws(

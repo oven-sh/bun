@@ -45,13 +45,13 @@ test("long JSX member-expression tags parse in linear memory", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
     stdout: expect.stringMatching(/^\{"delta_mb":/),
     stderr: "",
-    exitCode: 0,
   });
   const { delta_mb } = JSON.parse(stdout);
   // Before the fix: 16 tags x 8000 members copied ~1 GB into the arena (1.2 GB
   // RSS growth under ASAN). After: under 10 MB.
   expect(delta_mb).toBeLessThan(150);
+  expect(exitCode).toBe(0);
 });

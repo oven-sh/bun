@@ -830,9 +830,7 @@ impl<'a> JSXTag<'a> {
             );
         }
 
-        // Join "Button.Red" once, now that the full length is known. The
-        // members are read back off the `E::Dot` chain, innermost last, so the
-        // buffer fills from the end.
+        // Join "Button.Red" once, back to front off the `E::Dot` chain built above.
         if name_len != name.len() {
             let joined: &'a mut [u8] = p.bump().alloc_slice_fill_default::<u8>(name_len);
             let mut end = name_len;

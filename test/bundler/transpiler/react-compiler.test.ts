@@ -1339,6 +1339,43 @@ describe("bundler", () => {
               const { onlyPlain } = require("./only-plain");
               return onlyPlain();
             }
+
+            // Declared outside the compiled function: the compiler keeps
+            // these symbols, so the reads stay bound to the exports.
+            const moduleNs = require("./module-ns");
+            const { isFlag: moduleIsFlag } = require("./state");
+            export function ModuleNamespace() {
+              useEffect(() => {});
+              return moduleNs.value();
+            }
+            export function ModuleDestructure() {
+              useEffect(() => {});
+              return String(moduleIsFlag());
+            }
+            export function NestedDeclaration() {
+              useEffect(() => {});
+              function inner() {
+                const { isFlag } = require("./state");
+                return isFlag();
+              }
+              return String(inner());
+            }
+            // A component name, but no hook call and no JSX: not compiled.
+            export function ComponentNameNotCompiled() {
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
+            export function OptOut() {
+              "use no memo";
+              useEffect(keep);
+              const { onlyOptOut } = require("./only-opt-out");
+              return onlyOptOut();
+            }
+            export function optIn() {
+              "use memo";
+              const { isFlag } = require("./state");
+              return String(isFlag());
+            }
           `,
           "/state.ts": /* ts */ `
             let flag = false;
@@ -1359,7 +1396,19 @@ describe("bundler", () => {
             export function onlyPlain() {
               return "plain";
             }
-            export const notRead = "NOT_READ_SENTINEL";
+            export const notRead = "PLAIN_NOT_READ_SENTINEL";
+          `,
+          "/only-opt-out.ts": /* ts */ `
+            export function onlyOptOut() {
+              return "opt-out";
+            }
+            export const notRead = "OPT_OUT_NOT_READ_SENTINEL";
+          `,
+          "/module-ns.ts": /* ts */ `
+            export function value() {
+              return "module-ns";
+            }
+            export const notRead = "MODULE_NS_NOT_READ_SENTINEL";
           `,
           "/cjs.cjs": /* js */ `
             exports.hello = function () {
@@ -1393,17 +1442,23 @@ describe("bundler", () => {
           stdout: `
             AwaitDestructure=true
             AwaitNamespaceOfBuiltin=a/b
+            ComponentNameNotCompiled=true
             MemoRequireDestructure=true
+            ModuleDestructure=true
+            ModuleNamespace=module-ns
             NamespaceDestructure=true
             NamespaceEscapes=true
             NamespaceOfBuiltin=a/b
             NamespaceOfCommonJS=hello!
             NamespaceOfLazyModule=2,4,6
+            NestedDeclaration=true
+            OptOut=opt-out
             RequireDestructure=true
             RequireDestructureRenamed=true
             ThenDestructure=true
             ThenNamespaceOfCommonJS=hello
             ThenNamespaceTwice=hello2,4,6!
+            optIn=true
             plainFunction=plain
             useRequireDestructure=true
           `,
@@ -1416,7 +1471,11 @@ describe("bundler", () => {
           expect(out).not.toMatch(/\(\(\) => \{\s*\}\)/);
           // A function the compiler leaves alone still reads the export
           // without a namespace object, so tree shaking drops the other one.
-          expect(out).not.toContain("NOT_READ_SENTINEL");
+          expect(out).not.toContain("PLAIN_NOT_READ_SENTINEL");
+          // So does one that opts out of the compiler.
+          expect(out).not.toContain("OPT_OUT_NOT_READ_SENTINEL");
+          // And a read, in a compiled function, of a local declared outside it.
+          expect(out).not.toContain("MODULE_NS_NOT_READ_SENTINEL");
         },
       });
     }

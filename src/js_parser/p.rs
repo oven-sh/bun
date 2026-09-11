@@ -1165,7 +1165,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev
-            || self.react_compiler_may_replace_body
             || self.dynamic_import_copied_locals.contains_key(&ns)
         {
             return None;
@@ -1259,6 +1258,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(local, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(local, records.to_vec());
+        if self.react_compiler_may_replace_body {
+            self.dynamic_import_copied_locals.insert(local, ());
+        }
         for &import_record_id in records {
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {

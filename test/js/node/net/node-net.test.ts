@@ -1,7 +1,18 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  expectMaxObjectTypeCount,
+  gc,
+  isASAN,
+  isDebug,
+  isWindows,
+  tls as tlsCert,
+  tmpdirSync,
+} from "harness";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -3023,5 +3034,69 @@ describe("net.Server.listen({ fd })", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A throw from a user listener invoked synchronously from a native socket
+// dispatch must reach process.on('uncaughtException') the way Node reports it,
+// not be routed to the socket's 'error' event or silently dropped, and the
+// connection must stay alive so subsequent bytes are still delivered. The
+// listener-throw-*-fixture.js files run unchanged under node; the expected
+// event logs below are what Node v26.3.0 prints for them.
+describe.concurrent("uncaughtException from socket listeners", () => {
+  async function runFixture(name: string, env?: Record<string, string>) {
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, `listener-throw-${name}-fixture.js`), env);
+    return { stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) };
+  }
+  const tlsEnv = { TLS_FIXTURE: JSON.stringify(tlsCert) };
+
+  it("server-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("server-data")).toEqual({
+      stdout: JSON.stringify(["connection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client-side 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("client-data")).toEqual({
+      stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("'connection' listener throw reaches uncaughtException and the accepted socket keeps reading", async () => {
+    expect(await runFixture("connection")).toEqual({
+      stdout: JSON.stringify(["connection", "uncaught:conn-boom", "data:A", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/34064: the pg pool shape.
+  it("an unhandled 'error' emitted on another emitter from a 'data' listener reaches uncaughtException", async () => {
+    expect(await runFixture("foreign-emitter")).toEqual({
+      stdout: JSON.stringify(["uncaught:pool error", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("server-side TLS 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("tls-server-data", tlsEnv)).toEqual({
+      stdout: JSON.stringify(["secureConnection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("client-side TLS 'data' listener throw reaches uncaughtException and the socket keeps reading", async () => {
+    expect(await runFixture("tls-client-data", tlsEnv)).toEqual({
+      stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
+      exitCode: 0,
+    });
+  });
+
+  it("without an uncaughtException handler a throwing 'data' listener crashes the process", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "listener-throw-no-handler-fixture.js"));
+    expect(stdout).not.toContain("socket-error:");
+    expect(stderr).toContain("fatal-boom");
+    expect(exitCode).toBe(1);
   });
 });

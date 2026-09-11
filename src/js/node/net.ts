@@ -42,13 +42,20 @@ import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
-const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
+const {
+  kArmHandshakeTimeout,
+  kDestroyOnRead,
+  kPreHandshakeWrite,
+  kSecureConnectDone,
+  kVerifyError,
+} = require("internal/net/symbols");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const reportError = globalThis.reportError;
 
 let uvBinding;
 function uv() {
@@ -148,6 +155,7 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
+const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -261,6 +269,13 @@ function detachSocket(self) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
+// Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+function onUpgradedClose(self, connection) {
+  if (self[kupgraded] === connection) self.destroy();
+}
+function destroyWhenUpgradedCloses(self, connection) {
+  connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+}
 let addAbortListener;
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
@@ -297,9 +312,40 @@ function writeAfterFIN(chunk, encoding, cb) {
 
   return false;
 }
-// Shared client handshake tail (_finishInit + onConnectSecure) for the two
-// client handler tables. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1711
-function onClientHandshakeComplete(self, socket, verifyError) {
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1647-L1707
+function onClientHandshake(self, socket, success, verifyError) {
+  if (!success && verifyError?.code === "ECONNRESET") {
+    // will be handled in onConnectEnd
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1090
+  if (self.destroyed) return;
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+  if (!success && verifyError == null && self.writableFinished) {
+    self.secureConnecting = false;
+    return;
+  }
+  // The second argument is "authorized" (handshake + verification +
+  // hostname), matching the public Bun.connect handshake callback. node:tls
+  // decides what to do with verification results in JS via the
+  // rejectUnauthorized / checkServerIdentity handling below, so a
+  // verification-class result (an X509 code such as
+  // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
+  // means the TLS session itself was established. Only a fatal TLS protocol
+  // failure tears the socket down here: those arrive as EPROTO carrying the
+  // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
+  // ERR_SSL_* / ERR_OSSL_* code).
+  const isProtocolFailure =
+    !success &&
+    verifyError?.code != null &&
+    (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+  if (isProtocolFailure) {
+    // Surface the OpenSSL reason instead of letting the close path report a
+    // generic disconnect.
+    self.destroy(tlsHandshakeError(verifyError));
+    return;
+  }
+
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
@@ -401,6 +447,23 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// Node reports a throwing 'data' listener as uncaughtException and keeps reading.
+function pushDataToSocket(self, socket, buffer) {
+  if (self[kDestroyOnRead]) {
+    $debug("DATA on a socket that must receive nothing - destroying it");
+    self.destroy();
+    return;
+  }
+  let full;
+  try {
+    full = self.push(buffer) === false;
+  } catch (e) {
+    reportError(e);
+    return;
+  }
+  if (full) readStop(self, socket);
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -417,9 +480,7 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     const self = socket.data;
@@ -531,32 +592,7 @@ const SocketHandlers: SocketHandler = {
   handshake(socket, success, verifyError) {
     const { data: self } = socket;
     if (!self) return;
-    if (!success && verifyError?.code === "ECONNRESET") {
-      // will be handled in onConnectEnd
-      return;
-    }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
-    const isProtocolFailure =
-      !success &&
-      verifyError?.code != null &&
-      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
-    if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
-      self.destroy(tlsHandshakeError(verifyError));
-      return;
-    }
-
-    onClientHandshakeComplete(self, socket, verifyError);
+    onClientHandshake(self, socket, success, verifyError);
   },
   timeout(socket) {
     const self = socket.data;
@@ -764,9 +800,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      readStop(self, socket);
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   keylog(socket, line) {
     const { data: self } = socket;
@@ -1237,7 +1271,12 @@ function onconnection(err, clientHandle) {
 
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  self.emit("connection", _socket);
+  // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
+  try {
+    self.emit("connection", _socket);
+  } catch (e) {
+    reportError(e);
+  }
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
@@ -1275,7 +1314,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) readStop(self, socket);
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1369,32 +1408,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
     const { self } = socket.data;
-    if (!success && verifyError?.code === "ECONNRESET") {
-      // will be handled in onConnectEnd
-      return;
-    }
-    // The second argument is "authorized" (handshake + verification +
-    // hostname), matching the public Bun.connect handshake callback. node:tls
-    // decides what to do with verification results in JS via the
-    // rejectUnauthorized / checkServerIdentity handling below, so a
-    // verification-class result (an X509 code such as
-    // UNABLE_TO_VERIFY_LEAF_SIGNATURE, or the native hostname verdict) still
-    // means the TLS session itself was established. Only a fatal TLS protocol
-    // failure tears the socket down here: those arrive as EPROTO carrying the
-    // OpenSSL "error:...:SSL routines:..." reason (or an already decomposed
-    // ERR_SSL_* / ERR_OSSL_* code).
-    const isProtocolFailure =
-      !success &&
-      verifyError?.code != null &&
-      (verifyError.code === "EPROTO" || /^ERR_(SSL|OSSL)_/.test(verifyError.code));
-    if (isProtocolFailure) {
-      // Surface the OpenSSL reason instead of letting the close path report a
-      // generic disconnect.
-      self.destroy(tlsHandshakeError(verifyError));
-      return;
-    }
-
-    onClientHandshakeComplete(self, socket, verifyError);
+    onClientHandshake(self, socket, success, verifyError);
   },
   error(socket, error) {
     $debug("Bun.Socket error");
@@ -1584,6 +1598,7 @@ function Socket(options?) {
   this._parent = null;
   this._parentWrap = null;
   this[kupgraded] = null;
+  this[kOnUpgradedClose] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -1592,6 +1607,7 @@ function Socket(options?) {
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
+  this[kDestroyOnRead] = false;
   this.bytesRead = 0;
   this[kBytesWritten] = undefined;
   this[kclosed] = false;
@@ -1887,6 +1903,8 @@ Socket.prototype[kAttach] = function (port, socket) {
 
 Socket.prototype[kCloseRawConnection] = function () {
   const connection = this[kupgraded];
+  // Only a destroy the connection's owner started counts as it closing under this socket.
+  if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
   connection._handle = null;
   connection.unref();
@@ -1984,6 +2002,7 @@ Socket.prototype.connect = function connect(...args) {
       }
       this.authorized = false;
       this.secureConnecting = true;
+      this[kPreHandshakeWrite] = false;
       this._secureEstablished = false;
       this._securePending = true;
       this[kConnectOptions] = options;
@@ -2022,6 +2041,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
+          destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2040,6 +2060,7 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
+              destroyWhenUpgradedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
@@ -2073,6 +2094,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
+                destroyWhenUpgradedCloses(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2087,6 +2109,7 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
+                  destroyWhenUpgradedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
@@ -2377,6 +2400,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
+    destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2406,6 +2430,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
+      destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2429,6 +2454,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
+    destroyWhenUpgradedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
@@ -2791,6 +2817,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was
     // called directly): fail the write the way a write(2) on a closed fd does
@@ -3106,6 +3133,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     }
     self.authorized = false;
     self.secureConnecting = true;
+    self[kPreHandshakeWrite] = false;
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = options;
@@ -3256,6 +3284,7 @@ function internalConnectMultiple(context, canceled?) {
     }
     self.authorized = false;
     self.secureConnecting = true;
+    self[kPreHandshakeWrite] = false;
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = context.options;

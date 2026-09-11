@@ -231,7 +231,7 @@ impl FetchHeaders {
         Some(str)
     }
 
-    pub fn fast_has_(&mut self, name_: u8) -> bool {
+    pub fn fast_has_(&self, name_: u8) -> bool {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
@@ -262,8 +262,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
-    /// The number of headers, and the bytes in their names and values. `None` when the
-    /// bytes pass `u32::MAX`: the most a `StringPointer` can address.
+    /// Header count and total name + value bytes. `None` when the bytes pass `u32::MAX`.
     pub fn count(&self) -> Option<(u32, u32)> {
         let (mut names, mut buf_len) = (0, 0);
         WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))

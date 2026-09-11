@@ -102,8 +102,7 @@ impl StaticRoute {
         ))
     }
 
-    /// A route that serves `blob` with the user's `fetch_headers`. Ownership of
-    /// `blob` is transferred to this function.
+    /// Ownership of `blob` is transferred to this function.
     pub(crate) fn init_from_any_blob_with_headers(
         global_this: &JSGlobalObject,
         blob: AnyBlob,

@@ -2420,8 +2420,7 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
-// `names` and `values` each hold `count` entries and `buf` holds `buf_len` bytes:
-// what WebCore__FetchHeaders__count reported for these headers.
+// `names` and `values` each hold `count` entries. `buf` holds `buf_len` bytes.
 void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, uint32_t count, unsigned char* buf, uint32_t buf_len)
 {
     auto iter = headers->createIterator(false);
@@ -2474,8 +2473,7 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
         values++;
     }
 }
-// Returns false when the names and values pass the uint32_t range of a StringPointer,
-// so copyTo cannot address them.
+// Returns false when the names and values pass the uint32_t range of a StringPointer.
 bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();

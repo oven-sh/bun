@@ -6,7 +6,7 @@ BoringSSL's nc_match_single otherwise rejects GEN_IPADD as unsupported.
 @@ -507,6 +507,26 @@
    return X509_V_OK;
  }
- 
+
 +int nc_ip(const ASN1_OCTET_STRING *ip, const ASN1_OCTET_STRING *base) {
 +  // RFC 5280, section 4.2.1.10 encodes an IP constraint as address || mask.
 +  if (ip->length != 4 && ip->length != 16) {
@@ -33,7 +33,7 @@ BoringSSL's nc_match_single otherwise rejects GEN_IPADD as unsupported.
 @@ -524,6 +544,9 @@
        return nc_uri(gen->d.uniformResourceIdentifier,
                      base->d.uniformResourceIdentifier);
- 
+
 +    case GEN_IPADD:
 +      return nc_ip(gen->d.ip, base->d.ip);
 +
@@ -43,7 +43,7 @@ BoringSSL's nc_match_single otherwise rejects GEN_IPADD as unsupported.
 --- a/crypto/x509/x509_test.cc
 +++ b/crypto/x509/x509_test.cc
 @@ -1994,6 +1994,16 @@
- 
+
  static bssl::UniquePtr<GENERAL_NAME> MakeGeneralName(int type,
                                                       std::string_view value) {
 +  if (type == GEN_IPADD) {

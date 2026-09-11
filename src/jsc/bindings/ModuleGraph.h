@@ -12,13 +12,11 @@ class GlobalObject;
 }
 
 namespace JSC {
-class ErrorInstance;
 class JSFunction;
 class JSLexicalEnvironment;
 class JSModuleLoader;
 class JSPromise;
 class JSSet;
-class StackFrame;
 class ThrowScope;
 }
 
@@ -35,8 +33,6 @@ bool isDisposedModuleGraphLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
 // Rejections of promises while a graph exists, for attributing unhandled ones (onError).
 void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
-// An ErrorInstance is about to drop its stack frames: remember the graph they attribute it to.
-void moduleGraphNoteErrorFrames(Zig::GlobalObject*, JSC::ErrorInstance*, const WTF::Vector<JSC::StackFrame>&);
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 
 class JSModuleGraph final : public JSC::JSNonFinalObject {

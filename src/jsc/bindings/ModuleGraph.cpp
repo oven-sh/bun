@@ -176,22 +176,6 @@ void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promis
         globalObject->moduleGraphAttributions()->set(vm, promise, *owner ? JSValue(*owner) : jsNull());
 }
 
-// An ErrorInstance drops its frames when its stack string is materialized (e.stack,
-// console.error, Error.captureStackTrace): keep the graph they point at, for an error
-// that escapes later. error -> graph; the same map holds error -> true once an error
-// object has been delivered to an onError.
-void moduleGraphNoteErrorFrames(Zig::GlobalObject* globalObject, ErrorInstance* instance, const Vector<StackFrame>& frames)
-{
-    if (!instance || !globalObject->hasModuleGraphs())
-        return;
-    auto owner = moduleGraphForFrames(globalObject, frames);
-    if (!owner || !*owner)
-        return;
-    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
-    if (attributions->get(instance).isUndefined())
-        attributions->set(globalObject->vm(), instance, *owner);
-}
-
 // Called first for every uncaught exception / unhandled rejection on this thread
 // (VirtualMachine.rs). The code that threw (the Exception's stack) or rejected (noted
 // on the promise) decides; failing that, the code that created the error. Returns
@@ -220,13 +204,13 @@ extern "C" bool Bun__ModuleGraph__handleUnhandled(JSGlobalObject* lexicalGlobalO
     }
     if (!owner && exception)
         owner = moduleGraphForFrames(globalObject, exception->stack());
+    // Failing that, where the error was created — while the ErrorInstance still has its
+    // frames (they go once its stack string is materialized).
     bool byOrigin = false;
     if (!owner && errorInstance) {
         byOrigin = true;
         if (const Vector<StackFrame>* frames = errorInstance->stackTrace())
             owner = moduleGraphForFrames(globalObject, *frames);
-        else if (auto* graph = dynamicDowncast<JSModuleGraph>(attributions->get(errorInstance)))
-            owner = graph;
     }
     JSModuleGraph* graph = owner.value_or(nullptr);
     if (!graph || !graph->onError())

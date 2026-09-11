@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import net from "node:net";
 
 async function serveChunked(body: string) {
@@ -100,6 +101,79 @@ describe("fetch: chunked chunk-size token validation", () => {
       expect(code).toBe("InvalidHTTPResponse");
       expect(body.length).toBe(payload.length);
       expect(body).toBe(payload);
+    });
+
+    // The same body through a CONNECT tunnel to a TLS origin, which fails from `ProxyTunnel`'s data callback.
+    it("through a CONNECT tunnel", async () => {
+      // A subprocess, so that a NO_PROXY that covers loopback cannot bypass the `proxy` option.
+      const env = { ...bunEnv };
+      for (const name of ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) {
+        delete env[name];
+      }
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import net from "node:net";
+            import tls from "node:tls";
+            const cert = ${JSON.stringify(tlsCert)};
+            const accepted = Promise.withResolvers();
+            const origin = tls.createServer({ key: cert.key, cert: cert.cert }, socket => {
+              socket.on("error", () => {});
+              socket.once("data", () => {
+                socket.write(${JSON.stringify(`${head}\r\n`)});
+                accepted.resolve(socket);
+              });
+            });
+            await new Promise(r => origin.listen(0, "127.0.0.1", r));
+            const proxy = net.createServer(client => {
+              client.on("error", () => {});
+              client.once("data", () => {
+                const upstream = net.connect(origin.address().port, "127.0.0.1", () => {
+                  client.write("HTTP/1.1 200 Connection established\\r\\n\\r\\n");
+                  client.pipe(upstream);
+                  upstream.pipe(client);
+                });
+                upstream.on("error", () => client.destroy());
+              });
+            });
+            await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+
+            const res = await fetch("https://127.0.0.1:" + origin.address().port + "/", {
+              proxy: "http://127.0.0.1:" + proxy.address().port,
+              tls: { rejectUnauthorized: false },
+              keepalive: false,
+            });
+            const reader = res.body.getReader();
+            const chunks = [];
+            let code = "(stream ended)";
+            // A read is pending before the origin writes the rest, in one TLS record.
+            const reading = (async () => {
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  chunks.push(Buffer.from(value));
+                }
+              } catch (e) {
+                code = e?.code;
+              }
+            })();
+            (await accepted.promise).write(${JSON.stringify(`1\r\nx\r\n${malformed}`)});
+            await reading;
+            console.log(JSON.stringify({ status: res.status, body: Buffer.concat(chunks).toString(), code }));
+            process.exit(0);
+          `,
+        ],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "x", code: "InvalidHTTPResponse" });
+      expect(exitCode).toBe(0);
     });
 
     // node v26.3.0 delivers nothing here: the error tears its gunzip down before it emits.

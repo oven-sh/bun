@@ -277,7 +277,7 @@ impl<'a> Installer<'a> {
                     bstr::BStr::new(name),
                     resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     bstr::BStr::new(download_error_reason(err)),
-                    bstr::BStr::new(url),
+                    bun_core::fmt::redacted_npm_url(url),
                 ),
             );
             Output::flush();
@@ -388,7 +388,7 @@ impl<'a> Installer<'a> {
                         bstr::BStr::new(pkg_name.slice(string_buf)),
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                         bstr::BStr::new(download_error_reason(dl.err)),
-                        bstr::BStr::new(&dl.url),
+                        bun_core::fmt::redacted_npm_url(&dl.url),
                     ),
                 );
             }

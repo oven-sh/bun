@@ -4447,7 +4447,7 @@ impl H2FrameParser {
                     // Validate setting value is in range [0, 2^32-1]
                     if setting_value.is_number() {
                         let value = setting_value.as_number();
-                        if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
+                        if !(0.0..=MAX_HEADER_TABLE_SIZE_F64).contains(&value) {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error(
                                     "Invalid custom setting value",

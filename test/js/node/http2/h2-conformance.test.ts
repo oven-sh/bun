@@ -552,12 +552,10 @@ describe("session options and SETTINGS parameters", () => {
     expect(await request({ maxHeaderListPairs: 4 })).toBe("ERR_HTTP2_STREAM_ERROR");
   });
 
-  // The client used to store a top-level NaN as 0 and send it. With a maxFrameSize of 0, request()
-  // split the HEADERS block into empty frames forever. With an initialWindowSize of 0, the body
-  // never arrived. The server ACKs only a valid SETTINGS frame, so wait for the ACK first.
   test.each(["maxFrameSize", "initialWindowSize"])("connect(url, { %s: NaN }) serves a request", async key => {
     const client = http2.connect(`http://127.0.0.1:${port}`, { [key]: NaN } as any);
     try {
+      // The ACK comes first: with a frame size of 0 on the wire, request() never returns.
       await once(client, "localSettings");
       const req = client.request({ ":path": "/" });
       req.end();
@@ -572,30 +570,40 @@ describe("session options and SETTINGS parameters", () => {
     }
   });
 
-  // A getter can give the JS validation a valid number and the native read NaN. NaN compares false
-  // with both range bounds, so the native check has to reject it by name: stored as 0, it is the
-  // maxFrameSize above. Bun-only: node v26.3.0 aborts on this input (Http2Settings::Send()).
+  // Each getter gives validateSettings() a valid number and the native read NaN.
+  // Bun-only: node v26.3.0 aborts on this input (an assertion in Http2Settings::Send()).
+  function settingNanAfterValidation(key: string) {
+    let armed = false;
+    return {
+      get [key]() {
+        return armed ? NaN : 65535;
+      },
+      // validateSettings() reads customSettings after every other key.
+      get customSettings() {
+        armed = true;
+        return undefined;
+      },
+    };
+  }
+  function customSettingNanAfterValidation() {
+    let reads = 0;
+    return {
+      customSettings: {
+        get 1000() {
+          return reads++ === 0 ? 5 : NaN;
+        },
+      },
+    };
+  }
   test.each([
-    "headerTableSize",
-    "initialWindowSize",
-    "maxFrameSize",
-    "maxConcurrentStreams",
-    "maxHeaderListSize",
-    "maxHeaderSize",
-  ])("the native layer rejects a %s that becomes NaN after the JS validation", async key => {
-    function nanAfterValidation() {
-      let armed = false;
-      return {
-        get [key]() {
-          return armed ? NaN : 65535;
-        },
-        // validateSettings() reads customSettings after every other key.
-        get customSettings() {
-          armed = true;
-          return undefined;
-        },
-      };
-    }
+    ["headerTableSize", () => settingNanAfterValidation("headerTableSize")],
+    ["initialWindowSize", () => settingNanAfterValidation("initialWindowSize")],
+    ["maxFrameSize", () => settingNanAfterValidation("maxFrameSize")],
+    ["maxConcurrentStreams", () => settingNanAfterValidation("maxConcurrentStreams")],
+    ["maxHeaderListSize", () => settingNanAfterValidation("maxHeaderListSize")],
+    ["maxHeaderSize", () => settingNanAfterValidation("maxHeaderSize")],
+    ["customSettings value", customSettingNanAfterValidation],
+  ])("the native layer rejects a %s that becomes NaN after the JS validation", async (_, nanAfterValidation) => {
     function thrownCode(fn: () => void) {
       try {
         fn();

@@ -3393,10 +3393,6 @@ describe("http2 header values are latin-1 byte strings", () => {
     server.on("error", delivered.reject);
     server.on("stream", (stream, headers, _flags, rawHeaders) => {
       delivered.resolve({ headers, rawHeaders });
-      // The raw client below is destroyed as soon as the headers are delivered,
-      // which is before this response reaches the wire: the write then fails
-      // with the peer's reset and the stream takes that error.
-      stream.on("error", () => {});
       stream.respond({ ":status": 200 });
       stream.end();
     });
@@ -6334,14 +6330,24 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
   );
 });
 
-describe("a peer reset that a write sees first is reported as ECONNRESET", () => {
-  // The failed send() is the only report of the reset: the transport goes away before the
-  // read side is polled again. Node surfaces ECONNRESET on the stream and on the session.
-  // bun closed the transport as a clean EOF: the request ended with no 'error' at all, and
-  // with nothing but the socket holding the loop the process exited before any event.
+describe("a client session reports a peer reset that one of its writes sees first", () => {
+  // A failed send() is the only report of the reset: the transport goes away before the read
+  // side is polled again. bun closed it as a clean EOF: the request ended with no 'error' and
+  // no 'response', and with nothing but the socket holding the loop the process exited
+  // before any event.
+  //
+  // Node reports a reset only when its read side sees it. It drops the status of a failed
+  // write (node_http2.cc, the TODO in ClearOutgoing), and on linux the failed send() consumes
+  // the socket error, so the read that follows is a clean EOF. Which side sees the reset
+  // first depends on where the request is made. Node defers a write made from a timer until
+  // after the next poll, so its read reports ECONNRESET. It writes at once from inside a read
+  // callback, which is where it emits 'remoteSettings', so there it reports a clean close
+  // (rstCode 8, no 'error'). bun writes at once everywhere and reports the reset in each
+  // case: the request failed, and the client has to hear that.
   //
   // The client records what its session and its one request report and prints that when
-  // the process exits on its own. It starts no timer, so the socket is its only handle.
+  // the process exits on its own. It holds nothing but the socket, so each case also checks
+  // that the events arrive before the process exits.
   const clientPrelude = `
     const http2 = require("node:http2");
     const fs = require("node:fs");
@@ -6356,6 +6362,14 @@ describe("a peer reset that a write sees first is reported as ECONNRESET", () =>
       req.on("close", () => (state.rstCode = req.rstCode));
       req.resume();
       req.end();
+    }
+    function busyThenRequest() {
+      // Block the loop so the peer's RST is never polled. The marker tells the parent to
+      // reset now, and the wait is the unresponsive loop under test: this process must
+      // observe nothing until it writes.
+      fs.writeSync(1, "busy\\n");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
+      request();
     }
     process.on("exit", () => {
       const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
@@ -6400,21 +6414,18 @@ describe("a peer reset that a write sees first is reported as ECONNRESET", () =>
     }
   }
 
-  it("on an idle session whose event loop was busy while the reset arrived", async () => {
-    // The HEADERS write of the next request() is the first operation to see the RST.
+  // The HEADERS write of the next request() is the first operation to see the RST.
+  it.each([
+    // Node reports ECONNRESET here too. The timer is not a wait: it moves the request out
+    // of the read callback that emits 'remoteSettings'.
+    ["a timer", `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0));`],
+    // Node reports a clean close here. This is the one ordering where bun says more.
+    ["inside the 'remoteSettings' event", `session.on("remoteSettings", busyThenRequest);`],
+  ])("on an idle session whose loop was busy while the reset arrived, request made from %s", async (_, fixture) => {
     let peer = null;
     let reset = false;
     await runClient(
-      `
-      session.on("remoteSettings", () => {
-        // Block the loop so the peer's RST is never polled. The marker tells the parent to
-        // reset now, and the wait is the unresponsive loop under test: this process must
-        // observe nothing until it writes.
-        fs.writeSync(1, "busy\\n");
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
-        request();
-      });
-      `,
+      fixture,
       socket => {
         peer = socket;
         socket.write(frame(4, 0)); // empty SETTINGS
@@ -6433,7 +6444,7 @@ describe("a peer reset that a write sees first is reported as ECONNRESET", () =>
   it("on the first request of a connection that the peer resets at the preface", async () => {
     // The connect flush sends the preface and then the queued request's HEADERS. The peer
     // resets as soon as the first bytes arrive, so the RST can land between the two sends.
-    // Whichever side sees it first, the request and the session report it.
+    // Whichever side sees it first, the request and the session report it, as in Node.
     await runClient(`request();`, socket => socket.once("data", () => socket.resetAndDestroy()));
   });
 });

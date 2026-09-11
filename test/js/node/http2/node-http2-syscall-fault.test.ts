@@ -277,14 +277,15 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
 
 describe.skipIf(skip)("node:http2 transport write errors", () => {
   // A send() the kernel rejects is the only report that the peer is gone: the
-  // transport closes before the read side is polled again. The session and its
-  // request have to report it, and the process must not exit before they do
+  // transport closes before the read side is polled again. A client session and
+  // its request have to report it, and the process must not exit before they do
   // when the socket is its only handle (the client below starts no timer).
   //
   // One peer reset gives a different send errno per platform: linux reports
-  // ECONNRESET, darwin EPIPE. Node reports ECONNRESET on every platform (it
-  // learns of the reset from the read side, which reports one code everywhere).
-  // Injecting each errno pins the reported code on every platform.
+  // ECONNRESET, darwin EPIPE. The read side reports ECONNRESET for it on every
+  // platform, and that is the only side Node reports a reset from (it drops the
+  // status of a failed write, see the TODO in node_http2.cc ClearOutgoing).
+  // Injecting each errno pins the code bun reports on every platform.
   //
   // phase "request": the failing send is a later request() on an idle session.
   // phase "connect": it is inside the connect flush, which sends the preface
@@ -355,5 +356,78 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
     } finally {
       server.close();
     }
+  });
+
+  test("a server session whose response write fails closes quietly", async () => {
+    // A client that vanishes is routine for a server, and it has nobody to report it to.
+    // Node's server sessions close without an 'error', and an 'error' on a stream with no
+    // listener would end the process. This server attaches no 'error' listener at all.
+    const fixture = `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const http2 = require("node:http2");
+      const events = [];
+      const server = http2.createServer();
+      server.on("session", session => {
+        session.on("close", () => {
+          events.push("session.close");
+          server.close();
+        });
+      });
+      server.on("stream", stream => {
+        events.push("stream");
+        stream.on("close", () => events.push("stream.close(rstCode=" + stream.rstCode + ")"));
+        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      process.on("uncaughtException", err => {
+        events.push("uncaught:" + err.code);
+        console.log(JSON.stringify(events));
+        process.exit(1);
+      });
+      process.on("exit", code => code === 0 && console.log(JSON.stringify(events)));
+      server.listen(0, "127.0.0.1", () => console.log("port=" + server.address().port));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A raw client: preface, SETTINGS, and one GET with END_STREAM. It sends nothing more.
+    const frame = (type: number, flags: number, streamId: number, payload = Buffer.alloc(0)) => {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    };
+    // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+    const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+    let stdout = "";
+    let socket: net.Socket | undefined;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      const port = /port=(\d+)/.exec(stdout);
+      if (port && !socket) {
+        socket = net.connect(Number(port[1]), "127.0.0.1", () => {
+          socket!.write(
+            Buffer.concat([
+              Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"),
+              frame(4, 0, 0),
+              frame(1, 0x4 | 0x1, 1, requestBlock),
+            ]),
+          );
+        });
+        socket.on("error", () => {});
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    socket?.destroy();
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(JSON.parse(lines[lines.length - 1])).toEqual(["stream", "stream.close(rstCode=0)", "session.close"]);
+    expect(exitCode).toBe(0);
   });
 });

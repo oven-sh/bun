@@ -298,6 +298,22 @@ pub(super) fn lower_jsx_call(
         // args[3..6] (isStatic, source, self) are dev-only metadata; ignore.
     } else {
         // createElement(tag, propsOrNull, ...children)
+        //
+        // The callee is not an operand of `JsxExpression`: codegen resolves
+        // `options.jsx.factory` again. A factory that is a local of this
+        // function would look unused to the compiler and be dropped.
+        if let Some(ref_) = member_expression_root(&call.target)
+            && let VariableBinding::Identifier { .. } = builder.resolve_identifier(ref_, loc)?
+        {
+            builder.record_error(CompilerErrorDetail {
+                category: ErrorCategory::Todo,
+                reason: "(BuildHIR::lowerJsxCall) Handle a JSX factory that is a local binding"
+                    .to_string(),
+                description: None,
+                loc: convert_loc(call.target.loc),
+                suggestions: None,
+            })?;
+        }
         if let Some(p) = props_arg {
             if let ExprData::EObject(obj) = &p.data {
                 for prop in obj.properties.iter() {
@@ -369,6 +385,16 @@ fn jsx_import_kind(builder: &HirBuilder, expr: &Expr) -> Option<JsxImportKind> {
         _ => return None,
     };
     builder.host().jsx_import_kind(ref_)
+}
+
+/// The identifier `a` of an `a.b.c` callee. An import is not a local, so an
+/// `EImportIdentifier` root is of no interest.
+fn member_expression_root(expr: &Expr) -> Option<Ref> {
+    match expr.data {
+        ExprData::EIdentifier(id) => Some(id.ref_),
+        ExprData::EDot(dot) => member_expression_root(&dot.target),
+        _ => None,
+    }
 }
 
 /// The visit pass packs children into the props object as either a single

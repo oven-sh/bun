@@ -1602,6 +1602,31 @@ describe("bundler", () => {
       },
     },
   });
+
+  // The classic factory is not an operand the compiler sees: it is resolved
+  // again when the call is rebuilt. A factory that is a local of the component
+  // would look unused and be dropped, so such a component stays uncompiled.
+  itBundled("react-compiler/ClassicRuntimeLocalFactoryIsNotCompiled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /** @jsxRuntime classic */
+        /** @jsx h */
+        export function App({ h, a }) {
+          return <div title={a}>hi</div>;
+        }
+        const createElement = (type, props, ...children) => ({ h: type, props, children });
+        console.log(JSON.stringify(App({ h: createElement, a: "A" })));
+      `,
+      ...jsxCallShapeRuntime,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("compiler-runtime");
+    },
+    run: { stdout: '{"h":"div","props":{"title":"A"},"children":["hi"]}' },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

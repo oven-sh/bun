@@ -145,3 +145,6 @@ runtime, and the automatic runtime when `key` follows a spread, calls
 overlap in arity, so lowering tells them apart by the callee
 (`Host::jsx_import_kind`), and codegen picks the shape the visit pass would
 (`Host::is_jsx_classic`, and whether the HIR `key` attribute follows a spread).
+The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
+classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
+that is a local of the function, because the compiler would drop it as unused.

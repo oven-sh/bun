@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { rootCertificates } from "node:tls";
+import { connect, createServer, rootCertificates } from "node:tls";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
 // subjectAltName: DNS:*.wildcard.example.com, DNS:exact.example.com
@@ -182,6 +184,94 @@ vKS1+tUUY19gsw==
     expect(legacy.subject).toEqual({});
     expect(legacy.issuer).toEqual({});
     expect(cert.checkIssued(cert)).toBe(true);
+  });
+});
+
+// RFC 5280 forbids a timezone offset in a validity time, but BoringSSL's X509 parser and OpenSSL
+// both accept "YYMMDDHHMMSS+hhmm" / "-hhmm" in a UTCTime. BoringSSL's ASN1_TIME_print refuses that
+// form, so these strings were "Bad time value". Node prints the GMT time.
+describe("X509Certificate validity as a UTCTime with a timezone offset", () => {
+  // Self-signed EC P-256 certificate, CN=localhost. openssl does not write the offset form, so the
+  // TBSCertificate of an `openssl req -x509` certificate was rebuilt with this validity and signed
+  // again with `key`.
+  const notBefore = "200101000000-0530";
+  const notAfter = "301231235959+0100";
+  const cert = `-----BEGIN CERTIFICATE-----
+MIIBmzCCAUGgAwIBAgIUVlCjg2eA4PDTy99vuqiPfVXfhQ4wCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCYXETIwMDEwMTAwMDAwMC0wNTMwFxEzMDEy
+MzEyMzU5NTkrMDEwMDAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIB
+BggqhkjOPQMBBwNCAASzoiClaPOi2ZSUk0jCrlwc2214IIsIlD1FqaxxRK5gJNU2
+mVAgAhdVErLTpbPYEOeN05B4h/AIGMIMn7TfFo4Qo2kwZzAdBgNVHQ4EFgQU08p9
+IYJGwyx5RAyF/oU1rT7FyU8wHwYDVR0jBBgwFoAU08p9IYJGwyx5RAyF/oU1rT7F
+yU8wDwYDVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhvc3QwCgYIKoZI
+zj0EAwIDSAAwRQIgZKUnc1MqfDu+NVUZUJwpg79J92P133xIvE5EvI2KhbsCIQC0
+o5xAJFDUJCztalZEnJNOiwJTratQU3amSwINZggSFA==
+-----END CERTIFICATE-----`;
+  const key = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgtW4/jIJlViNFnoXq
+T0MUuFw1SKC16xeV6bTAuVXo8AqhRANCAASzoiClaPOi2ZSUk0jCrlwc2214IIsI
+lD1FqaxxRK5gJNU2mVAgAhdVErLTpbPYEOeN05B4h/AIGMIMn7TfFo4Q
+-----END PRIVATE KEY-----`;
+
+  // Every accessor of the validity, so that the strings and the Dates cannot disagree.
+  // toJSON() is the ISO string, or null for an Invalid Date.
+  const validity = (x509: X509Certificate) => {
+    const legacy = x509.toLegacyObject();
+    return {
+      validFrom: x509.validFrom,
+      validTo: x509.validTo,
+      valid_from: legacy.valid_from,
+      valid_to: legacy.valid_to,
+      validFromDate: x509.validFromDate.toJSON(),
+      validToDate: x509.validToDate.toJSON(),
+    };
+  };
+
+  test("validFrom / validTo, toLegacyObject() and the Date getters apply the offset", () => {
+    expect(validity(new X509Certificate(cert))).toEqual({
+      validFrom: "Jan  1 05:30:00 2020 GMT",
+      validTo: "Dec 31 22:59:59 2030 GMT",
+      valid_from: "Jan  1 05:30:00 2020 GMT",
+      valid_to: "Dec 31 22:59:59 2030 GMT",
+      validFromDate: "2020-01-01T05:30:00.000Z",
+      validToDate: "2030-12-31T22:59:59.000Z",
+    });
+  });
+
+  // A UTCTime holds the years 1950-2049. The offset moves these two times out of that range.
+  // Writing over the DER breaks the signature, which X509Certificate does not check.
+  test("the offset can move the time out of the UTCTime year range", () => {
+    const der = Buffer.from(new X509Certificate(cert).raw);
+    der.write("491231235959-0100", der.indexOf(notBefore), "latin1");
+    der.write("500101000000+0100", der.indexOf(notAfter), "latin1");
+    expect(validity(new X509Certificate(der))).toEqual({
+      validFrom: "Jan  1 00:59:59 2050 GMT",
+      validTo: "Dec 31 23:00:00 1949 GMT",
+      valid_from: "Jan  1 00:59:59 2050 GMT",
+      valid_to: "Dec 31 23:00:00 1949 GMT",
+      validFromDate: "2050-01-01T00:59:59.000Z",
+      validToDate: "1949-12-31T23:00:00.000Z",
+    });
+  });
+
+  test("tls getPeerCertificate() applies the offset", async () => {
+    const server = createServer({ cert, key }, socket => socket.end());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      // The certificate is self-signed, and the verifier refuses the offset form.
+      const socket = connect({ host: "127.0.0.1", port, rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      const peer = socket.getPeerCertificate();
+      socket.destroy();
+      expect({ valid_from: peer.valid_from, valid_to: peer.valid_to }).toEqual({
+        valid_from: "Jan  1 05:30:00 2020 GMT",
+        valid_to: "Dec 31 22:59:59 2030 GMT",
+      });
+    } finally {
+      server.close();
+    }
   });
 });
 

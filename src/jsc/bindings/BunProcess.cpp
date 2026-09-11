@@ -3889,9 +3889,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
 #if OS(DARWIN)
-    // The peak of the phys_footprint that memoryUsage().rss reports, so that
-    // maxRSS is never below rss. ru_maxrss (peak resident_size, in bytes on
-    // darwin) is only the fallback. Node reports kilobytes.
+    // Peak phys_footprint, where Node reports ru_maxrss (see getPeakRSS).
+    // ru_maxrss, in bytes on darwin, is only the fallback. Node's unit is
+    // kilobytes.
     size_t maxRSS = 0;
     if (getPeakRSS(&maxRSS) != 0)
         maxRSS = static_cast<size_t>(rusage.ru_maxrss);
@@ -4092,13 +4092,14 @@ static bool readTaskVMInfo(task_vm_info_data_t& info)
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
-    // Deliberately not Node's number: libuv's uv_resident_set_memory reads
-    // TASK_BASIC_INFO.resident_size.
-    // https://github.com/libuv/libuv/blob/91ffa7ba6e4d0d7e92ee8074ed85579f56380b5a/src/unix/darwin.c#L146-L164
-    // phys_footprint is the "Memory" column in Activity Monitor and what
-    // footprint(1) and the jetsam limits use. It counts anonymous memory that
-    // was compressed or swapped out, and leaves out clean file-backed pages and
-    // pages freed with MADV_FREE_REUSABLE that the kernel has not reclaimed yet.
+    // Same as libuv's uv_resident_set_memory since libuv/libuv#5217:
+    // https://github.com/libuv/libuv/blob/071d26c819cc041bd1f8e2b363ef581e14b3f5b0/src/unix/darwin.c#L154-L175
+    // Node releases that bundle libuv 1.52.1 or older still report
+    // TASK_BASIC_INFO.resident_size. phys_footprint is the "Memory" column in
+    // Activity Monitor and what footprint(1) and the jetsam limits use. It
+    // counts anonymous memory that was compressed or swapped out, and leaves
+    // out clean file-backed pages and pages freed with MADV_FREE_REUSABLE that
+    // the kernel has not reclaimed yet.
     task_vm_info_data_t info = {};
     if (!readTaskVMInfo(info))
         return -1;
@@ -4184,6 +4185,9 @@ err:
 extern "C" int getPeakRSS(size_t* peak)
 {
 #if defined(__APPLE__)
+    // Deliberately not Node's number: libuv's uv_getrusage still reports
+    // ru_maxrss, the peak resident_size. The peak has to come from the same
+    // ledger as getRSS(), or rss can exceed maxRSS once memory is compressed.
     task_vm_info_data_t info = {};
     if (!readTaskVMInfo(info))
         return -1;

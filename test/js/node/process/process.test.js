@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+import { getHeapStatistics } from "v8";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
@@ -1104,6 +1105,8 @@ describe.concurrent(() => {
     expect(closestDelta(() => process.resourceUsage().maxRSS * 1024, peakFootprint)).toBeLessThan(4 * MB);
     expect(closestDelta(() => jscMemoryUsage().peak, peakFootprint)).toBeLessThan(4 * MB);
     expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, peakFootprint)).toBeLessThan(4 * MB);
+    // node:v8 derives its physical size from the same peak.
+    expect(closestDelta(() => getHeapStatistics().total_physical_size, peakFootprint)).toBeLessThan(4 * MB);
   });
 
   it("bun:jsc memoryUsage() and process.report agree with process.memoryUsage() and resourceUsage()", () => {

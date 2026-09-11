@@ -1361,16 +1361,14 @@ impl Interpreter {
         let error = if global_this.has_pending_termination_exception() {
             None
         } else {
-            Some(
-                global_this
-                    .try_take_exception()
-                    .and_then(JSValue::to_error)
-                    .unwrap_or_else(|| {
-                        debug_assert!(false, "Yield::Failed without a pending JS exception");
-                        global_this
-                            .create_error_instance(format_args!("The shell interpreter failed"))
-                    }),
-            )
+            let error = global_this.try_take_exception().and_then(JSValue::to_error);
+            debug_assert!(
+                error.is_some(),
+                "Yield::Failed without a pending JS exception"
+            );
+            // Nothing was thrown: keep waiting, as the trampoline did for `Failed` before it was terminal.
+            let Some(error) = error else { return };
+            Some(error)
         };
 
         // A second pipeline member failed: the promise is already rejected.

@@ -102,29 +102,39 @@ describe("yield", async () => {
     });
   });
 
-  // A `${value}` redirect target the command cannot use (an in-memory Blob or
-  // Response as stdout) is a JS error thrown inside the state machine. When the
+  // A state can throw a JS error (here: a `${value}` redirect target the command
+  // cannot use, or a failed write of a "command not found" message). When the
   // command is not the first thing the script runs, the trampoline is driven
-  // by an event-loop callback (the previous command's exit), not by the
-  // `.run()` host call. The promise must still reject with the error, nothing
-  // may stay pending on the VM, and the process must exit on its own.
+  // by an event-loop callback (a process exit, a thread-pool task, a pipe
+  // write), not by the `.run()` host call. The promise must still reject with
+  // the error, nothing may stay pending on the VM, a GC afterwards must be
+  // safe, and the process must exit on its own.
   describe("a state that throws a JS error rejects the shell promise", () => {
+    function child(body: string) {
+      return [
+        bunExe(),
+        "-e",
+        `
+        import { $ } from "bun";
+        import { heapStats } from "bun:jsc";
+        const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.constructor.name + ": " + e.message);
+        const bun = process.execPath;
+        ${body}
+        `,
+        "--debug-crash-handler-use-trace-string",
+      ];
+    }
+
     async function expectRejection(shell: string, rejection: string) {
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          import { $ } from "bun";
-          const settle = p => p.then(r => "resolved " + r.exitCode, e => "rejected " + e.constructor.name + ": " + e.message);
-          const bun = process.execPath;
+        cmd: child(`
           const out = [await settle(${shell})];
+          Bun.gc(true);
           // The VM is still usable: no exception was left pending on it.
           out.push(await settle($\`echo ok\`.quiet()));
+          Bun.gc(true);
           console.log(JSON.stringify(out));
-          `,
-          "--debug-crash-handler-use-trace-string",
-        ],
+        `),
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -150,6 +160,10 @@ describe("yield", async () => {
       await expectRejection("$`${bun} --version; echo hi > ${new Blob(['x'])}`.quiet().nothrow()", builtin);
     });
 
+    test.concurrent("builtin after a builtin that ran on the thread pool", async () => {
+      await expectRejection("$`ls .; echo hi > ${new Blob(['x'])}`.quiet().nothrow()", builtin);
+    });
+
     test.concurrent("in an && chain after another command", async () => {
       await expectRejection("$`${bun} --version && echo hi > ${new Blob(['x'])} && echo no`.quiet()", builtin);
     });
@@ -165,6 +179,61 @@ describe("yield", async () => {
     // the interpreter was never finished and kept the event loop alive forever.
     test.concurrent("first command, and the process still exits", async () => {
       await expectRejection("$`echo hi > ${new Blob(['x'])}; echo no`.quiet().nothrow()", builtin);
+    });
+
+    // No misuse of the API here: the shell's own stderr is full, so the write
+    // of "bun: command not found" fails, and that failure is thrown.
+    test.concurrent.if(isLinux)("a failed write of the command-not-found message", async () => {
+      await using proc = Bun.spawn({
+        cmd: child(`
+          const out = [await settle($\`\${bun} --version > /dev/null; command-that-does-not-exist-xyz\`)];
+          Bun.gc(true);
+          out.push(await settle($\`echo ok\`.quiet()));
+          console.log(JSON.stringify(out));
+        `),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: Bun.file("/dev/full"),
+      });
+
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect({ result: stdout.trim(), exitCode }).toEqual({
+        result: JSON.stringify(["rejected Error: No space left on device", "resolved 0"]),
+        exitCode: 0,
+      });
+    });
+
+    // Without a pipeline nothing else is in flight when the command fails, so
+    // the interpreter must become collectable, not stay pinned until exit.
+    test.concurrent("failed scripts are collected", async () => {
+      await using proc = Bun.spawn({
+        cmd: child(`
+          let rejected = 0;
+          for (let i = 0; i < 10; i++) {
+            await $\`ls .; echo hi > \${new Blob(["x"])}\`.quiet().then(() => {}, () => rejected++);
+          }
+          let live;
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            live = heapStats().objectTypeCounts.ShellInterpreter ?? 0;
+            if (live <= 3) break;
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          console.log(JSON.stringify({ rejected, collected: live <= 3 ? true : live }));
+        `),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ result: stdout.trim(), stderr, exitCode }).toEqual({
+        result: JSON.stringify({ rejected: 10, collected: true }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

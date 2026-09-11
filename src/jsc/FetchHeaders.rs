@@ -27,11 +27,12 @@ unsafe extern "C" {
         arg1: &JSGlobalObject,
     ) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(
-        arg0: *mut FetchHeaders,
+        arg0: &FetchHeaders,
         arg1: *mut StringPointer,
         arg2: *mut StringPointer,
-        arg3: *mut u8,
-        arg4: u32,
+        arg3: u32,
+        arg4: *mut u8,
+        arg5: u32,
     );
     safe fn WebCore__FetchHeaders__count(
         arg0: &FetchHeaders,
@@ -261,11 +262,11 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
-    /// Returns `false`, with `names` and `buf_len` unset, when the names and values
-    /// together pass `u32::MAX` bytes: the most a `StringPointer` can address.
-    #[must_use]
-    pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) -> bool {
-        WebCore__FetchHeaders__count(self, names, buf_len)
+    /// The number of headers, and the bytes in their names and values. `None` when the
+    /// bytes pass `u32::MAX`: the most a `StringPointer` can address.
+    pub fn count(&self) -> Option<(u32, u32)> {
+        let (mut names, mut buf_len) = (0, 0);
+        WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))
     }
 
     pub fn clone_this(
@@ -281,15 +282,27 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
+    /// Aborts unless `names`, `values` and `buf` hold what `count()` reported.
     pub fn copy_to(
-        &mut self,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: *mut u8,
-        buf_len: u32,
+        &self,
+        names: &mut [StringPointer],
+        values: &mut [StringPointer],
+        buf: &mut [u8],
     ) {
-        // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
-        unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf, buf_len) }
+        // A longer slice is valid: C++ addresses `u32::MAX` of it at most.
+        let columns = u32::try_from(names.len().min(values.len())).unwrap_or(u32::MAX);
+        let buf_len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+        // SAFETY: C++ asserts that it writes at most `columns` entries and `buf_len` bytes.
+        unsafe {
+            WebCore__FetchHeaders__copyTo(
+                self,
+                names.as_mut_ptr(),
+                values.as_mut_ptr(),
+                columns,
+                buf.as_mut_ptr(),
+                buf_len,
+            )
+        }
     }
 }
 

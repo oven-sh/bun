@@ -332,8 +332,7 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
-    /// A state threw a JS exception (`Yield::Failed`) and the `ShellPromise`
-    /// was rejected with it; see [`Interpreter::reject_with_pending_exception`].
+    /// Set by [`Interpreter::reject_with_pending_exception`].
     pub(crate) const fn failed(self) -> bool {
         self.0 & 0b100 != 0
     }
@@ -1257,9 +1256,10 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize,
             exit_code
         );
-        // A node that returned `Yield::Failed` never reports to its parent, so
-        // the root script cannot complete after the promise was rejected.
-        debug_assert!(!self.flags.get().failed());
+        debug_assert!(
+            !self.flags.get().failed(),
+            "a failed node never reports to its parent, so the root script cannot complete"
+        );
         // Decrement pending activity unconditionally on exit. Paired with the
         // increment in `run_from_js`; harmless wrap on the mini path (flag is
         // only read from the JS GC `hasPendingActivity()` hook).
@@ -1343,18 +1343,7 @@ impl Interpreter {
         Yield::done()
     }
 
-    /// The `Yield::Failed` arm of the trampoline: a state threw a JS
-    /// exception and cannot continue. Terminal under every driver (the JS
-    /// host call, a process exit, a pipe or task callback): the exception is
-    /// taken off the VM here and the `ShellPromise` is rejected with it, so no
-    /// driver returns to the event loop with the exception still pending and
-    /// the promise unsettled.
-    ///
-    /// The failed node never reports to its parent, so `finish` does not run
-    /// afterwards. The remaining nodes are left for the GC finalizer
-    /// (`CleanupState::NeedsFullCleanup`), which is why nothing is freed here:
-    /// a pipeline sibling that is still running reads its `Cmd` node, the AST
-    /// arena and the root `ShellExecEnv` when its exit or pipe close arrives.
+    /// `Yield::Failed` is terminal: take the pending JS exception and reject the `ShellPromise` with it.
     pub(crate) fn reject_with_pending_exception(&self) {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
@@ -1368,8 +1357,7 @@ impl Interpreter {
             std::ptr::from_ref(self) as usize
         );
 
-        // The VM's termination (`worker.terminate()`) is not the script's
-        // error: it stays pending and keeps unwinding, and settles nothing.
+        // A pending termination (`worker.terminate()`) keeps unwinding and settles nothing.
         let error = if global_this.has_pending_termination_exception() {
             None
         } else {
@@ -1385,10 +1373,8 @@ impl Interpreter {
             )
         };
 
+        // A second pipeline member failed: the promise is already rejected.
         if self.flags.get().failed() {
-            // Another pipeline member, started before the first one failed,
-            // failed too. The promise is already rejected; the error taken
-            // above is dropped.
             return;
         }
         self.update_flags(|f| f.set_failed(true));
@@ -1411,18 +1397,13 @@ impl Interpreter {
             JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
         }
 
-        // Paired with the increment in `run_from_js`: lets the GC collect the
-        // wrapper and finalize the interpreter. A pipeline or `&` command runs
-        // its members concurrently, so one of them can still have a process,
-        // pipe or task in flight whose callback reaches back into this
-        // interpreter. The finalizer's in-flight teardown is only safe at VM
-        // shutdown, so in that case the interpreter stays alive until then.
-        let concurrent = self
+        // The nodes are freed by the finalizer, which must not run while a pipeline member's callbacks can still fire.
+        let members_in_flight = self
             .nodes
             .get()
             .iter()
             .any(|n| matches!(n.kind(), StateKind::Pipeline | StateKind::Async));
-        if !concurrent {
+        if !members_in_flight {
             Self::decr_pending_activity_flag(&self.has_pending_activity);
         }
     }
@@ -1536,11 +1517,8 @@ impl Interpreter {
 
         match this.cleanup_state.get() {
             CleanupState::NeedsFullCleanup => {
-                // The script did not finish: it is still in flight
-                // (`worker.terminate()` mid-command), or a state threw and the
-                // promise was rejected (`reject_with_pending_exception`, which
-                // keeps the wrapper alive instead when a pipeline member may
-                // still be running). `Node` has no `Drop` for its raw-pointer
+                // The script never reached `finish` (e.g. `worker.terminate()`
+                // mid-command) and `Node` has no `Drop` for its raw-pointer
                 // resources: deinit every live `Cmd` (kills the child, frees
                 // the `ShellSubprocess`, readers, redirection fd). Slots stay
                 // occupied so the env walk below still sees pipeline-duped

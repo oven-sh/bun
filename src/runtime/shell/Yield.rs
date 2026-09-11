@@ -37,10 +37,7 @@ pub enum Yield {
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
-    /// A JS exception is pending on the VM and the state cannot continue.
-    /// Terminal for the whole interpreter: the trampoline takes the exception
-    /// and rejects the `ShellPromise` with it
-    /// (`Interpreter::reject_with_pending_exception`), whichever driver ran it.
+    /// A JS exception is pending; terminal (`Interpreter::reject_with_pending_exception`).
     Failed,
     Done,
 }
@@ -135,8 +132,7 @@ impl Yield {
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
                 Yield::Failed => {
-                    // No `drain_pipelines`: the script is over, so the rest of
-                    // a pipeline's members are not started.
+                    // The script is over: the rest of a pipeline's members are not started.
                     interp.reject_with_pending_exception();
                     return;
                 }

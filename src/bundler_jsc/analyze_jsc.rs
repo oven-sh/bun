@@ -16,6 +16,7 @@ use bun_bundler::analyze_transpiled_module as analyze;
 extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
+    module_loader: *mut JSModuleLoader,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -24,7 +25,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
     // SourceProvider cache.
-    to_js_module_record(global_object, vm, module_key, source_code, res)
+    to_js_module_record(global_object, vm, module_loader, module_key, source_code, res)
         .unwrap_or(core::ptr::null_mut())
 }
 
@@ -35,6 +36,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 fn to_js_module_record(
     global_object: &JSGlobalObject,
     vm: &VM,
+    module_loader: *mut JSModuleLoader,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -87,6 +89,7 @@ fn to_js_module_record(
     let module_record = JSModuleRecord::create(
         global_object,
         vm,
+        module_loader,
         module_key,
         source_code,
         res.flags.contains_import_meta(),
@@ -330,11 +333,13 @@ impl IdentifierArray {
 bun_opaque::opaque_ffi! {
     pub(crate) struct SourceCode;
     pub(crate) struct JSModuleRecord;
+    pub(crate) struct JSModuleLoader;
 }
 unsafe extern "C" {
     fn JSC_JSModuleRecord__create(
         global_object: *const JSGlobalObject,
         vm: *const VM,
+        module_loader: *mut JSModuleLoader,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
         has_import_meta: bool,
@@ -443,6 +448,7 @@ impl JSModuleRecord {
     fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
+        module_loader: *mut JSModuleLoader,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
         has_import_meta: bool,
@@ -457,6 +463,7 @@ impl JSModuleRecord {
             JSC_JSModuleRecord__create(
                 global_object,
                 vm,
+                module_loader,
                 module_key,
                 source_code,
                 has_import_meta,

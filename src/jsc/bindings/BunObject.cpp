@@ -101,9 +101,14 @@ static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
-static JSValue constructEnvObject(VM& vm, JSObject* object)
+extern "C" JSC::JSObject* Bun__ModuleGraph__spawnEnv(JSC::JSGlobalObject*);
+// Bun.env: process.env — from code of a Bun.unsafe.ModuleGraph, that graph's.
+static JSC_DECLARE_CUSTOM_GETTER(bunObjectEnv);
+static JSC_DEFINE_CUSTOM_GETTER(bunObjectEnv, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
 {
-    return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    if (JSObject* scoped = Bun__ModuleGraph__spawnEnv(globalObject))
+        return JSValue::encode(scoped);
+    return JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->processEnvObject());
 }
 
 JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
@@ -957,7 +962,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
-    env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
+    env                                            bunObjectEnv                                                        ReadOnly|DontDelete|CustomAccessor
     escapeHTML                                     jsFunctionBunEscapeHTML                                             DontDelete|Function 2
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1

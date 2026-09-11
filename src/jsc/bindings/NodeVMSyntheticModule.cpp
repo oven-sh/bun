@@ -93,7 +93,7 @@ void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 
     // The source type only feeds AbstractModuleRecord::moduleType(), which the loader attaches to
     // errors as the failing module's kind; a vm.SyntheticModule is a JavaScript module in that sense.
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
+    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), globalObject->moduleLoader(), Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
 
     m_moduleRecord.set(vm, this, moduleRecord);
 

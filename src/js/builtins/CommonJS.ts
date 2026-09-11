@@ -2,6 +2,9 @@
 
 $getter;
 export function main() {
+  // Inside a Bun.unsafe.ModuleGraph: that graph's entry module, from its cache.
+  const graph = $moduleGraphOf(this);
+  if (graph) return graph.requireMap.$get(graph.mainModule) ?? graph.requireCache?.[graph.mainModule];
   return $requireMap.$get(Bun.main);
 }
 
@@ -21,7 +24,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
-      const existing = $requireMap.$get(originalId);
+      const existing = this.$requireMap.$get(originalId);
       if (existing) {
         const c = $evaluateCommonJSModule(existing, this);
         if (c && c.indexOf(existing) === -1) {
@@ -33,7 +36,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
     return this.$requireNativeModule(id);
   } else {
-    const existing = $requireMap.$get(id);
+    const existing = this.$requireMap.$get(id);
     if (existing) {
       // Scenario where this is necessary:
       //
@@ -74,7 +77,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false, this);
-  $requireMap.$set(id, mod);
+  this.$requireMap.$set(id, mod);
 
   var out: LoaderModule | -1;
 
@@ -97,7 +100,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
         $argument(1),
       );
     } catch (E) {
-      $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
+      $assert(this.$requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
       throw E;
     }
   } else {
@@ -107,12 +110,17 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id);
+      out = $requireESM.$call(this, id);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
-      $requireMap.$delete(id);
+      this.$requireMap.$delete(id);
       throw exception;
     }
+
+    // The registry entry was a CommonJS file whose evaluation in THIS cache had
+    // not happened yet (first loaded on behalf of a Bun.unsafe.ModuleGraph):
+    // evaluating it just ran `mod` as CommonJS, so this is a plain require().
+    if (mod.loaded) return mod.exports;
 
     const namespace = out;
     // In a require cycle the namespace is live while the module body is still
@@ -157,7 +165,8 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
-  $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
+  const requireMap = parent ? parent.$requireMap : $requireMap;
+  $assert(requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   // `id` keys the module cache and may carry a `?query` suffix;
   // `process.dlopen` needs the on-disk path.
   const queryIndex = id.indexOf("?");
@@ -166,27 +175,29 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 
   const module = $createCommonJSModule(id, {}, true, parent);
   process.dlopen(module, filename);
-  $requireMap.$set(id, module);
+  requireMap.$set(id, module);
   return module.exports;
 }
 
 $visibility = "Private";
-export function loadEsmIntoCjs(resolvedSpecifier: string) {
+export function loadEsmIntoCjs(resolvedSpecifier: string, requirer?: JSCommonJSModule) {
   // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
   // flag that makes the loader's internal promise reactions run immediately
   // (instead of queueing microtasks) whenever the upstream promise is already
   // settled. Because Bun resolves and reads source code synchronously, the
   // entire fetch → parse → link → evaluate chain completes within this call
   // for any module graph that does not use top-level await.
-  return $esmLoadSync(resolvedSpecifier);
+  return $esmLoadSync(resolvedSpecifier, requirer);
 }
 
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
   // `$esmLoadSync` answers from the registry for a record that is already
   // Evaluated, or still Evaluating because this require() sits inside its own
-  // evaluation (a require cycle), before it loads anything.
-  const exports = $loadEsmIntoCjs(resolved);
+  // evaluation (a require cycle), before it loads anything. Inside a
+  // Bun.unsafe.ModuleGraph, the graph's already-instantiated instance answers first.
+  let exports = this && $moduleGraphOf(this) ? $esmNamespaceForCjs(resolved, this) : undefined;
+  if (exports === undefined) exports = $loadEsmIntoCjs(resolved, this);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
@@ -197,10 +208,10 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   $assert(this);
   let namespace;
   try {
-    namespace = $requireESM(id);
+    namespace = $requireESM.$call(this, id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
-    $requireMap.$delete(id);
+    this.$requireMap.$delete(id);
     throw exception;
   }
 
@@ -229,7 +240,10 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
 }
 
 $visibility = "Private";
-export function createRequireCache() {
+export function createRequireCache(owner?: JSCommonJSModule) {
+  // `owner` is set for a Bun.unsafe.ModuleGraph's cache: reads/writes go to
+  // that graph's require map and its ESM instances instead of the global ones.
+  const requireMap = owner ? owner.$requireMap : $requireMap;
   var moduleMap = new Map();
   var inner = {
     [Symbol.for("nodejs.util.inspect.custom")]() {
@@ -246,14 +260,14 @@ export function createRequireCache() {
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
-      const entry = $requireMap.$get(key);
+      const entry = requireMap.$get(key);
       if (entry) return entry;
 
       if (!isBuiltinKey(key)) {
-        const namespace = $esmNamespaceForCjs(key);
+        const namespace = $esmNamespaceForCjs(key, owner);
         if (namespace !== undefined) {
-          const mod = $createCommonJSModule(key, namespace, true, undefined);
-          $requireMap.$set(key, mod);
+          const mod = $createCommonJSModule(key, namespace, true, owner);
+          requireMap.$set(key, mod);
           return mod;
         }
       }
@@ -261,25 +275,25 @@ export function createRequireCache() {
       return inner[key];
     },
     set(_target, key: string, value) {
-      $requireMap.$set(key, value);
+      requireMap.$set(key, value);
       return true;
     },
 
     has(_target, key: string) {
-      return $requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined);
+      return requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key, owner) !== undefined);
     },
 
     deleteProperty(_target, key: string) {
       moduleMap.$delete(key);
-      $requireMap.$delete(key);
-      $esmRegistryDelete(key);
-      $evictIsolationSourceProviderCache(key);
+      requireMap.$delete(key);
+      $esmRegistryDelete(key, owner);
+      if (!owner) $evictIsolationSourceProviderCache(key);
       return true;
     },
 
     ownKeys(_target) {
-      var array = [...$requireMap.$keys()];
-      for (const key of $esmRegistryEvaluatedKeys()) {
+      var array = [...requireMap.$keys()];
+      for (const key of $esmRegistryEvaluatedKeys(owner)) {
         if (!isBuiltinKey(key) && !array.includes(key)) {
           $arrayPush(array, key);
         }
@@ -293,7 +307,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(_target, key: string) {
-      if ($requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined)) {
+      if (requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key, owner) !== undefined)) {
         return {
           configurable: true,
           enumerable: true,

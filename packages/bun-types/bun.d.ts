@@ -5435,6 +5435,85 @@ declare module "bun" {
      */
     function mimallocDump(): void;
 
+    interface ModuleGraphOptions {
+      /**
+       * `process.env` for code in this graph. Defaults to a snapshot of the
+       * host's environment.
+       */
+      env?: Record<string, string>;
+      /** `process.cwd()` for code in this graph. Defaults to the host's. */
+      cwd?: string;
+      /**
+       * Called when code in the graph calls `process.exit()` / `process.abort()`.
+       * The graph's timers are cleared first; the host process keeps running.
+       */
+      onExit?: (code: number) => void;
+      /**
+       * Called with uncaught exceptions and unhandled rejections raised by code
+       * that belongs to this graph (instead of the host's `uncaughtException` /
+       * `unhandledRejection`). `kind` is `"uncaughtException"` or
+       * `"unhandledRejection"`.
+       */
+      onError?: (error: unknown, kind: "uncaughtException" | "unhandledRejection") => void;
+      /**
+       * Extra per-graph values for free identifiers in the graph's module and
+       * CommonJS code (e.g. `{ fetch: myFetch }`), layered over the defaults
+       * (`process`, `globalThis`/`global`/`self`, timers). The set of names is
+       * fixed process-wide by the first `ModuleGraph` constructed.
+       */
+      globals?: Record<string, unknown>;
+    }
+
+    /**
+     * A further instantiation of ES module graphs (and the CommonJS modules
+     * they `require`) in **this** global object.
+     *
+     * Every graph that imports a file shares that file's parsed code, bytecode
+     * and JIT-compiled code with every other graph and with the host; each
+     * graph gets its own module-level state (top-level bindings, classes,
+     * closures), its own `import()`/`require` cache view, its own
+     * `import.meta`, and its own `process` (env, cwd, exit), `globalThis` and
+     * timers. Intrinsics (`Object`, `Array`, `Promise`, …), truly global
+     * properties not listed in `globals`, native modules and the event loop
+     * are shared — this isolates cooperating instances of a program, it is not
+     * a sandbox.
+     *
+     * Experimental.
+     *
+     * @example
+     * ```ts
+     * const graph = new Bun.unsafe.ModuleGraph({ env: { NAME: "a" }, cwd: "/srv/a", onExit: code => {} });
+     * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
+     * app.start();
+     * graph.dispose();
+     * ```
+     */
+    class ModuleGraph {
+      constructor(options?: ModuleGraphOptions);
+      /**
+       * Load `specifier` (resolved against `process.cwd()` when relative) and
+       * instantiate it and its dependencies into this graph, evaluating what
+       * has not been evaluated in this graph yet. Resolves with the module's
+       * namespace object for this graph.
+       */
+      import<T = Record<string, any>>(specifier: string): Promise<T>;
+      /** The `process` object code in this graph sees. */
+      readonly process: NodeJS.Process;
+      /**
+       * Resolved path of the first module `import()`ed into this graph — the
+       * module for which `import.meta.main` is true inside the graph.
+       */
+      readonly mainModule: string | undefined;
+      /**
+       * Clears the timers the graph armed and drops its module instances and
+       * require cache. Code from the graph that is still referenced keeps
+       * working; later `import()` calls throw.
+       */
+      dispose(): void;
+      [Symbol.dispose](): void;
+    }
+
+
     /**
      * Scale JavaScriptCore's JIT tier-up thresholds for the current thread's VM.
      *

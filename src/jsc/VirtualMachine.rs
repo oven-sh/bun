@@ -402,6 +402,16 @@ unsafe extern "C" {
         promise: JSValue,
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
+    /// ModuleGraph.cpp: if the error was thrown (or the promise rejected) by code
+    /// of a `Bun.unsafe.ModuleGraph`, deliver it to that graph's `process`
+    /// listeners or its host `onError` and return true. false = not a graph's:
+    /// continue with the normal thread-wide handling.
+    safe fn Bun__ModuleGraph__handleUnhandled(
+        global: &JSGlobalObject,
+        err: JSValue,
+        promise: JSValue,
+        is_rejection: c_int,
+    ) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
@@ -1713,6 +1723,17 @@ impl VirtualMachine {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
+            return true;
+        }
+
+        // An error from a Bun.unsafe.ModuleGraph's code is the graph's (or its host
+        // callback's) to handle — ahead of the test runner and the thread-wide path.
+        if Bun__ModuleGraph__handleUnhandled(
+            global_object,
+            err,
+            JSValue::ZERO,
+            if is_rejection { 1 } else { 0 },
+        ) {
             return true;
         }
 
@@ -3835,6 +3856,11 @@ impl VirtualMachine {
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
+            return;
+        }
+
+        if Bun__ModuleGraph__handleUnhandled(global_object, reason, promise, 1) {
+            let _ = self.event_loop_mut().drain_microtasks();
             return;
         }
 

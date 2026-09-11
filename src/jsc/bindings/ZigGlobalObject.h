@@ -243,6 +243,9 @@ public:
 
     JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSModuleGraphStructure() const { return m_JSModuleGraphClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSModuleGraphConstructor() const { return m_JSModuleGraphClassStructure.constructorInitializedOnMainThread(this); }
+
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -521,6 +524,12 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp) */                                                           \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphPreset)                                                     \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                   \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                 \
+    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTable)                                         \
+    V(public, WriteBarrier<Unknown>, m_commonJSWrapperTemplates)                                              \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -564,6 +573,7 @@ public:
     V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyClassStructure, m_JSModuleGraphClassStructure)                                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
     V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
     V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \

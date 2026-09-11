@@ -20,4 +20,11 @@ JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSValue value);
 
+// JSON / TOML / JSONC modules when module graph instances are enabled: the
+// first generation exports the parsed value, every later one (another graph)
+// a fresh copy of it, so each graph's data module is its own.
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateDataModuleSourceCode(JSC::JSGlobalObject* globalObject,
+    JSC::JSValue value);
+
 } // namespace Zig

@@ -78,6 +78,7 @@ public:
 
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -86,6 +87,7 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    JSC::JSModuleLoader* loader,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,

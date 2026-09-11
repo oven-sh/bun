@@ -51,6 +51,10 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
+#include "ModuleGraph.h"
+#include "BunClientData.h"
+extern "C" JSC::EncodedJSValue Bun__ModuleGraph__mainPath(Bun::JSModuleGraph*);
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
@@ -501,9 +505,16 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
     return true;
 }
 
+extern "C" JSC::JSObject* Bun__ModuleGraph__envForImportMeta(JSC::JSGlobalObject*, JSC::JSObject* importMeta);
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
+    // A Bun.unsafe.ModuleGraph's import.meta.env is that graph's process.env.
+    if (auto* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue))) {
+        if (JSObject* graphEnv = Bun__ModuleGraph__envForImportMeta(globalObject, thisObject))
+            return JSValue::encode(graphEnv);
+    }
     return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 
@@ -527,6 +538,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
+    // A Bun.unsafe.ModuleGraph's import.meta: main is that graph's entry module
+    // (the first module import()ed into it), not the process entry point.
+    if (JSValue graphValue = thisObject->getDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName())) {
+        if (auto* graph = dynamicDowncast<Bun::JSModuleGraph>(graphValue))
+            bunMain = JSValue::decode(Bun__ModuleGraph__mainPath(graph));
+        else
+            bunMain = jsUndefined();
+    }
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -642,7 +661,11 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        // A graph instance's import.meta (Bun.unsafe.ModuleGraph) requires into that graph.
+        Bun::JSModuleGraph* moduleGraph = nullptr;
+        if (JSValue graphValue = meta->getDirect(init.vm, WebCore::clientData(init.vm)->builtinNames().moduleGraphPrivateName()))
+            moduleGraph = dynamicDowncast<Bun::JSModuleGraph>(graphValue);
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, moduleGraph);
         RETURN_IF_EXCEPTION(scope, );
         ASSERT(object);
         init.set(uncheckedDowncast<JSFunction>(object));

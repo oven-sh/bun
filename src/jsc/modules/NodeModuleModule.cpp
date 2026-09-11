@@ -24,6 +24,9 @@
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
 
+namespace Bun { class JSModuleGraph; }
+extern "C" Bun::JSModuleGraph* Bun__ambientModuleGraph(JSC::JSGlobalObject*);
+
 namespace Bun {
 
 using namespace JSC;
@@ -268,8 +271,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
+    // From code running in a Bun.unsafe.ModuleGraph: that graph's require.
+    Bun::JSModuleGraph* moduleGraph = Bun__ambientModuleGraph(globalObject);
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, moduleGraph)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,

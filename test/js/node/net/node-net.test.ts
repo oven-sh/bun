@@ -1317,6 +1317,39 @@ it("a client dialed with readable: false never reads and keeps writing", async (
   }
 });
 
+// A reset is reported to a stopped handle too, and the native layer first drains
+// what the kernel still holds so that the tail of a stream is not lost. A
+// `readable: false` socket takes none of it. Pushing it into the ended Readable
+// replaced the reset with ERR_STREAM_PUSH_AFTER_EOF. (node's handle is not polled
+// at all, so node finds the reset at the next write, also as ECONNRESET.)
+it("a client dialed with readable: false reports a reset that follows unread data as ECONNRESET", async () => {
+  const accepted = Promise.withResolvers<Socket>();
+  const server = createServer(socket => {
+    socket.on("error", () => {});
+    accepted.resolve(socket);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = connect({
+      port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
+      readable: false,
+    });
+    const events: string[] = [];
+    client.on("data", chunk => events.push(`data:${chunk.length}`));
+    client.on("end", () => events.push("end"));
+    client.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    const closed = Promise.withResolvers<boolean>();
+    client.on("close", closed.resolve);
+    const [peer] = await Promise.all([accepted.promise, once(client, "connect")]);
+    // The banner sits unread in the client's kernel buffer when the reset arrives.
+    peer.write("banner", () => peer.resetAndDestroy());
+    expect({ hadError: await closed.promise, events }).toEqual({ hadError: true, events: ["error:ECONNRESET"] });
+  } finally {
+    server.close();
+  }
+});
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
 it("an onread client dialed with readable: false still reads into its buffer", async () => {
   const server = createServer(socket => socket.end("banner"));

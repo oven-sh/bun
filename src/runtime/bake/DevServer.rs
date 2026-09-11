@@ -198,6 +198,9 @@ pub enum TestingBatchEvents {
     /// a message saying that new files have been seen. Once DevServer receives
     /// that signal, or times out, it will "release" this batch.
     Enabled(TestingBatch),
+    /// The harness released this batch while a bundle was already in flight.
+    /// `finalize_bundle_cleanup` releases it once no bundle is running.
+    ReleaseAfterBundle(TestingBatch),
 }
 
 /// There is only ever one bundle executing at the same time, since all bundles
@@ -1151,7 +1154,9 @@ impl Drop for DevServer {
             }
         }
 
-        if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
+        if let TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) =
+            &mut self.testing_batch_events
+        {
             drop(std::mem::replace(
                 &mut batch.entry_points,
                 EntryPointList::empty(),
@@ -3778,6 +3783,22 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
 
     dev.start_next_bundle_if_present();
 
+    // A batch released while this bundle was in flight waits for a moment with
+    // no bundle running. `start_next_bundle_if_present` may have started one,
+    // in which case the next cleanup releases the batch.
+    if matches!(
+        dev.testing_batch_events,
+        TestingBatchEvents::ReleaseAfterBundle(_)
+    ) && dev.current_bundle.is_none()
+    {
+        let TestingBatchEvents::ReleaseAfterBundle(batch) =
+            core::mem::replace(&mut dev.testing_batch_events, TestingBatchEvents::Disabled)
+        else {
+            unreachable!()
+        };
+        dev.release_testing_batch(batch);
+    }
+
     // Unref the ref added in `start_async_bundle`
     if let Some(server) = dev.server.as_mut() {
         server.on_static_request_complete();
@@ -4873,6 +4894,24 @@ pub(super) fn finalize_bundle(
 }
 
 impl DevServer {
+    /// Start a bundle for the files a testing batch collected, or tell the
+    /// harness the batch was empty. The caller must have no bundle in flight.
+    pub(crate) fn release_testing_batch(&mut self, batch: TestingBatch) {
+        debug_assert!(self.current_bundle.is_none());
+        if batch.entry_points.set.count() == 0 {
+            self.publish(
+                HmrTopic::TestingWatchSynchronization,
+                &[MessageId::TestingWatchSynchronization.char(), 2],
+                Opcode::BINARY,
+            );
+            return;
+        }
+
+        self.start_async_bundle(batch.entry_points, true, Instant::now())
+            // bun.handleOom(err) — Rust aborts on OOM by default
+            .expect("OOM");
+    }
+
     fn start_next_bundle_if_present(&mut self) {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle

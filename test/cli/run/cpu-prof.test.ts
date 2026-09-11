@@ -444,4 +444,72 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // https://github.com/oven-sh/bun/issues/42377
+  // The sampling profiler marks every sampled callee as a GC root until its
+  // samples are released. Bun only released them at exit, so a per-frame bound
+  // function (React's scheduler makes one per render) kept every frame's data
+  // alive for the whole run. The event loop now drains the profiler while it
+  // runs, so the heap after a full GC stays flat.
+  test("sampled callees are released while profiling runs", async () => {
+    using dir = tempDir("cpu-prof-gc-roots", {
+      "test.mjs": `
+        let sink = 0;
+        function work(frame) {
+          let s = 0;
+          for (const op of frame.operations) s += op.x;
+          return s;
+        }
+        function renderFrame(n) {
+          const frame = { operations: [], cells: new Array(50000).fill(n) };
+          for (let i = 0; i < 2000; i++) frame.operations.push({ x: i });
+          const callee = work.bind(null, frame);
+          for (let k = 0; k < 100; k++) sink += callee();
+        }
+        const heapMB = () => {
+          Bun.gc(true);
+          return process.memoryUsage().heapUsed / 1048576;
+        };
+        for (let n = 0; n < 150; n++) {
+          renderFrame(n);
+          if (n % 10 === 9) await Bun.sleep(1);
+        }
+        // The profiler drains on an event loop tick at most once per 100ms.
+        // Poll until the drained samples let the GC free the frames.
+        const deadline = performance.now() + 1000;
+        let heapAfterGC = heapMB();
+        while (heapAfterGC >= 8 && performance.now() < deadline) {
+          await Bun.sleep(20);
+          heapAfterGC = heapMB();
+        }
+        console.log(JSON.stringify({ heapAfterGC: Math.round(heapAfterGC), sink: sink > 0 }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "test.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result.sink).toBe(true);
+    // Without the fix this is 25 MB or more: every sampled frame's 50000-element array.
+    expect(result.heapAfterGC).toBeLessThan(8);
+    expect(exitCode).toBe(0);
+
+    // Draining must not lose samples: the profile still covers the workload.
+    const profileFiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+    expect(profileFiles.length).toBe(1);
+    const profile = JSON.parse(readFileSync(join(String(dir), profileFiles[0]), "utf-8"));
+    expect(profile.samples.length).toBeGreaterThan(0);
+    expect(profile.samples.length).toBe(profile.timeDeltas.length);
+    const functionNames = profile.nodes.map((n: any) => n.callFrame.functionName);
+    expect(functionNames).toContain("renderFrame");
+    expect(functionNames).toContain("work");
+  });
 });

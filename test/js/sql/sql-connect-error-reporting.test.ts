@@ -179,6 +179,52 @@ test("postgres: established connection that closes keeps the plain message", asy
   }
 });
 
+// The server establishes the connection and kills it in the same write
+// (ReadyForQuery immediately followed by a FATAL ErrorResponse, e.g. an
+// admin shutdown or too-many-connections check that runs after auth). The
+// driver used to report onconnect via a microtask but onclose synchronously,
+// so the pool saw onclose first, then a stale onconnect that handed the dead
+// connection to the waiting query, which then never settled.
+test("postgres: a connection killed in the same read that established it is not handed to a query", async () => {
+  const onconnect = mock();
+  const onclose = mock();
+  const { port, server } = await listeningServer(socket => {
+    socket.once("data", () => {
+      socket.write(
+        Buffer.concat([
+          pgAuthenticationOk(),
+          pgReadyForQuery(),
+          pgErrorResponse({ S: "FATAL", C: "57P01", M: "terminating connection due to administrator command" }),
+        ]),
+      );
+      socket.end();
+    });
+    socket.on("error", () => {});
+  });
+  const db = new SQL({
+    url: `postgres://postgres@127.0.0.1:${port}/postgres`,
+    max: 1,
+    connectionTimeout: 0.25,
+    onconnect,
+    onclose,
+  });
+  try {
+    const err: any = await db`SELECT 1`.then(
+      () => {
+        throw new Error("expected the query to reject");
+      },
+      e => e,
+    );
+    expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
+    expect(err.message).toBe("terminating connection due to administrator command");
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
 test("mysql: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
   const start = Date.now();
@@ -379,6 +425,33 @@ test("mysql: a socket close during session setup is a connect failure", async ()
     expect(err.message).toBe("Connection closed before the connection was established");
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
     expect(onconnect).not.toHaveBeenCalled();
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+// MySQL flavour of the postgres test above: the session-setup OK establishes
+// the connection and an ERR packet in the same write kills it.
+test("mysql: a connection killed in the same read that established it is not handed to a query", async () => {
+  const onconnect = mock();
+  const onclose = mock();
+  const { port, server } = await mysqlServerUpToAuthOk(socket => {
+    socket.write(Buffer.concat([mysqlOkPacket(1), mysqlErrPacket(0, 1053, "08S01", "Server shutdown in progress")]));
+    socket.end();
+  });
+  const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 0.25, onconnect, onclose });
+  try {
+    const err: any = await db`SELECT 1`.then(
+      () => {
+        throw new Error("expected the query to reject");
+      },
+      e => e,
+    );
+    expect(err.code).toBe("ERR_MYSQL_SERVER_ERROR");
+    expect(err.message).toBe("Server shutdown in progress");
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(onclose).toHaveBeenCalledTimes(1);
   } finally {
     await db.close({ timeout: 0 });
     server.close();

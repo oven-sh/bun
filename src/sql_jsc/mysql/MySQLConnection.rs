@@ -86,7 +86,7 @@ pub struct MySQLConnection {
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
-    flags: ConnectionFlags,
+    pub(crate) flags: ConnectionFlags,
 }
 
 impl Default for MySQLConnection {
@@ -747,12 +747,8 @@ impl MySQLConnection {
 
         self.status = status;
 
-        match status {
-            ConnectionState::Connected => {
-                // `on_connection_estabilished` spelling is intentional (sic).
-                self.js_connection_ref().on_connection_estabilished();
-            }
-            _ => {}
+        if status == ConnectionState::Connected {
+            self.flags.insert(ConnectionFlags::ON_CONNECT_PENDING);
         }
     }
 
@@ -988,8 +984,17 @@ impl MySQLConnection {
         reader: NewReader<C>,
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
-        // Get the current request if any
         let Some(request) = self.queue.current() else {
+            // No query in flight. The only packet a server sends on its own is
+            // an ERR right before it drops the connection (shutdown, KILL,
+            // wait_timeout / ER_CLIENT_INTERACTION_TIMEOUT); surface that
+            // error instead of a generic unexpected-packet failure.
+            if PacketType(reader.peek().first().copied().unwrap_or(0)) == PacketType::ERROR {
+                let mut err = ErrorPacket::default();
+                err.decode_internal(reader)?;
+                self.js_connection_ref().on_error_packet(None, &err);
+                return Err(AnyMySQLError::ConnectionClosed);
+            }
             debug!("Received unexpected command response");
             return Err(AnyMySQLError::UnexpectedPacket);
         };

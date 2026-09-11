@@ -215,10 +215,25 @@ DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
+// The host functions below are reachable only from the builtins in BundlerPlugin.ts, which always
+// call them with the plugin object as the receiver. The receiver is checked anyway: each one reads
+// C++ fields off `this`, so a receiver of another type is a type confusion and not a bad argument.
+// Returns nullptr with an exception pending.
+static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto* thisObject = dynamicDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]]
+        Bun::throwInvalidThisCallError(globalObject, callFrame, "BundlerPlugin"_s);
+    return thisObject;
+}
+
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -340,9 +355,12 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -423,7 +441,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
     if (auto kind = thisObject->plugin.takeRequest(context))
         thisObject->plugin.addError(context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
@@ -432,7 +453,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -445,7 +469,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
@@ -471,7 +498,10 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundle
 
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
+    JSBundlerPlugin* thisObject = pluginReceiver(globalObject, callFrame);
+    if (!thisObject) [[unlikely]]
+        return {};
+
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
     // Only a request the plugins still hold can defer: once answered it is the bundle thread's again.
     if (!thisObject->plugin.holdsRequest(BundlerPlugin::RequestKind::Load, context)) {
@@ -513,8 +543,12 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
                 JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
+    // Every property the builtins in BundlerPlugin.ts read off this object exists from the start, so
+    // a read before the first write finds an own property instead of walking the prototype chain.
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("promises"_s)), jsUndefined(), 0);
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
@@ -598,7 +632,10 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         JSBundlerPlugin::createStructure(
             globalObject->vm(),
             globalObject,
-            globalObject->objectPrototype()),
+            // The prototype is null. The builtins in BundlerPlugin.ts read properties off this object
+            // by name. With Object.prototype in the chain, a user accessor planted under one of those
+            // names runs with this private object as its receiver, which hands the object to user code.
+            jsNull()),
         nullptr,
         target);
 }

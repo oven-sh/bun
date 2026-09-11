@@ -1893,4 +1893,79 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  // The builtins in BundlerPlugin.ts read properties off a private plugin object by name. An
+  // accessor planted on Object.prototype under one of those names used to run with that object as
+  // its receiver, which handed it to user code. Its native methods then read any receiver as a
+  // plugin.
+  test.concurrent("plugin/the private plugin object is not reachable from Object.prototype", async () => {
+    using dir = tempDir("plugin-private-object", {
+      "entry.js": `export default 1;`,
+      "probe-fixture.mjs": /* js */ `
+        const names = ["promises", "onEndCallbacks", "onLoad", "onResolve"];
+        const leaked = [];
+        let plugin;
+        function record(name, receiver) {
+          if (!Object.prototype.hasOwnProperty.call(receiver, "addFilter")) return;
+          plugin ??= receiver;
+          if (!leaked.includes(name)) leaked.push(name);
+        }
+        for (const name of names) {
+          Object.defineProperty(Object.prototype, name, {
+            configurable: true,
+            get() {
+              record(name, this);
+              return undefined;
+            },
+            // Define an own property, so the build still behaves as it does without the accessor.
+            set(value) {
+              record(name, this);
+              Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
+            },
+          });
+        }
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          plugins: [
+            {
+              name: "probe",
+              setup(build) {
+                build.onResolve({ filter: /entry/ }, () => undefined);
+                build.onLoad({ filter: /entry/ }, () => undefined);
+                build.onStart(() => {});
+                build.onEnd(() => {});
+              },
+            },
+          ],
+        });
+        for (const name of names) delete Object.prototype[name];
+        // If the object ever leaks again, its native methods must refuse a receiver that is not a
+        // plugin instead of reading one out of it.
+        let receiver = "not reachable";
+        if (plugin) {
+          try {
+            plugin.addFilter.call(undefined, /x/, "a", 1);
+            receiver = "accepted";
+          } catch (e) {
+            receiver = e.code ?? "threw";
+          }
+        }
+        console.log(JSON.stringify({ success: result.success, leaked, receiver }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({ success: true, leaked: [], receiver: "not reachable" });
+    expect(exitCode).toBe(0);
+  });
 });

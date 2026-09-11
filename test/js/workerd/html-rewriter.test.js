@@ -1551,6 +1551,23 @@ describe("HTMLRewriter", () => {
     expect(insert("style", "<style>b{}</style>", el => el.prepend("ul>li{color:red} ", { html: true }))).toBe(
       "<style>ul>li{color:red} b{}</style>",
     );
+
+    // A tag selector also matches <svg><style>, whose contents are markup to
+    // the HTML parser (entities are decoded, tags are live). The recipe keeps
+    // the default escaping there and keys on namespaceURI.
+    const namespaces = [];
+    const css = "i>b{} <img src=x onerror=alert(1)>";
+    expect(
+      insert("style", "<svg><style>a{}</style></svg><style>b{}</style>", el => {
+        namespaces.push(el.namespaceURI);
+        if (el.namespaceURI !== "http://www.w3.org/1999/xhtml") el.append(css);
+        else el.append(css, { html: true });
+      }),
+    ).toBe(
+      "<svg><style>a{}i&gt;b{} &lt;img src=x onerror=alert(1)&gt;</style></svg>" +
+        "<style>b{}i>b{} <img src=x onerror=alert(1)></style>",
+    );
+    expect(namespaces).toEqual(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml"]);
   });
 
   it("handles element class properties", async () => {

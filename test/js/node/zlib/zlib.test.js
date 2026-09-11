@@ -860,6 +860,67 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
     expect(exitCode).toBe(0);
     // An 8 MB input through a debug build under system malloc: the default 5 s is not enough.
   }, 30_000);
+
+  // The stream APIs reach the same native write as the one-shots above.
+  it("createZstdCompress().write() compresses the bytes the caller passed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { createZstdCompress, zstdDecompressSync, constants } = require("node:zlib");
+        const { randomFillSync } = require("node:crypto");
+        const PAGES = 128; // 8 MB
+        const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
+
+        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
+        const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
+        const mem = newMemory();
+        const input = new Uint8Array(mem.buffer);
+        // Incompressible input at a high level: the job is still reading when the block is freed.
+        randomFillSync(input);
+        const original = Buffer.from(input);
+
+        const stream = createZstdCompress({
+          chunkSize: 12 << 20,
+          params: { [constants.ZSTD_c_compressionLevel]: 12 },
+        });
+        const chunks = [];
+        stream.on("data", chunk => chunks.push(chunk));
+        const ended = new Promise(resolve => stream.on("end", resolve));
+
+        stream.write(input);
+        stream.end();
+        mem.grow(2);
+        // Claim the freed block, so that reading it cannot see the caller's bytes.
+        const claim = Array.from({ length: 4 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        });
+
+        await ended;
+        const out = Buffer.concat(chunks);
+        console.log(JSON.stringify({
+          detachedAfterGrow: input.byteLength === 0,
+          roundTripMatches: Buffer.compare(zstdDecompressSync(out), original) === 0,
+        }));
+      `,
+      ],
+      // `Malloc=1` makes WebKit use system malloc, so the freed block is
+      // unmapped instead of kept in bmalloc's cache: the unfixed build faults
+      // instead of reading stale bytes.
+      env: { ...bunEnv, Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // An 8 MB input through a debug build under system malloc: the default 5 s is not enough.
+  }, 30_000);
 });
 
 describe("crc32", () => {

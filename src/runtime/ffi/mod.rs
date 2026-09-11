@@ -99,8 +99,7 @@ mod dom_call_slowpath {
     }
 }
 
-/// Every native `bun:ffi` / `Bun.FFI` entry point calls this first: throws
-/// `ERR_FFI_DISABLED` when `--no-ffi-cc` or `--no-addons` disabled FFI.
+/// Throws `ERR_FFI_DISABLED` under `--no-ffi-cc` / `--no-addons`.
 pub(crate) fn check_ffi_enabled(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JsResult<()> {
     if global.bun_vm().allow_ffi() {
         return Ok(());

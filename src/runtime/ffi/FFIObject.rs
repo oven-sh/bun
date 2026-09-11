@@ -759,7 +759,6 @@ fn eat_string<'a>(
 /// fn-pointer const generics, so this is a `macro_rules!` rather than a
 /// generic fn). Uses `jsc_host_abi!` so the thunk gets `extern "sysv64"` on
 /// Windows-x64 and `extern "C"` elsewhere — matching the `JSHostFn` typedef.
-/// Every field is gated on `check_ffi_enabled` (`--no-ffi-cc` / `--no-addons`).
 macro_rules! wrap_host_fn {
     ($body:path) => {{
         bun_jsc::jsc_host_abi! {

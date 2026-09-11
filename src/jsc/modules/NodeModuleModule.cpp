@@ -1157,6 +1157,11 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             init.set(requireESM);
         });
 
+    globalObject->m_commonJSCompileFromHijackedExtensionFunction.initLater(
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, commonJSCompileFromHijackedExtensionCodeGenerator(init.vm), init.owner));
+        });
+
     globalObject->m_lazyRequireCacheObject.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;

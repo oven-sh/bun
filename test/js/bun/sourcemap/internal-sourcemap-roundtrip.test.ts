@@ -1,6 +1,7 @@
 import { internalSourceMap } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // --- Reference VLQ codec (mirrors the spec; used as the oracle) ---
@@ -488,6 +489,90 @@ describe.concurrent("sourcemap of a source with a truncated trailing UTF-8 seque
       sources: ["../in.js"],
       mappings: ";AAAA,QAAQ,IAAI,CAAC;",
     });
+  });
+});
+
+// Both sides of a mapping come from walking raw bytes: LineOffsetTable::generate
+// walks the source and the builder in Chunk.rs walks the printed output. A lead
+// byte that is not followed by the continuation bytes it declares (a Latin-1
+// file, a sequence cut short) is one character, one byte wide. Stepping over the
+// declared width instead swallows the line break after it, and every mapping
+// from there on is a line off.
+describe.concurrent("sourcemap of a source with an ill-formed UTF-8 sequence right before a line break", () => {
+  // File contents are given as latin1 text, so "\xe9" is the one byte 0xE9 on
+  // disk; the output is read back the same way. Lines are 0-based like the map's.
+  async function bundle(latin1Files: Record<string, string>, entry: string) {
+    using dir = tempDir(
+      "sourcemap-ill-formed-utf8",
+      Object.fromEntries(Object.entries(latin1Files).map(([name, text]) => [name, Buffer.from(text, "latin1")])),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--sourcemap=external", "--outdir=out", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
+    const outfile = path.join(String(dir), "out", entry);
+    const outputLines = readFileSync(outfile, "latin1").split("\n");
+    const map = JSON.parse(readFileSync(outfile + ".map", "utf8"));
+    const segs = decodeMappings(map.mappings);
+    // For each statement: the mapping at the start of the output line it was
+    // printed on, i.e. what a stack trace through that line would be remapped to.
+    return (statements: string[]) =>
+      statements.map(statement => {
+        const generatedLine = outputLines.findIndex(line => line.includes(statement));
+        expect(generatedLine).toBeGreaterThanOrEqual(0);
+        const seg = referenceFind(segs, generatedLine, 0);
+        return { statement, mapped: seg && { source: map.sources[seg.srcIdx], line: seg.origLine } };
+      });
+  }
+
+  const illFormed = [
+    ["Latin-1 0xE9, a 3-byte lead with no continuation bytes", "\xe9"],
+    ["0xC3, a 2-byte lead with no continuation byte", "\xc3"],
+    ["0xF0 0x9F 0x92, three bytes of a 4-byte sequence", "\xf0\x9f\x92"],
+  ];
+
+  // Source lines 0-1 are the comment, `first` is on line 2 and `second` on line
+  // 5. The output drops the blank lines between them, so the two walks cannot
+  // each be a line off and still agree with each other by accident.
+  const rest = '\nb */\nconsole.log("first");\n\n\nconsole.log("second");\n';
+  const statements = ['console.log("first")', 'console.log("second")'];
+  const expected = [
+    { statement: 'console.log("first")', mapped: { source: "../in.js", line: 2 } },
+    { statement: 'console.log("second")', mapped: { source: "../in.js", line: 5 } },
+  ];
+
+  // A legal comment is copied into the output, so both walks see the bytes.
+  test.each(illFormed)("in a legal comment: %s", async (_name, bytes) => {
+    const mappingsOf = await bundle({ "in.js": "/*! caf" + bytes + rest }, "in.js");
+    expect(mappingsOf(statements)).toEqual(expected);
+  });
+
+  // A plain comment is dropped from the output, so only the source walk sees them.
+  test.each(illFormed)("in a plain comment: %s", async (_name, bytes) => {
+    const mappingsOf = await bundle({ "in.js": "/* caf" + bytes + rest }, "in.js");
+    expect(mappingsOf(statements)).toEqual(expected);
+  });
+
+  // In a bundle the files' mappings are chained: each file's start where the
+  // line count of the file printed before it left off, so a file that counts
+  // one of its own line breaks short also pulls every file after it up a line.
+  test("in a legal comment of a file printed ahead of the entry point", async () => {
+    const mappingsOf = await bundle(
+      {
+        "in.js": 'import "./dep.js";\nconsole.log("entry");\n',
+        "dep.js": '/*! caf\xe9\nb */\nconsole.log("dep");\n',
+      },
+      "in.js",
+    );
+    expect(mappingsOf(['console.log("dep")', 'console.log("entry")'])).toEqual([
+      { statement: 'console.log("dep")', mapped: { source: "../dep.js", line: 2 } },
+      { statement: 'console.log("entry")', mapped: { source: "../in.js", line: 1 } },
+    ]);
   });
 });
 

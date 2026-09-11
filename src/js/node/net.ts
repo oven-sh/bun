@@ -435,6 +435,8 @@ function tlsHandshakeError(verifyError) {
 
 // Node reports a throwing 'data' listener as uncaughtException and keeps reading.
 function pushDataToSocket(self, socket, buffer) {
+  // The raw half of a TLS pair still sees the connection's bytes; a readable side that has ended (`readable: false`) takes none.
+  if (self.readableEnded) return;
   let full;
   try {
     full = self.push(buffer) === false;

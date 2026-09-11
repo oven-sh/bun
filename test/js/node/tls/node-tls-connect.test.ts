@@ -709,6 +709,35 @@ it("'session' and 'keylog' are emitted for a TLSSocket over a duplex stream (tls
   await once(server, "close");
 });
 
+// The raw half of the TLS pair still sees the connection's (encrypted) bytes.
+// Pushing them into a raw socket built with `readable: false` destroyed it with
+// ERR_STREAM_PUSH_AFTER_EOF and took the TLS socket down before its data arrived.
+// Node's TLSWrap reads from the handle, so the raw stream's flags do not matter.
+it.each(["connected", "connecting"])(
+  "tls.connect({ socket }) works over a %s socket built with readable: false",
+  async state => {
+    const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+      socket.on("error", () => {});
+      socket.end("hello");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const raw = net.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", readable: false });
+      const events: string[] = [];
+      raw.on("error", err => events.push(`raw error ${(err as NodeJS.ErrnoException).code}`));
+      if (state === "connected") await once(raw, "connect");
+      const client = tls.connect({ socket: raw, rejectUnauthorized: false }, () => events.push("secureConnect"));
+      client.setEncoding("utf8");
+      client.on("data", chunk => events.push(`data ${chunk}`));
+      client.on("error", err => events.push(`tls error ${(err as NodeJS.ErrnoException).code}`));
+      await once(client, "close");
+      expect(events).toEqual(["secureConnect", "data hello"]);
+    } finally {
+      server.close();
+    }
+  },
+);
+
 it("a write from inside 'data' does not re-enter 'data' on a TLSSocket over a duplex (tls.connect({ socket }))", async () => {
   // The TLS engine behind a duplex decrypts into a 64 KiB buffer and emits one
   // buffer at a time. A write() from inside the 'data' handler used to pump the

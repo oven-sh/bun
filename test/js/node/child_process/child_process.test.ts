@@ -885,9 +885,35 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.error?.code).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
   expect(x.signal).toEqual(null);
-  expect(x.output).toEqual([null, null, null]);
-  expect(x.stdout).toEqual(null);
-  expect(x.stderr).toEqual(null);
+  expect(x.output).toEqual(null);
+  // Node leaves `stdout`/`stderr` as `undefined` on spawn failure
+  // (`result.stdout = result.output?.[1]`, and `output` is null).
+  expect(x.stdout).toBeUndefined();
+  expect(x.stderr).toBeUndefined();
+});
+
+// Node's SyncProcessRunner::BuildResultObject (src/spawn_sync.cc) sets `status`
+// to null when the process was never started, and always reports a `pid`
+// (libuv's uv_process_t is zero-initialized, so it reads as 0).
+it("spawnSync(does-not-exist) reports status: null and pid: 0 like Node", () => {
+  const x = spawnSync("does-not-exist");
+  expect(x.status).toEqual(null);
+  expect(x.pid).toEqual(0);
+
+  const y = spawnSync("does-not-exist", { encoding: "buffer" });
+  expect(y.status).toEqual(null);
+  expect(y.output).toEqual(null);
+});
+
+it.if(isWindows)("spawnSync(batch-file) reports the never-started result shape", () => {
+  const x = spawnSync("does-not-exist.cmd");
+  expect(x.error?.code).toBe("EINVAL");
+  expect(x.status).toBeNull();
+  expect(x.signal).toBeNull();
+  expect(x.output).toBeNull();
+  expect(x.pid).toBe(0);
+  expect(x.stdout).toBeUndefined();
+  expect(x.stderr).toBeUndefined();
 });
 
 // https://github.com/oven-sh/bun/issues/32067

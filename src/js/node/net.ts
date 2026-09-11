@@ -4328,11 +4328,11 @@ function closeSocketHandle(self, isException, isCleanupPending = false) {
   const handle = self._handle;
   $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
   if (handle) {
-    if (typeof handle.close === "function") {
+    if (handle instanceof Duplex) {
+      // A client-side TLSSocket wrap holds the stream it wraps as its handle until connect() upgrades it.
+      handle.destroy();
+    } else {
       handle.close(onSocketHandleClosed);
-    } else if (!handle.destroyed) {
-      // tls.ts stores the wrapped Duplex directly as _handle; it has destroy(), not close().
-      handle.destroy?.();
     }
     setImmediate(() => {
       $debug("emit close", isCleanupPending);

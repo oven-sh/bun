@@ -654,14 +654,6 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
-static void fireOnNavigationFailed(JSGlobalObject* g, JSWebView* view, JSValue errValue)
-{
-    if (JSObject* cb = view->m_onNavigationFailed.get()) {
-        Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-            JSValue::encode(errValue), JSValue::encode(jsUndefined()));
-    }
-}
-
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
 // onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
 // for PageTitle: that is the post-load title fetch, and its failure (for
@@ -673,7 +665,12 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
     bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
     if (navigationFailed) view->m_loading = false;
     settle(g, view, slot, false, errValue);
-    if (navigationFailed) fireOnNavigationFailed(g, view, errValue);
+    if (navigationFailed) {
+        if (JSObject* cb = view->m_onNavigationFailed.get()) {
+            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+        }
+    }
 }
 
 // Slots, not m_pending: a navigation that Chrome has already answered is
@@ -704,14 +701,14 @@ static void startNavigation(JSWebView* view, ChromeNavigationKind kind)
 {
     view->m_chromeNavigationKind = kind;
     view->m_chromeNavigationCommitted = false;
-    view->m_chromeNavigationLoaderId = WTF::String();
     view->m_chromeNavigationSeq++;
 }
 
-// Which commit is the view's? A same-document one carries no loader id, so only the state says.
-static bool sameDocumentCommitEndsNavigation(JSWebView* view)
+// Which commit is the view's? No loader id, so the state says. "historyApi" is the page's own pushState()/replaceState(): navigate() and a traversal report "fragment".
+static bool sameDocumentCommitEndsNavigation(JSWebView* view, std::span<const char> navigationType)
 {
     if (!view->m_pendingNavigate) return false;
+    if (navigationType.size() == 10 && memcmp(navigationType.data(), "historyApi", 10) == 0) return false;
     auto kind = view->m_chromeNavigationKind;
     return kind == ChromeNavigationKind::SameDocument || kind == ChromeNavigationKind::Unknown;
 }
@@ -867,27 +864,24 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageNavigate: {
-        // {frameId, loaderId?, errorText?}. errorText: failed before any commit; the error page for this loader follows.
-        auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(result, { "loaderId", 8 })));
+        // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
+        // errorText present → navigation failed synchronously (bad URL,
+        // net::ERR_* resolved before commit). Reject now.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty()) {
-            view->m_chromeFailedLoaderId = loaderId;
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
             return;
         }
-        // Don't settle — the commit does.
+        // Don't settle — the commit does. A reply without loaderId loads no document.
         if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested) {
-            view->m_chromeNavigationLoaderId = loaderId;
-            view->m_chromeNavigationKind = loaderId.isEmpty()
+            view->m_chromeNavigationKind = jsonField(result, { "loaderId", 8 }).empty()
                 ? ChromeNavigationKind::SameDocument
                 : ChromeNavigationKind::CrossDocument;
         }
         return;
     }
     case Method::PageReload:
-        // Empty {} on success: the reload is underway, and it always loads the document again.
-        if (view->m_chromeNavigationKind == ChromeNavigationKind::Requested)
-            view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
+        // Same as navigate: don't settle, Page.loadEventFired does.
         return;
 
     case Method::PageTitle: {
@@ -1167,44 +1161,16 @@ static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::Strin
     }
 }
 
-// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?, loaderId}, type}: a document committed.
+// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?}, type}: a document committed.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return; // an <iframe>'s own navigation
     view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
-    auto loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
-    // navigate() already failed with errorText for this loader: its error page ends nothing and reports nothing.
-    bool alreadyFailed = !loaderId.isEmpty() && loaderId == view->m_chromeFailedLoaderId;
-    // Page.navigate's reply named the loader it started; reload() and a traversal go by state alone.
-    bool expectedLoader = view->m_chromeNavigationLoaderId.isEmpty() || view->m_chromeNavigationLoaderId == loaderId;
-    // Another document took the commit navigate() was waiting for, so its own loader will not commit.
-    bool interrupted = !expectedLoader && !alreadyFailed && view->m_pendingNavigate
-        && view->m_chromeNavigationKind == ChromeNavigationKind::CrossDocument && !view->m_chromeNavigationCommitted;
-    if (!alreadyFailed && expectedLoader && commitIsNavigations(view)) {
+    if (commitIsNavigations(view)) {
         view->m_chromeNavigationCommitted = true;
         view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
     }
-
-    auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
-    if (interrupted) {
-        // Chrome normally answers a dropped Page.navigate with errorText first; this is the backstop, so no hang.
-        auto other = WTF::String::fromUTF8(unreachable.empty() ? jsonString(jsonField(frame, { "url", 3 })) : unreachable);
-        navigationConsumed(view);
-        view->m_chromeNavigationLoaderId = WTF::String();
-        settleFailure(m_global, view, PendingSlot::Navigate, Method::PageNavigate,
-            createError(m_global, makeString("Navigation interrupted by another one to "_s, other)));
-    }
-
-    // unreachableUrl: this is Chrome's error page for a load that failed. view.url keeps the last real page.
-    if (!unreachable.empty()) {
-        view->m_chromeOnErrorPage = true;
-        // Reported once the error page has loaded and the tab takes commands again.
-        view->m_chromeUnreportedFailure = alreadyFailed ? WTF::String() : WTF::String::fromUTF8(unreachable);
-        return;
-    }
-    view->m_chromeOnErrorPage = false;
-    view->m_chromeUnreportedFailure = WTF::String();
 
     // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
     auto url = jsonString(jsonField(frame, { "url", 3 }));
@@ -1223,13 +1189,13 @@ void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
     fireOnNavigated(m_global, view, view->m_url);
 }
 
-// Page.navigatedWithinDocument {frameId, url}: a same-document commit (#fragment, pushState). No load event follows.
+// Page.navigatedWithinDocument {frameId, url, navigationType?}: a same-document commit (#fragment, pushState). No load event follows.
 void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char> params)
 {
     if (!isMainFrame(view, jsonString(jsonField(params, { "frameId", 7 })))) return;
     view->m_url = WTF::String::fromUTF8(jsonString(jsonField(params, { "url", 3 })));
 
-    if (sameDocumentCommitEndsNavigation(view)) {
+    if (sameDocumentCommitEndsNavigation(view, jsonString(jsonField(params, { "navigationType", 14 })))) {
         sendTitleFetch(view, true);
         navigationConsumed(view);
     }
@@ -1241,23 +1207,7 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
 // Page.loadEventFired (page-level: no frame, no loader): the live document loaded. Title fetch, then settle.
 void Transport::onLoadEventFired(JSWebView* view)
 {
-    auto* g = m_global;
     bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;
-
-    if (view->m_chromeOnErrorPage) {
-        // No title fetch: view.title keeps the last real page's, like view.url.
-        auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String());
-        if (failedUrl.isNull()) return;
-        JSValue err = createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s));
-        if (endsNavigation) {
-            navigationConsumed(view);
-            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, err);
-        } else {
-            fireOnNavigationFailed(g, view, err);
-        }
-        return;
-    }
-
     // For a load that is not the view's navigation, the fetch only updates m_title.
     sendTitleFetch(view, endsNavigation);
     if (endsNavigation) navigationConsumed(view);
@@ -1304,13 +1254,12 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // The three navigation events update the view first, then reach addEventListener() like any CDP event.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0)
-        onFrameNavigated(view, params);
-    else if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
-        onNavigatedWithinDocument(view, params);
-    else if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0)
-        onLoadEventFired(view);
+        return onFrameNavigated(view, params);
+    if (method.size() == 28 && memcmp(method.data(), "Page.navigatedWithinDocument", 28) == 0)
+        return onNavigatedWithinDocument(view, params);
+    if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0)
+        return onLoadEventFired(view);
 
     // Runtime.consoleAPICalled — fires for every console.* call in the page.
     // params: {"type":"log","args":[<RemoteObject>,...],"stackTrace":{...}}.
@@ -1886,8 +1835,8 @@ JSPromise* goForward(JSGlobalObject* g, JSWebView* view) { return historyGo(g, v
 JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 {
     auto& t = transport();
-    // Chrome answers Page.reload with {}, so the reply is what puts the reload underway.
-    startNavigation(view, ChromeNavigationKind::Requested);
+    // A reload always loads the document again. Its reply comes from the renderer and can trail the commit, so it gates nothing.
+    startNavigation(view, ChromeNavigationKind::CrossDocument);
     uint32_t id = t.nextId();
     // Navigate slot — reload IS a navigation. Page.loadEventFired only
     // settles PendingSlot::Navigate; using Misc would hang waiting for a

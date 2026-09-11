@@ -112,16 +112,8 @@ public:
     ChromeNavigationKind m_chromeNavigationKind = ChromeNavigationKind::NotRequested;
     // Chrome: a main frame document has committed since the view's last navigation command.
     bool m_chromeNavigationCommitted = false;
-    // Chrome: the loader a Page.navigate reply named. Only its commit is that navigation's. Empty: any commit is.
-    WTF::String m_chromeNavigationLoaderId;
     // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
     uint32_t m_chromeNavigationSeq = 0;
-    // Chrome: the live main frame document is Chrome's error page for a load that failed.
-    bool m_chromeOnErrorPage = false;
-    // Chrome: the URL whose error page committed. Reported as a failure once that page has loaded.
-    WTF::String m_chromeUnreportedFailure;
-    // Chrome: the loaderId whose failure navigate() already reported from Page.navigate's errorText.
-    WTF::String m_chromeFailedLoaderId;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

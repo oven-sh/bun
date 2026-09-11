@@ -43,79 +43,43 @@ let commandsClosed = false;
 // The session of the command being handled, so a __fake_* global that an
 // evaluate() runs can emit events on it.
 let currentSessionId: string | undefined;
-// One URL the page will "replaceState" to while the next
-// Page.getNavigationHistory is being answered (see __fake_replace_state_on_history_lookup).
-let replaceStateOnHistoryLookup: string | undefined;
-// One URL the page navigates itself to while the next Page.getNavigationHistory
-// is being answered: that document commits during the lookup, and only
-// __fake_load_event() finishes it (see __fake_page_load_on_history_lookup).
-let pageLoadOnHistoryLookup: string | undefined;
-// One #fragment the page follows as the next navigation command is read,
-// before its reply: the way events already in the pipe reach the runtime
-// after it wrote the command (see __fake_fragment_link_on_next_navigate).
-let fragmentLinkOnNextNavigate: string | undefined;
-// One URL the page loads whole as the next Page.reload is read, before its
-// reply; that reload then never commits (see __fake_page_load_on_next_reload).
-let pageLoadOnNextReload: string | undefined;
-// One URL the page "replaceState"s to right after the next same-document
-// commit, the way a hashchange handler canonicalizing the URL does.
-let replaceStateAfterNextCommit: string | undefined;
+// One script per CDP method, run once as the next command of that method is
+// read and before it is handled (see __fake_on_next).
+const onNext = new Map<string, string>();
 // How many document.title fetches the runtime has sent: one per navigation.
 let titleFetches = 0;
 Object.assign(globalThis, {
   __fake_exit(code: number): never {
     process.exit(code);
   },
+  // The page does something of its own while a command of the runtime's is on
+  // its way: `script` runs as the next `method` command is read, before the
+  // fake handles or answers it. That is how an event that was already in the
+  // pipe reaches the runtime after it wrote the command.
+  __fake_on_next(method: string, script: string) {
+    onNext.set(method, script);
+  },
   // The page commits a same-document navigation of its own, the way
-  // history.replaceState() or a scroll-driven `location.hash = ...` does:
+  // history.pushState() and history.replaceState() do:
   // Page.navigatedWithinDocument with nothing before it, no new history entry.
   __fake_replace_state(url: string) {
-    replaceState(url);
+    if (historyIndex >= 0) history[historyIndex].url = url;
+    event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
   },
-  // The same, but timed to land while the runtime waits for the history
-  // lookup that goBack()/goForward() start with.
-  __fake_replace_state_on_history_lookup(url: string) {
-    replaceStateOnHistoryLookup = url;
+  // The page navigates itself to a new document (a link, `location.href = ...`):
+  // it commits, and only __fake_load_event() finishes it.
+  __fake_page_commit(url: string) {
+    loads++;
+    pushEntry(url);
+    event("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" },
+      type: "Navigation",
+    });
   },
   // The load event of the document that is live, the way one arrives for a
   // document the page itself navigated to. It names no frame and no loader.
   __fake_load_event() {
-    send({ method: "Page.loadEventFired", params: { timestamp: ++loads }, sessionId: currentSessionId });
-  },
-  // The page navigates itself to `url` while the runtime's next history
-  // lookup is in flight: a new document, committed but not finished.
-  __fake_page_load_on_history_lookup(url: string) {
-    pageLoadOnHistoryLookup = url;
-  },
-  // The page navigates itself to `url` and that document commits and loads,
-  // the way a `location.href = ...` that wins the frame does.
-  __fake_page_load(url: string) {
-    pageLoad(url);
-    event("Page.loadEventFired", { timestamp: loads });
-  },
-  // The page navigates itself to `url` (a link, `location.href = ...`) and
-  // the load fails: Chrome's error page commits in its place and loads.
-  __fake_page_load_fails(url: string) {
-    loads++;
-    event("Page.frameStartedNavigating", { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" });
-    pushEntry(url, "P" + loads);
-    commitErrorPage(url, "P" + loads);
-  },
-  // The page follows a #fragment link of its own, which Chrome starts and
-  // commits after the runtime wrote the next navigation command and before
-  // Chrome answers it. Chrome calls that start "sameDocument".
-  __fake_fragment_link_on_next_navigate(url: string) {
-    fragmentLinkOnNextNavigate = url;
-  },
-  // The page's own same-document commit lands right behind the next one,
-  // the way a hashchange handler that rewrites the URL produces.
-  __fake_replace_state_after_next_commit(url: string) {
-    replaceStateAfterNextCommit = url;
-  },
-  // The page finishes a load of its own after the runtime wrote the next
-  // Page.reload and before Chrome answered it. That reload never commits.
-  __fake_page_load_on_next_reload(url: string) {
-    pageLoadOnNextReload = url;
+    event("Page.loadEventFired", { timestamp: ++loads });
   },
   // How many document.title fetches the runtime has sent so far.
   __fake_title_fetches() {
@@ -157,46 +121,32 @@ let entries = 0;
 // Session history, the way the browser keeps it: Page.navigate appends,
 // Page.getNavigationHistory reports it, Page.navigateToHistoryEntry moves
 // inside it. Two URLs that differ only after the '#' are the same document.
-// Each entry remembers the loader its document committed under.
-const history: { id: number; url: string; loaderId: string }[] = [];
+const history: { id: number; url: string }[] = [];
 let historyIndex = -1;
 const documentOf = (url: string) => url.split("#")[0];
 const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("#")) : "");
 // A URL with "never-load" in it starts loading and never commits, the way a
 // server that accepts the connection and then says nothing looks. One with
 // "stall-on-return" loads when navigated to, but a history traversal back to
-// it starts and never commits. One with "unreachable" in it fails to load,
-// the way a refused connection does: Chrome commits its error page instead.
-// One with "bfcached" in it comes back whole from the back-forward cache when
-// a history traversal returns to it.
+// it starts and never commits. One with "bfcached" in it comes back whole
+// from the back-forward cache when a history traversal returns to it.
 const neverLoads = (url: string) => url.includes("never-load");
 const stallsOnReturn = (url: string) => url.includes("stall-on-return");
-const failsToLoad = (url: string) => url.includes("unreachable");
 const bfcached = (url: string) => url.includes("bfcached");
 
-function pushEntry(url: string, loaderId: string) {
+function pushEntry(url: string) {
   history.length = historyIndex + 1;
-  history.push({ id: ++entries, url, loaderId });
+  history.push({ id: ++entries, url });
   historyIndex = history.length - 1;
 }
 
-function replaceState(url: string) {
-  if (historyIndex >= 0) history[historyIndex].url = url;
-  event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "historyApi" });
-}
-
-// Chrome names a navigation's kind before it starts. The runtime ignores it.
-function startNavigating(url: string, navigationType: string) {
-  event("Page.frameStartedNavigating", { frameId: "F", url, navigationType });
-}
-
 // A document commits: Page.frameNavigated, with the fragment split off into
-// frame.urlFragment. A fresh load ("Navigation") ends with the load event; a
-// page restored from the back-forward cache is complete as it commits, so
+// frame.urlFragment. A fresh load ("Navigation") ends with the load event. A
+// page restored from the back-forward cache is whole as it commits, so
 // nothing follows.
-function commitDocument(url: string, loaderId: string, type: "Navigation" | "BackForwardCacheRestore") {
+function commitDocument(url: string, type: "Navigation" | "BackForwardCacheRestore") {
   const fragment = fragmentOf(url);
-  const frame = { id: "F", loaderId, url: documentOf(url), mimeType: "text/html" };
+  const frame = { id: "F", loaderId: "L" + loads, url: documentOf(url), mimeType: "text/html" };
   event("Page.frameNavigated", { frame: fragment ? { ...frame, urlFragment: fragment } : frame, type });
   if (type === "BackForwardCacheRestore") return;
   if (subframeNavigation) {
@@ -206,37 +156,22 @@ function commitDocument(url: string, loaderId: string, type: "Navigation" | "Bac
   event("Page.loadEventFired", { timestamp: loads });
 }
 
-// A same-document navigation commits: Page.navigatedWithinDocument, and never
-// a load event.
+// A same-document navigation of the runtime's commits: a #fragment target and
+// a history traversal both report "fragment". No load event follows.
 function commitSameDocument(url: string) {
   event("Page.navigatedWithinDocument", { frameId: "F", url, navigationType: "fragment" });
-  if (replaceStateAfterNextCommit !== undefined) {
-    replaceState(replaceStateAfterNextCommit);
-    replaceStateAfterNextCommit = undefined;
-  }
-}
-
-// Chrome's error page standing in for a document that failed to load: it
-// commits under the failed loader, names the URL it replaces, and loads.
-function commitErrorPage(unreachableUrl: string, loaderId: string) {
-  const frame = { id: "F", loaderId, url: "chrome-error://chromewebdata/", unreachableUrl, mimeType: "text/html" };
-  event("Page.frameNavigated", { frame, type: "Navigation" });
-  event("Page.loadEventFired", { timestamp: loads });
-}
-
-// The page navigates itself to a new document (a link, `location.href = ...`):
-// its own loader and commit. __fake_load_event() finishes it.
-function pageLoad(url: string) {
-  loads++;
-  event("Page.frameStartedNavigating", { frameId: "F", url, loaderId: "P" + loads, navigationType: "differentDocument" });
-  pushEntry(url, "P" + loads);
-  event("Page.frameNavigated", { frame: { id: "F", loaderId: "P" + loads, url, mimeType: "text/html" }, type: "Navigation" });
 }
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
   const { id, method, params = {}, sessionId } = command;
   currentSessionId = sessionId;
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
+
+  const script = onNext.get(method);
+  if (script !== undefined) {
+    onNext.delete(method);
+    (0, eval)(script);
+  }
 
   if (method === cdpErrorOn) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
@@ -251,85 +186,30 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.navigate": {
       const url: string = params.url;
       if (navigateError) return reply({ frameId: "F", errorText: navigateError });
-      if (fragmentLinkOnNextNavigate !== undefined) {
-        startNavigating(fragmentLinkOnNextNavigate, "sameDocument");
-        replaceState(fragmentLinkOnNextNavigate);
-        fragmentLinkOnNextNavigate = undefined;
-      }
       // A #fragment target of the current document keeps that document.
-      const current = history[historyIndex];
-      const sameDocument =
-        current !== undefined && documentOf(current.url) === documentOf(url) && fragmentOf(url) !== "";
-      startNavigating(url, sameDocument ? "sameDocument" : "differentDocument");
-      if (sameDocument) {
-        // The reply names a loaderId only for a navigation that loads a document.
-        reply({ frameId: "F" });
-        pushEntry(url, current.loaderId);
-        commitSameDocument(url);
-        return;
-      }
-      const loaderId = "L" + ++loads;
-      if (failsToLoad(url)) {
-        // The failure is known before anything commits: the reply carries it,
-        // and the error page follows under the same loader.
-        reply({ frameId: "F", loaderId, errorText: "net::ERR_CONNECTION_REFUSED" });
-        pushEntry(url, loaderId);
-        commitErrorPage(url, loaderId);
-        return;
-      }
-      reply({ frameId: "F", loaderId });
+      const current = history[historyIndex]?.url;
+      const sameDocument = current !== undefined && documentOf(current) === documentOf(url) && fragmentOf(url) !== "";
+      if (!sameDocument) loads++;
+      // The reply names a loaderId only for a navigation that loads a document.
+      reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
       if (neverLoads(url)) return;
-      pushEntry(url, loaderId);
-      commitDocument(url, loaderId, "Navigation");
-      return;
+      pushEntry(url);
+      return sameDocument ? commitSameDocument(url) : commitDocument(url, "Navigation");
     }
-    case "Page.reload": {
-      const current = history[historyIndex];
-      if (current === undefined) return reply({});
-      if (pageLoadOnNextReload !== undefined) {
-        pageLoad(pageLoadOnNextReload);
-        event("Page.loadEventFired", { timestamp: loads });
-        pageLoadOnNextReload = undefined;
-        return reply({});
-      }
-      startNavigating(current.url, "reload");
-      current.loaderId = "L" + ++loads;
-      reply({});
-      if (failsToLoad(current.url)) return commitErrorPage(current.url, current.loaderId);
-      commitDocument(current.url, current.loaderId, "Navigation");
-      return;
-    }
-    case "Page.getNavigationHistory": {
-      if (replaceStateOnHistoryLookup !== undefined) {
-        replaceState(replaceStateOnHistoryLookup);
-        replaceStateOnHistoryLookup = undefined;
-      }
-      // The page's own navigation commits while the lookup is in flight: a
-      // new document, still loading. The reply describes the history the
-      // browser read before that commit.
-      const snapshot = { currentIndex: historyIndex, entries: history.map(entry => ({ ...entry })) };
-      if (pageLoadOnHistoryLookup !== undefined) {
-        pageLoad(pageLoadOnHistoryLookup);
-        pageLoadOnHistoryLookup = undefined;
-      }
-      return reply(snapshot);
-    }
+    case "Page.getNavigationHistory":
+      return reply({ currentIndex: historyIndex, entries: history });
     case "Page.navigateToHistoryEntry": {
       const target = history.findIndex(entry => entry.id === params.entryId);
       if (target === -1) return reply({});
-      const entry = history[target];
-      const sameDocument = documentOf(history[historyIndex].url) === documentOf(entry.url);
-      startNavigating(entry.url, sameDocument ? "historySameDocument" : "historyDifferentDocument");
+      const url = history[target].url;
+      const sameDocument = documentOf(history[historyIndex].url) === documentOf(url);
       reply({});
-      if (neverLoads(entry.url) || stallsOnReturn(entry.url)) return;
+      if (neverLoads(url) || stallsOnReturn(url)) return;
       historyIndex = target;
-      if (sameDocument) return commitSameDocument(entry.url);
-      // A restore commits the cached document again, under its original loader.
-      if (bfcached(entry.url)) return commitDocument(entry.url, entry.loaderId, "BackForwardCacheRestore");
-      entry.loaderId = "L" + ++loads;
-      if (failsToLoad(entry.url)) return commitErrorPage(entry.url, entry.loaderId);
-      commitDocument(entry.url, entry.loaderId, "Navigation");
-      return;
+      if (sameDocument) return commitSameDocument(url);
+      if (bfcached(url)) return commitDocument(url, "BackForwardCacheRestore");
+      loads++;
+      return commitDocument(url, "Navigation");
     }
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });

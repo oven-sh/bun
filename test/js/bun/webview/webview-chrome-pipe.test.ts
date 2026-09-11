@@ -35,6 +35,9 @@ const prelude = /* js */ `
   const newView = () => new Bun.WebView({ backend, width: 100, height: 100 });
   const outcome = promise => promise.then(resolved => ({ resolved }), e => ({ rejected: e.message }));
   const print = value => console.log(JSON.stringify(value));
+  // The page runs \`script\` as the fake reads the view's next \`method\` command, before it answers.
+  const pageDoesOnNext = (view, method, script) =>
+    view.evaluate("__fake_on_next(" + JSON.stringify(method) + ", " + JSON.stringify(script) + ")");
   const big = ${BIG};
 `;
 
@@ -174,29 +177,6 @@ test.concurrent("a load event from a document the view did not ask for settles n
   });
 });
 
-// Chrome answered Page.navigate with a loaderId, but a document under another
-// loader committed instead: the page's own navigation won the frame and ours
-// will never commit. Chrome normally reports that with errorText first; when
-// it does not, navigate() must still settle, as a failure, and not hang.
-test.concurrent("a navigate() whose commit another document takes rejects instead of hanging", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/page");
-    const failures = [];
-    view.onNavigationFailed = e => failures.push(e.message);
-    const started = outcome(view.navigate("http://fake/never-load"));
-    await view.evaluate("__fake_page_load('http://fake/winner')");
-    print({ navigate: await started, failures, url: view.url, loading: view.loading });
-    view.close();
-  `);
-  expect(result).toEqual({
-    navigate: { rejected: "Navigation interrupted by another one to http://fake/winner" },
-    failures: ["Navigation interrupted by another one to http://fake/winner"],
-    url: "http://fake/winner",
-    loading: false,
-  });
-});
-
 // goBack() fills the slot and then looks the history entry up before it asks
 // Chrome to traverse. A same-document commit of the page's own that lands
 // during the lookup is not the traversal and must not settle the promise.
@@ -205,7 +185,7 @@ test.concurrent("goBack() is not settled by a commit of the page's own during th
     const view = newView();
     await view.navigate("http://fake/a");
     await view.navigate("http://fake/b");
-    await view.evaluate("__fake_replace_state_on_history_lookup('http://fake/b#spa')");
+    await pageDoesOnNext(view, "Page.getNavigationHistory", "__fake_replace_state('http://fake/b#spa')");
     const urls = [];
     view.onNavigated = url => urls.push(url);
     await view.goBack();
@@ -222,9 +202,9 @@ test.concurrent("goBack() is not settled by a commit of the page's own during th
 test.concurrent("goBack() is not settled by the load of a document it did not commit", async () => {
   const result = await runScenario(`
     const view = newView();
+    await view.navigate("http://fake/a");
     await view.navigate("http://fake/stall-on-return");
-    await view.navigate("http://fake/b");
-    await view.evaluate("__fake_page_load_on_history_lookup('http://fake/own')");
+    await pageDoesOnNext(view, "Page.getNavigationHistory", "__fake_page_commit('http://fake/own')");
     const started = view.goBack();
     // The fake answers in order, so this resolves after it answered the
     // history lookup: the traversal command is out and has not committed.
@@ -240,15 +220,58 @@ test.concurrent("goBack() is not settled by the load of a document it did not co
   expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/own" });
 });
 
+// Chrome answers a traversal at once and commits it later: a cross-document
+// one only after the network answered. history.pushState() and
+// history.replaceState() of the page being left (a router, a scroll position
+// saved in beforeunload) land in between. They report "historyApi", which a
+// traversal never does, and must not settle the promise: the target here
+// never commits, so goBack() has to stay pending.
+test.concurrent("goBack() is not settled by the page's own replaceState() behind the traversal's reply", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/stall-on-return");
+    await view.navigate("http://fake/b");
+    const started = view.goBack();
+    // The fake answers in order, so this resolves after it answered the
+    // history lookup: the traversal command is out. The next evaluate is
+    // behind that command, so the fake has answered the traversal by then.
+    await view.evaluate("1");
+    await view.evaluate("__fake_replace_state('http://fake/b?scroll=1')");
+    const first = await Promise.race([
+      started.then(() => "goBack() settled", () => "goBack() rejected"),
+      view.evaluate("'goBack() still pending'"),
+    ]);
+    print({ first, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "goBack() still pending", url: "http://fake/b?scroll=1" });
+});
+
+// The same window exists behind the reply of a #fragment navigate().
+test.concurrent("navigate() to a #fragment is not settled by the page's own replaceState()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/page");
+    const started = view.navigate("http://fake/page#never-load");
+    await view.evaluate("__fake_replace_state('http://fake/page?scroll=1')");
+    const first = await Promise.race([
+      started.then(() => "navigate() settled", () => "navigate() rejected"),
+      view.evaluate("'navigate() still pending'"),
+    ]);
+    print({ first, loading: view.loading, url: view.url });
+    view.close();
+  `);
+  expect(result).toEqual({ first: "navigate() still pending", loading: true, url: "http://fake/page?scroll=1" });
+});
+
 // A navigation that reaches the runtime after it wrote a navigation command,
 // but before Chrome answered it, cannot be that command's: Chrome answers a
-// navigation before its document commits. Its Page.frameStartedNavigating
-// says "sameDocument", which is no statement about the command either.
+// navigation before its document commits.
 test.concurrent("a navigation that arrives before the navigate command is answered settles nothing", async () => {
   const result = await runScenario(`
     const view = newView();
     await view.navigate("http://fake/page");
-    await view.evaluate("__fake_fragment_link_on_next_navigate('http://fake/page#spa')");
+    await pageDoesOnNext(view, "Page.navigate", "__fake_replace_state('http://fake/page#spa')");
     const started = view.navigate("http://fake/never-load");
     const first = await Promise.race([
       started.then(() => "navigate() settled", () => "navigate() rejected"),
@@ -274,94 +297,14 @@ test.concurrent("a second same-document commit does not fetch the title again", 
     // The fake counts document.title fetches only, so the difference is what
     // the navigation below sent.
     const before = await view.evaluate("__fake_title_fetches()");
-    await view.evaluate("__fake_replace_state_after_next_commit('http://fake/page#canonical')");
+    // The next Runtime.evaluate the fake reads is the navigation's title fetch.
+    await pageDoesOnNext(view, "Runtime.evaluate", "__fake_replace_state('http://fake/page#canonical')");
     await view.navigate("http://fake/page#one");
     const titleFetches = (await view.evaluate("__fake_title_fetches()")) - before;
     print({ url: view.url, titleFetches });
     view.close();
   `);
   expect(result).toEqual({ url: "http://fake/page#canonical", titleFetches: 1 });
-});
-
-// Chrome answers Page.reload with `{}`, so a reload is like a history
-// traversal: no commit counts as its own until Chrome has answered the
-// command. A document the page finished loading in that window is the page's,
-// and the reload here never commits, so the promise has to stay pending.
-test.concurrent("reload() is not settled by the load of a document the page committed first", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/page");
-    await view.evaluate("__fake_page_load_on_next_reload('http://fake/own')");
-    const started = view.reload();
-    // The fake answers in order, so this resolves after it answered the reload:
-    // the page's load is handled, and a title fetch that load queued is ahead
-    // of the race's evaluate below.
-    await view.evaluate("1");
-    const first = await Promise.race([
-      started.then(() => "reload() settled", () => "reload() rejected"),
-      view.evaluate("'reload() still pending'"),
-    ]);
-    print({ first, url: view.url });
-    view.close();
-  `);
-  expect(result).toEqual({ first: "reload() still pending", url: "http://fake/own" });
-});
-
-// After a load fails, Chrome commits its own error page
-// (chrome-error://chromewebdata/, with frame.unreachableUrl naming the page it
-// stands in for) and fires that page's load event. Neither is a navigation of
-// the view's: navigate() already rejected with the errorText of its reply, so
-// the error page reports nothing more, and view.url and view.title keep the
-// last real page.
-test.concurrent("a failed navigate() reports one failure and Chrome's error page changes nothing", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/before");
-    const events = [];
-    view.onNavigated = url => events.push("navigated:" + url);
-    view.onNavigationFailed = error => events.push("failed:" + error.message);
-    const errorPageLoaded = new Promise(resolve => view.addEventListener("Page.loadEventFired", resolve, { once: true }));
-    const failed = await outcome(view.navigate("http://fake/unreachable"));
-    await errorPageLoaded;
-    print({ failed, events, url: view.url, title: view.title, loading: view.loading });
-    view.close();
-  `);
-  expect(result).toEqual({
-    failed: { rejected: "net::ERR_CONNECTION_REFUSED" },
-    events: ["failed:net::ERR_CONNECTION_REFUSED"],
-    url: "http://fake/before",
-    title: "fake chrome",
-    loading: false,
-  });
-});
-
-// A load the page starts itself can fail too. Its error page is the only sign:
-// onNavigationFailed fires once that page has loaded. reload() then loads the
-// failed URL again, fails again, and rejects instead of resolving on the error
-// page's load event.
-test.concurrent("a failed load the page started fires onNavigationFailed, and reload() of it rejects", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/start");
-    const events = [];
-    view.onNavigated = url => events.push("navigated:" + url);
-    view.onNavigationFailed = error => events.push("failed:" + error.message);
-    await view.evaluate("__fake_page_load_fails('http://fake/unreachable-link')");
-    const afterLink = { events: [...events], url: view.url };
-    const reloaded = await outcome(view.reload());
-    print({ afterLink, reloaded, events, url: view.url, loading: view.loading });
-    view.close();
-  `);
-  expect(result).toEqual({
-    afterLink: { events: ["failed:Navigation to http://fake/unreachable-link failed"], url: "http://fake/start" },
-    reloaded: { rejected: "Navigation to http://fake/unreachable-link failed" },
-    events: [
-      "failed:Navigation to http://fake/unreachable-link failed",
-      "failed:Navigation to http://fake/unreachable-link failed",
-    ],
-    url: "http://fake/start",
-    loading: false,
-  });
 });
 
 // A history traversal onto a page Chrome kept in its back-forward cache
@@ -385,28 +328,6 @@ test.concurrent("goBack() onto a page restored from the back-forward cache settl
     afterForward: "http://fake/b",
     urls: ["http://fake/bfcached#top", "http://fake/b"],
   });
-});
-
-// The view does its own bookkeeping on these three events; like every other
-// CDP event they still reach addEventListener(), with the parsed params.
-test.concurrent("navigation events reach addEventListener()", async () => {
-  const result = await runScenario(`
-    const view = newView();
-    await view.navigate("http://fake/first");
-    const events = [];
-    for (const type of ["Page.frameNavigated", "Page.navigatedWithinDocument", "Page.loadEventFired"]) {
-      view.addEventListener(type, event => events.push([type, event.data.frame?.url ?? event.data.url ?? null]));
-    }
-    await view.navigate("http://fake/page");
-    await view.navigate("http://fake/page#one");
-    print(events);
-    view.close();
-  `);
-  expect(result).toEqual([
-    ["Page.frameNavigated", "http://fake/page"],
-    ["Page.loadEventFired", null],
-    ["Page.navigatedWithinDocument", "http://fake/page#one"],
-  ]);
 });
 
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {

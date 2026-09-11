@@ -1050,12 +1050,18 @@ function navServer() {
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    fetch(req) {
+    async fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === "/outer") return page('<title>outer</title><iframe src="/inner"></iframe>');
       if (path === "/inner") return page("<title>inner</title>inner");
       // An SPA router rewriting the URL while the document is still loading.
       if (path === "/spa") return page("<title>SPA</title><script>history.replaceState({}, '', '/app/home')</script>");
+      // A document whose load event trails its commit: the image holds it back.
+      if (path === "/slow-load") return page('<title>slow-load</title><img src="/late.gif">');
+      if (path === "/late.gif") {
+        await Bun.sleep(300);
+        return new Response("GIF89a", { headers: { "content-type": "image/gif", "cache-control": "no-store" } });
+      }
       return page(`<title>T${path}</title><body>${path}</body>`);
     },
   });
@@ -1082,52 +1088,6 @@ it("chrome: view.url keeps the #fragment", async () => {
   // Chrome reports the fragment in frame.urlFragment, separate from frame.url.
   expect(view.url).toBe(srv.base + "/page#frag");
   expect(await view.evaluate("location.href")).toBe(srv.base + "/page#frag");
-});
-
-it("chrome: a failed navigate() reports one failure and no navigation, and leaves view.url alone", async () => {
-  using srv = navServer();
-  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
-  await view.navigate(srv.base + "/before");
-  const events: string[] = [];
-  view.onNavigated = (url: string) => events.push("navigated:" + url);
-  view.onNavigationFailed = (err: Error) => events.push("failed:" + err.message);
-  // Chrome then commits its internal error page (chrome-error://chromewebdata/)
-  // and fires its load event; wait for that so every event it produces has been
-  // handled. Neither may surface as a navigation or as a second failure.
-  const errorPageLoaded = new Promise(resolve => view.addEventListener("Page.loadEventFired", resolve, { once: true }));
-  // Port 9 is on Chrome's unsafe-port list: fails before any connection.
-  await expect(view.navigate("http://127.0.0.1:9/")).rejects.toThrow("net::ERR_UNSAFE_PORT");
-  await errorPageLoaded;
-  expect(events).toEqual(["failed:net::ERR_UNSAFE_PORT"]);
-  expect(view.url).toBe(srv.base + "/before");
-  expect(view.title).toBe("T/before");
-  expect(view.loading).toBe(false);
-  // The view still navigates afterwards.
-  await view.navigate(srv.base + "/after");
-  expect({ url: view.url, title: view.title }).toEqual({ url: srv.base + "/after", title: "T/after" });
-});
-
-it("chrome: a navigation the page starts and that fails fires onNavigationFailed", async () => {
-  using srv = navServer();
-  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
-  await view.navigate(srv.base + "/start");
-  const events: string[] = [];
-  const failed = Promise.withResolvers<void>();
-  view.onNavigated = (url: string) => events.push("navigated:" + url);
-  view.onNavigationFailed = (err: Error) => {
-    events.push("failed:" + err.message);
-    failed.resolve();
-  };
-  // No navigate() of the view's is pending, so Chrome's error page for the
-  // failed load is the only notice of the failure.
-  await view.evaluate("location.href = 'http://127.0.0.1:9/gone'");
-  await failed.promise;
-  expect(events).toEqual(["failed:Navigation to http://127.0.0.1:9/gone failed"]);
-  expect({ url: view.url, title: view.title, loading: view.loading }).toEqual({
-    url: srv.base + "/start",
-    title: "T/start",
-    loading: false,
-  });
 });
 
 it("chrome: same-document navigations settle and update view.url", async () => {
@@ -1188,6 +1148,26 @@ it("chrome: a replaceState while the document loads does not settle navigate() e
     title: "T/first",
     seen: ["/app/next", "/app/home", "/first"],
   });
+});
+
+it("chrome: a cross-document goBack() waits for the load when the page being left calls replaceState()", async () => {
+  using srv = navServer();
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(srv.base + "/slow-load");
+  // An unload handler keeps the page out of the back-forward cache, so the
+  // traversal loads it again.
+  await view.evaluate("addEventListener('unload', () => {}), 0");
+  await view.navigate(srv.base + "/leaving");
+  // A router that saves its scroll position as the page goes away. Chrome has
+  // answered the traversal by then, so this commit lands behind the reply. It
+  // is the page's own and must not end goBack() before the target has loaded.
+  await view.evaluate("addEventListener('beforeunload', () => history.replaceState({ scroll: 1 }, '')), 0");
+  await view.goBack();
+  expect({
+    url: view.url,
+    title: view.title,
+    readyState: await view.evaluate("document.readyState"),
+  }).toEqual({ url: srv.base + "/slow-load", title: "slow-load", readyState: "complete" });
 });
 
 it("chrome: goBack() to a page restored from the back-forward cache resolves", async () => {

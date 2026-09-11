@@ -3388,6 +3388,101 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
     }
+
+    // Headers and URLSearchParams have no own properties: their entries live in
+    // native code, so an expected value of one of these types has to be compared
+    // by its entries (all of them, like toEqual), not by property walking.
+    test("Headers on the expected side are compared by their entries", () => {
+      expect({ h: new Headers({ a: "1" }) }).toMatchObject({ h: new Headers({ a: "1" }) });
+      expect({ h: new Headers({ a: "1", b: "2" }) }).toMatchObject({ h: new Headers({ b: "2", a: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).toMatchObject({ h: expect.any(Headers) });
+      expect({ h: new Headers({ a: "1" }), other: 1 }).toMatchObject({ h: new Headers({ a: "1" }) });
+
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "2" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ b: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers({ a: "1", b: "2" }) });
+      expect({ h: new Headers({ a: "1", b: "2" }) }).not.toMatchObject({ h: new Headers({ a: "1" }) });
+      expect({ h: new Headers({ a: "1" }) }).not.toMatchObject({ h: new Headers() });
+      expect({ h: new Headers() }).not.toMatchObject({ h: new Headers({ a: "1" }) });
+
+      expect({ res: { headers: new Headers({ a: "1" }) } }).toMatchObject({
+        res: { headers: new Headers({ a: "1" }) },
+      });
+      expect({ res: { headers: new Headers({ a: "1" }) } }).not.toMatchObject({
+        res: { headers: new Headers({ a: "2" }) },
+      });
+
+      expect([new Headers({ a: "1" })]).toMatchObject([new Headers({ a: "1" })]);
+      expect([new Headers({ a: "1" })]).not.toMatchObject([new Headers({ a: "2" })]);
+
+      expect(new Headers({ a: "1" })).toMatchObject(new Headers({ a: "1" }));
+      expect(new Headers({ a: "1" })).not.toMatchObject(new Headers({ a: "2" }));
+    });
+
+    test("URLSearchParams on the expected side are compared by their entries", () => {
+      expect({ p: new URLSearchParams("a=1") }).toMatchObject({ p: new URLSearchParams("a=1") });
+      expect({ p: new URLSearchParams("a=1&b=2") }).toMatchObject({ p: new URLSearchParams("a=1&b=2") });
+      expect({ p: new URLSearchParams("a=1") }).toMatchObject({ p: expect.any(URLSearchParams) });
+
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=2") });
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("b=1") });
+      expect({ p: new URLSearchParams("a=1") }).not.toMatchObject({ p: new URLSearchParams("a=1&b=2") });
+      expect({ p: new URLSearchParams("a=1&b=2") }).not.toMatchObject({ p: new URLSearchParams("a=1") });
+
+      expect({ req: { query: new URLSearchParams("a=1") } }).toMatchObject({
+        req: { query: new URLSearchParams("a=1") },
+      });
+      expect({ req: { query: new URLSearchParams("a=1") } }).not.toMatchObject({
+        req: { query: new URLSearchParams("a=2") },
+      });
+
+      expect([new URLSearchParams("a=1")]).toMatchObject([new URLSearchParams("a=1")]);
+      expect([new URLSearchParams("a=1")]).not.toMatchObject([new URLSearchParams("a=2")]);
+
+      expect(new URLSearchParams("a=1")).toMatchObject(new URLSearchParams("a=1"));
+      expect(new URLSearchParams("a=1")).not.toMatchObject(new URLSearchParams("a=2"));
+    });
+
+    if (isBun) {
+      test("URL on the expected side is compared by href", () => {
+        expect({ u: new URL("https://example.com/a") }).toMatchObject({ u: new URL("https://example.com/a") });
+        expect({ u: new URL("https://example.com/a") }).not.toMatchObject({ u: new URL("https://example.com/b") });
+      });
+
+      test("Bun.deepMatch compares Headers and URLSearchParams by their entries", () => {
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "1" }) })).toBe(true);
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "2" }) })).toBe(false);
+        expect(Bun.deepMatch({ h: new Headers({ a: "1" }) }, { h: new Headers({ a: "1", b: "2" }) })).toBe(false);
+        expect(Bun.deepMatch(new Headers({ a: "1" }), new Headers({ a: "1" }))).toBe(true);
+        expect(Bun.deepMatch(new Headers({ a: "1" }), new Headers({ a: "2" }))).toBe(false);
+
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1") }, { p: new URLSearchParams("a=1") })).toBe(true);
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1") }, { p: new URLSearchParams("a=2") })).toBe(false);
+        // same size and every entry of one side is found on the other side, but not the other way around
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1&b=1") }, { p: new URLSearchParams("a=1&a=1") })).toBe(false);
+        expect(Bun.deepMatch({ p: new URLSearchParams("a=1&a=1") }, { p: new URLSearchParams("a=1&b=1") })).toBe(false);
+        expect(Bun.deepMatch(new URLSearchParams("a=1"), new URLSearchParams("a=1"))).toBe(true);
+        expect(Bun.deepMatch(new URLSearchParams("a=1"), new URLSearchParams("a=2"))).toBe(false);
+      });
+
+      test("snapshot property matchers compare Headers and URLSearchParams by their entries", () => {
+        expect(() =>
+          expect({ h: new Headers({ a: "1" }) }).toMatchInlineSnapshot({ h: new Headers({ a: "2" }) }, `unreachable`),
+        ).toThrow("to match properties from received object");
+        expect(() =>
+          expect({ p: new URLSearchParams("a=1") }).toMatchInlineSnapshot(
+            { p: new URLSearchParams("a=2") },
+            `unreachable`,
+          ),
+        ).toThrow("to match properties from received object");
+      });
+
+      test("expect.objectContaining with a Headers sample matches by its entries", () => {
+        expect(new Headers({ a: "1" })).toEqual(expect.objectContaining(new Headers({ a: "1" })));
+        expect(new Headers({ a: "1" })).not.toEqual(expect.objectContaining(new Headers({ a: "2" })));
+      });
+    }
+
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

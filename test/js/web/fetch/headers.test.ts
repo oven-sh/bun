@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { bunEnv, bunExe } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -737,42 +738,73 @@ describe("Headers", () => {
   });
 
   describe("growth limit", () => {
-    // Every set-cookie value is one entry in a Vector<String>. That vector holds at
-    // most min(INT32_MAX, the synthetic allocation limit) / 8 entries.
-    // setSyntheticAllocationLimitForTesting floors at 1 MiB, which puts the bound at
-    // 131072 values. Without it the bound is 262343954 values and about 2 GB.
-    // 131072 append() calls take about 4 s on a debug ASAN build (milliseconds on a
-    // release build), which is too close to the 5 s default, so the test names a timeout.
-    const LIMIT_BYTES = 1024 * 1024;
+    // Every set-cookie value is one entry in a Vector<String>, which holds at most
+    // min(INT32_MAX, the synthetic allocation limit) / 8 entries. The real limit
+    // needs 262343954 values and 2 GB. The child runs with a 64 KiB limit, which
+    // puts it at 8192 values.
+    const LIMIT_BYTES = 64 * 1024;
     const MAX_SET_COOKIE = LIMIT_BYTES / 8;
-    const TIMEOUT_MS = 30_000;
 
-    test("append('set-cookie') throws a RangeError past the vector's largest size", () => {
-      const setLimit = internalForTesting.setSyntheticAllocationLimitForTesting;
-      const previousLimit = setLimit(LIMIT_BYTES);
-      try {
-        const headers = new Headers();
-        for (let i = 0; i < MAX_SET_COOKIE; i++) headers.append("set-cookie", "a=1");
-        expect(headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
+    test("append('set-cookie') throws a RangeError when the list cannot grow", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const headers = new Headers();
+            let stored = 0;
+            let appendError = null;
+            try {
+              for (; stored < ${MAX_SET_COOKIE} + 100; stored++) headers.append("set-cookie", "a=" + stored);
+            } catch (e) {
+              appendError = e.name + ": " + e.message;
+            }
+            const values = headers.getSetCookie();
 
-        expect(() => headers.append("set-cookie", "a=1")).toThrow(RangeError);
-        expect(() => headers.append("set-cookie", "a=1")).toThrow("Headers maximum size exceeded");
+            let constructorError = null;
+            try {
+              new Headers([...values, "one=more"].map(value => ["set-cookie", value]));
+            } catch (e) {
+              constructorError = e.name + ": " + e.message;
+            }
 
-        // The refused value is not stored, and the object still works.
-        expect(headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
-        headers.set("content-type", "text/plain");
-        expect(headers.get("content-type")).toBe("text/plain");
+            // The object still works at the limit.
+            headers.set("content-type", "text/plain");
+            const iterated = [...headers].length;
+            const copied = new Response(null, { headers }).clone().headers.getSetCookie().length;
+            headers.set("set-cookie", "b=2");
 
-        // A Headers at the bound can still be copied: the copy holds exactly the bound.
-        const response = new Response(null, { headers });
-        expect(response.clone().headers.getSetCookie().length).toBe(MAX_SET_COOKIE);
+            console.log(JSON.stringify({
+              stored,
+              appendError,
+              kept: values.length,
+              last: values.at(-1),
+              constructorError,
+              iterated,
+              copied,
+              afterSet: headers.getSetCookie(),
+            }));
+          `,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        // set() replaces every set-cookie value with one, so it succeeds at the bound.
-        headers.set("set-cookie", "b=2");
-        expect(headers.getSetCookie()).toEqual(["b=2"]);
-      } finally {
-        setLimit(previousLimit);
-      }
-    }, TIMEOUT_MS);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout || "{}")).toEqual({
+        stored: MAX_SET_COOKIE,
+        appendError: "RangeError: Out of memory",
+        // The refused value is not stored.
+        kept: MAX_SET_COOKIE,
+        last: "a=" + (MAX_SET_COOKIE - 1),
+        constructorError: "RangeError: Out of memory",
+        iterated: MAX_SET_COOKIE + 1,
+        copied: MAX_SET_COOKIE,
+        afterSet: ["b=2"],
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 });

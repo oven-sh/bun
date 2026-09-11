@@ -2496,6 +2496,13 @@ typedef struct PicoHTTPHeaders {
     size_t len;
 } PicoHTTPHeaders;
 
+// One message cannot carry the 262 million set-cookie fields that fill the list, so only a failed allocation fails here.
+static void addParsedHeader(HTTPHeaderMap& map, HTTPHeaderName name, const String& value)
+{
+    bool added = map.add(name, value);
+    RELEASE_ASSERT(added);
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
@@ -2527,17 +2534,14 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             // memory safety: the header names must be cloned if they're not statically known
             // the value must also be cloned
             // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
-            bool added;
             if (WebCore::findHTTPHeaderName(nameView, name)) {
-                added = map.add(name, value);
+                addParsedHeader(map, name, value);
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
                 // we don't have that information here, so map.addUncommonHeaderCloneName exists
-                added = map.addUncommonHeaderCloneName(nameView, value);
+                map.addUncommonHeaderCloneName(nameView, value);
             }
-            // Every transport caps one response's header block, so only a failed allocation gets here.
-            RELEASE_ASSERT(added);
         }
 
         headers->setInternalHeaders(WTF::move(map));
@@ -2561,11 +2565,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 
         HTTPHeaderName name;
 
-        bool added = WebCore::findHTTPHeaderName(nameView, name)
-            ? map.add(name, WTF::move(value))
-            : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        // The parser caps the header count at UWS_HTTP_MAX_HEADERS_COUNT, so only a failed allocation gets here.
-        RELEASE_ASSERT(added);
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            addParsedHeader(map, name, value);
+        } else {
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        }
     }
     headers->setInternalHeaders(WTF::move(map));
     return headers;
@@ -2585,11 +2589,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
             memcpy(data.data(), val.data(), val.length());
 
         HTTPHeaderName hn;
-        bool added = WebCore::findHTTPHeaderName(nameView, hn)
-            ? map.add(hn, WTF::move(value))
-            : map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        // es_max_header_list_size caps one request's headers at 64 KiB, so only a failed allocation gets here.
-        RELEASE_ASSERT(added);
+        if (WebCore::findHTTPHeaderName(nameView, hn)) {
+            addParsedHeader(map, hn, value);
+        } else {
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+        }
     });
     headers->setInternalHeaders(WTF::move(map));
     return headers;

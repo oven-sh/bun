@@ -43,15 +43,6 @@ extern "C" void highway_lower_ascii16(const uint16_t* src, size_t len, uint16_t*
 
 namespace WebCore {
 
-// Script controls how long these vectors get, and Vector::append CRASH()es past the largest capacity.
-template<typename VectorType, typename U>
-static bool tryAppendHeader(VectorType& vector, U&& value)
-{
-    if (vector.size() >= Bun::maxVectorSize<typename VectorType::ValueType>()) [[unlikely]]
-        return false;
-    return vector.tryAppend(std::forward<U>(value));
-}
-
 String lowercaseHeaderName(const String& name)
 {
     if (name.isEmpty())
@@ -125,40 +116,40 @@ String HTTPHeaderMap::getUncommonHeader(const StringView name) const
     return index != notFound ? m_uncommonHeaders[index].value : String();
 }
 
-bool HTTPHeaderMap::set(const String& name, const String& value)
+void HTTPHeaderMap::set(const String& name, const String& value)
 {
     HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName))
-        return set(headerName, value);
+    if (findHTTPHeaderName(name, headerName)) {
+        set(headerName, value);
+        return;
+    }
 
-    return setUncommonHeader(name, value);
+    setUncommonHeader(name, value);
 }
 
-bool HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
+void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound)
-        return tryAppendHeader(m_uncommonHeaders, UncommonHeader { name, value });
-
-    m_uncommonHeaders[index].value = value;
-    return true;
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = value;
 }
 
-bool HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
+void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound)
-        return tryAppendHeader(m_uncommonHeaders, UncommonHeader { name, value });
-
-    m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
-    return true;
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
-bool HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
+void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -167,11 +158,9 @@ bool HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const Stri
         std::span<Latin1Character> ptr;
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
         memcpy(ptr.data(), name.span8().data(), name.length());
-        return tryAppendHeader(m_uncommonHeaders, UncommonHeader { nameCopy, value });
-    }
-
-    m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
-    return true;
+        m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
+    } else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 bool HTTPHeaderMap::add(const String& name, const String& value)
@@ -184,9 +173,9 @@ bool HTTPHeaderMap::add(const String& name, const String& value)
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound)
-        return tryAppendHeader(m_uncommonHeaders, UncommonHeader { name, value });
-
-    m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
     return true;
 }
 
@@ -275,14 +264,12 @@ String HTTPHeaderMap::getIndex(HTTPHeaderMap::HeaderIndex index) const
         return m_commonHeaders[index.index].value;
     return m_uncommonHeaders[index.index].value;
 }
-bool HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
+void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
-        Vector<String, 0> replacement;
-        if (!tryAppendHeader(replacement, value)) [[unlikely]]
-            return false;
-        m_setCookieHeaders = WTF::move(replacement);
-        return true;
+        m_setCookieHeaders.clear();
+        m_setCookieHeaders.append(value);
+        return;
     }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
@@ -292,7 +279,6 @@ bool HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
         m_commonHeaders.append(CommonHeader { name, value });
     else
         m_commonHeaders[index].value = value;
-    return true;
 }
 
 bool HTTPHeaderMap::setIndex(HTTPHeaderMap::HeaderIndex index, const String& value)
@@ -333,8 +319,12 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
 
 bool HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 {
-    if (name == HTTPHeaderName::SetCookie)
-        return tryAppendHeader(m_setCookieHeaders, value);
+    if (name == HTTPHeaderName::SetCookie) {
+        // Script grows this list one cheap call at a time, and Vector::append CRASH()es past the largest capacity.
+        if (m_setCookieHeaders.size() >= Bun::maxVectorSize<String>()) [[unlikely]]
+            return false;
+        return m_setCookieHeaders.tryAppend(value);
+    }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;

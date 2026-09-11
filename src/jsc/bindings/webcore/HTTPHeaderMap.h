@@ -164,8 +164,8 @@ public:
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
 
     WEBCORE_EXPORT String get(const StringView name) const;
-    // Mutators return false, map unchanged, when a vector is at Bun::maxVectorSize<T>() or allocation fails.
-    [[nodiscard]] WEBCORE_EXPORT bool set(const String& name, const String& value);
+    WEBCORE_EXPORT void set(const String& name, const String& value);
+    // add() returns false, map unchanged, when the set-cookie list is full or its allocation fails.
     [[nodiscard]] WEBCORE_EXPORT bool add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
@@ -178,7 +178,7 @@ public:
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
-    [[nodiscard]] bool set(HTTPHeaderName, const String& value);
+    void set(HTTPHeaderName, const String& value);
     [[nodiscard]] bool add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
@@ -230,9 +230,9 @@ public:
         return !(a == b);
     }
 
-    [[nodiscard]] bool setUncommonHeader(const String& name, const String& value);
-    [[nodiscard]] bool addUncommonHeader(const String& name, const String& value);
-    [[nodiscard]] bool addUncommonHeaderCloneName(const StringView name, const String& value);
+    void setUncommonHeader(const String& name, const String& value);
+    void addUncommonHeader(const String& name, const String& value);
+    void addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;

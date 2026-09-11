@@ -89,11 +89,6 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
     return true;
 }
 
-static Exception headersTooLargeException()
-{
-    return Exception { RangeError, "Headers maximum size exceeded"_s };
-}
-
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     // The common path here is a brand-new header with no leading/trailing HTTP
@@ -128,10 +123,10 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName != HTTPHeaderName::SetCookie) {
-            if (!headers.setIndex(index, *valueToSet) && !headers.set(headerName, *valueToSet))
-                return headersTooLargeException();
+            if (!headers.setIndex(index, *valueToSet))
+                headers.set(headerName, *valueToSet);
         } else if (!headers.add(headerName, normalizedValue)) {
-            return headersTooLargeException();
+            return Exception { OutOfMemoryError };
         }
 
         return {};
@@ -147,8 +142,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.setIndex(index, *valueToSet) && !headers.set(name, *valueToSet))
-        return headersTooLargeException();
+    if (!headers.setIndex(index, *valueToSet))
+        headers.set(name, *valueToSet);
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -165,11 +160,11 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    bool stored = header.keyAsHTTPHeaderName
+    bool added = header.keyAsHTTPHeaderName
         ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
         : headers.add(header.key, header.value);
-    if (!stored)
-        return headersTooLargeException();
+    if (!added)
+        return Exception { OutOfMemoryError };
 
     return {};
 }
@@ -220,11 +215,9 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
         HTTPHeaderMap headers;
-        auto& other = otherHeaders.m_headers;
-        if (!headers.commonHeaders().tryAppend(other.commonHeaders().span())
-            || !headers.uncommonHeaders().tryAppend(other.uncommonHeaders().span())
-            || !headers.getSetCookieHeaders().tryAppend(other.getSetCookieHeaders().span()))
-            return headersTooLargeException();
+        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
+        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
+        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
         setInternalHeaders(WTF::move(headers));
         m_updateCounter++;
         return {};
@@ -302,8 +295,7 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
         return {};
 
     ++m_updateCounter;
-    if (!m_headers.set(name, normalizedValue))
-        return headersTooLargeException();
+    m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
@@ -321,8 +313,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         return {};
 
     ++m_updateCounter;
-    if (!m_headers.set(name, normalizedValue))
-        return headersTooLargeException();
+    m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
@@ -335,7 +326,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
         bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
+        m_keys.reserveCapacity(m_headers->sizeAfterJoiningSetCookieHeader());
         if (m_lowerCaseKeys) {
             for (auto& header : m_headers->m_headers)
                 m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());

@@ -2982,9 +2982,8 @@ impl H2FrameParser {
     /// a semi-connected socket runs no terminal callback (stranding its refs, see the
     /// close host_fn in socket_body).
     fn close_transport_after_fatal_write(&self) {
-        // A client has a request to fail. A server has nobody to tell that a client
-        // vanished: Node's server sessions close quietly, and an 'error' on a stream
-        // with no listener would end the process.
+        // Only a client reports the errno: it has a request to fail. A server closes
+        // quietly, as Node's does: an unheard stream 'error' would end the process.
         let errno = if self.is_server.get() {
             0
         } else {

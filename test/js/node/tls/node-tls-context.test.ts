@@ -361,7 +361,7 @@ describe("tls.Server", () => {
 
   // server.close() keeps the connections it already accepted. One that starts
   // its handshake afterwards still selects its context by server name.
-  describe.each(["addContext"] as ("addContext" | "SNICallback")[])("a handshake that starts after close() resolves %s", mode => {
+  describe.each(["addContext", "SNICallback"] as const)("a handshake that starts after close() resolves %s", mode => {
     it("like one that starts before it", async () => {
       // agent1 chains to ca1, the client's agent3 to ca2: the default context
       // authorizes the client, the a.example.com context does not.

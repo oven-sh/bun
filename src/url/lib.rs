@@ -57,8 +57,7 @@ pub mod whatwg {
     // Getters take `&URL` (C++ never mutates on read). String inputs are
     // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
     // as owning `String`. `URL__deinit` frees the allocation, so it stays
-    // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
-    // `bun_jsc::URLJsc`.
+    // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
     unsafe extern "C" {
         safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
@@ -160,11 +159,6 @@ pub mod whatwg {
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
             Self::from_string(&String::borrow_utf8(input))
-        }
-        /// # Safety
-        /// `url` is a heap `WTF::URL` nothing else frees.
-        pub unsafe fn from_raw(url: NonNull<URL>) -> Self {
-            Self(url)
         }
     }
 
@@ -703,7 +697,14 @@ impl<'a> URL<'a> {
             url.pathname = url.path;
         }
 
-        if let Some(q) = strings::index_of_char(&base[offset as usize..], b'?') {
+        // The fragment starts at the first `#`, so a `?` after it is part of
+        // the fragment, not the start of the query.
+        let before_hash = match strings::index_of_char(&base[offset as usize..], b'#') {
+            Some(hash) => &base[offset as usize..][..hash as usize],
+            None => &base[offset as usize..],
+        };
+
+        if let Some(q) = strings::index_of_char(before_hash, b'?') {
             offset += q;
             url.path = &base[path_offset as usize..][0..q as usize];
             can_update_path = false;
@@ -1773,6 +1774,29 @@ mod tests {
             .expect("Vec<u8> writes cannot fail");
         assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
         out
+    }
+
+    #[test]
+    fn fragment_is_not_part_of_the_path_or_query() {
+        let url = URL::parse(b"http://localhost:3000/path#frag?x=1");
+        assert_eq!(url.pathname, b"/path");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"");
+        assert_eq!(url.hash, b"#frag?x=1");
+
+        let url = URL::parse(b"http://localhost:3000/cb#access_token=abc&scope=x?y");
+        assert_eq!(url.pathname, b"/cb");
+        assert_eq!(url.hash, b"#access_token=abc&scope=x?y");
+
+        let url = URL::parse(b"http://localhost:3000/#?");
+        assert_eq!(url.pathname, b"/");
+        assert_eq!(url.hash, b"#?");
+
+        let url = URL::parse(b"http://localhost:3000/path?q=1#frag?x=2");
+        assert_eq!(url.pathname, b"/path?q=1");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"?q=1");
+        assert_eq!(url.hash, b"#frag?x=2");
     }
 
     #[test]

@@ -126,6 +126,7 @@ private:
 namespace JSC {
 struct HashTableValue;
 class DecoderStringTable;
+class PrelinkedModuleGraph;
 }
 
 namespace Bun {
@@ -285,9 +286,15 @@ public:
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
 
+    // The executable's pre-resolved module graph for this VM, created on first use over decoderStringTable() from the
+    // standalone module graph; null when there is none (or it does not validate).
+    JSC::PrelinkedModuleGraph* prelinkedModuleGraph(JSC::VM&);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
     std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
+    RefPtr<JSC::PrelinkedModuleGraph> m_prelinkedModuleGraph;
+    bool m_prelinkedModuleGraphChecked { false };
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
@@ -380,10 +387,21 @@ inline constexpr SubspaceForInit subspaceForInit {
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
 };
 
+// True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.
+template<typename T>
+inline constexpr bool inheritsJSCellDestroy = [] {
+    if constexpr (requires { static_cast<void (*)(JSC::JSCell*)>(&T::destroy); })
+        return static_cast<void (*)(JSC::JSCell*)>(&T::destroy) == static_cast<void (*)(JSC::JSCell*)>(&JSC::JSCell::destroy);
+    else
+        return false;
+}();
+
 template<typename T, UseCustomHeapCellType useCustomHeapCellType>
 ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, SubspaceSlots slots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&) = nullptr)
 {
     static_assert(useCustomHeapCellType == UseCustomHeapCellType::Yes || std::is_base_of_v<JSC::JSDestructibleObject, T> || T::needsDestruction == JSC::DoesNotNeedDestruction);
+    static_assert(T::needsDestruction == JSC::DoesNotNeedDestruction || std::is_trivially_destructible_v<T> || !inheritsJSCellDestroy<T>,
+        "the GC sweeps this cell type with JSCell::destroy, so its members' destructors never run; define `static void destroy(JSC::JSCell*)`");
     auto& clientData = *downcast<JSVMClientData>(vm.clientData);
     auto* clientSpace = *reinterpret_cast<JSC::GCClient::IsoSubspace**>(reinterpret_cast<uint8_t*>(&clientData.clientSubspaces()) + slots.clientOffset);
     if (clientSpace)

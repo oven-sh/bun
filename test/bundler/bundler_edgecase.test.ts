@@ -1435,6 +1435,49 @@ describe("bundler", () => {
       stdout: "12 312\n12 3124",
     },
   });
+  // A member initialized with a concatenation is stored as a rope. Folding a
+  // template literal that inlines it used to append the template's text onto
+  // that rope, changing the member everywhere: its declaration, every inlined
+  // use in the same file and every cross-module use.
+  itBundled("edgecase/EnumInliningRopeStringTemplateLiteral", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Routes, users } from "./routes";
+        enum Local {
+          X = "x" + "y",
+        }
+        function tail(prefix: string) {
+          return \`\${prefix}-\${Local.X}-z\`;
+        }
+        console.log(users);
+        console.log(Routes.Base);
+        console.log(\`\${Routes.Base}/posts\`);
+        console.log(JSON.stringify(Routes));
+        console.log(tail("p"));
+        console.log(Local.X);
+        console.log(JSON.stringify(Local));
+      `,
+      "/routes.ts": /* ts */ `
+        export enum Routes {
+          Base = "/api" + "/v1",
+          Health = "/health",
+        }
+        export const users = \`\${Routes.Base}/users\`;
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: `
+        /api/v1/users
+        /api/v1
+        /api/v1/posts
+        {"Base":"/api/v1","Health":"/health"}
+        p-xy-z
+        xy
+        {"X":"xy"}
+      `,
+    },
+  });
   itBundled("edgecase/ProtoNullProtoInlining", {
     files: {
       "/entry.ts": `
@@ -3318,6 +3361,46 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // A macro result or a folded constant that is NaN, ±Infinity or undefined
+  // prints as the bare global name. The renamer reserves those names, so a
+  // user binding called NaN, Infinity or undefined is renamed instead of
+  // capturing the printed value.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/MacroNaNInfinityUndefinedShadowed${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { nan, inf, ninf, undef } from "./macro.ts" with { type: "macro" };
+          import * as top from "./top-level.ts";
+          function f(NaN, Infinity, undefined) {
+            return [
+              typeof nan(), typeof undef(),
+              String(nan()), String(inf()), String(ninf()), String(undef()),
+              String(+"x"), String(void 0),
+              NaN, Infinity, undefined,
+            ];
+          }
+          console.write(JSON.stringify([f("n", "i", "u"), top.NaN, top.Infinity, top.undefined, String(nan()), String(inf())]));
+        `,
+        "/macro.ts": /* js */ `
+          export function nan() { return NaN; }
+          export function inf() { return Infinity; }
+          export function ninf() { return -Infinity; }
+          export function undef() { return undefined; }
+        `,
+        "/top-level.ts": /* js */ `
+          export const NaN = "N", Infinity = "I";
+          export var undefined = "U";
+        `,
+      },
+      target: "bun",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout:
+          '[["number","undefined","NaN","Infinity","-Infinity","undefined","NaN","undefined","n","i","u"],"N","I","U","NaN","Infinity"]',
+      },
+    });
+  }
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant

@@ -213,6 +213,7 @@ impl HTTPRequestBody {
                 )
                 .throw());
         }
+        body_value.to_blob_if_in_memory();
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
                 // `BodyValue` now has `Drop` (H3), so we cannot move

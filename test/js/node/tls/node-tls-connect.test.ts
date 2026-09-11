@@ -1957,9 +1957,9 @@ async function runShutdownFixture(exe: string, ...mode: string[]) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const report = JSON.parse(stdout);
+  // The report is the fixture's last line before exit(0): no exit 0, nothing to parse.
   expect(exitCode).toBe(0);
-  return report;
+  return JSON.parse(stdout);
 }
 describe.each([
   ["bun", bunExe()],

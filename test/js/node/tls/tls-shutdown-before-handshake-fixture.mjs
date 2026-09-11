@@ -224,9 +224,14 @@ if (mode === "end" || mode === "destroySoon") {
   const client = tls.connect({ socket: transport.stream, rejectUnauthorized: false, allowHalfOpen: true });
   for (const event of ["secureConnect", "finish", "close"]) client.on(event, () => log.push(event));
   client.on("error", error => log.push(`error:${error.code}`));
+  const finished = Promise.withResolvers();
+  client.on("finish", () => finished.resolve());
   await once(client, "secureConnect");
   client.end();
-  await serverSawCloseNotify.promise;
+  // 'finish' is the client's own last step here, and it is the sampling point:
+  // node runs the transport's final() before it, bun inside the same shutdown.
+  // The server's 'end' can come before or after it.
+  await Promise.all([finished.promise, serverSawCloseNotify.promise]);
 
   const { writableFinished, readyState, destroyed } = client;
   const transportFinalCalled = transport.finalCalled;

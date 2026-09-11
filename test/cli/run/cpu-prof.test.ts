@@ -450,11 +450,12 @@ describe.concurrent("--cpu-prof", () => {
   // samples are released. Bun only released them at exit, so a per-frame bound
   // function (React's scheduler makes one per render) kept every frame's data
   // alive for the whole run. The event loop now drains the profiler while it
-  // runs, so the heap after a full GC stays flat.
+  // runs, so a full GC frees the frames.
   test("sampled callees are released while profiling runs", async () => {
     using dir = tempDir("cpu-prof-gc-roots", {
       "test.mjs": `
         let sink = 0;
+        const frames = [];
         function work(frame) {
           let s = 0;
           for (const op of frame.operations) s += op.x;
@@ -463,12 +464,13 @@ describe.concurrent("--cpu-prof", () => {
         function renderFrame(n) {
           const frame = { operations: [], cells: new Array(50000).fill(n) };
           for (let i = 0; i < 2000; i++) frame.operations.push({ x: i });
+          frames.push(new WeakRef(frame));
           const callee = work.bind(null, frame);
           for (let k = 0; k < 100; k++) sink += callee();
         }
-        const heapMB = () => {
+        const aliveFrames = () => {
           Bun.gc(true);
-          return process.memoryUsage().heapUsed / 1048576;
+          return frames.filter(ref => ref.deref() !== undefined).length;
         };
         for (let n = 0; n < 150; n++) {
           renderFrame(n);
@@ -477,12 +479,12 @@ describe.concurrent("--cpu-prof", () => {
         // The profiler drains on an event loop tick at most once per 100ms.
         // Poll until the drained samples let the GC free the frames.
         const deadline = performance.now() + 1000;
-        let heapAfterGC = heapMB();
-        while (heapAfterGC >= 8 && performance.now() < deadline) {
+        let alive = aliveFrames();
+        while (alive > 0 && performance.now() < deadline) {
           await Bun.sleep(20);
-          heapAfterGC = heapMB();
+          alive = aliveFrames();
         }
-        console.log(JSON.stringify({ heapAfterGC: Math.round(heapAfterGC), sink: sink > 0 }));
+        console.log(JSON.stringify({ alive, sink: sink > 0 }));
       `,
     });
 
@@ -498,8 +500,9 @@ describe.concurrent("--cpu-prof", () => {
     expect(stderr).toBe("");
     const result = JSON.parse(stdout);
     expect(result.sink).toBe(true);
-    // Without the fix this is 25 MB or more: every sampled frame's 50000-element array.
-    expect(result.heapAfterGC).toBeLessThan(8);
+    // Without the fix, every frame that was sampled through its bound function
+    // stays alive: about 90 of 150 on a debug build.
+    expect(result.alive).toBeLessThan(4);
     expect(exitCode).toBe(0);
 
     // Draining must not lose samples: the profile still covers the workload.

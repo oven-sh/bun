@@ -453,8 +453,8 @@ impl EventLoop {
 
         // That user code can also post deferred tasks of its own (the peer end of an in-process
         // transport answering the frame it was just handed). Those run at the next checkpoint,
-        // the way node submits them from a fresh immediate; a yield task makes sure the loop
-        // stays alive and does not block until there has been one.
+        // the way node submits them from a fresh immediate. A yield task keeps the loop alive,
+        // and keeps its poll from blocking, until that checkpoint has run.
         if self.deferred_tasks.take_unrun() {
             let task = ManagedTask::ManagedTask::new(
                 core::ptr::from_mut(&mut self.deferred_tasks),

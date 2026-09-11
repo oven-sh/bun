@@ -12,13 +12,13 @@ pub(crate) fn apply_standalone_runtime_flags(
     graph: &StandaloneModuleGraph,
 ) {
     use bun_options_types::schema::api::DotEnvBehavior;
-    let disable_env = graph.flags.contains(GraphFlags::DISABLE_DEFAULT_ENV_FILES);
-    b.options.env.disable_default_env_files = disable_env;
-    b.options.env.behavior = if disable_env {
-        DotEnvBehavior::disable
-    } else {
-        DotEnvBehavior::LoadAllWithoutInlining
-    };
+    b.options.env.disable_default_env_files =
+        graph.flags.contains(GraphFlags::DISABLE_DEFAULT_ENV_FILES);
+    // Not `disable` when .env autoload is off: every behavior other than this
+    // one makes `defines_from_transform_options` inline `process.env.NODE_ENV`,
+    // `BUN_ENV` and `process.browser` into the files transpiled at runtime.
+    // `disable_default_env_files` alone skips the .env files (as `--no-env-file`).
+    b.options.env.behavior = DotEnvBehavior::LoadAllWithoutInlining;
 
     b.resolver.opts.load_tsconfig_json =
         !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);

@@ -2021,8 +2021,7 @@ function pushToStream(stream, data) {
   }
 }
 
-// Ends the readable. A HEADERS frame with END_STREAM calls this before its event is emitted
-// (node's onSessionHeaders): the frame's streamEnd dispatch only runs a tick drain later.
+// Like node's onSessionHeaders, a HEADERS frame with END_STREAM ends the readable before its event.
 function endInboundHalf(stream: Http2Stream) {
   if (!stream.rstCode) stream.rstCode = 0;
   pushToStream(stream, null);

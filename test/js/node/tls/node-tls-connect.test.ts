@@ -1986,6 +1986,41 @@ describe.each([
     });
   });
 
+  // Both shapes shut the socket down before it has its TLS handle. The FIN waits
+  // for the transport, as node's _final does on `connecting`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  describe.concurrent("before the TLS handle is attached", () => {
+    it.skipIf(!exe)("end() and destroySoon() wait for a tls.connect({ socket }) transport to connect", async () => {
+      const ended = {
+        log: ["transport connect", "finish"],
+        peerSawFin: true,
+        writableFinished: true,
+        readyState: "readOnly",
+        destroyed: false,
+      };
+      const destroyed = {
+        log: ["transport connect", "finish", "close"],
+        peerSawFin: true,
+        writableFinished: true,
+        readyState: "closed",
+        destroyed: true,
+      };
+      expect(await run("pending-transport")).toEqual({
+        "end connecting": ended,
+        "end unconnected": ended,
+        "destroySoon connecting": destroyed,
+        "destroySoon unconnected": destroyed,
+      });
+    });
+
+    it.skipIf(!exe)("a server-side TLSSocket end()s and destroySoon()s in the tick that wraps the socket", async () => {
+      expect(await run("server-same-tick")).toEqual({
+        end: { log: ["finish"], clientSawFin: true, writableFinished: true, destroyed: false },
+        destroySoon: { log: ["finish", "close"], clientSawFin: true, writableFinished: true, destroyed: true },
+      });
+    });
+  });
+
   it.skipIf(!exe)("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
     expect(await run("server-end")).toEqual({
       log: ["end secureConnecting=true", "finish"],

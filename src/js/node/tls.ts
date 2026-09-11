@@ -897,7 +897,8 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  if (!this._handle) return callback();
+  // net.Socket's _final waits for a handle that is still on its way, and finishes at once when none is.
+  if (!this._handle) return NetSocket.prototype._final.$call(this, callback);
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));

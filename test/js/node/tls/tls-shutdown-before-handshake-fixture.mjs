@@ -60,6 +60,83 @@ if (mode === "end" || mode === "destroySoon") {
   client.destroy();
   peer.close();
   report({ peerSawFin: true, writableFinished, readyState, destroyed });
+} else if (mode === "pending-transport") {
+  // tls.connect({ socket }) over a net.Socket that is not connected yet, shut
+  // down in the same tick: the FIN has to wait for the transport. One report
+  // per method and transport, each on a socket and a peer of its own.
+  async function shutDown(method, transport) {
+    const log = [];
+    const peer = await stalledPeer();
+    const raw = transport === "connecting" ? net.connect(peer.port, "127.0.0.1") : new net.Socket();
+    raw.on("connect", () => log.push("transport connect"));
+
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    for (const event of ["secureConnect", "finish", "error", "close"]) {
+      client.on(event, arg => log.push(arg?.code ? `${event}:${arg.code}` : event));
+    }
+    client[method]();
+    if (transport === "unconnected") raw.connect(peer.port, "127.0.0.1");
+
+    await Promise.all([once(client, method === "end" ? "finish" : "close"), peer.sawFin]);
+
+    const { writableFinished, readyState, destroyed } = client;
+    const result = { log: [...log], peerSawFin: true, writableFinished, readyState, destroyed };
+    client.destroy();
+    raw.destroy();
+    peer.close();
+    return result;
+  }
+
+  const reports = {};
+  await Promise.all(
+    ["end", "destroySoon"].flatMap(method =>
+      ["connecting", "unconnected"].map(async transport => {
+        reports[`${method} ${transport}`] = await shutDown(method, transport);
+      }),
+    ),
+  );
+  console.log(JSON.stringify(reports));
+  process.exit(0);
+} else if (mode === "server-same-tick") {
+  // new TLSSocket(socket, { isServer: true }) shut down in the tick that wraps
+  // it. One report per method, each on a server and a connection of its own.
+  async function shutDown(method) {
+    const log = [];
+    const clientSawFin = Promise.withResolvers();
+    const wrapped = Promise.withResolvers();
+    const server = net.createServer(raw => {
+      const socket = new TLSSocket(raw, {
+        isServer: true,
+        key: process.env.TLS_KEY,
+        cert: process.env.TLS_CERT,
+      });
+      socket.on("error", () => {});
+      raw.on("error", () => {});
+      for (const event of ["finish", "close"]) socket.on(event, () => log.push(event));
+      wrapped.resolve({ socket, done: once(socket, method === "end" ? "finish" : "close") });
+      socket[method]();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("data", () => {});
+    client.on("error", () => {});
+    client.on("end", () => clientSawFin.resolve());
+
+    const { socket, done } = await wrapped.promise;
+    await Promise.all([done, clientSawFin.promise]);
+
+    const { writableFinished, destroyed } = socket;
+    const result = { log: [...log], clientSawFin: true, writableFinished, destroyed };
+    client.destroy();
+    socket.destroy();
+    server.close();
+    return result;
+  }
+
+  const [end, destroySoon] = await Promise.all(["end", "destroySoon"].map(shutDown));
+  console.log(JSON.stringify({ end, destroySoon }));
+  process.exit(0);
 } else if (mode === "server-end") {
   const clientSawFin = Promise.withResolvers();
   let serverSocket;

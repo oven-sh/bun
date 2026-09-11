@@ -187,6 +187,9 @@ function onUpgradeWriteClose(callback) {
   callback($ERR_SOCKET_CLOSED());
 }
 const kUpgradeAttached = Symbol("kUpgradeAttached");
+// True while a TLS socket has no handle because it adopts one later: when the transport it was given
+// connects, or one tick after a server-side wrap. kUpgradeAttached is emitted once it has the handle.
+const kUpgradePending = Symbol("kUpgradePending");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
 const kOnreadBuffer = Symbol("kOnreadBuffer");
@@ -2003,6 +2006,7 @@ Socket.prototype.connect = function connect(...args) {
       this.authorized = false;
       this.secureConnecting = true;
       this[kPreHandshakeWrite] = false;
+      this[kUpgradePending] = false;
       this._secureEstablished = false;
       this._securePending = true;
       this[kConnectOptions] = options;
@@ -2070,6 +2074,7 @@ Socket.prototype.connect = function connect(...args) {
             }
           } else {
             // wait to be connected
+            this[kUpgradePending] = true;
             connection.once("connect", () => {
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
@@ -2118,6 +2123,8 @@ Socket.prototype.connect = function connect(...args) {
                   throw new Error("Invalid socket");
                 }
               }
+              this[kUpgradePending] = false;
+              this.emit(kUpgradeAttached);
             });
           }
         }
@@ -2276,6 +2283,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
 Socket.prototype._final = function _final(callback) {
   $debug("Socket.prototype._final");
+  // No TLS handle to shut down yet. Node has one from the constructor and waits on `connecting`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+  if (this[kUpgradePending]) {
+    return this.once(kUpgradeAttached, this._final.bind(this, callback));
+  }
   if (this.connecting) {
     return this.once("connect", this._final.bind(this, callback));
   }
@@ -2406,6 +2417,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     return;
   }
   this[kupgraded] = connection;
+  this[kUpgradePending] = true;
   process.nextTick(() => {
     if (this.destroyed || connection.destroyed) {
       this.destroy();
@@ -2432,6 +2444,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("close", events[3]);
       destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
+      this[kUpgradePending] = false;
       this.emit(kUpgradeAttached);
       return;
     }
@@ -2458,6 +2471,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
+    this[kUpgradePending] = false;
     this.emit(kUpgradeAttached);
   });
 };

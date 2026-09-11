@@ -59,10 +59,11 @@ struct us_quic_hset {
     struct lsxpack_header scratch;
     struct us_quic_header_t *headers;
     unsigned int count, hcap;
-    enum us_quic_hset_kind kind;
-    unsigned int pseudo_seen; /* US_QUIC_PSEUDO_* bits */
-    int seen_regular;
-    int is_connect;
+    /* One byte each: this struct is allocated once per header block. */
+    unsigned char kind;        /* enum us_quic_hset_kind */
+    unsigned char pseudo_seen; /* US_QUIC_PSEUDO_* bits */
+    unsigned char seen_regular;
+    unsigned char is_connect;
 };
 
 struct us_quic_sni {

@@ -253,6 +253,56 @@ describe("bundler", () => {
     },
   });
 
+  // With memoization off (ssr mode) the pipeline infers no reactive scopes for
+  // the compiled function itself, so an object literal and its method
+  // shorthands reach AlignObjectMethodScopes with no scope to align.
+  //
+  // The fake useState never returns its argument. The ssr pass inlines useState
+  // to its initial value, so a function prints that value only when the
+  // compiler compiled it and did not skip it.
+  itBundled("react-compiler/SsrObjectMethodShorthand", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+
+        function InJsxAttribute() {
+          const [n] = useState(1);
+          return <div data-v={{ m() { return n; } }} />;
+        }
+        function InBody({ label }) {
+          const [n] = useState(2);
+          const v = {
+            m() { return label + n; },
+            async am() { return n; },
+            [label]() { return n; },
+            nested() { return { inner() { return n; } }; },
+          };
+          return <div data-v={v} />;
+        }
+        function useApi(value) {
+          const [n] = useState(3);
+          return { get() { return value + n; } };
+        }
+
+        const a = InJsxAttribute().props["data-v"];
+        const b = InBody({ label: "x" }).props["data-v"];
+        console.log(JSON.stringify({
+          InJsxAttribute: a.m(),
+          InBody: [b.m(), await b.am(), b.x(), b.nested().inner()],
+          useApi: useApi("v").get(),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useState = () => ["not inlined", () => {}];`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "cli",
+    run: { stdout: '{"InJsxAttribute":1,"InBody":["x2",2,2,2],"useApi":"v3"}' },
+  });
+
   // https://github.com/oven-sh/bun/pull/32504#discussion_r3447488111
   itBundled("react-compiler/OutputModeIgnoredWhenCompilerDisabled-Client", {
     files: {

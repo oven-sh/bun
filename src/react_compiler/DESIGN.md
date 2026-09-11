@@ -66,6 +66,17 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+### Behaviour that differs from upstream
+
+A few sites in the whole-crate ports fix a miscompile that upstream still has.
+Each one has a comment that starts with "Upstream". Keep them on a sync, and
+drop one only when upstream fixes the same case.
+
+| Where                                                                | What Bun does                                                                                                                                                      | Test (`test/bundler/transpiler/react-compiler.test.ts`)   |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `inference/propagate_scope_dependencies_hir.rs` `visit_reassignment` | A reassignment is an output of every enclosing reactive scope that starts after the declaration, not only of the innermost one. Each restores it on its cache hit. | `react-compiler/LocalAssignedInsideScopeSurvivesCacheHit` |
+| `inference/propagate_scope_dependencies_hir.rs` `handle_instruction` | `x++` and `--x` register `x` as a reassignment of the scope, as `x = x + 1` does.                                                                                  | same                                                      |
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

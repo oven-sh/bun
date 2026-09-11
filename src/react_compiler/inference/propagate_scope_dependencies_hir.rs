@@ -1807,6 +1807,18 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     fn check_valid_dependency(&self, dep: &ReactiveScopeDependency, env: &Environment) -> bool {
+        match self.current_scope() {
+            Some(current_scope) => self.check_valid_dependency_of(dep, current_scope, env),
+            None => false,
+        }
+    }
+
+    fn check_valid_dependency_of(
+        &self,
+        dep: &ReactiveScopeDependency,
+        scope_id: ScopeId,
+        env: &Environment,
+    ) -> bool {
         // Ref value is not a valid dep
         let ty = &env.types[env.identifiers[dep.identifier.0 as usize].type_.0 as usize];
         if crate::hir::is_ref_value_type(ty) {
@@ -1823,11 +1835,9 @@ impl<'a> DependencyCollectionContext<'a> {
             .get(dep.identifier)
             .or_else(|| self.declarations.get(ident.declaration_id));
 
-        if let Some(current_scope) = self.current_scope() {
-            if let Some(decl) = current_declaration {
-                let scope_range_start = env.scopes[current_scope.0 as usize].range.start;
-                return decl.id < scope_range_start;
-            }
+        if let Some(decl) = current_declaration {
+            let scope_range_start = env.scopes[scope_id.0 as usize].range.start;
+            return decl.id < scope_range_start;
         }
         false
     }
@@ -1914,25 +1924,25 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
+    /// Upstream records the reassignment on the innermost scope only. A cache
+    /// hit on an enclosing scope skips the inner scope too, so every enclosing
+    /// scope that starts after the declaration has to restore the variable.
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
-        if let Some(current_scope) = self.current_scope() {
-            let scope = &env.scopes[current_scope.0 as usize];
-            let already = scope.reassignments.iter().any(|id| {
-                env.identifiers[id.0 as usize].declaration_id
-                    == env.identifiers[place.identifier.0 as usize].declaration_id
-            });
-            if !already
-                && self.check_valid_dependency(
-                    &ReactiveScopeDependency {
-                        identifier: place.identifier,
-                        reactive: place.reactive,
-                        path: hir_vec![],
-                        loc: place.loc,
-                    },
-                    env,
-                )
-            {
-                env.scopes[current_scope.0 as usize]
+        let dep = ReactiveScopeDependency {
+            identifier: place.identifier,
+            reactive: place.reactive,
+            path: hir_vec![],
+            loc: place.loc,
+        };
+        let decl_id = env.identifiers[place.identifier.0 as usize].declaration_id;
+        for &scope_id in &self.scope_stack {
+            let scope = &env.scopes[scope_id.0 as usize];
+            let already = scope
+                .reassignments
+                .iter()
+                .any(|id| env.identifiers[id.0 as usize].declaration_id == decl_id);
+            if !already && self.check_valid_dependency_of(&dep, scope_id, env) {
+                env.scopes[scope_id.0 as usize]
                     .reassignments
                     .push(place.identifier);
             }
@@ -2128,6 +2138,26 @@ fn handle_instruction(
             // Visit all operands (lvalue.place AND value)
             ctx.visit_operand(&lvalue.place, env);
             ctx.visit_operand(val, env);
+        }
+        // Upstream visits only `value` here. `x++` assigns `x` like `x = x + 1`
+        // does, so the scope has to restore `x` when its cache hits.
+        InstructionValue::PrefixUpdate {
+            lvalue, value: val, ..
+        }
+        | InstructionValue::PostfixUpdate {
+            lvalue, value: val, ..
+        } => {
+            ctx.visit_operand(val, env);
+            ctx.visit_reassignment(lvalue, env);
+            let scope_stack_copy = ctx.scope_stack.clone();
+            ctx.declare(
+                lvalue.identifier,
+                Decl {
+                    id,
+                    scope_stack: scope_stack_copy,
+                },
+                env,
+            );
         }
         _ => {
             // Visit all value operands

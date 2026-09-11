@@ -1631,6 +1631,220 @@ describe("bundler", () => {
     },
   });
 
+  // `stubReact` with one memo cache per component, kept across calls the way
+  // React keeps it across renders. The test sets `globalThis.renderingComponent`
+  // before it calls a component.
+  const stubReactWithPersistentMemoCache = {
+    ...stubReact,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      const caches = new Map();
+      exports.c = size => {
+        const key = globalThis.renderingComponent;
+        if (!caches.has(key)) caches.set(key, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(key);
+      };
+    `,
+  };
+
+  // A `let` that is declared before a reactive scope and assigned inside it is
+  // an output of the scope: the scope stores it after the computation and
+  // restores it when its cache hits. Two cases were missed. A scope can sit
+  // inside another one, and a cache hit on the outer scope skips the inner
+  // scope too, so the outer scope has to store and restore the variable as
+  // well. And `x++` assigns `x` the way `x = x + 1` does. Each component below
+  // is rendered twice with the same props (the second render hits the cache)
+  // and then once with `a` changed.
+  itBundled("react-compiler/LocalAssignedInsideScopeSurvivesCacheHit", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        // The scope of inner is inside the scope of outer. Both are kept.
+        function TwoArrays(p) {
+          let v = "init";
+          const outer = [];
+          const inner = [];
+          v = "v" + p.a;
+          inner.push(p.b);
+          outer.push(p.c);
+          return <div v={v} outer={outer} inner={inner} />;
+        }
+        function ThreeArrays(p) {
+          let v = "init";
+          const outer = [];
+          const middle = [];
+          const inner = [];
+          v = "v" + p.a;
+          inner.push(p.a);
+          middle.push(p.b);
+          outer.push(p.c);
+          return <div v={v} outer={outer} middle={middle} inner={inner} />;
+        }
+        // Both scopes depend on p.a only, so the inner one is merged into the
+        // outer one.
+        function SameDependencies(p) {
+          let v = "init";
+          const outer = [];
+          const inner = [];
+          v = "v" + p.a;
+          inner.push(p.a);
+          outer.push(p.a);
+          return <div v={v} outer={outer} inner={inner} />;
+        }
+        function Destructuring(p) {
+          let v = "init", u = "init";
+          const outer = [];
+          const inner = [];
+          [v, u] = [p.a, p.b];
+          inner.push(p.b);
+          outer.push(p.c);
+          return <div v={[v, u]} outer={outer} inner={inner} />;
+        }
+        // The scope of w runs from its declaration to the end of the for-of. The
+        // do-while counter j has a scope of its own inside it, which is later
+        // pruned because nothing it computes needs memoization.
+        function DoWhileInsideScopeOfSibling(p) {
+          let v = "init";
+          let w = "w";
+          let j = 0;
+          do { j++; v = "v" + p.a; } while (j < p.n);
+          for (const it of p.items) { w = {}; }
+          return <div v={v} w={w} />;
+        }
+        // The scope of the object spread is inside loops, so it is flattened.
+        function SpreadInsideLoopsInsideScopeOfSibling(p) {
+          let v = "init";
+          let w = "w";
+          for (const k in p.obj) {
+            for (let i = 0; i < p.n; i++) {
+              switch (p.a) {
+                case 1: v = { ...p.obj }; break;
+                default: break;
+              }
+            }
+          }
+          for (const it of p.items) { w = {}; }
+          return <div v={v} w={w} />;
+        }
+        // One scope is enough for an update expression.
+        function PostfixUpdate(p) {
+          let v = 0;
+          const rows = [];
+          if (p.a === 1) v++;
+          rows.push(p.c);
+          return <div v={v} rows={rows} />;
+        }
+        function PrefixUpdateInNestedScope(p) {
+          let v = 0;
+          const outer = [];
+          const inner = [];
+          if (p.a === 1) --v;
+          inner.push(p.b);
+          outer.push(p.c);
+          return <div v={v} outer={outer} inner={inner} />;
+        }
+
+        const first = { a: 1, b: 2, c: 3, n: 1, items: [1], obj: { q: 1 } };
+        const second = { ...first, a: 2 };
+        const components = {
+          TwoArrays,
+          ThreeArrays,
+          SameDependencies,
+          Destructuring,
+          DoWhileInsideScopeOfSibling,
+          SpreadInsideLoopsInsideScopeOfSibling,
+          PostfixUpdate,
+          PrefixUpdateInNestedScope,
+        };
+        for (const [name, Component] of Object.entries(components)) {
+          globalThis.renderingComponent = name;
+          const renders = [first, first, second].map(props => JSON.stringify(Component(props).p.v));
+          console.log(name, ...renders);
+        }
+      `,
+      ...stubReactWithPersistentMemoCache,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        TwoArrays "v1" "v1" "v2"
+        ThreeArrays "v1" "v1" "v2"
+        SameDependencies "v1" "v1" "v2"
+        Destructuring [1,2] [1,2] [2,2]
+        DoWhileInsideScopeOfSibling "v1" "v1" "v2"
+        SpreadInsideLoopsInsideScopeOfSibling {"q":1} {"q":1} "init"
+        PostfixUpdate 1 1 0
+        PrefixUpdateInNestedScope -1 -1 0
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Every component compiled: each one allocates a memo cache.
+      expect(out.match(/\blet \$ = [\w$]+\(\d+\);/g)).toHaveLength(8);
+    },
+  });
+
+  // Not fixed yet (facebook/react#37224, upstream has it too). The local is
+  // assigned on only some paths through the scope. On the other paths it keeps
+  // the value it had on entry, and that value is not a dependency of the scope.
+  // When only that value changes, the cache hits and restores the value of an
+  // older render: the second render of each component prints the first
+  // render's value. Before the outer scope restored the variable, the two
+  // nested shapes got the second render right and the fourth one wrong.
+  itBundled("react-compiler/LocalAssignedOnSomePathsKeepsItsValueOnEntry", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function OneScope(p) {
+          let v = p.v;
+          const list = [];
+          if (p.off) v = "off";
+          list.push(p.b);
+          return <div v={v} list={list} />;
+        }
+        function NestedScopes(p) {
+          let v = p.v;
+          const outer = [];
+          const inner = [];
+          if (p.off) v = "off";
+          inner.push(p.b);
+          outer.push(p.c);
+          return <div v={v} outer={outer} inner={inner} />;
+        }
+        function LoopInsideScopeOfSibling(p) {
+          let v = p.v;
+          let w = "w";
+          for (const it of p.items) { if (p.off) v = "off"; }
+          for (const it of p.items) { w = {}; }
+          return <div v={v} w={w} />;
+        }
+
+        const items = [1];
+        const renders = [
+          { v: "a", off: false, b: 2, c: 3, items },
+          { v: "b", off: false, b: 2, c: 3, items },
+          { v: "b", off: true, b: 2, c: 3, items },
+          { v: "b", off: true, b: 2, c: 3, items },
+        ];
+        for (const [name, Component] of Object.entries({ OneScope, NestedScopes, LoopInsideScopeOfSibling })) {
+          globalThis.renderingComponent = name;
+          console.log(name, ...renders.map(props => JSON.stringify(Component(props).p.v)));
+        }
+      `,
+      ...stubReactWithPersistentMemoCache,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: `
+        OneScope "a" "b" "off" "off"
+        NestedScopes "a" "b" "off" "off"
+        LoopInsideScopeOfSibling "a" "b" "off" "off"
+      `,
+    },
+  });
+
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
   // declares nothing, and `ns.a` off `const ns = require("./m")` is an import

@@ -13,7 +13,6 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
     safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
-    safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
     // to `callback` (never dereferenced as Rust data) — same contract as
@@ -29,10 +28,13 @@ unsafe extern "C" {
     safe fn JSC__VM__shrinkFootprint(vm: &VM);
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
-    safe fn JSC__VM__collectAsync(vm: &VM);
-    safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
+    safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
+    safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
+    safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
@@ -52,10 +54,6 @@ impl VM {
 
     pub fn enable_control_flow_profiler(&self) {
         JSC__VM__enableControlFlowProfiler(self)
-    }
-
-    pub fn has_execution_time_limit(&self) -> bool {
-        JSC__VM__hasExecutionTimeLimit(self)
     }
 
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper
@@ -98,12 +96,19 @@ impl VM {
         JSC__VM__heapSize(self)
     }
 
-    pub(crate) fn collect_async(&self) {
-        JSC__VM__collectAsync(self)
+    /// Request a concurrent collection; JSC picks the scope unless `full`.
+    pub(crate) fn collect_async(&self, full: bool) {
+        JSC__VM__collectAsync(self, full)
     }
 
-    pub fn set_execution_forbidden(&self, forbidden: bool) {
-        JSC__VM__setExecutionForbidden(self, forbidden)
+    /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
+    pub(crate) fn collect_async_idle(&self) {
+        JSC__VM__collectAsyncIdle(self)
+    }
+
+    /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
+    pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
+        JSC__VM__setStartupJITDeferralScale(self, scale)
     }
 
     pub fn execution_forbidden(&self) -> bool {
@@ -118,10 +123,15 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    /// Has termination been requested on this VM (worker.terminate(), or
-    /// teardown's forbidExecution)? JS thread.
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
+    /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).
+    pub fn is_entered(&self) -> bool {
+        JSC__VM__isEntered(self)
+    }
+
+    /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert
+    /// until thrown.
+    pub fn termination_exception(&self) -> JSValue {
+        JSC__VM__terminationException(self)
     }
 
     #[track_caller]

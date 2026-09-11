@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -579,6 +588,120 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// A property lookup that throws while an object is being formatted (a Proxy trap in the
+// prototype chain, a lazily initialized property whose initializer throws, a module namespace
+// export that is still in its temporal dead zone) used to leave the exception pending: the
+// lookups of the following properties failed and were dropped from the output or the formatter
+// rethrew the exception from the next property, debug builds asserted, and moving on to the
+// next prototype dereferenced the empty value returned by the throwing getPrototype. Each case
+// runs in a child so a regression fails the test instead of taking down the runner.
+describe.concurrent("Bun.inspect when a property lookup throws", () => {
+  async function runChild(args, cwd) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const inspectInChild = code => runChild(["-e", code]);
+
+  it("skips a prototype property whose Proxy get trap throws and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a prototype getter that throws behind a Proxy and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, get b() { throw new Error("getter"); }, c: 3 }, {});
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("propagates a Proxy getPrototypeOf trap that throws while walking the prototype chain", async () => {
+    // Matches util.inspect: a throwing getPrototypeOf trap is an error, not a display nicety.
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      try {
+        Bun.inspect(obj);
+        console.log("no throw");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
+    `);
+    expect(result).toEqual({ stdout: "threw: getPrototypeOf trap\n", stderr: "", exitCode: 0 });
+  });
+
+  it("propagates an error thrown by toJSON while formatting", () => {
+    const toJSON = () => {
+      throw new Error("from toJSON");
+    };
+    const params = new URLSearchParams("a=1");
+    params.toJSON = toJSON;
+    expect(() => Bun.inspect(params)).toThrow("from toJSON");
+    const headers = new Headers({ a: "1" });
+    headers.toJSON = toJSON;
+    expect(() => Bun.inspect(headers)).toThrow("from toJSON");
+    const form = new FormData();
+    form.append("a", "1");
+    Object.defineProperty(form, "toJSON", { value: toJSON });
+    expect(() => Bun.inspect(form)).toThrow("from toJSON");
+  });
+
+  it("skips a lazily initialized Bun property whose initializer throws and keeps the rest", async () => {
+    // Bun.$ is the first property of the Bun object and is built by a builtin that calls
+    // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
+    // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
+    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    const result = await inspectInChild(`
+      Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
+      globalThis.Symbol = 0;
+      const out = Bun.inspect(Bun);
+      console.log(JSON.stringify(["$", "Archive", "version"].map(key => out.includes("\\n  " + key + ": "))));
+    `);
+    expect(result).toEqual({ stdout: "[false,true,true]\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a module namespace export that is in its temporal dead zone and keeps the rest", async () => {
+    // b.mjs runs while a.mjs is still evaluating, so reading `later` off the namespace throws a
+    // ReferenceError. console.log used to rethrow it; util.inspect prints such an export as
+    // `<uninitialized>`, this formatter leaves it out.
+    using dir = tempDir("inspect-tdz-namespace", {
+      "a.mjs": `
+        import "./b.mjs";
+        export const later = 1;
+        export function hoisted() {}
+      `,
+      "b.mjs": `
+        import * as a from "./a.mjs";
+        console.log(a);
+      `,
+    });
+    const result = await runChild(["a.mjs"], String(dir));
+    expect(result).toEqual({ stdout: "Module {\n  hoisted: [Function: hoisted],\n}\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},
@@ -926,5 +1049,36 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/25309
+it("object property enumeration scales linearly with property count", () => {
+  function makeWide(n) {
+    const o = {};
+    for (let i = 0; i < n; i++) o["p" + i] = i;
+    return o;
+  }
+  function timeInspect(o) {
+    const t0 = performance.now();
+    const out = Bun.inspect(o);
+    return { ms: performance.now() - t0, out };
+  }
+
+  const small = makeWide(3000);
+  const large = makeWide(30000);
+
+  withoutAggressiveGC(() => {
+    Bun.inspect(small); // warm up
+    const s = timeInspect(small);
+    const l = timeInspect(large);
+
+    // Output still lists every property (no behavior change).
+    expect(s.out.includes("p2999")).toBe(true);
+    expect(l.out.includes("p29999")).toBe(true);
+
+    // Per-property cost must stay roughly constant as n grows 10x. The previous
+    // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
+    expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });

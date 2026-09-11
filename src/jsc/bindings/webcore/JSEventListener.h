@@ -30,7 +30,6 @@
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/Ref.h>
 #include <wtf/TypeCasts.h>
-#include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -55,9 +54,6 @@ public:
     JSC::JSObject* jsFunction() const final { return m_jsFunction.get(); }
     JSC::JSObject* wrapper() const final { return m_wrapper.get(); }
 
-    virtual URL sourceURL() const { return {}; }
-    virtual TextPosition sourcePosition() const { return TextPosition(); }
-
     String functionName() const;
 
     void replaceJSFunctionForAttributeListener(JSC::JSObject* function, JSC::JSObject* wrapper);
@@ -80,7 +76,6 @@ protected:
 
     JSEventListener(JSC::JSObject* function, JSC::JSObject* wrapper, bool isAttribute, CreatedFromMarkup, DOMWrapperWorld&);
     void handleEvent(ScriptExecutionContext&, Event&) override;
-    void setWrapperWhenInitializingJSFunction(JSC::VM&, JSC::JSObject* wrapper) const { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 
     // JSVMClientDataClient
     void willDestroyVM() final;

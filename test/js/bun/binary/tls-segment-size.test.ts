@@ -15,20 +15,8 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import { isFreeBSD, isLinux, isWindows } from "harness";
-import { closeSync, openSync, readSync } from "node:fs";
-
-/** Read `len` bytes from `fd` at absolute `offset`. */
-function preadExact(fd: number, offset: number, len: number): Buffer {
-  const buf = Buffer.alloc(len);
-  let got = 0;
-  while (got < len) {
-    const n = readSync(fd, buf, got, len - got, offset + got);
-    if (n === 0) throw new Error(`short read at ${offset}`);
-    got += n;
-  }
-  return buf;
-}
+import { isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
+import { closeSync, openSync } from "node:fs";
 
 /**
  * ELF: size of the PT_TLS segment's in-memory template (p_memsz). This is
@@ -37,30 +25,8 @@ function preadExact(fd: number, offset: number, len: number): Buffer {
  * the main image.
  */
 function elfTlsMemSize(path: string): number {
-  const fd = openSync(path, "r");
-  try {
-    const ehdr = preadExact(fd, 0, 64);
-    if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not ELF");
-    if (ehdr[4] !== 2) throw new Error("only ELF64 supported"); // EI_CLASS
-    const le = ehdr[5] === 1; // EI_DATA
-    const u16 = (b: Buffer, o: number) => (le ? b.readUInt16LE(o) : b.readUInt16BE(o));
-    const u64 = (b: Buffer, o: number) => (le ? b.readBigUInt64LE(o) : b.readBigUInt64BE(o));
-
-    const e_phoff = Number(u64(ehdr, 32));
-    const e_phentsize = u16(ehdr, 54);
-    const e_phnum = u16(ehdr, 56);
-
-    for (let i = 0; i < e_phnum; i++) {
-      const ph = preadExact(fd, e_phoff + i * e_phentsize, e_phentsize);
-      const p_type = le ? ph.readUInt32LE(0) : ph.readUInt32BE(0);
-      if (p_type === 7 /* PT_TLS */) {
-        return Number(u64(ph, 40)); // p_memsz
-      }
-    }
-    return 0; // no TLS segment
-  } finally {
-    closeSync(fd);
-  }
+  const tls = readElf64ProgramHeaders(path).find(ph => ph.type === 7 /* PT_TLS */);
+  return tls ? Number(tls.memsz) : 0;
 }
 
 /**

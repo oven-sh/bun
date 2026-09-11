@@ -1,16 +1,16 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(name: string) {
   return define({
     name,
     construct: true,
     noConstructor: false,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["writeCallback", "errorCallback", "dictionary", "pendingInput", "pendingOutput", "writeResult"],
+    values: ["writeCallback", "errorCallback", "pendingInput", "pendingOutput", "writeResult"],
 
     proto: {
       init: { fn: "init" },

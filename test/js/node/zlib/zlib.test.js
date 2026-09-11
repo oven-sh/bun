@@ -725,6 +725,35 @@ describe("async write buffer lifetime", () => {
   });
 });
 
+describe("async write pins are released", () => {
+  it("transfer() detaches once several async writes through the same buffers have completed", async () => {
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+      const input = new Uint8Array(new ArrayBuffer(64)).fill(97);
+      const out = new Uint8Array(new ArrayBuffer(4096));
+      for (let i = 0; i < 5; i++) {
+        const { promise, resolve } = Promise.withResolvers();
+        handle.buffer = input;
+        handle.cb = resolve;
+        handle.availOutBefore = out.byteLength;
+        handle.availInBefore = input.byteLength;
+        handle.inOff = 0;
+        handle.flushFlag = zlib.constants.Z_NO_FLUSH;
+        handle.write(zlib.constants.Z_NO_FLUSH, input, 0, input.byteLength, out, 0, out.byteLength);
+        await promise;
+      }
+      // Every write pinned both buffers; every completion must have unpinned them, or they stay undetachable.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
+    } finally {
+      deflate.close();
+    }
+  });
+});
+
 describe("dictionary buffer lifetime", () => {
   it("decompresses correctly when the dictionary's ArrayBuffer is detached after stream creation", async () => {
     const dictText = "hello hello hello world world world ";

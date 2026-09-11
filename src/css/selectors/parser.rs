@@ -572,7 +572,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
             let source_location = input.current_source_location();
             if let Ok(next) = input.next() {
                 return Err(source_location.new_custom_error(
-                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(next.clone())
+                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(*next)
                         .into_default_parser_error(),
                 ));
             }
@@ -673,11 +673,19 @@ fn parse_selector<Impl: BunSelectorImpl>(
         }
     }
 
-    let has_pseudo_element = state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
-        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT);
-    let slotted = state.contains(SelectorParsingState::AFTER_SLOTTED);
-    let part = state.contains(SelectorParsingState::AFTER_PART);
-    let result = builder.build(has_pseudo_element, slotted, part);
+    let mut flags = SelectorFlags::empty();
+    if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
+        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT)
+    {
+        flags |= SelectorFlags::HAS_PSEUDO;
+    }
+    if state.contains(SelectorParsingState::AFTER_SLOTTED) {
+        flags |= SelectorFlags::HAS_SLOTTED;
+    }
+    if state.contains(SelectorParsingState::AFTER_PART) {
+        flags |= SelectorFlags::HAS_PART;
+    }
+    let result = builder.build(flags);
     Ok(GenericSelector {
         specificity_and_flags: result.specificity_and_flags,
         components: result.components,
@@ -1214,7 +1222,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // PERF: 7 entries with near-unique lengths (3/6/10/19/19/21/26) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1226,6 +1234,11 @@ impl<'a> SelectorParser<'a> {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
                     selector: Box::new(Selector::parse(self, input)?),
+                });
+            }
+            6 if name == b"picker" => {
+                return Ok(PseudoElement::PickerFunction {
+                    identifier: Ident::parse(input)?,
                 });
             }
             10 if name == b"cue-region" => {
@@ -1334,7 +1347,7 @@ impl<'a> SelectorParser<'a> {
                 // the underlying `&'static [u8]` payload directly.
                 let languages = parser.parse_comma_separated(|p| -> CResult<Str> {
                     let loc = p.current_source_location();
-                    let tok = p.next()?.clone();
+                    let tok = *p.next()?;
                     match tok {
                         Token::Ident(i) | Token::QuotedString(i) => Ok(i),
                         t => Err(loc.new_unexpected_token_error(t)),
@@ -1544,6 +1557,9 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"-webkit-scrollbar-corner" => PE::WebkitScrollbar(WS::Corner),
         b"-webkit-resizer" => PE::WebkitScrollbar(WS::Resizer),
         b"view-transition" => PE::ViewTransition,
+        b"details-content" => PE::DetailsContent,
+        b"picker-icon" => PE::PickerIcon,
+        b"checkmark" => PE::Checkmark,
         _ => return None,
     } })
 }
@@ -1611,13 +1627,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             }
         }
         true
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector_list()` or
-    /// `tocss_servo::to_css_selector_list()` instead.
-    #[deprecated = "use serializer::serialize_selector_list()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector_list()");
     }
 
     pub fn parse(
@@ -1810,13 +1819,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
     }
 
-    /// Do not call this! Use `serializer::serialize_selector()` or
-    /// `tocss_servo::to_css_selector()` instead.
-    #[deprecated = "use serializer::serialize_selector()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector()");
-    }
-
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
         let index = 'index: {
             for (i, comp) in self.components.iter().enumerate() {
@@ -1883,7 +1885,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         } else {
             builder.push_simple_selector(component);
         }
-        let result = builder.build(false, false, false);
+        let result = builder.build(SelectorFlags::empty());
         Self {
             specificity_and_flags: result.specificity_and_flags,
             components: result.components,
@@ -2264,13 +2266,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
-    }
-
-    /// Do not call this! Use `serializer::serialize_component()` or
-    /// `tocss_servo::to_css_component()` instead.
-    #[deprecated = "use serializer::serialize_component()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_component()");
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
@@ -2802,13 +2797,6 @@ pub enum Combinator {
 impl Combinator {
     // hash — via `#[derive(CssHash)]`.
 
-    /// Do not call this! Use `serializer::serialize_combinator()` or
-    /// `tocss_servo::to_css_combinator()` instead.
-    #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_combinator()");
-    }
-
     pub(crate) fn is_tree_combinator(self) -> bool {
         matches!(
             self,
@@ -2979,6 +2967,17 @@ pub enum PseudoElement {
         /// A part name selector.
         part_name: ViewTransitionPartName,
     },
+    /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
+    DetailsContent,
+    /// The [::picker-icon](https://drafts.csswg.org/css-forms-1/#picker-icon-pseudo) pseudo element.
+    PickerIcon,
+    /// The [::checkmark](https://drafts.csswg.org/css-forms-1/#checkmark-pseudo) pseudo element.
+    Checkmark,
+    /// The [::picker()](https://drafts.csswg.org/css-forms-1/#picker-pseudo) functional pseudo element.
+    PickerFunction {
+        /// The identifier argument, e.g. `select` in `::picker(select)`.
+        identifier: Ident,
+    },
     /// An unknown pseudo element.
     Custom {
         /// The name of the pseudo element.
@@ -3108,6 +3107,10 @@ impl fmt::Display for PseudoElement {
             Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
             Self::ViewTransitionOld { .. } => "view_transition_old",
             Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::DetailsContent => "details_content",
+            Self::PickerIcon => "picker_icon",
+            Self::Checkmark => "checkmark",
+            Self::PickerFunction { .. } => "picker_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })
@@ -3243,7 +3246,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     let token_location = input.current_source_location();
     let token_loc = input.position();
     let token = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             input.reset(&start);
             return Ok(None);
@@ -3281,8 +3284,8 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
         Token::Colon => {
             let location = input.current_source_location();
             let (is_single_colon, next_token): (bool, Token) =
-                match input.next_including_whitespace()?.clone() {
-                    Token::Colon => (false, input.next_including_whitespace()?.clone()),
+                match *input.next_including_whitespace()? {
+                    Token::Colon => (false, *input.next_including_whitespace()?),
                     t => (true, t),
                 };
             let (name, is_functional): (Str, bool) = match next_token {
@@ -3382,7 +3385,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     ));
                 }
                 let location = input.current_source_location();
-                let class = match input.next_including_whitespace()?.clone() {
+                let class = match *input.next_including_whitespace()? {
                     Token::Ident(class) => class,
                     t => {
                         let e = SelectorParseErrorKind::ClassNeedsIdent(t);
@@ -3451,7 +3454,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let location = input.current_source_location();
     let operator: attrs::AttrSelectorOperator = 'operator: {
         let tok = match input.next() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => {
                 // [foo]
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
@@ -3505,7 +3508,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     // Clone the token so the borrow is released before we re-borrow.
     let value_str: Str = {
         let value_loc = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             Token::Ident(v) | Token::QuotedString(v) => v,
             t => {
@@ -3893,7 +3896,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     let start = input.state();
 
     let tok = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(e) => {
             input.reset(&start);
             return Err(e);
@@ -4000,7 +4003,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     in_attr_selector: bool,
 ) -> CResult<OptionalQName<Impl>> {
     let location = input.current_source_location();
-    let t = input.next_including_whitespace()?.clone();
+    let t = *input.next_including_whitespace()?;
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
         // `*` is only a valid local name outside of attribute selectors;
@@ -4148,20 +4151,12 @@ pub enum ViewTransitionPartName {
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // `CustomIdentFns::to_css` is CSS-modules-gated via
-        // `Printer::{css_module,write_ident}`; inline the
-        // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
-        // serializer concern, not a grammar concern — the gated impl just
-        // toggles the second arg).
-        let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            dest.serialize_identifier(name.v())
-        };
         match self {
             Self::All => dest.write_str("*"),
-            Self::Name(name) => write_ci(name, dest),
+            Self::Name(name) => name.to_css(dest),
             Self::Class(name) => {
                 dest.write_char(b'.')?;
-                write_ci(name, dest)
+                name.to_css(dest)
             }
         }
     }
@@ -4205,7 +4200,7 @@ impl ViewTransitionPartName {
 pub(crate) fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
     let location = input.current_source_location();
     let token = match input.next() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             // Selectors spec says language-defined; HTML says it depends on the
             // exact attribute name.

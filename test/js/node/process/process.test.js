@@ -1714,7 +1714,8 @@ it("process.execArgv", async () => {
   const fixtures = [
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
-    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // `-d` takes a value, so "bruh:1" belongs to execArgv and is not the script name.
+    ["run -d bruh:1 -b index.ts foo -a -b -c", ["-d", "bruh:1", "-b"], ["foo", "-a", "-b", "-c"]],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

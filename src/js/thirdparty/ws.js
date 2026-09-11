@@ -30,19 +30,14 @@ function sendAfterClose(state, cb) {
   }
 }
 
-/**
- * The native WebSocket only understands PEM key/cert/ca. Unseal a Node `pfx`
- * (PKCS#12) option into those, the way node:tls does before it crosses into native.
- */
+// The native SSLConfig has no `pfx` field; turn a PKCS#12 archive into PEM key/cert.
 function unsealPfx(tls) {
   if (tls?.pfx == null) return tls;
   const { processPfxOptions } = require("internal/tls");
   tls = processPfxOptions(tls);
   const pfxExtraCAs = tls._pfxExtraCACerts;
   if (pfxExtraCAs?.length) {
-    // Node adds the CAs bundled in the archive on top of the trust store. The
-    // native config has no addCACert hook and an explicit `ca` replaces the
-    // default roots, so seed `ca` with those roots when the caller gave none.
+    // A native `ca` replaces the default roots, so extend them here like Node's addCACert.
     const ca = tls.ca ?? require("node:tls").getCACertificates("default");
     tls.ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
     tls._pfxExtraCACerts = undefined;

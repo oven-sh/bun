@@ -403,8 +403,6 @@ static JSValue undefinedIfEmpty(JSUint8Array* value)
     return value;
 }
 
-// Built from the ASN.1 time, not from the validFrom / validTo text: that prints
-// the year 30 as "30", which a date parser reads as 2030.
 static JSValue validityDate(VM& vm, JSGlobalObject* globalObject, std::optional<int64_t> seconds)
 {
     double ms = seconds ? static_cast<double>(*seconds) * 1000.0 : PNaN;

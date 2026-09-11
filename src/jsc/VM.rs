@@ -30,6 +30,8 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__shrinkFootprintWhenIdle(vm: &VM, quiet_ms: u32, everything: bool) -> bool;
+    safe fn JSC__VM__entryCountFromOutside(vm: &VM) -> u32;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -104,6 +106,18 @@ impl VM {
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
     pub(crate) fn collect_async_idle(&self) {
         JSC__VM__collectAsyncIdle(self)
+    }
+
+    /// Drop the code JSC can get back cheaply (unlinked code decodable from the executable's bytecode, parser caches; with
+    /// `everything` also all linked and RegExp code). `false`, and nothing done, if JS is on the stack or a collection saw
+    /// the program allocating within the last `quiet_ms`; after `true` the caller schedules the full collection that frees it.
+    pub(crate) fn shrink_footprint_when_idle(&self, quiet_ms: u32, everything: bool) -> bool {
+        JSC__VM__shrinkFootprintWhenIdle(self, quiet_ms, everything)
+    }
+
+    /// How often JS was entered from native code so far (wraps).
+    pub(crate) fn entry_count_from_outside(&self) -> u32 {
+        JSC__VM__entryCountFromOutside(self)
     }
 
     /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.

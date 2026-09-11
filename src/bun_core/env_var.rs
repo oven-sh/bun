@@ -92,6 +92,9 @@ new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKI
 new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
 new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 new!(pub BUN_IDLE_GC_SECONDS: string, "BUN_IDLE_GC_SECONDS", {});
+new!(pub BUN_IDLE_SHRINK_EVERYTHING: boolean, "BUN_IDLE_SHRINK_EVERYTHING", {});
+new!(pub BUN_IDLE_SHRINK_MAX_ENTRIES_PER_SECOND: unsigned, "BUN_IDLE_SHRINK_MAX_ENTRIES_PER_SECOND", {});
+new!(pub BUN_IDLE_SHRINK_QUIET_MS: unsigned, "BUN_IDLE_SHRINK_QUIET_MS", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });

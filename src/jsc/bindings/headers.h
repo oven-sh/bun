@@ -263,6 +263,8 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0, bool full);
 CPP_DECL uint64_t JSC__VM__totalBytesAllocated(JSC::VM* arg0);
 CPP_DECL void JSC__VM__collectAsyncIdle(JSC::VM* arg0);
+CPP_DECL bool JSC__VM__shrinkFootprintWhenIdle(JSC::VM* arg0, uint32_t quietMs, bool everything);
+CPP_DECL uint32_t JSC__VM__entryCountFromOutside(JSC::VM* arg0);
 CPP_DECL void JSC__VM__setStartupJITDeferralScale(JSC::VM* arg0, double scale);
 CPP_DECL JSC::VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);

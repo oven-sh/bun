@@ -3166,6 +3166,26 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
+// The deep-idle step GarbageCollectionController takes once the process has stayed quiet well past its idle collections.
+// JSC lets go of the unlinked bytecode it can decode again from the executable (only of functions that have no linked
+// code any more, unless `everything`, which also drops all linked and RegExp code) and of its parser caches. Nothing
+// that would have to be parsed again is dropped. Returns false, having done nothing, if JS is on the stack or a
+// collection saw the program allocating within the last `quietMs`; the caller follows up a `true` with an idle full
+// collection, which is what frees the memory.
+bool JSC__VM__shrinkFootprintWhenIdle(JSC::VM* vm, uint32_t quietMs, bool everything)
+{
+    JSC::JSLockHolder lock(*vm);
+    if (quietMs && WTF::ApproximateTime::now() - vm->heap.lastActiveCollectionTime() < WTF::Seconds::fromMilliseconds(quietMs))
+        return false;
+    return vm->shrinkFootprintNow({ JSC::VM::ShrinkFootprint::LeaveCollectionToCaller, everything ? JSC::VM::ShrinkFootprint::KeepCodeThatNeedsParsing : JSC::VM::ShrinkFootprint::KeepCodeInUse });
+}
+
+// How often JS was entered from native code: the GC controller's measure of whether the program is doing anything.
+uint32_t JSC__VM__entryCountFromOutside(JSC::VM* vm)
+{
+    return vm->entryCountFromOutside();
+}
+
 void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
 {
     vm->setStartupJITDeferralScale(scale);

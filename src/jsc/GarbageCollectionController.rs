@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the program has been quiet (`was_busy`) for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory, and once the program has been quiet (`was_busy`) for `BUN_IDLE_GC_SECONDS` (default "10,65,65": first after 10 s of quiet, then one per CodeBlock-aging lease; 0 = off; main thread only) full collections so JSC can age out code that no longer runs, plus a page-out of a standalone executable's embedded module graph and, once the process is at rest, of the executable's own code and constants, and once the program has then really been at rest for `BUN_IDLE_SHRINK_QUIET_MS` (default 30 s; 0 = off) a deep-idle shrink (JSC drops the bytecode of functions that no longer have linked code and can be decoded again from the executable; `BUN_IDLE_SHRINK_EVERYTHING=1`: all linked and RegExp code too) followed by one more full collection and another page-out of the module graph. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -30,6 +30,33 @@ pub struct GarbageCollectionController {
     idle_quiet_ms: Cell<u32>,
     #[cfg(target_os = "linux")]
     idle_image_page_out: IdleImagePageOut,
+    /// Deep-idle shrink: `shrink_quiet_ms` (0 = off) is how long the program must have been at rest. It becomes
+    /// `shrink_pending` with the last idle collection, and from the next tick on runs at the end of the first
+    /// `shrink_quiet_ms` window of ticks in which the program was not busy, JS was entered no more than
+    /// `shrink_max_entries_per_second` (`BUN_IDLE_SHRINK_MAX_ENTRIES_PER_SECOND`, default 50: a parked program's timers
+    /// and spinners, not a server that is busy without allocating) on average and JSC agrees that nothing allocated. The
+    /// idle sequence is: collections, module graph page-out, image page-out, shrink, module graph page-out again; a tick
+    /// that pages the image out does not shrink (that waits for the next tick). `entry_count` is the VM's counter at the
+    /// last tick.
+    shrink_quiet_ms: Cell<u32>,
+    shrink_max_entries_per_second: Cell<u32>,
+    shrink_everything: Cell<bool>,
+    shrink_pending: Cell<bool>,
+    page_out_after_shrink: Cell<bool>,
+    shrink_window_ms: Cell<u32>,
+    shrink_window_entries: Cell<u32>,
+    entry_count: Cell<u32>,
+}
+
+/// What `idle_tick` decided for this tick.
+#[derive(Clone, Copy, Default)]
+struct IdleTick {
+    /// Make this tick's collection a full, idle-tagged one.
+    full: bool,
+    /// This tick pages the executable's image out.
+    paged_out_image: bool,
+    /// ms until the next tick that has something to do is due.
+    due_in: Option<u32>,
 }
 
 /// The executable's own code and constants are only paged out for a process that is at rest, which a quiet heap does
@@ -191,6 +218,14 @@ impl Default for GarbageCollectionController {
             idle_quiet_ms: Cell::new(0),
             #[cfg(target_os = "linux")]
             idle_image_page_out: IdleImagePageOut::default(),
+            shrink_quiet_ms: Cell::new(0),
+            shrink_max_entries_per_second: Cell::new(50),
+            shrink_everything: Cell::new(false),
+            shrink_pending: Cell::new(false),
+            page_out_after_shrink: Cell::new(false),
+            shrink_window_ms: Cell::new(0),
+            shrink_window_entries: Cell::new(0),
+            entry_count: Cell::new(0),
         }
     }
 }
@@ -272,6 +307,21 @@ impl GarbageCollectionController {
                 *slot = sum;
             }
             self.idle_gc_at_ms.set(at);
+            if sum != 0 {
+                // Well after the last idle collection, so that a user who only stepped away for a minute or two comes
+                // back to code that is all still there.
+                self.shrink_quiet_ms.set(
+                    env_var::BUN_IDLE_SHRINK_QUIET_MS::get()
+                        .unwrap_or(30_000)
+                        .min(3_600_000) as u32,
+                );
+                self.shrink_everything
+                    .set(env_var::BUN_IDLE_SHRINK_EVERYTHING::get().unwrap_or(false));
+                if let Some(rate) = env_var::BUN_IDLE_SHRINK_MAX_ENTRIES_PER_SECOND::get() {
+                    self.shrink_max_entries_per_second
+                        .set(rate.min(u32::MAX as u64) as u32);
+                }
+            }
         }
     }
 
@@ -281,17 +331,20 @@ impl GarbageCollectionController {
     /// (the second also pages out an embedded module graph; the last is followed, a tick later, by the executable's code
     /// and constants): JSC
     /// drops code that has not run since the previous one, and each round makes a little more releasable (code whose
-    /// last owner died in that collection, pages it emptied). Returns (full, ms until the next such tick is due).
-    fn idle_tick(&self, vm: &VirtualMachine, busy: bool, elapsed_ms: u32) -> (bool, Option<u32>) {
+    /// last owner died in that collection, pages it emptied). With the last one the deep-idle shrink becomes pending
+    /// (`try_deep_idle_shrink`).
+    fn idle_tick(&self, vm: &VirtualMachine, busy: bool, elapsed_ms: u32) -> IdleTick {
         let dues = self.idle_gc_at_ms.get();
         if dues[0] == 0 || vm.is_inspector_enabled() {
-            return (false, None);
+            self.shrink_pending.set(false);
+            return IdleTick::default();
         }
         if busy {
             self.idle_quiet_ms.set(0);
+            self.shrink_pending.set(false);
             #[cfg(target_os = "linux")]
             self.idle_image_page_out.restart();
-            return (false, None);
+            return IdleTick::default();
         }
         let before = self.idle_quiet_ms.get();
         let quiet = before.saturating_add(elapsed_ms);
@@ -299,6 +352,8 @@ impl GarbageCollectionController {
         let dues = dues.into_iter().filter(|&due| due != 0);
         let crossed = |due: u32| before < due && quiet >= due;
         let full = dues.clone().any(crossed);
+        #[allow(unused_mut)]
+        let mut paged_out_image = false;
         // The module graph's page-out goes with the second collection (or the only one): after a pause of a few seconds
         // the user is likely to come straight back, and those file-backed pages would just be read in again.
         #[cfg(target_os = "linux")]
@@ -309,17 +364,14 @@ impl GarbageCollectionController {
             }
             let at = self.idle_gc_at_ms.get();
             if crossed(if at[1] != 0 { at[1] } else { at[0] }) {
-                if let Some(graph) = vm.standalone_module_graph {
-                    // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread
-                    // only madvise()s file-backed pages of the executable and touches no VM or JS state.
-                    spawn_idle_page_out(move || graph.page_out());
-                }
+                Self::page_out_module_graph(vm);
             }
             // The image goes after the last idle collection: an earlier page-out would be read back by the next one.
             if dues.clone().next_back().is_some_and(crossed) {
                 image.pending.set(Some(CpuSample::now()));
             } else if !full && image.quiet_tick() {
                 IdleImagePageOut::page_out(vm.standalone_module_graph);
+                paged_out_image = true;
             } else if !full {
                 // One CodeBlock-aging lease, like the collections.
                 let lease = if at[1] != 0 { at[1] - at[0] } else { at[0] };
@@ -329,10 +381,65 @@ impl GarbageCollectionController {
                 );
             }
         }
-        (
+        // From the last idle collection on the deep-idle shrink waits for its own conditions.
+        let last = dues.clone().next_back().unwrap_or(0);
+        if crossed(last) && self.shrink_quiet_ms.get() != 0 {
+            self.shrink_pending.set(true);
+            self.shrink_window_ms.set(0);
+            self.shrink_window_entries.set(0);
+        }
+        IdleTick {
             full,
-            dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
-        )
+            paged_out_image,
+            due_in: dues.clone().find(|&due| quiet < due).map(|due| due - quiet),
+        }
+    }
+
+    /// While a shrink is pending: at the end of each `shrink_quiet_ms` window of quiet ticks, run it if the program was
+    /// at rest for the whole window. `true` if it ran (the caller then makes this tick's collection an idle full one).
+    fn try_deep_idle_shrink(&self, vm: &VirtualMachine, entries: u32, elapsed_ms: u32) -> bool {
+        if !self.shrink_pending.get() {
+            return false;
+        }
+        let window_ms = self.shrink_window_ms.get().saturating_add(elapsed_ms);
+        let window_entries = self.shrink_window_entries.get().saturating_add(entries);
+        let quiet_ms = self.shrink_quiet_ms.get();
+        if window_ms < quiet_ms {
+            self.shrink_window_ms.set(window_ms);
+            self.shrink_window_entries.set(window_entries);
+            return false;
+        }
+        self.shrink_window_ms.set(0);
+        self.shrink_window_entries.set(0);
+        let allowed = (window_ms / 1000)
+            .max(1)
+            .saturating_mul(self.shrink_max_entries_per_second.get());
+        // `false` from JSC: JS is on the stack (a nested event loop) or something allocated within the window.
+        if window_entries > allowed
+            || !vm
+                .jsc_vm()
+                .shrink_footprint_when_idle(quiet_ms, self.shrink_everything.get())
+        {
+            return false;
+        }
+        self.shrink_pending.set(false);
+        // The shrink reads none of the embedded bytecode, but the collection that follows it and anything else since the
+        // idle collections' page-out may have; the next tick (that collection is over by then) releases those pages again.
+        self.page_out_after_shrink.set(true);
+        true
+    }
+
+    /// Hand the pages of a standalone executable's embedded module graph back to the kernel; they fault in again from
+    /// the file when read.
+    fn page_out_module_graph(vm: &VirtualMachine) {
+        #[cfg(target_os = "linux")]
+        if let Some(graph) = vm.standalone_module_graph {
+            // SAFETY: VM-free — `graph` is the process-lifetime, immutable embedded module graph; the thread
+            // only madvise()s file-backed pages of the executable and touches no VM or JS state.
+            spawn_idle_page_out(move || graph.page_out());
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = vm;
     }
 
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
@@ -418,8 +525,18 @@ impl GarbageCollectionController {
         let total = vm_ref.jsc_vm().total_bytes_allocated();
         let allocated = total.saturating_sub(this.bytes_allocated_at_last_tick.replace(total));
         let busy = this.was_busy(allocated, elapsed_ms);
-        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, busy, elapsed_ms);
-        this.perform_gc(full);
+        if this.page_out_after_shrink.replace(false) && !busy {
+            Self::page_out_module_graph(vm_ref);
+        }
+        // A shrink that only becomes pending in this tick (with the last idle collection) starts its window with the next.
+        let was_pending = this.shrink_pending.get();
+        let tick = this.idle_tick(vm_ref, busy, elapsed_ms);
+        let entry_count = vm_ref.jsc_vm().entry_count_from_outside();
+        let entries = entry_count.wrapping_sub(this.entry_count.replace(entry_count));
+        let shrank = was_pending
+            && !tick.paged_out_image
+            && this.try_deep_idle_shrink(vm_ref, entries, elapsed_ms);
+        this.perform_gc(tick.full || shrank);
         if busy {
             this.gc_repeating_timer_fast.set(true);
         }
@@ -435,7 +552,7 @@ impl GarbageCollectionController {
         if ticks >= 30 {
             this.gc_repeating_timer_fast.set(false);
         }
-        let interval = match idle_gc_due_in {
+        let interval = match tick.due_in {
             Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
             None => this.repeat_interval(),
         };

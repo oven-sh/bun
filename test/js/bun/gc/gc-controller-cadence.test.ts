@@ -447,3 +447,95 @@ describe("idle release lets FTL code age out", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Once the program has been at rest for BUN_IDLE_SHRINK_QUIET_MS after the last idle collection, the controller asks JSC
+// to let go of the code it can get back cheaply (VM::shrinkFootprintNow): for a --compile --bytecode executable, the
+// unlinked bytecode of functions that have no linked code any more, which is decoded again from the executable when
+// such a function is next called. BUN_IDLE_SHRINK_EVERYTHING=1 also drops the code that is still linked.
+describe("deep-idle shrink", () => {
+  const app = `
+    import { heapStats } from "bun:jsc";
+    ${Array.from({ length: 60 }, (_, i) => `function f${i}(a) { let s = a + ${i}; for (let k = 0; k < 3; k++) s += k * ${i + 1}; return [s, "f${i}"].join(":"); }`).join("\n    ")}
+    const all = [${Array.from({ length: 60 }, (_, i) => `f${i}`).join(", ")}];
+    const run = () => all.map((f, i) => f(i)).join("|");
+    const count = () => heapStats().objectTypeCounts.UnlinkedFunctionCodeBlock ?? 0;
+    const expected = run();
+    Bun.gc(true);
+    const before = count();
+    const deadline = performance.now() + Number(process.env.WAIT_MS);
+    const timer = setInterval(() => {
+      const now = count();
+      if (now < before - 40 || performance.now() > deadline) {
+        clearInterval(timer);
+        console.log(JSON.stringify({ before, after: now, same: run() === expected }));
+      }
+    }, 500);
+  `;
+
+  let dir: ReturnType<typeof tempDir>;
+  beforeAll(async () => {
+    dir = tempDir("deep-idle-shrink", { "app.js": app });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--outfile", "app", "app.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildExit, buildErr).toBe(0);
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  async function run(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [String(dir) + "/app"],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        // One idle collection after 1 s of quiet, the shrink 1 s later. Code ages in milliseconds instead of the
+        // seconds it normally takes, so that the idle collection finds the functions' CodeBlocks old as it would a
+        // minute into a real idle period.
+        BUN_IDLE_GC_SECONDS: "1",
+        BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
+        ...env,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const result = (stdout.trim().startsWith("{") ? JSON.parse(stdout.trim()) : {}) as {
+      before?: number;
+      after?: number;
+      same?: boolean;
+    };
+    return { ...result, stdout, exitCode };
+  }
+
+  for (const everything of ["0", "1"]) {
+    test.concurrent(
+      `drops re-decodable unlinked code after the quiet period, and it comes back (BUN_IDLE_SHRINK_EVERYTHING=${everything})`,
+      async () => {
+        const { before, after, same, stdout, exitCode } = await run({
+          BUN_IDLE_SHRINK_QUIET_MS: "1000",
+          BUN_IDLE_SHRINK_EVERYTHING: everything,
+          WAIT_MS: "4000",
+        });
+        expect(before, stdout).toBeGreaterThan(60);
+        expect(after, stdout).toBeLessThan(before! - 40);
+        expect(same, stdout).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
+
+  test.concurrent("BUN_IDLE_SHRINK_QUIET_MS=0 disables it", async () => {
+    const { before, after, same, stdout, exitCode } = await run({ BUN_IDLE_SHRINK_QUIET_MS: "0", WAIT_MS: "3500" });
+    expect(before, stdout).toBeGreaterThan(60);
+    expect(after, stdout).toBeGreaterThan(before! - 40);
+    expect(same, stdout).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+});

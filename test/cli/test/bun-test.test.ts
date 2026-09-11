@@ -403,6 +403,40 @@ describe("bun test", () => {
       });
       expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
+    // https://github.com/oven-sh/bun/issues/42361
+    test.concurrent.each([
+      ["beforeAll", "(fail) beforeAll", "a beforeAll hook timed out after 10ms."],
+      ["afterAll", "(fail) afterAll", "an afterAll hook timed out after 10ms."],
+      ["beforeEach", "(fail) runs", "a beforeEach hook for this test timed out after 10ms."],
+      ["afterEach", "(fail) runs", "an afterEach hook for this test timed out after 10ms."],
+    ])("a timed out %s hook names the hook kind", (hook, label, message) => {
+      const stderr = runTest({
+        input: `
+          import { ${hook}, test } from "bun:test";
+          ${hook}(async () => {
+            await Bun.sleep(1000);
+          }, 10);
+          test("runs", () => {});
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr).toContain(label);
+      expect(stderr).toContain(`^ ${message}`);
+      expect(stderr).not.toContain("beforeEach/afterEach");
+      expect(stderr).not.toContain("(unnamed)");
+    });
+    test.concurrent("a timed out hook with a done callback names the hook kind", () => {
+      const stderr = runTest({
+        input: `
+          import { afterAll, test } from "bun:test";
+          afterAll(done => {}, 10);
+          test("runs", () => {});
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr).toContain("(fail) afterAll");
+      expect(stderr).toContain("^ an afterAll hook timed out after 10ms, before its done callback was called.");
+    });
   });
   describe("support for Github Actions", () => {
     test("should not group logs by default", () => {
@@ -718,6 +752,24 @@ describe("bun test", () => {
         },
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
+    test("should annotate a hook timeout with the hook kind and its timeout", () => {
+      const stderr = runTest({
+        input: `
+          import { beforeEach, test } from "bun:test";
+          beforeEach(async () => {
+            await Bun.sleep(1000);
+          }, 10);
+          test("time out", () => {}, { timeout: 5000 });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toContain(
+        '::error title=error: Test "time out": a beforeEach hook for this test timed out after 10ms::',
+      );
     });
     test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
       // Longer than a path buffer on every platform (98302 bytes on Windows).

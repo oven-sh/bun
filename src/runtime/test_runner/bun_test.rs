@@ -114,45 +114,6 @@ pub mod js_fns {
         Ok(bun_test)
     }
 
-    /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
-    /// (adds `OnTestFinished`).
-    // was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
-    #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-    pub enum GenericHookTag {
-        #[strum(serialize = "beforeAll")]
-        BeforeAll,
-        #[strum(serialize = "beforeEach")]
-        BeforeEach,
-        #[strum(serialize = "afterEach")]
-        AfterEach,
-        #[strum(serialize = "afterAll")]
-        AfterAll,
-        #[strum(serialize = "onTestFinished")]
-        OnTestFinished,
-    }
-    impl GenericHookTag {
-        const fn as_hook_tag(self) -> Option<HookTag> {
-            match self {
-                Self::BeforeAll => Some(HookTag::BeforeAll),
-                Self::BeforeEach => Some(HookTag::BeforeEach),
-                Self::AfterEach => Some(HookTag::AfterEach),
-                Self::AfterAll => Some(HookTag::AfterAll),
-                Self::OnTestFinished => None,
-            }
-        }
-        /// Per-variant signature string: the tag name plus `"()"`.
-        const fn sig(self) -> &'static [u8] {
-            match self {
-                Self::BeforeAll => b"beforeAll()",
-                Self::BeforeEach => b"beforeEach()",
-                Self::AfterEach => b"afterEach()",
-                Self::AfterAll => b"afterAll()",
-                Self::OnTestFinished => b"onTestFinished()",
-            }
-        }
-    }
-
     // `adt_const_params` is unstable, so the body takes `tag` at runtime and
     // 5 thin `#[host_fn]` wrappers below supply the per-tag entry points
     // (one fn per JS function so JSFunction::create gets a distinct address).
@@ -292,6 +253,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
+                        Some(tag),
                         args.callback,
                         cfg,
                         None,
@@ -1808,7 +1770,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let mut entry = ExecutionEntry::create(name_not_owned, None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1837,7 +1799,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let entry = ExecutionEntry::create(None, Some(tag.into()), callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let list = self.get_hook_entries(tag);
         list.push(entry);
         Ok(&mut **list.last_mut().unwrap())
@@ -1850,6 +1812,61 @@ pub enum HookTag {
     BeforeEach,
     AfterEach,
     AfterAll,
+}
+
+/// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
+/// (adds `OnTestFinished`). Also recorded on every hook `ExecutionEntry` so
+/// the reporter can name the hook kind.
+#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+pub enum GenericHookTag {
+    #[strum(serialize = "beforeAll")]
+    BeforeAll,
+    #[strum(serialize = "beforeEach")]
+    BeforeEach,
+    #[strum(serialize = "afterEach")]
+    AfterEach,
+    #[strum(serialize = "afterAll")]
+    AfterAll,
+    #[strum(serialize = "onTestFinished")]
+    OnTestFinished,
+}
+impl GenericHookTag {
+    const fn as_hook_tag(self) -> Option<HookTag> {
+        match self {
+            Self::BeforeAll => Some(HookTag::BeforeAll),
+            Self::BeforeEach => Some(HookTag::BeforeEach),
+            Self::AfterEach => Some(HookTag::AfterEach),
+            Self::AfterAll => Some(HookTag::AfterAll),
+            Self::OnTestFinished => None,
+        }
+    }
+    /// Per-variant signature string: the tag name plus `"()"`.
+    const fn sig(self) -> &'static [u8] {
+        match self {
+            Self::BeforeAll => b"beforeAll()",
+            Self::BeforeEach => b"beforeEach()",
+            Self::AfterEach => b"afterEach()",
+            Self::AfterAll => b"afterAll()",
+            Self::OnTestFinished => b"onTestFinished()",
+        }
+    }
+    /// `true` for the hooks that run as part of one test's sequence.
+    pub(crate) const fn is_per_test(self) -> bool {
+        match self {
+            Self::BeforeEach | Self::AfterEach | Self::OnTestFinished => true,
+            Self::BeforeAll | Self::AfterAll => false,
+        }
+    }
+}
+impl From<HookTag> for GenericHookTag {
+    fn from(tag: HookTag) -> Self {
+        match tag {
+            HookTag::BeforeAll => Self::BeforeAll,
+            HookTag::BeforeEach => Self::BeforeEach,
+            HookTag::AfterEach => Self::AfterEach,
+            HookTag::AfterAll => Self::AfterAll,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Default)]
@@ -1873,6 +1890,8 @@ pub enum AddedInPhase {
 pub struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
+    /// `Some` for a hook entry, `None` for a test entry.
+    pub(crate) hook: Option<GenericHookTag>,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1893,6 +1912,7 @@ pub struct ExecutionEntry {
 impl ExecutionEntry {
     fn create(
         name_not_owned: Option<&[u8]>,
+        hook: Option<GenericHookTag>,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,
         parent: Option<*mut DescribeScope>,
@@ -1902,6 +1922,7 @@ impl ExecutionEntry {
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
+            hook,
             timeout: cfg.timeout,
             has_done_parameter: cfg.has_done_parameter,
             added_in_phase: phase,
@@ -1925,6 +1946,17 @@ impl ExecutionEntry {
         entry
     }
 
+    /// The label the reporter prints: the test name, or the hook kind for a hook entry.
+    pub(crate) fn display_label(&self) -> &[u8] {
+        if let Some(name) = self.base.name.as_deref() {
+            return name;
+        }
+        match self.hook {
+            Some(hook) => <&'static str>::from(hook).as_bytes(),
+            None => b"(unnamed)",
+        }
+    }
+
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
@@ -1942,10 +1974,16 @@ impl ExecutionEntry {
                 } else {
                     Execution::Result::FailBecauseTimeout
                 }
-            } else if self.has_done_parameter {
-                Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
-                Execution::Result::FailBecauseHookTimeout
+                sequence.timed_out_hook = Some(Execution::TimedOutHook {
+                    tag: self.hook,
+                    timeout: self.timeout,
+                });
+                if self.has_done_parameter {
+                    Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+                } else {
+                    Execution::Result::FailBecauseHookTimeout
+                }
             };
             sequence.maybe_skip = true;
             return true;

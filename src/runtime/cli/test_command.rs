@@ -1006,7 +1006,24 @@ impl CommandLineReporter {
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
-        let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+        let display_label: &[u8] = test_entry.display_label();
+        // For a hook timeout: "a beforeEach hook for this test" / "a beforeAll hook", plus
+        // the hook's own timeout. `*All` hooks belong to no test.
+        let timed_out_hook = || -> (String, u32) {
+            match sequence.timed_out_hook {
+                Some(hook) => {
+                    let name: &'static str = hook.tag.map_or("hook", Into::into);
+                    let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                    let label = if hook.tag.is_some_and(|tag| tag.is_per_test()) {
+                        format!("{article} {name} hook for this test")
+                    } else {
+                        format!("{article} {name} hook")
+                    };
+                    (label, hook.timeout)
+                }
+                None => ("a hook".to_owned(), test_entry.timeout),
+            }
+        };
 
         // Quieter output when claude code is in use.
         if !Output::is_ai_agent() || !status.is_pass(bun_test::PendingMode::PendingIsFail) {
@@ -1049,14 +1066,25 @@ impl CommandLineReporter {
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
-                | bun_test::Execution::Result::FailBecauseHookTimeout
-                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
-                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
+                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
                         Output::print_error(format_args!(
                             "::error title=error: Test \"{}\" timed out after {}ms::\n",
                             bun_fmt::github_action_property(display_label),
                             test_entry.timeout
+                        ));
+                        Output::flush();
+                    }
+                }
+                bun_test::Execution::Result::FailBecauseHookTimeout
+                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
+                    if Output::is_github_action() {
+                        let (hook_label, hook_timeout) = timed_out_hook();
+                        Output::print_error(format_args!(
+                            "::error title=error: Test \"{}\": {} timed out after {}ms::\n",
+                            bun_fmt::github_action_property(display_label),
+                            hook_label,
+                            hook_timeout
                         ));
                         Output::flush();
                     }
@@ -1176,10 +1204,13 @@ impl CommandLineReporter {
                     );
                 }
                 R::FailBecauseHookTimeout => {
+                    let (hook_label, hook_timeout) = timed_out_hook();
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                        "  <d>^<r> <red>{s} timed out after {d}ms.<r>\n",
+                        hook_label,
+                        hook_timeout
                     );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {
@@ -1191,10 +1222,13 @@ impl CommandLineReporter {
                     );
                 }
                 R::FailBecauseHookTimeoutWithDoneCallback => {
+                    let (hook_label, hook_timeout) = timed_out_hook();
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                        "  <d>^<r> <red>{s} timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n",
+                        hook_label,
+                        hook_timeout
                     );
                 }
             }
@@ -1243,7 +1277,7 @@ impl CommandLineReporter {
         TestCaseReport {
             file,
             scopes,
-            name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+            name: test_entry.display_label(),
             status,
             assertions: sequence.expect_call_count,
             elapsed_ns,

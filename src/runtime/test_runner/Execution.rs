@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry, GenericHookTag,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -152,6 +152,14 @@ pub enum ExpectAssertions {
     Exact(u32),
 }
 
+/// Which hook entry set `FailBecauseHookTimeout*` on its sequence.
+#[derive(Clone, Copy)]
+pub struct TimedOutHook {
+    pub(crate) tag: Option<GenericHookTag>,
+    /// The hook's own timeout in ms, not the test's.
+    pub(crate) timeout: u32,
+}
+
 pub struct ExecutionSequence {
     pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
@@ -167,6 +175,8 @@ pub struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// Set when `result` is `FailBecauseHookTimeout*`.
+    pub(crate) timed_out_hook: Option<TimedOutHook>,
 }
 
 impl ExecutionSequence {
@@ -189,6 +199,7 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            timed_out_hook: None,
         }
     }
 

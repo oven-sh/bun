@@ -31,7 +31,7 @@ test("12782", async () => {
                                                                          ^
     error: Environment variable FOO is not set
         at <anonymous> (file:NN:NN)
-    (fail) (unnamed)
+    (fail) beforeAll
 
     test/regression/issue/12782.bar.fixture.ts:
     (pass) bar > should not run

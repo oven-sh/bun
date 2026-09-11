@@ -274,7 +274,7 @@ function onUpgradedClose(self, connection) {
   if (self[kupgraded] !== connection) return;
   // The stream-level engine reads its transport with no backpressure, so the
   // transport can close after the peer's EOF with plaintext still unread.
-  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self.destroy);
+  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
   else self.destroy();
 }
 // Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts

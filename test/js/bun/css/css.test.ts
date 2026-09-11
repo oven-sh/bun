@@ -7701,6 +7701,63 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers keep the
+  // out-of-gamut channels and clip them when painting (w3c/csswg-drafts#8444), so resolving
+  // these by gamut mapping the origin, as before (#fff and #00f942 below), painted a
+  // different color than the unbundled stylesheet. They are left for the browser.
+  describe("relative colors with an origin outside the sRGB gamut", () => {
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from color(display-p3 0 1 0) h s l) }",
+      ".foo{color:hsl(from color(display-p3 0 1 0) h s l)}",
+    );
+    minify_test(
+      ".foo { color: hwb(from oklch(100% 0.399 336.3) h w b) }",
+      ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
+    );
+    // Under targets without lab(), the origin literal gets the fallback tiers any unresolved
+    // value containing it gets; the relative color itself is still left alone in each tier.
+    prefix_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      indoc`
+        .foo {
+          color: rgb(from #fff r g b);
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            color: rgb(from lab(100% 104.3 -50.9) r g b);
+          }
+        }
+      `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // In-gamut origins resolve as before, and the unbounded functions resolve any origin.
+    minify_test(".foo { color: rgb(from lab(50% 40 -50) r g b) }", ".foo{color:#965dcd}");
+    minify_test(".foo { color: hsl(from color(display-p3 0.4 0.4 0.4) h s l) }", ".foo{color:#666}");
+    minify_test(
+      ".foo { color: color(from lab(100% 104.3 -50.9) srgb r g b) }",
+      ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+    );
+    // A boundary color converts back a few 1e-7 outside the gamut; that still resolves.
+    minify_test(".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b) }", ".foo{color:red}");
+    minify_test(".foo { color: hsl(from lab(54.2905% 80.8049 69.891) h s l) }", ".foo{color:red}");
+    minify_test(
+      ".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b / var(--a)) }",
+      ".foo{color:rgb(255 0 0/var(--a))}",
+    );
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

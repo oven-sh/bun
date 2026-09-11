@@ -3,10 +3,11 @@
 shopt -s extglob
 
 _compgen_reply() {
-    local item
+    local comp_out item
+    comp_out=$(compgen "$@")
     while IFS= read -r item || [[ -n "${item}" ]]; do
         [[ -n "${item}" ]] && COMPREPLY+=( "${item}" )
-    done < <(compgen "$@")
+    done <<< "${comp_out}"
 }
 
 _file_arguments() {
@@ -32,7 +33,7 @@ _read_scripts_in_package_json() {
     local pkg_file="package.json"
     [[ -f "${pkg_file}" && -r "${pkg_file}" ]] || return 0
 
-    local in_scripts=0 line_content script_names=() rest
+    local in_scripts=0 line_content script_names=() rest key
     while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
         if (( ! in_scripts )); then
             if [[ "${line_content}" =~ \"scripts\"[[:space:]]*:[[:space:]]*\{(.*) ]]; then
@@ -48,9 +49,9 @@ _read_scripts_in_package_json() {
                 rest="${BASH_REMATCH[1]}"
                 in_scripts=0
             fi
-            while [[ "${rest}" =~ \"([^\"\\]+)\"[[:space:]]*: ]]; do
+            while [[ "${rest}" =~ [[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; do
                 script_names+=( "${BASH_REMATCH[1]}" )
-                rest="${rest#*${BASH_REMATCH[0]}}"
+                rest="${BASH_REMATCH[3]}"
             done
         fi
     done < "${pkg_file}"
@@ -198,6 +199,11 @@ _bun_completions_inner() {
             return ;;
         run)
             _read_scripts_in_package_json
+            local bins
+            bins=$(bun getcompletes b 2>/dev/null)
+            if [[ -n "${bins}" ]]; then
+                _compgen_reply -W "${bins}" -- "${cur_word}"
+            fi
             _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
             _long_short_completion "--version --cwd --help --silent -v -h" "-v -h"
             return ;;

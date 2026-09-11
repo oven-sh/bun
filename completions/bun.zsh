@@ -1110,10 +1110,10 @@ _bun_run_param_script_completion() {
             val="${words[i]#--cwd=}"
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%\"}"
-            val="${val#\"}"
-            val="${val%\'}"
-            val="${val#\'}"
+            val="${val%"}"
+            val="${val#"}"
+            val="${val%'}"
+            val="${val#'}"
             val="${val/#\~/$HOME}"
             target_cwd="${val}"
         fi
@@ -1131,6 +1131,18 @@ _bun_run_param_script_completion() {
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
+    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+}
+
+_bun_link_param_package_completion() {
+    # Read packages from ~/.bun/install/global/node_modules
+    install_env=$BUN_INSTALL
+    install_dir=${(P)install_env:-$HOME/.bun}
+    global_node_modules=$install_dir/install/global/node_modules
+
+    local -a packages_full_path=(${global_node_modules}/*(N))
+    local -a packages=(${packages_full_path:t})
+    _alternative "dirs:directory:compadd -a packages"
 }
 
 _bun_remove_param_package_completion() {
@@ -1144,10 +1156,10 @@ _bun_remove_param_package_completion() {
             val="${words[i]#--cwd=}"
         fi
         if [[ -n "${val}" ]]; then
-            val="${val%\"}"
-            val="${val#\"}"
-            val="${val%\'}"
-            val="${val#\'}"
+            val="${val%"}"
+            val="${val#"}"
+            val="${val%'}"
+            val="${val#'}"
             val="${val/#\~/$HOME}"
             pkg_dir="${val}"
         fi
@@ -1172,9 +1184,9 @@ _bun_remove_param_package_completion() {
                     rest="${match[1]}"
                     in_dep_block=0
                 fi
-                while [[ "${rest}" =~ \"([^\"\]+)\"[[:space:]]*: ]]; do
+                while [[ "${rest}" =~ [[:space:]]*\"([^\"\]+)\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"(.*) ]]; do
                     deps+=( "${match[1]}" )
-                    rest="${rest#*${MATCH}}"
+                    rest="${match[3]}"
                 done
             fi
         done < "${pkg_file}"

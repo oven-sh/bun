@@ -1049,7 +1049,7 @@ enum WaitError {
 #[repr(C)]
 pub struct Thread {
     next: *mut Thread,
-    target: *mut Thread,
+    target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
     idle_queue: node::Queue,
@@ -1192,7 +1192,7 @@ impl Thread {
 
         let mut self_ = Thread {
             next: ptr::null_mut(),
-            target: ptr::null_mut(),
+            target: Cell::new(ptr::null_mut()),
             join_event: Event::default(),
             run_queue: node::Queue::default(),
             idle_queue: node::Queue::default(),
@@ -1206,6 +1206,8 @@ impl Thread {
         // SAFETY: self_ptr is our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(pool, self_ptr) };
 
+        // Published now: from here on this thread, like the stealers, only borrows it shared.
+        let this: &Thread = &self_;
         let stats = stats_enabled();
         let mut is_waking = false;
         loop {
@@ -1221,8 +1223,7 @@ impl Thread {
                     // worker thread tears down its own `Worker`/`WorkerData`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
-                    // SAFETY: self_ptr is our own stack-local Thread.
-                    unsafe { (*self_ptr).drain_idle_events() };
+                    this.drain_idle_events();
                     return;
                 }
             };
@@ -1232,8 +1233,7 @@ impl Thread {
                     .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
-            // SAFETY: self_ptr is our own stack-local Thread.
-            while let Some(result) = unsafe { (*self_ptr).pop(pool) } {
+            while let Some(result) = this.pop(pool) {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
@@ -1253,8 +1253,7 @@ impl Thread {
             }
 
             Output::flush();
-            // SAFETY: self_ptr is our own stack-local Thread.
-            unsafe { (*self_ptr).drain_idle_events() };
+            this.drain_idle_events();
         }
     }
 
@@ -1278,7 +1277,7 @@ impl Thread {
     /// already proved liveness once (`join()` waits on every registered
     /// worker), so the per-access raw-pointer derefs that the `*const`
     /// signature forced are gone.
-    pub(crate) fn pop(&mut self, thread_pool: &ThreadPool) -> Option<node::Stole> {
+    pub(crate) fn pop(&self, thread_pool: &ThreadPool) -> Option<node::Stole> {
         // Check our local buffer first
         if let Some(node) = self.run_buffer.pop() {
             return Some(node::Stole {
@@ -1301,8 +1300,9 @@ impl Thread {
         let mut num_threads = thread_pool.sync.load(Ordering::Relaxed).spawned();
         while num_threads > 0 {
             // Traverse the stack of registered threads on the thread pool
-            let target = if !self.target.is_null() {
-                self.target
+            let cursor = self.target.get();
+            let target = if !cursor.is_null() {
+                cursor
             } else {
                 let t = thread_pool.threads.load(Ordering::Acquire);
                 if t.is_null() {
@@ -1311,7 +1311,7 @@ impl Thread {
                 t
             };
             // SAFETY: target is a registered Thread in the lock-free stack.
-            self.target = unsafe { (*target).next };
+            self.target.set(unsafe { (*target).next });
 
             // Try to steal from their queue first to avoid contention (the target steal's from queue last).
             // SAFETY: target is a registered Thread in the lock-free stack, alive until join().
@@ -1321,7 +1321,7 @@ impl Thread {
 
             // Skip stealing from the buffer if we're the target.
             // We still steal from our own queue above given it may have just been locked the first time we tried.
-            if target == std::ptr::from_mut::<Thread>(self) {
+            if ptr::eq(target, self) {
                 num_threads -= 1;
                 continue;
             }

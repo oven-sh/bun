@@ -1541,6 +1541,88 @@ test("close(cb) interleaves with other close listeners in registration order", a
   expect(order2).toEqual(["B", "C"]);
 });
 
+// node's 'close' is dispatchEvent(new MessagePortCloseEvent()), and node-style
+// listeners receive a dispatched event as-is. The .on() shim used to hand every
+// non-message listener event.detail, which a plain Event does not have.
+function recordCloseArgs(port: MessagePort, seen: unknown[], via: string) {
+  return (...args: unknown[]) => {
+    const event = args[0] as Event | undefined;
+    seen.push({
+      via,
+      argc: args.length,
+      isEvent: event instanceof Event,
+      type: event?.type,
+      target: event?.target === port,
+    });
+  };
+}
+
+test("'close' listeners receive the close Event when the port itself is closed", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: unknown[] = [];
+  port1.on("close", recordCloseArgs(port1, seen, "on"));
+  port1.once("close", recordCloseArgs(port1, seen, "once"));
+  const resolved = once(port1, "close");
+  port1.close(recordCloseArgs(port1, seen, "close(cb)"));
+  const [arg] = await resolved;
+  expect(seen).toEqual([
+    { via: "on", argc: 1, isEvent: true, type: "close", target: true },
+    { via: "once", argc: 1, isEvent: true, type: "close", target: true },
+    { via: "close(cb)", argc: 1, isEvent: true, type: "close", target: true },
+  ]);
+  expect(arg).toBeInstanceOf(Event);
+  port2.close();
+});
+
+test("'close' listeners receive the close Event when the peer is closed", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: unknown[] = [];
+  port1.on("close", recordCloseArgs(port1, seen, "on"));
+  const resolved = once(port1, "close");
+  port2.close();
+  const [arg] = await resolved;
+  expect(seen).toEqual([{ via: "on", argc: 1, isEvent: true, type: "close", target: true }]);
+  expect(arg).toBeInstanceOf(Event);
+  port1.close();
+});
+
+// The two other sources of non-message events, as node delivers them: emit()'s
+// argument exactly as passed (undefined when omitted), and an event handed to
+// dispatchEvent() as that very event. addEventListener() still sees a CustomEvent.
+test("non-message .on() listeners get emit()'s argument or the dispatched event itself", () => {
+  const { port1, port2 } = new MessageChannel();
+  const received: unknown[] = [];
+  const details: unknown[] = [];
+  port1.on("custom", arg => received.push(arg));
+  port1.addEventListener("custom", event => details.push((event as CustomEvent).detail));
+
+  const payload = { id: 1 };
+  const plain = new Event("custom");
+  const custom = new CustomEvent("custom", { detail: 7 });
+  port1.emit("custom", payload);
+  port1.emit("custom");
+  port1.dispatchEvent(plain);
+  port1.dispatchEvent(custom);
+
+  expect({
+    argc: received.length,
+    emitPayloadByIdentity: received[0] === payload,
+    omittedEmitArgIsUndefined: received[1] === undefined,
+    plainEventByIdentity: received[2] === plain,
+    customEventByIdentity: received[3] === custom,
+    details,
+  }).toEqual({
+    argc: 4,
+    emitPayloadByIdentity: true,
+    omittedEmitArgIsUndefined: true,
+    plainEventByIdentity: true,
+    customEventByIdentity: true,
+    details: [payload, null, undefined, 7],
+  });
+  port1.close();
+  port2.close();
+});
+
 test("getHeapStatistics settles when terminated mid-request", async () => {
   const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });
   await once(w, "online");

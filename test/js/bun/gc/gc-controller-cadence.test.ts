@@ -274,7 +274,7 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
   let copies: string[];
   beforeAll(() => {
     dir = tempDir("idle-page-out", {});
-    copies = [0, 1, 2, 3].map(i => {
+    copies = [0, 1, 2, 3, 4].map(i => {
       const exe = join(String(dir), "bun-copy-" + i);
       copyFileSync(bunExe(), exe);
       chmodSync(exe, 0o755);
@@ -286,10 +286,11 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
   });
   afterAll(() => dir[Symbol.dispose]());
 
-  async function run(busy: boolean, env: Record<string, string>, waitMs = 4200) {
+  // Runs `source` in a child and returns the JSON it printed.
+  async function runScript(source: string, env: Record<string, string>) {
     const exe = copies.pop()!;
     await using proc = Bun.spawn({
-      cmd: [exe, "-e", script(busy, waitMs)],
+      cmd: [exe, "-e", source],
       env: {
         ...bunEnv,
         BUN_IDLE_GC_SECONDS: "1,1",
@@ -302,8 +303,9 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { ...(JSON.parse(stdout) as { before: number; now: number; at: number }), exitCode };
+    return { ...(JSON.parse(stdout) as Record<string, number>), exitCode };
   }
+  const run = (busy: boolean, env: Record<string, string>, waitMs = 4200) => runScript(script(busy, waitMs), env);
 
   test.concurrent("file-backed resident memory drops once the process is idle", async () => {
     const { before, now, exitCode } = await run(false, {}, 15_000);
@@ -326,6 +328,49 @@ describe.skipIf(cannotObservePageOut)("idle release pages out the executable ima
   test.concurrent("not while the process is using the CPU with a heap that has stopped growing", async () => {
     const { before, now, exitCode } = await run(true, {});
     expect(now).toBeGreaterThan(before * 0.6);
+    expect(exitCode).toBe(0);
+  });
+
+  // A parked program's rare background jobs read a lot of the executable back in without being work. Once the idle
+  // collections are done, file-backed resident memory well above where it settled after the last page-out gets it
+  // requested again.
+  test.concurrent("what a background job reads back in is released again while the quiet lasts", async () => {
+    const source = /* js */ `
+      const { readFileSync } = require("fs");
+      const fileResident = () => Number(/^RssFile:\\s+(\\d+) kB/m.exec(readFileSync("/proc/self/status", "utf8"))[1]);
+      const start = fileResident();
+      const deadline = Date.now() + 15_000;
+      let previous = start, steady = 0, low, touched;
+      const timer = setInterval(() => {
+        const now = fileResident();
+        if (low === undefined) {
+          // The first page-out has finished and the controller has seen where things settled once the number is down
+          // and has not fallen for a quarter of a lease and a tick (there is nothing else to observe for the latter).
+          steady = now < start * 0.6 && now >= previous ? steady + 1 : 0;
+          previous = now;
+          if (steady < 6 && Date.now() < deadline) return;
+          low = now;
+          // Code and data this process has not run yet: locale data, the transpiler, compression, hashing.
+          for (const locale of ["ja-JP", "ar-EG", "hi-IN", "de-DE", "zh-Hant-TW", "th-TH"]) {
+            new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "full" }).format(0);
+            new Intl.NumberFormat(locale, { style: "currency", currency: "EUR" }).format(1234.5);
+            ["b", "a"].sort(new Intl.Collator(locale).compare);
+            [...new Intl.Segmenter(locale, { granularity: "word" }).segment("a b")];
+          }
+          new Bun.Transpiler({ loader: "tsx" }).transformSync("export const a: number = <div>{1}</div>;");
+          require("zlib").gunzipSync(require("zlib").gzipSync("x"));
+          require("crypto").createHash("sha512").update("x").digest("hex");
+          touched = fileResident();
+        } else if (now < low + (touched - low) / 2 || Date.now() > deadline) {
+          clearInterval(timer);
+          console.log(JSON.stringify({ start, low, touched, now }));
+        }
+      }, 100);
+    `;
+    const { start, low, touched, now, exitCode } = await runScript(source, { BUN_GC_TIMER_INTERVAL: "250" });
+    expect(low).toBeLessThan(start * 0.6);
+    expect(touched).toBeGreaterThan(low + 8 * 1024);
+    expect(now).toBeLessThan(low + (touched - low) / 2);
     expect(exitCode).toBe(0);
   });
 

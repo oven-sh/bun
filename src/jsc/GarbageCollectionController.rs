@@ -35,14 +35,21 @@ pub struct GarbageCollectionController {
 /// The executable's own code and constants are only paged out for a process that is at rest, which a quiet heap does
 /// not prove: also under `MAX_CPU_PERCENT` of the CPU (all threads) both since the program was last busy and
 /// over the last tick, on a tick without an idle collection (which runs that code), retried each tick until then, and
-/// not again for `MIN_INTERVAL`.
+/// the first time in a quiet stretch not within `MIN_INTERVAL` of the last. A parked program's rare background jobs
+/// read pages back in without being work, so after the last idle collection of the same stretch it is requested again
+/// when the process's file-backed resident memory is `REPEAT_ABOVE_SETTLED` over where it settled after the last one.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct IdleImagePageOut {
     quiet_since: Cell<Option<CpuSample>>,
-    /// Set with the last idle collection: the sample at the previous tick.
+    /// Set with the last idle collection and by a repeat: the sample at the previous tick.
     pending: Cell<Option<CpuSample>>,
     last: Cell<Option<std::time::Instant>>,
+    /// How many times since the program was last busy, when a repeat was last considered, and the process's
+    /// file-backed resident bytes once its timers and pollers had read their pages back in after the last one.
+    times_this_stretch: Cell<u8>,
+    repeat_considered: Cell<Option<std::time::Instant>>,
+    settled: Cell<Option<usize>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -71,11 +78,44 @@ impl CpuSample {
 impl IdleImagePageOut {
     const MAX_CPU_PERCENT: u128 = 3;
     const MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    // A background job that fetches, parses and reports reads tens of MB back in.
+    const REPEAT_ABOVE_SETTLED: usize = 8 * 1024 * 1024;
 
     /// The program was busy: the next quiet stretch starts over.
     fn restart(&self) {
         self.quiet_since.set(None);
         self.pending.set(None);
+        self.times_this_stretch.set(0);
+    }
+
+    /// A quiet tick: once the idle collections are `finished`, request the page-out again if a lot has been read back
+    /// in since things settled after the one before. Looked at every quarter `lease`; no sooner after that one than
+    /// `lease`, and twice as long each further time: a job that keeps reading the same pages in is not worth chasing.
+    fn request_repeat(&self, lease: std::time::Duration, finished: bool) {
+        let times = self.times_this_stretch.get();
+        let waited =
+            |since: Option<std::time::Instant>, wait| since.is_none_or(|t| t.elapsed() >= wait);
+        if times == 0
+            || self.pending.get().is_some()
+            || !waited(self.repeat_considered.get(), lease / 4)
+            || !waited(self.last.get(), lease / 4)
+        {
+            return;
+        }
+        self.repeat_considered.set(Some(std::time::Instant::now()));
+        let Some(resident) = bun_sys::file_backed_resident_bytes() else {
+            return;
+        };
+        let Some(settled) = self.settled.get() else {
+            self.settled.set(Some(resident));
+            return;
+        };
+        if finished
+            && resident > settled + Self::REPEAT_ABOVE_SETTLED
+            && waited(self.last.get(), lease * (1 << (times - 1).min(6)))
+        {
+            self.pending.set(Some(CpuSample::now()));
+        }
     }
 
     /// A quiet tick that runs no idle collection. `true`: page the image out now.
@@ -84,10 +124,12 @@ impl IdleImagePageOut {
             return false;
         };
         let now = CpuSample::now();
-        if self
-            .last
-            .get()
-            .is_some_and(|last| now.at.duration_since(last) < Self::MIN_INTERVAL)
+        // Between quiet stretches; within one `request_repeat` paces it.
+        if self.times_this_stretch.get() == 0
+            && self
+                .last
+                .get()
+                .is_some_and(|last| now.at.duration_since(last) < Self::MIN_INTERVAL)
         {
             self.pending.set(Some(now));
             return false;
@@ -100,8 +142,23 @@ impl IdleImagePageOut {
         self.pending.set(if at_rest { None } else { Some(now) });
         if at_rest {
             self.last.set(Some(now.at));
+            self.settled.set(None);
+            self.times_this_stretch
+                .set(self.times_this_stretch.get().saturating_add(1));
         }
         at_rest
+    }
+
+    /// The module graph goes along: a repeat is for what was read back in, and going over pages that are out is cheap.
+    fn page_out(graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>) {
+        // SAFETY: VM-free — the thread only madvise()s file-backed pages of the executable (`graph` is the
+        // process-lifetime, immutable embedded module graph) and touches no VM or JS state.
+        spawn_idle_page_out(move || {
+            if let Some(graph) = graph {
+                graph.page_out();
+            }
+            bun_sys::elf::page_out_program_image();
+        });
     }
 }
 
@@ -262,7 +319,14 @@ impl GarbageCollectionController {
             if dues.clone().next_back().is_some_and(crossed) {
                 image.pending.set(Some(CpuSample::now()));
             } else if !full && image.quiet_tick() {
-                spawn_idle_page_out(bun_sys::elf::page_out_program_image);
+                IdleImagePageOut::page_out(vm.standalone_module_graph);
+            } else if !full {
+                // One CodeBlock-aging lease, like the collections.
+                let lease = if at[1] != 0 { at[1] - at[0] } else { at[0] };
+                image.request_repeat(
+                    std::time::Duration::from_millis(lease.into()),
+                    dues.clone().next_back().is_some_and(|last| before >= last),
+                );
             }
         }
         (

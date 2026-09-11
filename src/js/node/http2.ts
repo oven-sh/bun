@@ -2021,11 +2021,8 @@ function pushToStream(stream, data) {
   }
 }
 
-// The peer's half of the stream is over: END_STREAM arrived, or the stream is a server push,
-// which never has one. A HEADERS frame that carries END_STREAM calls this before the event for
-// that frame is emitted (node's onSessionHeaders): the streamEnd dispatch for the same frame only
-// runs after the listener's ticks have drained, too late for a listener that close()s with an
-// error code, which would never see 'end'.
+// Ends the readable. A HEADERS frame with END_STREAM calls this before its event is emitted
+// (node's onSessionHeaders): the frame's streamEnd dispatch only runs a tick drain later.
 function endInboundHalf(stream: Http2Stream) {
   if (!stream.rstCode) stream.rstCode = 0;
   pushToStream(stream, null);

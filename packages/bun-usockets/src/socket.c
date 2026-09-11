@@ -545,6 +545,56 @@ static int us_internal_send_errno_is_peer_gone(int e) {
 #define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
 #endif
 
+/* Classify the failure of a send() that just returned < 0 on `s`. Returns 0
+ * when the write is to be retried from a writable event, or the platform
+ * error code (errno on POSIX, a WSA code on Windows) when no retry can
+ * succeed. */
+static int us_internal_classify_failed_send(struct us_socket_t *s) {
+    /* bsd_send already retries EINTR; bsd_would_block() reads errno on
+     * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
+     * transient kernel resource exhaustion on a healthy connection -
+     * classifying them as fatal made the node:net drain path drop the
+     * buffered bytes on a socket that kept flowing. */
+    if (bsd_would_block() || bsd_send_is_transient_error()) {
+        return 0;
+    }
+#ifndef _WIN32
+    /* Anything else that is not a known peer-gone errno gets a BOUNDED
+     * retry through the same rearm/writable machinery as would-block.
+     * Kernels return racy, non-terminal errnos from send() on sockets
+     * that are still perfectly usable - macOS EPROTOTYPE while the
+     * connection is concurrently mutating is the canonical case, and
+     * libuv retries it (RETRY_ON_WRITE_ERROR,
+     * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c) -
+     * so failing the write on first sight killed live connections.
+     * But the retry must not be unbounded: an errno that persists across
+     * many consecutive writable dispatches with no successful send in
+     * between means the transport is dead in a way the kernel will not
+     * name on the write side, and silently re-arming forever jams the
+     * connection (buffered bytes never drain and no error ever
+     * surfaces). After the limit, report the errno like the peer-gone
+     * class so the caller can fail the write. */
+    if (!us_internal_send_errno_is_peer_gone(errno) &&
+        s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
+        s->unclassified_send_failures++;
+        return 0;
+    }
+    return errno;
+#else
+    /* Windows: report the raw (positive) WSA code. The JS layer already
+     * traffics in raw negative WSA values on this platform (see
+     * SocketEmitEndNT / failWrite, which shape unnameable ones as
+     * ECONNRESET), and a real code keeps fatal sends distinguishable from
+     * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
+     * them (flood tests hung on Windows because a fatal send looked like
+     * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
+     * See a5e7ba5905 before widening what counts as fatal
+     * (drain-into-RST on test-http-no-content-length). */
+    int wsa_send_error = WSAGetLastError();
+    return wsa_send_error > 1 ? wsa_send_error : 1;
+#endif
+}
+
 int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
     if (fatal_write_error) *fatal_write_error = 0;
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
@@ -557,57 +607,15 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
-        /* bsd_send already retries EINTR; bsd_would_block() reads errno on
-         * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
-         * transient kernel resource exhaustion on a healthy connection -
-         * classifying them as fatal made the node:net drain path drop the
-         * buffered bytes on a socket that kept flowing. */
-        if (bsd_would_block() || bsd_send_is_transient_error()) {
+        int fatal_send_error = us_internal_classify_failed_send(s);
+        if (!fatal_send_error) {
             s->flags.last_write_failed = 1;
             us_internal_rearm_writable(s);
             return 0;
         }
-#ifndef _WIN32
-        /* Anything else that is not a known peer-gone errno gets a BOUNDED
-         * retry through the same rearm/writable machinery as would-block.
-         * Kernels return racy, non-terminal errnos from send() on sockets
-         * that are still perfectly usable - macOS EPROTOTYPE while the
-         * connection is concurrently mutating is the canonical case, and
-         * libuv retries it (RETRY_ON_WRITE_ERROR,
-         * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c) -
-         * so failing the write on first sight killed live connections.
-         * But the retry must not be unbounded: an errno that persists across
-         * many consecutive writable dispatches with no successful send in
-         * between means the transport is dead in a way the kernel will not
-         * name on the write side, and silently re-arming forever jams the
-         * connection (buffered bytes never drain and no error ever
-         * surfaces). After the limit, report the errno like the peer-gone
-         * class so the caller can fail the write. */
-        if (!us_internal_send_errno_is_peer_gone(errno) &&
-            s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
-            s->unclassified_send_failures++;
-            s->flags.last_write_failed = 1;
-            us_internal_rearm_writable(s);
-            return 0;
-        }
-        /* Fatal send error: report the errno to callers that opt in and stop
+        /* Fatal send error: report the code to callers that opt in and stop
          * polling writable - retrying can never succeed. */
-        if (fatal_write_error) *fatal_write_error = errno;
-#else
-        /* Windows: report the raw (positive) WSA code. The JS layer already
-         * traffics in raw negative WSA values on this platform (see
-         * SocketEmitEndNT / failWrite, which shape unnameable ones as
-         * ECONNRESET), and a real code keeps fatal sends distinguishable from
-         * the legacy -1 closed/shutdown sentinel so the h2 parser can latch
-         * them (flood tests hung on Windows because a fatal send looked like
-         * backpressure). Keep 1 as the floor for a zero/garbage WSA value.
-         * See a5e7ba5905 before widening what counts as fatal
-         * (drain-into-RST on test-http-no-content-length). */
-        if (fatal_write_error) {
-            int wsa_send_error = WSAGetLastError();
-            *fatal_write_error = wsa_send_error > 1 ? wsa_send_error : 1;
-        }
-#endif
+        if (fatal_write_error) *fatal_write_error = fatal_send_error;
         return 0;
     }
     s->unclassified_send_failures = 0;

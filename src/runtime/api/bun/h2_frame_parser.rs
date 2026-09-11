@@ -2945,7 +2945,7 @@ impl H2FrameParser {
     /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
     /// close the transport - the failing write can be deep inside frame emission, so
     /// the close must not run under the caller's stack.
-    /// Errno classification lives in `us_socket_write_check_error` (socket.c):
+    /// Errno classification lives in `us_internal_classify_failed_send` (socket.c):
     /// would-block/transient errnos re-arm writable and are never reported
     /// here, known peer-gone errnos are reported immediately, and every other
     /// errno gets a bounded retry window through the same rearm machinery

@@ -755,24 +755,6 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
     });
-    test("should annotate a hook timeout with the hook kind and its timeout", () => {
-      const stderr = runTest({
-        input: `
-          import { beforeEach, test } from "bun:test";
-          beforeEach(async () => {
-            await Bun.sleep(1000);
-          }, 10);
-          test("time out", () => {}, { timeout: 5000 });
-        `,
-        env: {
-          FORCE_COLOR: "1",
-          GITHUB_ACTIONS: "true",
-        },
-      });
-      expect(stderr).toContain(
-        '::error title=error: Test "time out": a beforeEach hook for this test timed out after 10ms::',
-      );
-    });
     test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
       // Longer than a path buffer on every platform (98302 bytes on Windows).
       const padding = 100_000;

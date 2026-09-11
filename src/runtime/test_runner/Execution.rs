@@ -155,7 +155,7 @@ pub enum ExpectAssertions {
 /// Which hook entry set `FailBecauseHookTimeout*` on its sequence.
 #[derive(Clone, Copy)]
 pub struct TimedOutHook {
-    pub(crate) tag: Option<GenericHookTag>,
+    pub(crate) tag: GenericHookTag,
     /// The hook's own timeout in ms, not the test's.
     pub(crate) timeout: u32,
 }
@@ -163,13 +163,13 @@ pub struct TimedOutHook {
 impl TimedOutHook {
     /// "a beforeAll hook" or "an afterEach hook for this test".
     pub(crate) fn label(&self) -> String {
-        let name: &'static str = self.tag.map_or("hook", Into::into);
+        let name: &'static str = self.tag.into();
         let article = if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
             "an"
         } else {
             "a"
         };
-        if self.tag.is_some_and(|tag| tag.is_per_test()) {
+        if self.tag.is_per_test() {
             format!("{article} {name} hook for this test")
         } else {
             format!("{article} {name} hook")

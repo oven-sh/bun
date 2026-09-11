@@ -253,7 +253,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
-                        Some(tag),
+                        EntryKind::Hook(tag),
                         args.callback,
                         cfg,
                         None,
@@ -1770,7 +1770,15 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let mut entry = ExecutionEntry::create(
+            name_not_owned,
+            EntryKind::Test,
+            callback,
+            cfg,
+            Some(std::ptr::from_mut(self)),
+            base,
+            phase,
+        );
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1799,7 +1807,15 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let entry = ExecutionEntry::create(None, Some(tag.into()), callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let entry = ExecutionEntry::create(
+            None,
+            EntryKind::Hook(tag.into()),
+            callback,
+            cfg,
+            Some(std::ptr::from_mut(self)),
+            base,
+            phase,
+        );
         let list = self.get_hook_entries(tag);
         list.push(entry);
         Ok(&mut **list.last_mut().unwrap())
@@ -1885,11 +1901,16 @@ pub enum AddedInPhase {
     Execution,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum EntryKind {
+    Test,
+    Hook(GenericHookTag),
+}
+
 pub struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
-    /// `Some` for a hook entry, `None` for a test entry.
-    pub(crate) hook: Option<GenericHookTag>,
+    pub(crate) kind: EntryKind,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1910,7 +1931,7 @@ pub struct ExecutionEntry {
 impl ExecutionEntry {
     fn create(
         name_not_owned: Option<&[u8]>,
-        hook: Option<GenericHookTag>,
+        kind: EntryKind,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,
         parent: Option<*mut DescribeScope>,
@@ -1920,7 +1941,7 @@ impl ExecutionEntry {
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
-            hook,
+            kind,
             timeout: cfg.timeout,
             has_done_parameter: cfg.has_done_parameter,
             added_in_phase: phase,
@@ -1949,9 +1970,9 @@ impl ExecutionEntry {
         if let Some(name) = self.base.name.as_deref() {
             return name;
         }
-        match self.hook {
-            Some(hook) => <&'static str>::from(hook).as_bytes(),
-            None => b"(unnamed)",
+        match self.kind {
+            EntryKind::Hook(tag) => <&'static str>::from(tag).as_bytes(),
+            EntryKind::Test => b"(unnamed)",
         }
     }
 
@@ -1962,25 +1983,24 @@ impl ExecutionEntry {
     ) -> bool {
         if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
-            // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
-            let is_test_entry = sequence
-                .test_entry
-                .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
-            sequence.result = if is_test_entry {
-                if self.has_done_parameter {
-                    Execution::Result::FailBecauseTimeoutWithDoneCallback
-                } else {
-                    Execution::Result::FailBecauseTimeout
+            sequence.result = match self.kind {
+                EntryKind::Test => {
+                    if self.has_done_parameter {
+                        Execution::Result::FailBecauseTimeoutWithDoneCallback
+                    } else {
+                        Execution::Result::FailBecauseTimeout
+                    }
                 }
-            } else {
-                sequence.timed_out_hook = Some(Execution::TimedOutHook {
-                    tag: self.hook,
-                    timeout: self.timeout,
-                });
-                if self.has_done_parameter {
-                    Execution::Result::FailBecauseHookTimeoutWithDoneCallback
-                } else {
-                    Execution::Result::FailBecauseHookTimeout
+                EntryKind::Hook(tag) => {
+                    sequence.timed_out_hook = Some(Execution::TimedOutHook {
+                        tag,
+                        timeout: self.timeout,
+                    });
+                    if self.has_done_parameter {
+                        Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+                    } else {
+                        Execution::Result::FailBecauseHookTimeout
+                    }
                 }
             };
             sequence.maybe_skip = true;

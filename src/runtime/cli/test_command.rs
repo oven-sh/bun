@@ -1055,25 +1055,14 @@ impl CommandLineReporter {
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
-                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback => {
+                | bun_test::Execution::Result::FailBecauseHookTimeout
+                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
+                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
                         Output::print_error(format_args!(
                             "::error title=error: Test \"{}\" timed out after {}ms::\n",
                             bun_fmt::github_action_property(display_label),
                             test_entry.timeout
-                        ));
-                        Output::flush();
-                    }
-                }
-                bun_test::Execution::Result::FailBecauseHookTimeout
-                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
-                    if Output::is_github_action() {
-                        let (hook_label, hook_timeout) = timed_out_hook();
-                        Output::print_error(format_args!(
-                            "::error title=error: Test \"{}\": {} timed out after {}ms::\n",
-                            bun_fmt::github_action_property(display_label),
-                            hook_label,
-                            hook_timeout
                         ));
                         Output::flush();
                     }

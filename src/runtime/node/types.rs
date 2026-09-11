@@ -1293,12 +1293,34 @@ impl Valid {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What one element's iovec points at.
+enum Span {
+    /// The element's own bytes, of this length.
+    Borrowed(usize),
+    /// A copy of them, for storage a pin does not hold.
+    Copied(Vec<u8>),
+}
+
+impl Span {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Span::Borrowed(len) => *len,
+            Span::Copied(bytes) => bytes.len(),
+        }
+    }
+}
+
 pub struct VectorArrayBuffer {
     pub value: JSValue,
     pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
+    /// Parallel to `views`: what each iovec points at.
+    spans: Vec<Span>,
+    /// A copy could not be allocated. `from_js` turns this into a throw.
+    oom: bool,
     pinned: bool,
 }
 
@@ -1327,6 +1349,7 @@ unsafe extern "C" {
             element: JSValue,
             data: *mut u8,
             byte_len: usize,
+            volatile_storage: bool,
         ),
     ) -> i32;
 }
@@ -1336,6 +1359,7 @@ unsafe extern "C" fn append_buffer_span(
     element: JSValue,
     data: *mut u8,
     byte_len: usize,
+    volatile_storage: bool,
 ) {
     // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
@@ -1348,7 +1372,24 @@ unsafe extern "C" fn append_buffer_span(
         // backing store, valid and unaliased for the duration of the callback.
         unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
     };
-    out.buffers.push(bun_sys::platform_iovec_create(slice));
+    let mut span = Span::Borrowed(slice.len());
+    if volatile_storage && !slice.is_empty() {
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(slice.len()).is_err() {
+            out.oom = true;
+        } else {
+            copy.extend_from_slice(slice);
+            span = Span::Copied(copy);
+        }
+    }
+    // The `out.spans` push below moves the `Vec`, not its bytes, so the
+    // pointer this takes stays good.
+    let iovec = match &mut span {
+        Span::Copied(copy) => bun_sys::platform_iovec_create(copy.as_mut_slice()),
+        Span::Borrowed(_) => bun_sys::platform_iovec_create(slice),
+    };
+    out.buffers.push(iovec);
+    out.spans.push(span);
     out.views.push(element);
 }
 
@@ -1370,6 +1411,8 @@ impl VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
             views: Vec::new(),
+            spans: Vec::new(),
+            oom: false,
             pinned: false,
         };
         bun_jsc::validation_scope!(scope, global_object);
@@ -1396,6 +1439,9 @@ impl VectorArrayBuffer {
             }
             val.protect();
         }
+        if out.oom {
+            return Err(global_object.throw_out_of_memory());
+        }
         match status {
             0 => Ok(out),
             -1 => Err(jsc::JsError::Thrown),
@@ -1404,6 +1450,30 @@ impl VectorArrayBuffer {
                 Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
             }
+        }
+    }
+
+    /// Copies what a read produced back into the elements it could not write
+    /// into directly. `bytes_read` fills the spans in order. JS thread: each
+    /// range is read from the JS value again, because a `grow()` since the
+    /// call moved the block or detached the view.
+    pub(crate) fn write_back(&mut self, global_object: &JSGlobalObject, bytes_read: u64) {
+        let mut left = bytes_read;
+        for (view, span) in self.views.iter().zip(self.spans.iter()) {
+            if left == 0 {
+                return;
+            }
+            let filled = left.min(span.len() as u64);
+            left -= filled;
+            let Span::Copied(bytes) = span else {
+                continue;
+            };
+            let Some(mut live) = view.as_array_buffer(global_object) else {
+                continue;
+            };
+            let dst = live.byte_slice_mut();
+            let n = (filled as usize).min(dst.len());
+            dst[..n].copy_from_slice(&bytes[..n]);
         }
     }
 }

@@ -1038,7 +1038,6 @@ mod _async_tasks {
     impl_fs_argument!(
         args::Rename<'static>,
         args::Truncate<'static>,
-        args::FdVectorIo,
         args::FTruncate,
         args::Chown<'static>,
         args::Lutimes<'static>,
@@ -1081,6 +1080,22 @@ mod _async_tasks {
             let len = bytes_written.unwrap_or(0).min(self.length) as usize;
             if let args::ReadBuffer::PinnedBuffer(buffer) = &mut self.buffer {
                 buffer.write_back(global, len);
+            }
+        }
+    }
+    // `readv` and `writev` share this argument set. `write_back` reaches only
+    // `readv`: `ret::Writev` is `ret::Write`, which reports no bytes.
+    // SAFETY: as for `impl_fs_argument!`.
+    unsafe impl ThreadIsolatedArg for args::FdVectorIo {}
+    impl FsArgument for args::FdVectorIo {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::FdVectorIo::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn write_back(&mut self, global: &JSGlobalObject, bytes_written: Option<u64>) {
+            if let Some(bytes_read) = bytes_written {
+                self.buffers.write_back(global, bytes_read);
             }
         }
     }

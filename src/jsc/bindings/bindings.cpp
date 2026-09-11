@@ -6972,6 +6972,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 // every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
 // is never detachable and never moves, so it is left unpinned.
 //
+// `volatileStorage` marks an element the pin does not hold; the caller copies
+// those.
+//
 // Returns 0 on success, 1 if the value is not a JSArray or an element is not
 // an ArrayBufferView, 2 on allocation failure, -1 if an exception is pending.
 extern "C" int32_t Bun__JSArray__collectBufferSpans(
@@ -6979,7 +6982,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     JSC::EncodedJSValue encodedValue,
     bool pinBuffers,
     void* ctx,
-    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength))
+    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength, bool volatileStorage))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -7006,6 +7009,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
         if (!view)
             return 1;
+        bool volatileStorage = false;
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can
@@ -7013,10 +7017,14 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
             auto* buf = view->possiblySharedBuffer();
             if (!buf) [[unlikely]]
                 return 2;
-            if (!buf->isShared())
+            if (!buf->isShared()) {
                 buf->pin();
+                // `ArrayBuffer::detach` ignores the pin count for a wasm memory,
+                // and `grow()` on a bounds-checked one frees the block.
+                volatileStorage = buf->isWasmMemory();
+            }
         }
-        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
+        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength(), volatileStorage);
     }
     return 0;
 }

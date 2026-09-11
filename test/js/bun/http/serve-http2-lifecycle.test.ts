@@ -206,7 +206,7 @@ describe("Bun.serve http2 lifecycle", () => {
       // hangs up only after the third, so more than one answer on a connection means the server
       // kept serving it. No answer means stop() found it already HTTP/2 with no request yet.
       const src = `
-        const http2 = require("node:http2");
+        import http2 from "node:http2";
         let stopped;
         const server = Bun.serve({
           port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tlsCert)}, http2: true, idleTimeout: 30,
@@ -248,7 +248,11 @@ describe("Bun.serve http2 lifecycle", () => {
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
-      expect(JSON.parse(stdout)).toEqual({ answers: expect.stringMatching(/^1[01]{19}$/), answeredWithoutGoaway: 0 });
+      // The request that called stop() is always answered. Which connection sent it is not fixed.
+      expect(JSON.parse(stdout)).toEqual({
+        answers: expect.stringMatching(/^(?=[01]*1)[01]{20}$/),
+        answeredWithoutGoaway: 0,
+      });
       expect(exitCode).toBe(0);
     }, 20000);
   });

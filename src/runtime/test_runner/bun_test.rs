@@ -1447,17 +1447,31 @@ impl RefDataValue {
     }
 
     pub(crate) fn entry<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut ExecutionEntry> {
+        let sequence = self.running_sequence(buntest)?;
+        // SAFETY: `active_entry` is a valid intrusive node while the sequence is live.
+        unsafe { sequence.active_entry.map(|p| &mut *p.as_ptr()) }
+    }
+
+    /// The entry a snapshot is named after: the test, also while its beforeEach/afterEach run (jest's currentTestName).
+    pub(crate) fn snapshot_entry<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a ExecutionEntry> {
+        let sequence = self.running_sequence(buntest)?;
+        // beforeAll/afterAll sequences have no test, so their snapshots are named after the hook entry itself.
+        let entry = sequence.test_entry.or(sequence.active_entry)?;
+        // SAFETY: `test_entry`/`active_entry` are valid intrusive nodes while the sequence is live.
+        Some(unsafe { &*entry.as_ptr() })
+    }
+
+    /// The sequence this state was captured in, while it is still the one running (unknown inside a concurrent group).
+    fn running_sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a Execution::ExecutionSequence> {
         if !matches!(self, RefDataValue::Execution { .. }) {
             return None;
         }
         if buntest.phase != Phase::Execution {
             return None;
         }
-        let (the_sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
-        // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
-        // at point-of-use only. `active_entry` is a valid intrusive node while
-        // the sequence is live.
-        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
+        let (sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
+        // SAFETY: `sequence` points into `buntest.execution.sequences`, which stays borrowed for `'a`.
+        Some(unsafe { &*sequence.as_ptr() })
     }
 }
 

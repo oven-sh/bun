@@ -625,7 +625,7 @@ impl Expect {
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
-            .entry(buntest)
+            .snapshot_entry(buntest)
             .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");

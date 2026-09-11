@@ -31,8 +31,9 @@ JSModuleGraph* moduleGraphForLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 // Whether `loader` belongs to a disposed graph; the throwing form throws ERR_INVALID_STATE then.
 bool isDisposedModuleGraphLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 bool throwIfModuleGraphDisposed(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSModuleLoader*);
-// Rejections of promises while a graph exists, for attributing unhandled ones (onError).
-void moduleGraphNoteRejection(Zig::GlobalObject*, JSC::JSPromise*);
+// promiseRejectionTracker: the graph whose module code is rejecting `promise` right now,
+// or null (the global object's code, or no graph exists).
+JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*, JSC::JSPromise*);
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 
 class JSModuleGraph final : public JSC::JSNonFinalObject {
@@ -87,6 +88,9 @@ public:
     JSC::WeakGCMap<WTF::String, JSC::SymbolTable> overlaySymbolTables;
     // Set while a graph's onError runs: what it throws synchronously is the host's.
     bool inOnError { false };
+    // Set while graph.import() / dispose() reject an import() promise: the caller's, not
+    // the graph whose module threw.
+    bool rejectingImport { false };
 };
 
 } // namespace Bun

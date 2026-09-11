@@ -304,7 +304,6 @@ public:
     // Bun.unsafe.ModuleGraph (ModuleGraph.cpp)
     bool hasModuleGraphs() const { return m_moduleGraphRegistry.isInitialized(); }
     JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); } // overlay -> graph
-    JSWeakMap* moduleGraphAttributions() const { return m_moduleGraphAttributions.getInitializedOnMainThread(this); } // promise / error -> whose it is
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
@@ -531,7 +530,6 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
-    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphAttributions)                             \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -823,7 +821,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    Bun::PendingRejectionList m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

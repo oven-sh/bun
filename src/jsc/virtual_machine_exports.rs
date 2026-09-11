@@ -116,7 +116,13 @@ pub fn vm_handle_queue_task_concurrently(
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
-pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
+/// `rejection_owner`: the `Bun.unsafe.ModuleGraph` whose code rejected the promise
+/// (decided by promiseRejectionTracker when it happened), or null.
+pub fn handle_rejected_promise(
+    global: &JSGlobalObject,
+    promise: &mut JSPromise,
+    rejection_owner: JSValue,
+) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
@@ -127,7 +133,7 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
         return;
     }
 
-    jsc_vm.unhandled_rejection(global, result, promise.to_js());
+    jsc_vm.unhandled_rejection_owned(global, result, promise.to_js(), rejection_owner);
     jsc_vm.auto_garbage_collect();
 }
 

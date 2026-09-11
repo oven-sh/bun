@@ -1094,13 +1094,12 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
-        Bun::moduleGraphNoteRejection(globalObj, promise);
+        // Whose rejection this is (a Bun.unsafe.ModuleGraph's or the global object's) is
+        // decided now, while the rejecting code is on the stack, and travels with it.
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj, promise));
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
-            return unhandledPromise.get() == promise;
-        });
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
         if (removed) break;
         // handleRejectedPromises() drains the list into a local buffer before
         // running any handler. A handler may .catch() a later still-queued
@@ -2647,10 +2646,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
-    m_moduleGraphAttributions.initLater(
-        [](const Initializer<JSWeakMap>& init) {
-            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
-        });
 
     this->initGeneratedLazyClasses();
 
@@ -3268,7 +3263,7 @@ RefPtr<Performance> GlobalObject::performance()
     return m_performance;
 }
 
-extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
 void GlobalObject::handleRejectedPromises()
 {
@@ -3282,8 +3277,9 @@ void GlobalObject::handleRejectedPromises()
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
         // RejectedPromiseTracker use.
         JSC::MarkedArgumentBuffer promises;
-        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
-        RELEASE_ASSERT(!promises.hasOverflowed());
+        JSC::MarkedArgumentBuffer rejectionOwners;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, rejectionOwners);
+        RELEASE_ASSERT(!promises.hasOverflowed() && !rejectionOwners.hasOverflowed());
         // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
         // can tell "still pending" apart from "already notified". Linked as a
         // stack so a re-entrant handleRejectedPromises() (a handler that ticks
@@ -3296,7 +3292,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            Bun__handleRejectedPromise(this, promise);
+            Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;

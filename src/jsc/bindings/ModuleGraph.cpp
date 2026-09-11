@@ -7,11 +7,11 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "NodeValidator.h"
+#include "PathInlines.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 
 #include <JavaScriptCore/BuiltinNames.h>
-#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>
@@ -154,83 +154,45 @@ static std::optional<JSModuleGraph*> moduleGraphForFrames(Zig::GlobalObject* glo
     return std::nullopt;
 }
 
-// promiseRejectionTracker, for a promise rejected with no handler: the code rejecting it
-// is on the stack now — or, for an async function or a promise reaction whose handler
-// threw, nothing is (the runtime rejects right after unwinding) and the exception it
-// just caught, the VM's last, carries the throw site. Every tracked rejection consumes
-// that exception, so an older one cannot claim a later rejection of the same value.
-// promise -> graph, or -> null for the global object's module code.
-void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promise)
+// promiseRejectionTracker(Reject): the code rejecting `promise` is on the stack now — or,
+// for an async function or a promise reaction whose handler threw, nothing is (the
+// runtime rejects right after unwinding) and the exception it just caught, the VM's
+// last, carries the throw site. Every tracked rejection consumes that exception: it
+// speaks for the rejection that immediately follows the throw, not for promises later
+// derived from that one through .then() (those, unhandled, are the host's), and never
+// for an unrelated later rejection of the same value.
+JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->hasModuleGraphs())
-        return;
+        return nullptr;
     VM& vm = globalObject->vm();
-    auto owner = moduleGraphForCurrentStack(globalObject);
+    ModuleGraphState& state = moduleGraphState(globalObject);
+    std::optional<JSModuleGraph*> owner;
+    if (state.rejectingImport)
+        owner = nullptr;
+    else
+        owner = moduleGraphForCurrentStack(globalObject);
     if (!owner) {
         JSC::Exception* last = vm.lastException();
         if (last && last->value() == promise->result())
             owner = moduleGraphForFrames(globalObject, last->stack());
     }
     vm.clearLastException();
-    if (owner)
-        globalObject->moduleGraphAttributions()->set(vm, promise, *owner ? JSValue(*owner) : jsNull());
+    return owner.value_or(nullptr);
 }
 
-// Called first for every uncaught exception / unhandled rejection on this thread
-// (VirtualMachine.rs). The code that threw (the Exception's stack) or rejected (noted
-// on the promise) decides; failing that, the code that created the error. Returns
-// whether a graph's onError took it; anything else takes the normal path.
-extern "C" bool Bun__ModuleGraph__handleUnhandled(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError, EncodedJSValue encodedPromise, bool isRejection)
+static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue error, ASCIILiteral kind)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!globalObject->hasModuleGraphs() || moduleGraphState(globalObject).inOnError)
+    ModuleGraphState& state = moduleGraphState(globalObject);
+    if (!graph || !graph->onError() || state.inOnError)
         return false;
     VM& vm = globalObject->vm();
-    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
-    JSValue error = JSValue::decode(encodedError);
-    JSValue promise = JSValue::decode(encodedPromise);
-    auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr;
-    if (exception)
-        error = exception->value();
-    auto* errorInstance = error.isCell() ? dynamicDowncast<ErrorInstance>(error.asCell()) : nullptr;
-
-    std::optional<JSModuleGraph*> owner;
-    if (promise && promise.isObject()) { // empty for an uncaught exception
-        JSValue noted = attributions->get(asObject(promise));
-        if (auto* graph = dynamicDowncast<JSModuleGraph>(noted))
-            owner = graph;
-        else if (noted.isNull())
-            owner = nullptr;
-    }
-    if (!owner && exception)
-        owner = moduleGraphForFrames(globalObject, exception->stack());
-    // Failing that, where the error was created — while the ErrorInstance still has its
-    // frames (they go once its stack string is materialized).
-    bool byOrigin = false;
-    if (!owner && errorInstance) {
-        byOrigin = true;
-        if (const Vector<StackFrame>* frames = errorInstance->stackTrace())
-            owner = moduleGraphForFrames(globalObject, *frames);
-    }
-    JSModuleGraph* graph = owner.value_or(nullptr);
-    if (!graph || !graph->onError())
-        return false;
-    if (error.isObject()) {
-        // An error object attributed only by where it was created goes to that graph's
-        // onError once: an onError that lets it escape again where no code claims it
-        // (a bare promise chain, say) hands it to the host instead of looping.
-        JSObject* errorObject = asObject(error);
-        if (byOrigin && attributions->get(errorObject).isTrue())
-            return false;
-        attributions->set(vm, errorObject, jsBoolean(true));
-    }
-
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* onError = graph->onError();
     MarkedArgumentBuffer args;
     args.append(error);
-    args.append(jsString(vm, isRejection ? String("unhandledRejection"_s) : String("uncaughtException"_s)));
-    SetForScope inOnError(moduleGraphState(globalObject).inOnError, true);
+    args.append(jsString(vm, String(kind)));
+    SetForScope inOnError(state.inOnError, true);
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
         if (vm.hasPendingTerminationException())
@@ -241,6 +203,34 @@ extern "C" bool Bun__ModuleGraph__handleUnhandled(JSGlobalObject* lexicalGlobalO
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, thrown);
     }
     return true;
+}
+
+// VirtualMachine::unhandled_rejection, first: `owner` is what moduleGraphRejecting decided
+// when the promise was rejected. Returns whether a graph's onError took it.
+extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexicalGlobalObject, EncodedJSValue reason, EncodedJSValue owner)
+{
+    auto* graph = dynamicDowncast<JSModuleGraph>(JSValue::decode(owner));
+    return graph && deliverToOnError(defaultGlobalObject(lexicalGlobalObject), graph, JSValue::decode(reason), "unhandledRejection"_s);
+}
+
+// VirtualMachine::uncaught_exception, first: the throw site (the Exception's stack) decides.
+// Callers that caught the error in JS (the nextTick drain, node-style callback shims) report
+// the bare value; the exception they just caught is still the VM's last.
+extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedError)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (!globalObject->hasModuleGraphs())
+        return false;
+    VM& vm = globalObject->vm();
+    JSValue error = JSValue::decode(encodedError);
+    auto* exception = error.isCell() ? dynamicDowncast<JSC::Exception>(error.asCell()) : nullptr;
+    if (!exception && vm.lastException() && vm.lastException()->value() == error)
+        exception = vm.lastException();
+    vm.clearLastException();
+    if (!exception)
+        return false;
+    JSModuleGraph* graph = moduleGraphForFrames(globalObject, exception->stack()).value_or(nullptr);
+    return deliverToOnError(globalObject, graph, exception->value(), "uncaughtException"_s);
 }
 
 // ─── JSModuleGraph ───────────────────────────────────────────────────────────────────
@@ -340,9 +330,9 @@ static void settleImport(JSGlobalObject* globalObject, CallFrame* callFrame, boo
     // with one that never loaded.
     if (graph->mainPath() == key)
         graph->clearMainPath();
+    // graph.import()'s promise is its caller's to handle, not the graph's whose module threw.
+    SetForScope rejectingImport(moduleGraphState(defaultGlobalObject(globalObject)).rejectingImport, true);
     promise->reject(vm, settlement);
-    // graph.import()'s promise is its caller's to handle, not the graph's (whose code threw).
-    defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsModuleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -446,12 +436,11 @@ JSC_DEFINE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_dispose, (JSGlobalObject
         graph->setPendingImports(vm, nullptr);
         auto* iterator = JSSetIterator::create(vm, globalObject->setIteratorStructure(), pending, IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, {});
+        SetForScope rejectingImport(moduleGraphState(defaultGlobalObject(globalObject)).rejectingImport, true);
         JSValue value;
         while (iterator->next(globalObject, value)) {
-            if (auto* promise = dynamicDowncast<JSPromise>(value); promise && promise->status() == JSPromise::Status::Pending) {
+            if (auto* promise = dynamicDowncast<JSPromise>(value); promise && promise->status() == JSPromise::Status::Pending)
                 promise->reject(vm, createModuleGraphDisposedError(globalObject));
-                defaultGlobalObject(globalObject)->moduleGraphAttributions()->set(vm, promise, jsNull());
-            }
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

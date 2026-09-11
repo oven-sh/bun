@@ -1087,9 +1087,9 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
   });
   test("an error goes to a graph's onError once: an onError that lets it escape again (rethrow, or reject after reading its stack) hands it to the host", async () => {
     using d = tempDir("module-graph-onerror-once", {
-      "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); } export function throwAndCatch(e) { try { throw e; } catch {} }`,
+      "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); } export function throwAndCatch(e) { try { throw e; } catch {} } export function chain() { (async () => { await null; throw new Error("derived"); })().then(x => x); }`,
       "host.mjs": `const seen = [];
-        const done = () => { if (seen.length === 5) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
+        const done = () => { if (seen.length === 6) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
         process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
         process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
         // one rethrows from a microtask; the other logs the stack (drops the error's frames) and rejects with it
@@ -1098,11 +1098,13 @@ describe("Bun.unsafe.ModuleGraph — error attribution matrix", () => {
         (await rethrow.import("./boom.mjs")).boom();
         const m2 = await rereject.import("./boom.mjs?2"); m2.boom();
         // an object graph code once threw and caught does not make a later host rejection with it the graph's
-        const stale = new Error("stale"); m2.throwAndCatch(stale); Promise.resolve().then(() => Promise.reject(stale));`,
+        const stale = new Error("stale"); m2.throwAndCatch(stale); Promise.resolve().then(() => Promise.reject(stale));
+        // the promise graph code rejected is the graph's; one derived from it through .then() without a rejection handler, left unhandled, is the host's
+        m2.chain();`,
     });
     const r = await runBun(["host.mjs"], { cwd: String(d) });
     expect({ out: r.stdout, err: r.stderr, exitCode: r.exitCode }).toEqual({
-      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","host:unhandledRejection:stale","rereject:boom-once","rethrow:boom-once"]`,
+      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","host:unhandledRejection:derived","host:unhandledRejection:stale","rereject:boom-once","rethrow:boom-once"]`,
       err: "",
       exitCode: 0,
     });

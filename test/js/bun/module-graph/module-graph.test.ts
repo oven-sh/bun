@@ -2339,6 +2339,7 @@ describe("Bun.unsafe.ModuleGraph — re-entrancy: graphs created/disposed from i
     "spawner.mjs": `const inner = new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: "inner-of-" + process.env.T }, enumerable: true } }) } }); export const innerWho = (await inner.import(Bun.fileURLToPath(new URL("./who.mjs", import.meta.url)))).who; export const outerWho = process.env.T; inner.dispose();`,
     "who.mjs": `export const who = process.env.T`,
     "disposer.mjs": `export function run(other) { other.dispose(); return process.env.T }`,
+    "gated.mjs": `await gate; export const who = process.env.T`,
     "thrower.mjs": `export function later() { setTimeout(() => { throw new Error("e1") }, 0) }`,
     "who-cjs.cjs": `module.exports = { who: process.env.T }`,
   });
@@ -2347,13 +2348,17 @@ describe("Bun.unsafe.ModuleGraph — re-entrancy: graphs created/disposed from i
     expect([m.outerWho, m.innerWho]).toEqual(["outer", "inner-of-outer"]);
   });
   test("graph A disposing graph B from A's code; B's pending import rejects; A unaffected", async () => {
+    const gate = Promise.withResolvers<void>();
     const A = ModuleGraph({ env: { T: "A" } }),
-      B = ModuleGraph({ env: { T: "B" } });
-    const bPending = B.import(join(dir, "spawner.mjs"));
+      B = ModuleGraph({ env: { T: "B" }, globals: { gate: gate.promise } });
+    const bPending = B.import(join(dir, "gated.mjs")); // cannot finish before A disposes B
     const a = await A.import(join(dir, "disposer.mjs"));
     expect(a.run(B)).toBe("A");
-    expect(await rejection(bPending)).toBe("Error [ERR_INVALID_STATE]: ModuleGraph has been disposed");
-    expect((await A.import(join(dir, "who.mjs"))).who).toBe("A");
+    gate.resolve();
+    expect([await rejection(bPending), (await A.import(join(dir, "who.mjs"))).who]).toEqual([
+      "Error [ERR_INVALID_STATE]: ModuleGraph has been disposed",
+      "A",
+    ]);
   });
   test("onError handler that disposes the graph and creates a new one, while more errors from the old graph are queued", async () => {
     const seen: string[] = [];
@@ -2460,7 +2465,8 @@ describe("Bun.unsafe.ModuleGraph — a plain script is unaffected by the API exi
 });
 
 describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () => {
-  test("per-instance heap cost grows with module count but stays far below the template cost; numbers are stable across instances", async () => {
+  test("per-instance heap cost grows with module count but stays far below the template cost", async () => {
+    // Measured in a fresh process so other tests' garbage does not move the baseline.
     const results: Record<string, number[]> = {};
     for (const modules of [20, 200]) {
       const files: Record<string, string> = {};
@@ -2468,29 +2474,24 @@ describe("Bun.unsafe.ModuleGraph — memory per instance vs module count", () =>
         files[`m${i}.mjs`] =
           `${i ? `import { v as p } from "./m${i - 1}.mjs";` : "const p = 0;"} export const v = p + 1; export function f${i}(a) { return a + v } export class C${i} { m() { return v } } export const who = process.env.T;`;
       files["root.mjs"] = `export { v, who } from "./m${modules - 1}.mjs"`;
+      files["measure.mjs"] = `import { heapStats } from "bun:jsc";
+        const mk = t => new Bun.unsafe.ModuleGraph({ globals: { process: Object.create(process, { env: { value: { T: t }, enumerable: true } }) } });
+        const settle = () => { for (let i = 0; i < 3; i++) Bun.gc(true); return heapStats().heapSize; };
+        const h0 = settle();
+        const keep = [await mk("0").import("./root.mjs")];
+        const h1 = settle();
+        for (let i = 1; i <= 8; i++) keep.push(await mk(String(i)).import("./root.mjs"));
+        const h9 = settle();
+        console.log(JSON.stringify({ vs: keep.map(m => m.v), first: h1 - h0, perInstance: (h9 - h1) / 8 }));`;
       const dir = fixture(files);
-      const settle = async () => {
-        for (let i = 0; i < 3; i++) {
-          Bun.gc(true);
-          await new Promise<void>(r => setImmediate(r));
-        }
-        return heapStats().heapSize;
-      };
-      const h0 = await settle();
-      const keep = [await ModuleGraph({ env: { T: "0" } }).import(join(dir, "root.mjs"))];
-      const h1 = await settle();
-      for (let i = 1; i <= 8; i++)
-        keep.push(await ModuleGraph({ env: { T: String(i) } }).import(join(dir, "root.mjs")));
-      const h9 = await settle();
-      expect(keep.map(m => m.v)).toEqual(Array(9).fill(modules));
-      const first = h1 - h0,
-        perInstance = (h9 - h1) / 8;
-      results[modules] = [Math.round(first / 1024), Math.round(perInstance / 1024)];
+      const r = await runBun(["./measure.mjs"], { cwd: dir });
+      const m = JSON.parse(r.stdout);
+      expect({ vs: m.vs, exitCode: r.exitCode }).toEqual({ vs: Array(9).fill(modules), exitCode: 0 });
+      results[modules] = [m.first, m.perInstance];
       if (!stressMode) {
-        expect(perInstance).toBeLessThan(first * 0.5); // sharing: an extra instance is well under half the first load
-        expect(perInstance / modules).toBeLessThan(8 * 1024); // < 8 KB per module per instance (envs + functions + namespace)
+        expect(m.perInstance).toBeLessThan(m.first * 0.5); // sharing: an extra instance is well under half the first load
+        expect(m.perInstance / modules).toBeLessThan(8 * 1024); // < 8 KB per module per instance (envs + functions + namespace)
       }
-      rmSync(dir, { recursive: true, force: true });
     }
     // more modules → more per-instance cost, roughly proportionally (not, e.g., quadratic)
     if (!stressMode) expect(results[200][1] / Math.max(1, results[20][1])).toBeLessThan(20);

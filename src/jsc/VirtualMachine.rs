@@ -1729,7 +1729,11 @@ impl VirtualMachine {
 
         // An error from a Bun.unsafe.ModuleGraph's code is the graph's (or its host
         // callback's) to handle — ahead of the test runner and the thread-wide path.
-        if Bun__ModuleGraph__handleUnhandled(global_object, err, JSValue::ZERO, is_rejection) {
+        // A rejection arriving here was already offered to the graphs, with its promise,
+        // by `unhandled_rejection` (strict / throw modes re-enter as an uncaught error).
+        if !is_rejection
+            && Bun__ModuleGraph__handleUnhandled(global_object, err, JSValue::ZERO, false)
+        {
             return true;
         }
 

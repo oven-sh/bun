@@ -156,12 +156,15 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   // 30 ticks that allocate next to nothing put the timer on its 30 s tick. Work that starts then must get the fast
   // tick back at once, not half a minute later: with a 20 ms tick that shows as dozens of requested collections in the
   // second after a 15 MB burst instead of the one or two JSC decides on by itself.
-  test.concurrent("a burst of allocation during the 30 s tick brings the fast tick back", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  // Counts requested collections; ASAN builds fold dozens of requests into a few cycles (see the top of the file).
+  (isASAN ? test.skip : test.concurrent)(
+    "a burst of allocation during the 30 s tick brings the fast tick back",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           setTimeout(() => {
             const fill = Buffer.alloc(80, "x").toString();
             let n = 0;
@@ -171,22 +174,23 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
             setTimeout(() => { console.error("DONE"); process.exit(0); }, 1000);
           }, 1500);
         `,
-      ],
-      env: {
-        ...bunEnv,
-        BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: "20",
-        BUN_IDLE_GC_SECONDS: "0",
-        BUN_JSC_logGC: "true",
-      },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const afterBurst = stderr.slice(stderr.indexOf("MARK")).split("DONE")[0];
-    expect((afterBurst.match(/=> EdenCollection/g) ?? []).length).toBeGreaterThan(10);
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: {
+          ...bunEnv,
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: "20",
+          BUN_IDLE_GC_SECONDS: "0",
+          BUN_JSC_logGC: "true",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const afterBurst = stderr.slice(stderr.indexOf("MARK")).split("DONE")[0];
+      expect((afterBurst.match(/=> EdenCollection/g) ?? []).length).toBeGreaterThan(10);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // After BUN_IDLE_GC_SECONDS in which the program did no real work, the controller requests a full collection (so JSC can
@@ -487,7 +491,9 @@ describe("idle release lets FTL code age out", () => {
 // to let go of the code it can get back cheaply (VM::shrinkFootprintNow): for a --compile --bytecode executable, the
 // unlinked bytecode of functions that have no linked code any more, which is decoded again from the executable when
 // such a function is next called. BUN_IDLE_SHRINK_EVERYTHING=1 also drops the code that is still linked.
-describe("deep-idle shrink", () => {
+// Debug and ASAN builds are skipped: the sequence below has a second or so of slack at release speed, and their
+// executables are too big to compile a copy of per run.
+describe.skipIf(isDebug || isASAN)("deep-idle shrink", () => {
   const app = `
     import { heapStats } from "bun:jsc";
     ${Array.from({ length: 60 }, (_, i) => `function f${i}(a) { let s = a + ${i}; for (let k = 0; k < 3; k++) s += k * ${i + 1}; return [s, "f${i}"].join(":"); }`).join("\n    ")}
@@ -556,13 +562,15 @@ describe("deep-idle shrink", () => {
         const { before, after, same, stdout, exitCode } = await run({
           BUN_IDLE_SHRINK_QUIET_MS: "1000",
           BUN_IDLE_SHRINK_EVERYTHING: everything,
-          WAIT_MS: "4000",
+          // The child reports as soon as the count has dropped; the deadline only bounds a failing run.
+          WAIT_MS: "9000",
         });
         expect(before, stdout).toBeGreaterThan(60);
         expect(after, stdout).toBeLessThan(before! - 40);
         expect(same, stdout).toBe(true);
         expect(exitCode).toBe(0);
       },
+      15_000,
     );
   }
 

@@ -1,4 +1,4 @@
-use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
+use crate::autolinks::{find_permissive_autolink, find_strict_permissive_autolink};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
@@ -9,8 +9,8 @@ pub(crate) const MAX_EMPH_MATCHES: usize = 6;
 
 /// Snapshot of an enclosing slice's walk state while one of its link/image/
 /// wikilink labels is rendered. `base..end` locate the enclosing slice
-/// within the block's inline content; `i`/`text_start`/`delim_cursor` are
-/// local to that slice. See `process_inline_content`.
+/// within the block's inline content; `i`/`text_start`/`delim_cursor`/
+/// `no_autolink_before` are local to that slice. See `process_inline_content`.
 pub(crate) struct LabelFrame {
     base: usize,
     end: usize,
@@ -18,6 +18,7 @@ pub(crate) struct LabelFrame {
     text_start: usize,
     resolved: Vec<EmphDelim>,
     delim_cursor: usize,
+    no_autolink_before: usize,
     leave: LabelLeave,
 }
 
@@ -221,6 +222,8 @@ impl Parser<'_> {
         let mut i: usize = 0;
         let mut text_start: usize = 0;
         let mut delim_cursor: usize = 0;
+        // End of the last permissive autolink candidate that was cut short.
+        let mut no_autolink_before: usize = 0;
 
         // Enter the label of a just-parsed link/image/wikilink: snapshot the
         // current walk state and restart the walk on the label slice.
@@ -234,6 +237,7 @@ impl Parser<'_> {
                     text_start: parse.link_end,
                     resolved: core::mem::take(&mut resolved),
                     delim_cursor,
+                    no_autolink_before,
                     leave: parse.leave,
                 });
                 base += parse.label_start;
@@ -244,6 +248,7 @@ impl Parser<'_> {
                 i = 0;
                 text_start = 0;
                 delim_cursor = 0;
+                no_autolink_before = 0;
             }};
         }
 
@@ -469,21 +474,12 @@ impl Parser<'_> {
                 // Note: Strikethrough (~) is handled above via the resolved delimiter system
 
                 // Permissive autolinks: detect URL, email, and WWW autolinks
-                // Suppress inside explicit links to avoid double-wrapping (md4c issue #152)
-                if self.link_nesting_level == 0
-                    && ((c == b':' && self.flags.permissive_url_autolinks)
-                        || (c == b'@' && self.flags.permissive_email_autolinks)
-                        || (c == b'.' && self.flags.permissive_www_autolinks))
-                {
+                if i >= no_autolink_before && self.is_permissive_autolink_trigger(c) {
                     // First try with strict boundaries, then with relaxed (emphasis-aware)
-                    let mut al = find_permissive_autolink(content, i, false);
+                    let cut_end = &mut no_autolink_before;
+                    let mut al = find_permissive_autolink(content, i, false, &resolved, cut_end);
                     if al.is_none() {
-                        al = find_permissive_autolink(content, i, true);
-                        if let Some(a) = al {
-                            if !is_emph_boundary_resolved(content, a, &resolved) {
-                                al = None;
-                            }
-                        }
+                        al = find_permissive_autolink(content, i, true, &resolved, cut_end);
                     }
                     if let Some(a) = al {
                         if a.beg > text_start {
@@ -576,6 +572,7 @@ impl Parser<'_> {
                     text_start = frame.text_start;
                     resolved = frame.resolved;
                     delim_cursor = frame.delim_cursor;
+                    no_autolink_before = frame.no_autolink_before;
                 }
                 None => break 'frames,
             }
@@ -587,6 +584,18 @@ impl Parser<'_> {
         // Hand the bracket-map storage back for reuse by the next block.
         self.bracket_pairs = brackets.into_storage();
         Ok(())
+    }
+
+    /// True if `c` can be the trigger character of a permissive autolink here.
+    /// Explicit links suppress them to avoid double-wrapping (md4c issue #152).
+    fn is_permissive_autolink_trigger(&self, c: u8) -> bool {
+        let enabled = match c {
+            b':' => self.flags.permissive_url_autolinks,
+            b'@' => self.flags.permissive_email_autolinks,
+            b'.' => self.flags.permissive_www_autolinks,
+            _ => return false,
+        };
+        enabled && self.link_nesting_level == 0
     }
 
     pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
@@ -735,6 +744,15 @@ impl Parser<'_> {
                         }
                     }
                     i = link_result.link_end;
+                    continue;
+                }
+            }
+            // Skip permissive autolinks that do not need an emphasis delimiter
+            // as a boundary. They are links whatever the delimiters resolve
+            // to, so `*`, `_` and `~` in them belong to the URL (as in GFM).
+            if self.is_permissive_autolink_trigger(c) {
+                if let Some(al) = find_strict_permissive_autolink(content, i) {
+                    i = al.end;
                     continue;
                 }
             }

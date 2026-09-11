@@ -904,6 +904,137 @@ describe("pathological autolink inputs", () => {
 });
 
 // ============================================================================
+// Permissive autolinks and emphasis. "_", "*" and "~" are legal URL bytes, so
+// an autolink can run over emphasis delimiters. It used to be able to swallow
+// one delimiter run of a resolved pair ("__a@b.co__" linked "a@b.co_"): the
+// other tag stayed unmatched, and render() returned "" for the whole document.
+// ============================================================================
+
+describe("permissive autolinks and emphasis delimiters", () => {
+  const opts = { autolinks: true };
+
+  // Every tag in `html` is closed, in order.
+  function isWellFormed(html: string): boolean {
+    const open: string[] = [];
+    for (const [, slash, name] of html.matchAll(/<(\/?)([a-z]+)[^>]*>/g)) {
+      if (!slash) open.push(name);
+      else if (open.pop() !== name) return false;
+    }
+    return open.length === 0;
+  }
+
+  test.each([
+    // The link ends in front of the closer of the emphasis around it.
+    ["__a@b.cob__", '<p><strong><a href="mailto:a@b.cob">a@b.cob</a></strong></p>\n'],
+    ["_a@b.co__", '<p><em><a href="mailto:a@b.co">a@b.co</a></em>_</p>\n'],
+    ["**http://example.com/a**", '<p><strong><a href="http://example.com/a">http://example.com/a</a></strong></p>\n'],
+    ["~~www.example.com/a~~", '<p><del><a href="http://www.example.com/a">www.example.com/a</a></del></p>\n'],
+    [
+      "see *http://example.com/path*with*stars for more",
+      '<p>see <em><a href="http://example.com/path">http://example.com/path</a></em>with*stars for more</p>\n',
+    ],
+    [
+      "**Note:** contact __support@example.com__ today.\n\nSecond paragraph.",
+      '<p><strong>Note:</strong> contact <strong><a href="mailto:support@example.com">support@example.com</a></strong> today.</p>\n' +
+        "<p>Second paragraph.</p>\n",
+    ],
+    // The link ends in front of an opener whose closer it does not reach.
+    ["*a*http://a.bc/*y z*", '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y z</em></p>\n'],
+    // A pair that lies in the URL stays part of the URL.
+    [
+      "**https://example.com/src/__init__.py**",
+      '<p><strong><a href="https://example.com/src/__init__.py">https://example.com/src/__init__.py</a></strong></p>\n',
+    ],
+    [
+      "https://example.com/src/__tests__/a.js",
+      '<p><a href="https://example.com/src/__tests__/a.js">https://example.com/src/__tests__/a.js</a></p>\n',
+    ],
+    // A link between plain boundaries is found before emphasis is resolved:
+    // the delimiters in it do not pair with delimiters outside of it.
+    [
+      "http://example.com/path*with stars*",
+      '<p><a href="http://example.com/path*with">http://example.com/path*with</a> stars*</p>\n',
+    ],
+    ["*a http://x.yz/b*c d*", '<p><em>a <a href="http://x.yz/b*c">http://x.yz/b*c</a> d</em></p>\n'],
+    ["2*3 http://x.yz/a*b", '<p>2*3 <a href="http://x.yz/a*b">http://x.yz/a*b</a></p>\n'],
+    [
+      "https://foo.bar/a*b\nhttps://foo.bar/a*b",
+      '<p><a href="https://foo.bar/a*b">https://foo.bar/a*b</a>\n<a href="https://foo.bar/a*b">https://foo.bar/a*b</a></p>\n',
+    ],
+  ])("html(%j)", (input, expected) => {
+    expect(Markdown.html(input, opts)).toBe(expected);
+  });
+
+  test("render() returns the text of every paragraph", () => {
+    const input = "**Note:** contact __support@example.com__ today.\n\nSecond paragraph.";
+    expect(Markdown.render(input, {}, opts)).toBe("Note: contact support@example.com today.Second paragraph.");
+    expect(
+      Markdown.render(
+        input,
+        {
+          paragraph: (children: string) => `<p>${children}</p>`,
+          strong: (children: string) => `<b>${children}</b>`,
+          link: (children: string) => `[${children}]`,
+        },
+        opts,
+      ),
+    ).toBe("<p><b>Note:</b> contact <b>[support@example.com]</b> today.</p><p>Second paragraph.</p>");
+  });
+
+  test("every mix of delimiters around and in a link renders balanced tags", () => {
+    const links = ["a@b.co", "http://a.bc/d", "http://a.bc/d*e", "www.a.bc/_d_/~e"];
+    const tails = ["", "x", "_x", " x*"];
+    const bad: string[] = [];
+    for (const before of ["", "*", "__", "~~"]) {
+      for (const link of links) {
+        for (const after of ["", "*", "**", "__", "~~"]) {
+          for (const tail of tails) {
+            const input = before + link + after + tail;
+            const html = Markdown.html(input, opts);
+            const text = html.replace(/<[^>]*>/g, "").replace(/\n$/, "");
+            if (!isWellFormed(html) || Markdown.render(input, {}, opts) !== text) bad.push(input);
+          }
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  test("a flood of links that are cut at emphasis delimiters renders in linear time", async () => {
+    // Each "www." link runs to the end of the token, over the openers of the
+    // links after it. Every one of those openers closes outside of the token.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 30000;
+        const html = Bun.markdown.html(fill(n, "*www.a.bc/") + "x" + fill(n, " y*"), { autolinks: true });
+        const count = tag => html.split(tag).length - 1;
+        if (count("<em>") !== n || count("</em>") !== n) {
+          throw new Error("unbalanced: " + count("<em>") + " <em>, " + count("</em>") + " </em>");
+        }
+        if (!html.startsWith('<p><em><a href="http://www.a.bc/">www.a.bc/</a><em>www.a.bc/<em>')) {
+          throw new Error("unexpected output: " + JSON.stringify(html.slice(0, 120)));
+        }
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});
+
+// ============================================================================
 // ANSI renderer: text taken from the markdown document must not be able to
 // smuggle its own terminal control sequences (OSC 52 clipboard writes, title
 // changes, CSI device queries, ...) into the output alongside the renderer's

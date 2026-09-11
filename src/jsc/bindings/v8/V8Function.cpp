@@ -7,10 +7,56 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ConstructData.h"
+#include "JavaScriptCore/FunctionExecutable.h"
+#include "JavaScriptCore/JSFunctionInlines.h"
+#include "JavaScriptCore/LineColumn.h"
+#include "JavaScriptCore/SourceProvider.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Function)
 
 namespace v8 {
+
+const int Function::kLineOffsetNotFound = -1;
+
+namespace {
+
+// 1-based position of the parameter list, source-map remapped. False without script source.
+bool functionSourcePosition(const JSC::JSCell* cell, WTF::String& url, JSC::LineColumn& lineColumn)
+{
+    auto* function = dynamicDowncast<const JSC::JSFunction>(cell);
+    if (!function || function->isHostFunction()) {
+        return false;
+    }
+    JSC::FunctionExecutable* executable = function->jsExecutable();
+    if (executable->isBuiltinFunction()) {
+        return false;
+    }
+    // A synthesized default constructor has no source of its own. V8 reports the `class` keyword.
+    const JSC::SourceCode source = executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor()
+        ? executable->classSource()
+        : executable->source();
+    JSC::SourceProvider* provider = source.provider();
+    if (!provider) {
+        return false;
+    }
+
+    url = provider->sourceURL();
+    lineColumn = JSC::LineColumn {
+        static_cast<unsigned>(source.firstLine().oneBasedInt()),
+        static_cast<unsigned>(source.startColumn().oneBasedInt()),
+    };
+
+#if USE(BUN_JSC_ADDITIONS)
+    auto& vm = function->vm();
+    auto& remap = vm.computeLineColumnWithSourcemap();
+    if (remap) {
+        remap(vm, provider, lineColumn, url);
+    }
+#endif
+    return true;
+}
+
+} // namespace
 
 MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
 {
@@ -85,6 +131,42 @@ Local<Value> Function::GetName() const
     auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     auto* jsString = JSC::jsString(globalObject->vm(), wtfString);
     return handleScope->createLocal<Value>(globalObject->vm(), jsString);
+}
+
+ScriptOrigin Function::GetScriptOrigin() const
+{
+    WTF::String url;
+    JSC::LineColumn lineColumn;
+    if (!functionSourcePosition(localToCell(), url, lineColumn)) {
+        return ScriptOrigin(Local<Value>());
+    }
+
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(localToObjectPointer<JSC::JSNonFinalObject>()->globalObject());
+    auto& vm = globalObject->vm();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    Local<Value> resourceName = handleScope->createLocal<Value>(vm, JSC::jsString(vm, url));
+    Local<Value> sourceMapUrl = handleScope->createLocal<Value>(vm, JSC::jsUndefined());
+    return ScriptOrigin(resourceName, 0, 0, false, -1, sourceMapUrl);
+}
+
+int Function::GetScriptLineNumber() const
+{
+    WTF::String url;
+    JSC::LineColumn lineColumn;
+    if (!functionSourcePosition(localToCell(), url, lineColumn) || lineColumn.line == 0) {
+        return kLineOffsetNotFound;
+    }
+    return static_cast<int>(lineColumn.line) - 1;
+}
+
+int Function::GetScriptColumnNumber() const
+{
+    WTF::String url;
+    JSC::LineColumn lineColumn;
+    if (!functionSourcePosition(localToCell(), url, lineColumn) || lineColumn.column == 0) {
+        return kLineOffsetNotFound;
+    }
+    return static_cast<int>(lineColumn.column) - 1;
 }
 
 } // namespace v8

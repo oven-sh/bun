@@ -531,6 +531,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         && c.options.compile_mode.is_executable())
     .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
+    // (`prelinked_module_graph` blob, chunk index of each graph module), when one was built.
+    let mut prelinked_graph: Option<(Vec<u8>, Vec<u32>)> = None;
     if c.options.generates_module_info() {
         let external_string_table = external_string_table
             .as_ref()
@@ -610,18 +612,64 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
             table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
         }
+
+        // The pre-resolved graph over every chunk with module_info (`OutputKind::PrelinkedModuleGraph`): graph module
+        // `i` is the i-th such chunk, keyed by the path other chunks request it by. Built before the slot table is
+        // serialized below (it interns the keys). Its modules ship no module_info body: the graph is their record.
+        {
+            let mut inputs: Vec<crate::prelinked_module_graph::ModuleInput<'_>> = Vec::new();
+            let mut chunk_indices: Vec<u32> = Vec::new();
+            let mut complete = true;
+            let mut ids = table_ids.iter();
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                let crate::chunk::Content::Javascript(js) = &chunk.content else {
+                    continue;
+                };
+                let Some(mi) = js.module_info.as_ref() else {
+                    continue;
+                };
+                let table_ids = ids.next().expect("one per chunk with module_info");
+                let Some(path) = unique_key_to_path.get(chunk.unique_key) else {
+                    complete = false;
+                    break;
+                };
+                inputs.push(crate::prelinked_module_graph::ModuleInput {
+                    path: &path[..],
+                    info: mi,
+                    table_ids,
+                });
+                chunk_indices.push(chunk_index as u32);
+            }
+            if complete && !inputs.is_empty() {
+                prelinked_graph = crate::prelinked_module_graph::build(
+                    &inputs,
+                    &mut module_info_strings,
+                    external_string_table,
+                )
+                .map(|bytes| (bytes, chunk_indices));
+            }
+        }
+
         let mut table_ids = table_ids.iter();
-        for chunk in chunks.iter_mut() {
+        for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
             };
             let Some(mi) = js.module_info.take() else {
                 continue;
             };
+            let table_ids = table_ids.next().expect("one per chunk with module_info");
+            if prelinked_graph.as_ref().is_some_and(|(_, chunk_indices)| {
+                chunk_indices.binary_search(&(chunk_index as u32)).is_ok()
+            }) {
+                // Keeps the chunk's (empty) module_info output slot so output-file indices stay dense.
+                js.module_info_bytes = Some(Box::default());
+                continue;
+            }
             js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
                 &mi,
                 module_info_strings.count(),
-                table_ids.next().expect("one per chunk with module_info"),
+                table_ids,
             ));
         }
     }
@@ -1099,6 +1147,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             &code_result.buffer,
                             &source_provider_url,
                             c.options.bytecode_depth,
+                            c.options.optimize_bytecode,
                             external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
@@ -1363,6 +1412,34 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
         );
+    }
+    if let Some((bytes, chunk_indices)) = prelinked_graph {
+        debug!(
+            "prelinked module graph: {} modules, {} bytes",
+            chunk_indices.len(),
+            bytes.len()
+        );
+        // `result[i]` is chunk `i`'s output file (see the chunk loop above).
+        for (module_index, &chunk_index) in chunk_indices.iter().enumerate() {
+            result[chunk_index as usize].prelinked_module_index = module_index as u32;
+        }
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".prelinked-module-graph".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::PrelinkedModuleGraph,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer {
+                data: bytes.into_boxed_slice(),
+            },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
     }
     if c.options.generates_module_info() {
         let bytes = module_info_strings.serialize();

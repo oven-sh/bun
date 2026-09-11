@@ -52,7 +52,6 @@ inline bool exceedsStringLimit(size_t length)
 
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
 using WebCore::JSCrossRealmTransformState;
-using WebCore::JSDirectSinkCloseState;
 using WebCore::JSDirectStreamController;
 using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
@@ -720,7 +719,8 @@ bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::G
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
 // NO sentinel guard (reachable on a NativeSink-controlled stream).
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
-void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no

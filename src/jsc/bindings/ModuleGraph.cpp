@@ -40,6 +40,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/HexNumber.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 
 namespace Bun {
@@ -363,9 +364,18 @@ JSC_DECLARE_HOST_FUNCTION(jsModuleGraphProtoFuncDispose);
 // disposed first (dispose() rejects it). Bound: this = graph, argument 0 = that promise.
 JSC_DECLARE_HOST_FUNCTION(moduleGraphImportFulfilled);
 JSC_DECLARE_HOST_FUNCTION(moduleGraphImportRejected);
-static JSPromise* takePendingImport(JSGlobalObject*, CallFrame* callFrame)
+static JSPromise* takePendingImport(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
+    // Settled now: the graph need not keep it (or its value) for dispose().
+    auto* graph = dynamicDowncast<JSModuleGraph>(callFrame->thisValue());
+    auto* pending = graph ? dynamicDowncast<JSArray>(graph->field(JSModuleGraph::Field::PendingImports)) : nullptr;
+    for (unsigned i = 0, length = pending ? pending->length() : 0; i < length; ++i) {
+        if (pending->canGetIndexQuickly(i) && pending->getIndexQuickly(i) == JSValue(promise)) {
+            pending->putDirectIndex(globalObject, i, jsUndefined());
+            break;
+        }
+    }
     return promise && promise->status() == JSPromise::Status::Pending ? promise : nullptr;
 }
 JSC_DEFINE_HOST_FUNCTION(moduleGraphImportFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))

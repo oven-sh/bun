@@ -4261,6 +4261,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.unsafe.ModuleGraph.
+    if (Bun::JSModuleGraph* graph = Bun::moduleGraphForLoader(lexicalGlobalObject, moduleLoader); graph && graph->disposed()) {
+        throwTypeError(lexicalGlobalObject, scope, "ModuleGraph has been disposed"_s);
+        return {};
+    }
     noteModuleEvaluation(globalObject, moduleLoader);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);

@@ -145,8 +145,7 @@ struct CollectState {
     identifiers: IdMap<DeclarationId, IdentifierNode>,
     scopes: IdMap<ScopeId, ScopeNode>,
     escaping_values: IndexSet<DeclarationId>,
-    /// The first invariant violation. The visitor callbacks return `()`, so the
-    /// entry point reads it back once the walk ends.
+    /// First invariant violation. The `()` visitor callbacks cannot return it.
     error: Option<CompilerError>,
 }
 

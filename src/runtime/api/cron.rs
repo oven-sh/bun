@@ -1872,16 +1872,13 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         bun_core::time::milli_timestamp() as f64
     };
 
-    // An out-of-range `from` is an invalid argument, not "no future match":
-    // throw before next() maps it to None.
+    // An out-of-range `from` is an invalid argument. next() would report it as "no match".
     if from_ms.is_nan() || from_ms.abs() > jsc::wtf::MAX_ECMASCRIPT_TIME {
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
     let tz = resolve_cron_tz(global, args[2])?;
 
-    // next() stays inside the Date range, so this is null and never an
-    // Invalid Date: callers can rely on `=== null` for "no future match".
     let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
         return Ok(JSValue::NULL);
     };

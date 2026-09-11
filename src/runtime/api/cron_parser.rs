@@ -222,18 +222,15 @@ impl CronExpression {
     }
 
     /// Compute the next time (in ms since epoch) that matches this expression
-    /// in `tz`, strictly after `from_ms`. Returns None if `from_ms` is outside
-    /// the Date range, or if no match is found within 8 years or before the
-    /// end of that range.
+    /// in `tz`, strictly after `from_ms`. Returns None if no match found
+    /// within 8 years and inside the Date range.
     pub(crate) fn next(
         &self,
         global_object: &JSGlobalObject,
         from_ms: f64,
         tz: CronTz,
     ) -> JsResult<Option<f64>> {
-        // JSC converts no time value more than a day outside the Date range
-        // to a calendar date: `ms_to_gregorian_date_time*` asserts or returns
-        // year 0. The scheduler's clock can be mocked that far out.
+        // The scheduler's clock can be mocked past the Date range, which JSC does not convert.
         if from_ms.is_nan() || from_ms.abs() > MAX_ECMASCRIPT_TIME {
             return Ok(None);
         }
@@ -257,9 +254,7 @@ impl CronExpression {
             }
             let noon_ms = global_object
                 .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, 12, 0, 0, 0)?;
-            // Every zone is within a day of UTC, so no instant on a later
-            // wall-clock day fits in a Date. A year 0 in `n` (see above) would
-            // also restart the walk.
+            // Check before the conversion: JSC asserts or returns year 0 for a later day.
             if noon_ms > LAST_DAY_NOON_MS {
                 return Ok(None);
             }
@@ -310,7 +305,7 @@ impl CronExpression {
 
 const MINUTE_MS: f64 = 60_000.0;
 const MAX_DST_SHIFT_MIN: f64 = 120.0;
-/// UTC noon of +275760-09-13, the day that `MAX_ECMASCRIPT_TIME` starts.
+/// UTC noon of +275760-09-13. No instant on a later wall-clock day fits in a Date, in any zone.
 const LAST_DAY_NOON_MS: f64 = MAX_ECMASCRIPT_TIME + 12.0 * 60.0 * MINUTE_MS;
 
 const ALL_MINUTES: u64 = (1 << 60) - 1;

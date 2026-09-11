@@ -26,10 +26,6 @@
 #include "ZigGeneratedClasses.h"
 
 namespace Bun {
-class JSModuleGraph;
-}
-
-namespace Bun {
 
 using namespace JSC;
 

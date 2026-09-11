@@ -15,6 +15,10 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* gl
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
+namespace Bun {
+class JSModuleGraph;
+}
+
 namespace Zig {
 
 using namespace JSC;
@@ -32,13 +36,15 @@ public:
     }
 
     /// Must be called with a valid url string (for `import.meta.url`)
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url, Bun::JSModuleGraph* = nullptr);
 
     /// Creates an ImportMetaObject from a specifier or URL JSValue
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL);
+    /// `moduleGraph`: the Bun.unsafe.ModuleGraph the module belongs to (its import.meta.main /
+    /// import.meta.require are the graph's), or null.
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, Bun::JSModuleGraph* = nullptr);
 
     /// TODO:
     /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
@@ -54,7 +60,7 @@ public:
     ///
     /// The above rules get a best estimate bandage to solve the problems
     /// stated in https://github.com/oven-sh/bun/pull/9399
-    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
+    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, Bun::JSModuleGraph* = nullptr);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -78,14 +84,14 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
-private:
-    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
+    Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
 
-    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
-        : Base(vm, structure)
-        , url(url)
-    {
-    }
+private:
+    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph*);
+
+    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url, Bun::JSModuleGraph* moduleGraph);
+
+    JSC::WriteBarrier<Bun::JSModuleGraph> m_moduleGraph;
 
     void finishCreation(JSC::VM&);
 };

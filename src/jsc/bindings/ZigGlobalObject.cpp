@@ -2660,6 +2660,18 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    m_moduleGraphRegistry.initLater(
+        [](const Initializer<JSWeakMap>& init) {
+            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+        });
+    m_moduleGraphAttributions.initLater(
+        [](const Initializer<JSWeakMap>& init) {
+            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+        });
+    m_moduleGraphOverlaySymbolTables.initLater(
+        [](const Initializer<JSMap>& init) {
+            init.set(JSMap::create(init.vm, init.owner->mapStructure()));
+        });
 
     this->initGeneratedLazyClasses();
 
@@ -4193,11 +4205,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
-    // A Bun.unsafe.ModuleGraph's import.meta: its main / env / require are the graph's.
-    if (Bun::JSModuleGraph* graph = importMeta ? Bun::moduleGraphForLoader(globalObject, loader) : nullptr)
-        importMeta->putDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().moduleGraphPrivateName(), graph, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    return importMeta;
+    return Zig::ImportMetaObject::create(globalObject, key, Bun::moduleGraphForLoader(globalObject, loader));
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);

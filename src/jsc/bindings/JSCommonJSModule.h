@@ -80,6 +80,9 @@ public:
     // Selects the require cache (`@requireMap`), the scope CJS wrappers close
     // over, and which ESM instance require(esm) binds to.
     mutable JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
+    // A graph module's wrapper executable, shared by every graph's copy of the file
+    // (moduleGraphCommonJSTemplates finds it while a module made from it is alive).
+    JSC::WriteBarrier<JSC::FunctionExecutable> m_moduleGraphWrapperExecutable;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();

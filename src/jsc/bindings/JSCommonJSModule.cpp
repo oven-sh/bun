@@ -197,47 +197,54 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // overload would swallow the exception, leaving the misleading
     // "function wrapper" TypeError below instead of the real error.
     JSValue fnValue;
-    // In a Bun.unsafe.ModuleGraph every load of the file gets its own function over
-    // ONE executable per overlay shape (shared by all graphs of that shape), closing over
-    // the graph's overlay. That code resolves the overlay's names as its variables where
-    // the wrapper evaluated for the global loader resolves globals, so it is compiled
-    // from its own text (the graph's source suffix names the shape) rather than taken
-    // from the code cache's entry for the file.
+    // A Bun.unsafe.ModuleGraph's module gets a wrapper closing over the graph's overlay, from
+    // one FunctionExecutable per (file, overlay shape) so graphs share CodeBlocks / JIT code:
+    // compiled from the file's text plus the shape's suffix (the code cache's entry for the
+    // plain text resolves globals, not overlay names), cached in moduleGraphCommonJSTemplates,
+    // and kept alive by the module objects made from it (m_moduleGraphWrapperExecutable).
     JSModuleGraph* graph = moduleObject->m_moduleGraph.get();
-    JSLexicalEnvironment* overlay = graph ? dynamicDowncast<JSLexicalEnvironment>(graph->overlay()) : nullptr;
+    JSLexicalEnvironment* overlay = graph ? graph->overlay() : nullptr;
     ModuleGraphCommonJSTemplates::Key templateKey { nullptr, nullptr };
-    String graphSourceText;
     if (overlay) {
         JSString* keyString = filename.isString() ? asString(filename) : moduleObject->m_id.get();
         Identifier key = keyString->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         templateKey = { key.impl(), overlay->symbolTable() };
-        auto* suffix = uncheckedDowncast<JSString>(graph->field(JSModuleGraph::Field::OverlaySourceSuffix));
-        auto suffixView = suffix->view(globalObject);
+        auto suffix = graph->overlaySourceSuffix()->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        graphSourceText = makeString(code.provider()->source(), StringView(suffixView));
-        // Reuse the executable only for the same file and source (the file may have been
-        // edited and re-required, or module._compile()d with other text).
-        if (FunctionExecutable* executable = globalObject->moduleGraphCommonJSTemplates().get(templateKey); executable
-            && executable->source().provider()->sourceURL() == code.provider()->sourceURL() && executable->source().provider()->source() == graphSourceText)
+        StringView text = code.provider()->source();
+        FunctionExecutable* executable = globalObject->moduleGraphCommonJSTemplates().get(templateKey);
+        // Only for the same file and text (it may have been edited and re-required, or module._compile()d with other text).
+        if (executable) {
+            StringView cached = executable->source().provider()->source();
+            if (executable->source().provider()->sourceURL() != code.provider()->sourceURL() || cached.length() != text.length() + suffix->length() || !cached.startsWith(text) || !cached.endsWith(StringView(suffix)))
+                executable = nullptr;
+        }
+        if (!executable) {
+            SourceCode graphCode = makeSource(makeString(text, StringView(suffix)), code.provider()->sourceOrigin(), JSC::SourceTaintedOrigin::Untainted, code.provider()->sourceURL(), code.provider()->startPosition(), JSC::SourceProviderSourceType::Program);
+            WTF::NakedPtr<JSC::Exception> wrapperException;
+            JSValue templateValue = JSC::evaluate(globalObject, graphCode, jsUndefined(), wrapperException);
+            if (wrapperException) [[unlikely]] {
+                scope.throwException(globalObject, wrapperException.get());
+                return false;
+            }
+            auto* templateFunction = dynamicDowncast<JSFunction>(templateValue);
+            if (templateFunction && !templateFunction->isHostFunction()) {
+                executable = templateFunction->jsExecutable();
+                globalObject->moduleGraphCommonJSTemplates().set(templateKey, executable);
+            } else
+                fnValue = templateValue; // not a function wrapper: reported below
+        }
+        if (executable) {
+            moduleObject->m_moduleGraphWrapperExecutable.set(vm, moduleObject, executable);
             fnValue = JSFunction::create(vm, globalObject, executable, overlay);
-    }
-    if (!fnValue) {
+        }
+    } else {
         WTF::NakedPtr<JSC::Exception> wrapperException;
-        if (overlay) {
-            SourceCode graphCode = makeSource(graphSourceText, code.provider()->sourceOrigin(), JSC::SourceTaintedOrigin::Untainted, code.provider()->sourceURL(), code.provider()->startPosition(), JSC::SourceProviderSourceType::Program);
-            fnValue = JSC::evaluate(globalObject, graphCode, jsUndefined(), wrapperException);
-        } else
-            fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+        fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
         if (wrapperException) [[unlikely]] {
             scope.throwException(globalObject, wrapperException.get());
             return false;
-        }
-        if (overlay) {
-            if (auto* templateFunction = dynamicDowncast<JSFunction>(fnValue); templateFunction && !templateFunction->isHostFunction()) {
-                globalObject->moduleGraphCommonJSTemplates().set(templateKey, templateFunction->jsExecutable());
-                fnValue = JSFunction::create(vm, globalObject, templateFunction->jsExecutable(), overlay);
-            }
         }
     }
     ASSERT(fnValue);
@@ -268,12 +275,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
-            // it expects ImportMetaObject
-            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
+            // it expects ImportMetaObject (a graph's module: import.meta.main / import.meta.require are the graph's)
+            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename, graph);
             RETURN_IF_EXCEPTION(scope, false);
-            // A graph's module: import.meta.main / import.meta.require are the graph's.
-            if (graph)
-                importMeta->putDirect(vm, WebCore::clientData(vm)->builtinNames().moduleGraphPrivateName(), graph, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
             args.append(importMeta);
         }
     }
@@ -313,7 +317,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // so that it can be re-evaluated on the next require.
         bool wasRemoved = requireMapFor(globalObject, m_moduleGraph.get())->remove(globalObject, this->filename());
         RETURN_IF_EXCEPTION(scope, false);
-        ASSERT(wasRemoved);
+        ASSERT_UNUSED(wasRemoved, wasRemoved || (m_moduleGraph && m_moduleGraph->disposed())); // dispose() empties a graph's cache under running code
 
         scope.throwException(globalObject, exception);
         return false;
@@ -408,14 +412,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
             auto& vm = globalObject->vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
             JSModuleGraph* graph = owner->moduleGraph();
-            if (JSValue existing = graph->field(JSModuleGraph::Field::RequireCache); existing && !existing.isUndefined())
+            if (JSValue existing = graph->requireCache(); existing && !existing.isUndefined())
                 return JSValue::encode(existing);
             auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
             MarkedArgumentBuffer args;
             args.append(owner);
             JSValue cache = JSC::call(globalObject, function, JSC::getCallData(function), jsUndefined(), args);
             RETURN_IF_EXCEPTION(scope, {});
-            graph->setField(vm, JSModuleGraph::Field::RequireCache, cache);
+            graph->setRequireCache(vm, cache);
             return JSValue::encode(cache);
         }
     }
@@ -1283,6 +1287,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_moduleGraph);
+    visitor.append(thisObject->m_moduleGraphWrapperExecutable);
     visitor.appendHidden(thisObject->m_childrenValue);
     {
         WTF::Locker locker { thisObject->cellLock() };
@@ -1370,7 +1375,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     // Bun.unsafe.ModuleGraph has its own) so that it can be re-evaluated on the next require.
     bool wasRemoved = requireMapFor(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT(wasRemoved);
+    ASSERT_UNUSED(wasRemoved, wasRemoved || (referrerModule->moduleGraph() && referrerModule->moduleGraph()->disposed())); // dispose() empties a graph's cache under running code
 
     throwScope.throwException(globalObject, exception);
     RELEASE_AND_RETURN(throwScope, {});
@@ -1640,7 +1645,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
     auto provider = JSC::SyntheticSourceProvider::create(
-        [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+        [graph = JSC::Weak<JSModuleGraph>(graph), forGraph = !!graph](JSC::JSGlobalObject* lexicalGlobalObject,
             const JSC::Identifier& moduleKey,
             Vector<JSC::Identifier, 4>& exportNames,
             JSC::MarkedArgumentBuffer& exportValues) -> void {
@@ -1653,6 +1658,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             // (a graph's or the global one). Created here when that cache has
             // not seen the file yet.
             JSModuleGraph* loadingGraph = graph.get();
+            if (forGraph && !loadingGraph) [[unlikely]] {
+                // Unreachable while the graph's loader (which evaluates this) is alive; never the global cache.
+                throwModuleGraphDisposed(globalObject, scope);
+                return;
+            }
             JSMap* targetRequireMap = requireMapFor(globalObject, loadingGraph);
             JSValue entry = targetRequireMap->get(globalObject, keyValue);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1839,3 +1849,10 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
 }
 
 } // namespace Bun
+
+Bun::ModuleGraphCommonJSTemplates& Zig::GlobalObject::moduleGraphCommonJSTemplates()
+{
+    if (!m_moduleGraphCommonJSTemplates)
+        m_moduleGraphCommonJSTemplates = makeUnique<Bun::ModuleGraphCommonJSTemplates>(vm());
+    return *m_moduleGraphCommonJSTemplates;
+}

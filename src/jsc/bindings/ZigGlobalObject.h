@@ -301,6 +301,12 @@ public:
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
+    JSWeakMap* moduleGraphRegistry() const { return m_moduleGraphRegistry.getInitializedOnMainThread(this); }
+    JSWeakMap* moduleGraphRegistryIfExists() const { return m_moduleGraphRegistry.isInitialized() ? m_moduleGraphRegistry.get(this) : nullptr; } // null until the first Bun.unsafe.ModuleGraph
+    JSWeakMap* moduleGraphAttributions() const { return m_moduleGraphAttributions.getInitializedOnMainThread(this); }
+    JSWeakMap* moduleGraphAttributionsIfExists() const { return m_moduleGraphAttributions.isInitialized() ? m_moduleGraphAttributions.get(this) : nullptr; }
+    JSC::JSMap* moduleGraphOverlaySymbolTables() const { return m_moduleGraphOverlaySymbolTables.getInitializedOnMainThread(this); }
+
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
@@ -525,10 +531,11 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp) */                                                           \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphRegistry)                                                  \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphRejections)                                                \
-    V(public, WriteBarrier<Unknown>, m_moduleGraphOverlaySymbolTables)                                       \
+    /* Bun.unsafe.ModuleGraph (ModuleGraph.cpp): overlay -> graph; promise / error object -> graph it is */  \
+    /* attributed to (null: the host's); sorted `globals` names -> overlay SymbolTable */                    \
+    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphRegistry)                                 \
+    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleGraphAttributions)                             \
+    V(private, LazyPropertyOfGlobalObject<JSMap>, m_moduleGraphOverlaySymbolTables)                          \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -688,8 +695,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcRestoreAdvancedBuffersFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
-    visibility:                                             \
-    T name;
+    visibility : T name;
 
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(DECLARE_GLOBALOBJECT_GC_MEMBER)
 

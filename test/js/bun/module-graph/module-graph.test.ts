@@ -4,6 +4,7 @@
 // for the names the host passes as `globals`.
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { EventEmitter } from "events";
 import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -1132,6 +1133,67 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
       m.hostCallbackThrow((cb: () => void) => setTimeout(cb, 1));
     });
     expect(errs).toEqual(["uncaughtException=hostcb:g"]);
+  });
+  test("attribution survives the error's stack being materialized before it escapes (e.stack read, console.error) — still the graph's onError", async () => {
+    using d = tempDir("module-graph-stack-read", {
+      "late.mjs": `export async function viaAsync() { await 0; const e = new Error("after-stack-read"); void e.stack; throw e; }
+        export function viaTimer() { setTimeout(() => { const e = new TypeError("timer-after-stack-read"); String(e.stack); throw e; }, 0); }`,
+    });
+    const seen: string[] = [];
+    const settled = Promise.withResolvers<void>();
+    const g = new ModuleGraphClass!({
+      globals: {},
+      onError: (e: any, kind: string) => {
+        seen.push(kind + ":" + e.message);
+        if (seen.length === 2) settled.resolve();
+      },
+    });
+    const m = await g.import(join(String(d), "late.mjs"));
+    m.viaAsync();
+    m.viaTimer();
+    await settled.promise;
+    expect(seen.sort()).toEqual(["uncaughtException:timer-after-stack-read", "unhandledRejection:after-stack-read"]);
+  });
+  test("an error goes to a graph's onError once: an onError that lets it escape again asynchronously hands it to the host", async () => {
+    using d = tempDir("module-graph-onerror-once", {
+      "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); }`,
+      "host.mjs": `const seen = [];
+        process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); process.exit(0); });
+        const g = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); queueMicrotask(() => { throw e; }); } });
+        (await g.import("./boom.mjs")).boom();`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.mjs"],
+      cwd: String(d),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(`["graph:boom-once","host:boom-once"]`);
+    expect(exitCode).toBe(0);
+  });
+  test("a first import() that fails leaves the graph without a main module; the next successful import becomes it", async () => {
+    using d = tempDir("module-graph-main-after-failure", {
+      "bad.mjs": `throw new Error("not today");`,
+      "ok.mjs": `export const main = import.meta.main;`,
+      "other.mjs": `export const main = import.meta.main;`,
+    });
+    const g = new ModuleGraphClass!();
+    const failed = await g.import(join(String(d), "bad.mjs")).then(
+      () => "resolved",
+      (e: Error) => e.message,
+    );
+    const mainAfterFailure = g.mainModule;
+    const ok = await g.import(join(String(d), "ok.mjs"));
+    const other = await g.import(join(String(d), "other.mjs"));
+    expect({ failed, mainAfterFailure, main: g.mainModule, okMain: ok.main, otherMain: other.main }).toEqual({
+      failed: "not today",
+      mainAfterFailure: undefined,
+      main: join(String(d), "ok.mjs"),
+      okMain: true,
+      otherMain: false,
+    });
   });
   test("a rejection by graph code whose reason is an Error constructed by host code → the rejecting graph's onError", async () => {
     const d = fixture({

@@ -403,9 +403,10 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn Bun__emitHandledPromiseEvent(global: &JSGlobalObject, promise: JSValue) -> bool;
     /// ModuleGraph.cpp: if the error was thrown (or the promise rejected) by code
-    /// of a `Bun.unsafe.ModuleGraph`, deliver it to that graph's `process`
-    /// listeners or its host `onError` and return true. false = not a graph's:
-    /// continue with the normal thread-wide handling.
+    /// of a `Bun.unsafe.ModuleGraph` that has an `onError`, deliver it there and
+    /// return true (the host handled it: no test failure, exit code or
+    /// `--unhandled-rejections` policy). false: not a graph's, continue with the
+    /// normal thread-wide handling.
     safe fn Bun__ModuleGraph__handleUnhandled(
         global: &JSGlobalObject,
         err: JSValue,

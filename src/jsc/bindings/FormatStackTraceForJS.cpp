@@ -572,6 +572,10 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
 
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
+    // The callers drop the frames after this: keep which Bun.unsafe.ModuleGraph they attribute
+    // the error to, for an uncaught error / unhandled rejection reported later.
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(errorInstance->globalObject()))
+        Bun::moduleGraphNoteErrorFrames(globalObject, dynamicDowncast<JSC::ErrorInstance>(errorInstance), stackTrace);
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
@@ -640,10 +644,6 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
 
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
-    // The frames are dropped after this: keep which Bun.unsafe.ModuleGraph they attribute
-    // the error to, for an uncaught error / unhandled rejection reported later.
-    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(errorInstance->globalObject()))
-        Bun::moduleGraphNoteErrorFrames(globalObject, dynamicDowncast<JSC::ErrorInstance>(errorInstance), stackTrace);
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 

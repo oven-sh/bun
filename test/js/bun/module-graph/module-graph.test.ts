@@ -1041,24 +1041,25 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
     await settled.promise;
     expect(seen.sort()).toEqual(["uncaughtException:timer-after-stack-read", "unhandledRejection:after-stack-read"]);
   });
-  test("an error goes to a graph's onError once: an onError that lets it escape again asynchronously hands it to the host", async () => {
+  test("an error goes to a graph's onError once: an onError that lets it escape again (rethrow, or reject after reading its stack) hands it to the host", async () => {
     using d = tempDir("module-graph-onerror-once", {
       "boom.mjs": `export function boom() { setTimeout(() => { throw new Error("boom-once"); }, 0); }`,
       "host.mjs": `const seen = [];
-        process.on("uncaughtException", e => { seen.push("host:" + e.message); console.log(JSON.stringify(seen)); process.exit(0); });
-        const g = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("graph:" + e.message); queueMicrotask(() => { throw e; }); } });
-        (await g.import("./boom.mjs")).boom();`,
+        const done = () => { if (seen.length === 4) { console.log(JSON.stringify(seen.sort())); process.exit(0); } };
+        process.on("uncaughtException", e => { seen.push("host:uncaughtException:" + e.message); done(); });
+        process.on("unhandledRejection", e => { seen.push("host:unhandledRejection:" + e.message); done(); });
+        // one rethrows from a microtask; the other logs the stack (drops the error's frames) and rejects with it
+        const rethrow = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rethrow:" + e.message); queueMicrotask(() => { throw e; }); } });
+        const rereject = new Bun.unsafe.ModuleGraph({ onError: (e) => { seen.push("rereject:" + e.message); void e.stack; Promise.reject(e); } });
+        (await rethrow.import("./boom.mjs")).boom();
+        (await rereject.import("./boom.mjs?2")).boom();`,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "host.mjs"],
-      cwd: String(d),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+    const r = await runBun(["host.mjs"], { cwd: String(d) });
+    expect({ out: r.stdout, err: r.stderr, exitCode: r.exitCode }).toEqual({
+      out: `["host:uncaughtException:boom-once","host:unhandledRejection:boom-once","rereject:boom-once","rethrow:boom-once"]`,
+      err: "",
+      exitCode: 0,
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(`["graph:boom-once","host:boom-once"]`);
-    expect(exitCode).toBe(0);
   });
   test("a first import() that fails leaves the graph without a main module; the next successful import becomes it", async () => {
     using d = tempDir("module-graph-main-after-failure", {
@@ -1082,11 +1083,14 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
       otherMain: false,
     });
   });
-  test("a rejection by graph code whose reason is an Error constructed by host code → the rejecting graph's onError", async () => {
+  test("a rejection by graph code whose reason is an Error constructed by host code (module, CommonJS or global code) → the rejecting graph's onError", async () => {
     const d = fixture({
       "rej.mjs": `export function viaReject() { Promise.reject(hostMakeError("made-by-host")); }
         export async function viaAsync() { throw hostMakeError("rethrown-by-graph"); }
-        export function fire() { viaReject(); viaAsync(); }`,
+        export function viaCjsHelper() { Promise.reject(cjsMakeError("made-by-host-cjs")); }
+        export function viaScriptHelper() { Promise.reject(scriptMakeError("made-by-global-code")); }
+        export function fire() { viaReject(); viaAsync(); viaCjsHelper(); viaScriptHelper(); }`,
+      "helper.cjs": `module.exports = function (m) { return new Error(m); };`,
     });
     const seen: string[] = [];
     const hostSeen: string[] = [];
@@ -1094,13 +1098,22 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph — error attribution matrix",
     process.on("unhandledRejection", onHost);
     try {
       const g = new ModuleGraphClass!({
-        globals: { hostMakeError: (m: string) => new Error(m) },
+        globals: {
+          hostMakeError: (m: string) => new Error(m),
+          cjsMakeError: createRequire(join(d, "rej.mjs"))("./helper.cjs"),
+          scriptMakeError: (0, eval)("(function scriptMakeError(m) { return new Error(m); })"),
+        },
         onError: (e: any, kind: string) => seen.push(kind + ":" + e.message),
       });
       (await g.import(join(d, "rej.mjs"))).fire();
-      await until(() => seen.length + hostSeen.length >= 2);
+      await until(() => seen.length + hostSeen.length >= 4);
       expect({ seen: seen.sort(), hostSeen }).toEqual({
-        seen: ["unhandledRejection:made-by-host", "unhandledRejection:rethrown-by-graph"],
+        seen: [
+          "unhandledRejection:made-by-global-code",
+          "unhandledRejection:made-by-host",
+          "unhandledRejection:made-by-host-cjs",
+          "unhandledRejection:rethrown-by-graph",
+        ],
         hostSeen: [],
       });
     } finally {

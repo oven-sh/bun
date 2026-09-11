@@ -5447,10 +5447,12 @@ declare module "bun" {
        * that belongs to this graph, instead of the process-wide
        * `uncaughtException` / `unhandledRejection` handling; without it (or for
        * an error `onError` itself lets escape) they take that normal path. An
-       * error belongs to the graph whose module code is the innermost module
-       * code on the stack where it was created (functions passed in through
-       * `globals`, and CommonJS modules, are the host's code). `kind` is
-       * `"uncaughtException"` or `"unhandledRejection"`.
+       * error belongs to the graph whose module code threw it or rejected with
+       * it — the innermost module code on the stack at that moment (functions
+       * passed in through `globals`, and CommonJS modules, are the host's
+       * code); for a rejection that cannot be placed that way, where the error
+       * was created decides. `kind` is `"uncaughtException"` or
+       * `"unhandledRejection"`.
        */
       onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
     }

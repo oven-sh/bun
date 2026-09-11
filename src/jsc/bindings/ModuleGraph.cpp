@@ -177,18 +177,20 @@ void moduleGraphNoteErrorFrames(Zig::GlobalObject* globalObject, ErrorInstance* 
 {
     if (!instance || !globalObject->moduleGraphRegistryIfExists())
         return;
+    JSWeakMap* attributions = globalObject->moduleGraphAttributions();
+    if (!attributions->get(instance).isUndefined())
+        return; // already noted, or already delivered to an onError
     bool decided = false;
     JSModuleGraph* graph = moduleGraphForFrames(globalObject, frames, decided);
     if (!decided)
         return;
-    VM& vm = globalObject->vm();
-    globalObject->moduleGraphAttributions()->set(vm, instance, graph ? JSValue(graph) : jsNull());
+    attributions->set(globalObject->vm(), instance, graph ? JSValue(graph) : jsNull());
 }
 
-// Rejections by graph code whose reason does not lead back to a graph (a plain value,
-// or an Error constructed by host code) are attributed at rejection time, while the
-// rejecting code is on the stack: promise -> graph, weakly, consulted when the
-// rejection turns out unhandled.
+// A rejection belongs to the code that rejects: noted at rejection time, while that code
+// is on the stack (promise -> graph, weakly), consulted first when the rejection turns out
+// unhandled. The reason's own frames say where it was created, which can be somewhere
+// else (a host helper, an earlier turn) or nowhere (a plain value).
 void moduleGraphNoteRejection(Zig::GlobalObject* globalObject, JSPromise* promise)
 {
     if (!globalObject->moduleGraphRegistryIfExists())
@@ -210,12 +212,16 @@ static bool moduleGraphReportUnhandled(Zig::GlobalObject* globalObject, JSValue 
     // What an onError throws synchronously (the error it was given, say) is the host's.
     if (globalObject->m_inModuleGraphOnError)
         return false;
+    // The code that threw (the Exception's stack) or rejected (noted on the promise)
+    // decides; failing that, the code that created the error.
     bool decided = false;
-    JSModuleGraph* graph = moduleGraphForError(globalObject, rawError, decided);
+    JSModuleGraph* graph = moduleGraphForRejectedPromise(globalObject, promise);
+    if (graph)
+        decided = true;
+    if (!decided)
+        graph = moduleGraphForError(globalObject, rawError, decided);
     if (!decided)
         graph = moduleGraphForError(globalObject, error, decided);
-    if (!decided)
-        graph = moduleGraphForRejectedPromise(globalObject, promise);
     if (!graph || !graph->onError())
         return false;
     VM& vm = globalObject->vm();

@@ -772,7 +772,10 @@ static bool didSettlePendingModulePatch(Zig::GlobalObject* globalObject, JSModul
     specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    return virtualModules && virtualModules->get(specifier).get() == mock;
+    if (!virtualModules)
+        return false;
+    auto entry = virtualModules->find(specifier);
+    return entry != virtualModules->end() && entry->value.get() == mock;
 }
 
 // Mocks replaced or cleared while their factory was pending are no longer in the map.

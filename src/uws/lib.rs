@@ -769,8 +769,9 @@ pub mod ssl_wrapper {
             if self.flags.sent_ssl_shutdown() {
                 return Err(WriteDataError::ConnectionClosed);
             }
-            // A fatal read is mid-dispatch (its data callback wrote back): the
-            // error report and the close follow it. Do not close here.
+            // A callback of the pass that hit the fatal error wrote back. That pass
+            // closes once the callback returns. Closing here instead runs the owner's
+            // `on_close` (fetch's ProxyTunnel frees itself there) under its own frame.
             if self.flags.fatal_error() {
                 return Err(WriteDataError::ConnectionClosed);
             }

@@ -59,6 +59,21 @@ fn ts_namespace_member_value(data: js_ast::ts::Data) -> Option<TSConstantValue> 
     }
 }
 
+/// The enum, namespace, or member that `ref_` names; a sibling block's member goes through `namespace_alias`.
+fn ts_member_data_of_symbol(
+    symbols: &[js_ast::Symbol],
+    members: &bun_collections::HashMap<Ref, js_ast::ts::Data>,
+    ref_: Ref,
+) -> Option<js_ast::ts::Data> {
+    if let Some(alias) = &symbols[ref_.inner_index() as usize].namespace_alias {
+        let js_ast::ts::Data::Namespace(map) = *members.get(&alias.namespace_ref)? else {
+            return None;
+        };
+        return Some((*map).get(alias.alias.slice())?.data);
+    }
+    members.get(&ref_).copied()
+}
+
 /// An unbound `Infinity` or `NaN`, which tsc folds too.
 fn ts_global_constant(name: &[u8]) -> Option<TSConstantValue> {
     match name {
@@ -2366,7 +2381,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(&value) = self.ts_enum_constants.get(&result.r#ref) {
                     return Some(value);
                 }
-                ts_namespace_member_value(self.ts_member_data_of_symbol(result.r#ref)?)
+                ts_namespace_member_value(ts_member_data_of_symbol(
+                    &self.symbols,
+                    &self.ref_to_ts_namespace_member,
+                    result.r#ref,
+                )?)
             }
             js_ast::ExprData::EDot(dot) => {
                 if dot.optional_chain.is_some() {
@@ -2423,7 +2442,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if result.is_inside_with_scope || result.r#ref.is_empty() {
             return None;
         }
-        let mut data = self.ts_member_data_of_symbol(result.r#ref)?;
+        let mut data = ts_member_data_of_symbol(
+            &self.symbols,
+            &self.ref_to_ts_namespace_member,
+            result.r#ref,
+        )?;
         // The innermost member was pushed last.
         for member_name in member_names.iter().rev() {
             let js_ast::ts::Data::Namespace(map) = data else {
@@ -2435,19 +2458,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ts::Data::Namespace(map) => Some(map),
             _ => None,
         }
-    }
-
-    /// The enum, namespace, or member that `ref_` names; a sibling block's member goes through `namespace_alias`.
-    fn ts_member_data_of_symbol(&self, ref_: Ref) -> Option<js_ast::ts::Data> {
-        if let Some(alias) = &self.symbols[ref_.inner_index() as usize].namespace_alias {
-            let js_ast::ts::Data::Namespace(map) =
-                *self.ref_to_ts_namespace_member.get(&alias.namespace_ref)?
-            else {
-                return None;
-            };
-            return Some((*map).get(alias.alias.slice())?.data);
-        }
-        self.ref_to_ts_namespace_member.get(&ref_).copied()
     }
 
     /// Stores the constant members of the enums in an unvisited namespace body, for the enums `visit_stmts` pre-visits.

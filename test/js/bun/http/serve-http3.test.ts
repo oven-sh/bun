@@ -1668,6 +1668,42 @@ describe("Bun.serve HTTP/3 malformed request field sections", () => {
     ]);
   });
 
+  // Values are scanned eight bytes at a time with a per-byte tail, so the
+  // verdict must not depend on where in the value a byte sits: every offset
+  // across two full words and the tail, plus the allowed bytes that sit right
+  // next to the rejected ranges (HTAB, SP, '~', 0x80 and up).
+  test("a forbidden byte is rejected at every offset of a long field value", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const length = 20;
+    const at = (offset: number, byte: string) =>
+      Buffer.alloc(offset, "a").toString() + byte + Buffer.alloc(length - offset - 1, "a").toString();
+    const cases: Array<[string, string]> = [];
+    for (let offset = 0; offset < length; offset++) cases.push([`0x01@${offset}`, at(offset, "\x01")]);
+    for (const offset of [0, 7, 8, 15, 16, 19]) {
+      cases.push([`LF@${offset}`, at(offset, "\n")], [`DEL@${offset}`, at(offset, "\x7f")]);
+    }
+    const results = await Promise.all(
+      cases.map(async ([name, value]) => [
+        name,
+        await rawH3(server.port, { ...wellFormed(server.port), "x-forwarded": value }),
+      ]),
+    );
+    expect(Object.fromEntries(results)).toEqual(
+      Object.fromEntries(cases.map(([name]) => [name, { status: undefined, errorCode: H3_MESSAGE_ERROR }])),
+    );
+    expect(seen).toEqual([]);
+  });
+
+  test("allowed bytes next to the forbidden ranges are delivered from a long field value", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const value = "aaaa\tbbbb\u00e9cccc~ dddd\u0080\u00ffeeee\tffffffff";
+    const res = await rawH3(server.port, { ...wellFormed(server.port), "x-long": value });
+    expect(res).toEqual({ status: "200", errorCode: undefined });
+    expect(seen.map(s => s.headers)).toEqual([{ host: `127.0.0.1:${server.port}`, "x-long": value }]);
+  });
+
   // Only pseudo-headers are single-valued; a repeated regular field is two
   // field lines and combines as usual.
   test("a repeated regular field is delivered", async () => {

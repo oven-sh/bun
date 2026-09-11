@@ -488,17 +488,52 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     return hdr;
 }
 
-/* RFC 9110 tchar minus uppercase: RFC 9114 §4.2 makes an uppercase field
- * name malformed rather than something to fold. */
-static int us_quic_is_field_name_byte(unsigned char c) {
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return 1;
-    switch (c) {
-    case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
-    case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
-        return 1;
-    default:
-        return 0;
+/* US_QUIC_NAME_BYTE: RFC 9110 tchar minus uppercase (RFC 9114 §4.2 makes an
+ * uppercase field name malformed rather than something to fold).
+ * US_QUIC_VALUE_BYTE: everything except DEL and the C0 controls other than HTAB. */
+#define US_QUIC_NAME_BYTE 1
+#define US_QUIC_VALUE_BYTE 2
+static const unsigned char us_quic_field_byte[256] = {
+    /* 0x00 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0,
+    /* 0x10 */ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* 0x20 */ 2, 3, 2, 3, 3, 3, 3, 3, 2, 2, 3, 3, 2, 3, 3, 2,
+    /* 0x30 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2,
+    /* 0x40 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0x50 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3,
+    /* 0x60 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+    /* 0x70 */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 0,
+    /* 0x80 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0x90 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xa0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xb0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xc0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xd0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xe0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    /* 0xf0 */ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+};
+
+static int us_quic_bytes_lack(const unsigned char *p, unsigned int len, unsigned char kind) {
+    for (unsigned int i = 0; i < len; i++) {
+        if (!(us_quic_field_byte[p[i]] & kind)) return 1;
     }
+    return 0;
+}
+
+/* Values are most of a header block, so they are tested eight bytes at a
+ * time (the hasLess trick HttpParser.h uses). HTAB is the one allowed byte
+ * below 0x20, so a hit only sends that word to the exact per-byte test. */
+static int us_quic_field_value_is_malformed(const unsigned char *value, unsigned int len) {
+    const uint64_t ones = ~0ULL / 255, high = ones * 128;
+    unsigned int i = 0;
+    for (; i + 8 <= len; i += 8) {
+        uint64_t word;
+        memcpy(&word, value + i, 8);
+        uint64_t below_space = (word - ones * 0x20) & ~word & high;
+        uint64_t del = word ^ (ones * 0x7f);
+        del = (del - ones) & ~del & high;
+        if ((below_space | del) && us_quic_bytes_lack(value + i, 8, US_QUIC_VALUE_BYTE)) return 1;
+    }
+    return us_quic_bytes_lack(value + i, len - i, US_QUIC_VALUE_BYTE);
 }
 
 static unsigned int us_quic_request_pseudo_header_bit(const char *name, unsigned int len) {
@@ -519,10 +554,7 @@ static int us_quic_hset_check_field(struct us_quic_hset *h, const char *name,
                                     unsigned int name_len, const char *value,
                                     unsigned int value_len) {
     if (name_len == 0) return 1;
-    for (unsigned int i = 0; i < value_len; i++) {
-        unsigned char c = (unsigned char) value[i];
-        if ((c < 0x20 && c != '\t') || c == 0x7f) return 1;
-    }
+    if (us_quic_field_value_is_malformed((const unsigned char *) value, value_len)) return 1;
     if (name[0] == ':') {
         if (h->seen_regular || h->kind != US_QUIC_HSET_REQUEST) return 1;
         unsigned int bit = us_quic_request_pseudo_header_bit(name, name_len);
@@ -533,10 +565,7 @@ static int us_quic_hset_check_field(struct us_quic_hset *h, const char *name,
         return 0;
     }
     h->seen_regular = 1;
-    for (unsigned int i = 0; i < name_len; i++) {
-        if (!us_quic_is_field_name_byte((unsigned char) name[i])) return 1;
-    }
-    return 0;
+    return us_quic_bytes_lack((const unsigned char *) name, name_len, US_QUIC_NAME_BYTE);
 }
 
 /* RFC 9114 §4.3.1: a request carries exactly one :method, :scheme and :path,

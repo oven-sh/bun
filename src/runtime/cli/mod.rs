@@ -907,7 +907,11 @@ pub mod command {
         };
 
         if is_bun_x(argv0) {
-            if let Some(next) = argv.get(1) {
+            // BUN_OPTIONS tokens are spliced in right after argv[0], so the
+            // "add"/"exec" the parent bunx spawned its install child with sits
+            // at `1 + bun_options_argc()` — checking argv[1] made the escape
+            // hatch below miss it and bunx re-spawn itself forever (#39377).
+            if let Some(next) = argv.get(1 + bun::bun_options_argc()) {
                 let next_bytes = next.as_bytes();
                 if next_bytes == b"add"
                     && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()

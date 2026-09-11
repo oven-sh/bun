@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -509,6 +509,100 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(err).not.toContain("Cannot find module 'exec'");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
+});
+
+// Regression test for #39377: BUN_OPTIONS tokens spliced after argv[0] used to
+// defeat the BUN_INTERNAL_BUNX_INSTALL escape hatch's positional check, so the
+// install child re-entered bunx mode and re-spawned itself forever. Before the
+// fix this test hangs instead of completing.
+it.concurrent(
+  "bunx does not fork-bomb when BUN_OPTIONS is set",
+  async () => {
+    const { x_dir, env } = setup();
+    // The bug only triggers when argv[0] is "bunx": the `bun x` spelling
+    // dispatches through the generic flag-skipping path and is immune.
+    copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
+    copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
+
+    const subprocess = spawn({
+      cmd: ["bunx", "esbuild@latest", "--version"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_OPTIONS: "--smol",
+        PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+      },
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(err).not.toContain("error:");
+    expect(out.trim()).not.toContain(Bun.version);
+    expect(out.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(exited).toBe(0);
+  },
+  1000 * 60 * 2,
+);
+
+// Companion to the end-to-end test above: exercises the escape hatch directly,
+// so a regression fails as a bounded wrong-output assertion in under a second
+// (no network, no process chain). Covers the exec arm and a two-token
+// BUN_OPTIONS value the e2e path doesn't reach.
+it.concurrent("BUN_OPTIONS does not break the internal bunx install escape hatch", async () => {
+  const { env } = setup();
+  // Dispatch keys off argv[0] ending in "bunx".
+  const bunxDir = tmpdirSync();
+  const bunxPath = join(bunxDir, isWindows ? "bunx.exe" : "bunx");
+  if (isWindows) copyFileSync(bunExe(), bunxPath);
+  else symlinkSync(bunExe(), bunxPath);
+
+  // If the escape hatch misses, BunxCommand resolves "add"/"exec" as the
+  // package to run and finds these on PATH, so the failure is bounded
+  // wrong output instead of an unbounded chain of installs.
+  const decoyDir = tmpdirSync();
+  for (const name of ["add", "exec"]) {
+    if (isWindows) {
+      writeFileSync(join(decoyDir, `${name}.cmd`), `@echo MISDISPATCHED_${name.toUpperCase()}\r\n`);
+    } else {
+      writeFileSync(join(decoyDir, name), `#!/bin/sh\necho MISDISPATCHED_${name.toUpperCase()}\n`, { mode: 0o755 });
+    }
+  }
+
+  // One injected token and two, so skipping a fixed count instead of
+  // bun_options_argc() still fails.
+  for (const bunOptions of ["--smol", "--smol --silent"]) {
+    const childEnv = {
+      ...env,
+      BUN_OPTIONS: bunOptions,
+      BUN_INTERNAL_BUNX_INSTALL: "true",
+      PATH: `${decoyDir}${delimiter}${env.PATH || ""}`,
+    };
+
+    {
+      await using proc = spawn({ cmd: [bunxPath, "add", "--help"], env: childEnv, stdout: "pipe", stderr: "pipe" });
+      const [out, errOut, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(out).not.toContain("MISDISPATCHED_ADD");
+      expect(errOut).not.toContain("MISDISPATCHED_ADD");
+      expect(out).toContain("bun add");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      await using proc = spawn({ cmd: [bunxPath, "exec", "echo hatch-ok"], env: childEnv, stdout: "pipe", stderr: "pipe" });
+      const [out, errOut, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(out).not.toContain("MISDISPATCHED_EXEC");
+      expect(errOut).not.toContain("MISDISPATCHED_EXEC");
+      expect(out.trim()).toBe("hatch-ok");
+      expect(exitCode).toBe(0);
+    }
+  }
 });
 
 // Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24

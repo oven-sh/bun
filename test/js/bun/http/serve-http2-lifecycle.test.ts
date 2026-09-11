@@ -182,7 +182,7 @@ describe("Bun.serve http2 lifecycle", () => {
         await secured;
         return RawH2.over(socket);
       });
-    }, 20000);
+    });
 
     test("cleartext preface incomplete", async () => {
       await using fx = await startFixture({ tls: false });
@@ -197,7 +197,7 @@ describe("Bun.serve http2 lifecycle", () => {
         raw.write(frame(T.SETTINGS, 0, 0));
         return raw;
       });
-    }, 20000);
+    });
 
     test("TLS handshakes queued behind the per-iteration budget", async () => {
       // The loop runs five TLS handshakes per iteration and parks the rest of a burst in a queue
@@ -254,6 +254,7 @@ describe("Bun.serve http2 lifecycle", () => {
         answeredWithoutGoaway: 0,
       });
       expect(exitCode).toBe(0);
+      // 40 TLS endpoints handshake in one process: 4 to 6 s on a debug build with ASAN.
     }, 20000);
   });
 

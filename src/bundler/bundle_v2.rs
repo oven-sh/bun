@@ -1252,13 +1252,12 @@ pub mod bv2_impl {
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
                     let path_loader = parse.path.loader(&bv2.transpiler.options.loaders);
-                    // `parse.loader` is the loader the bundle picked (a `with { type }` attribute wins over
-                    // the extension). A file it would only copy because nothing claims its extension still
-                    // defaults to js for plugin contents, as in esbuild.
-                    let default_loader = match parse.loader.or(path_loader) {
-                        Some(Loader::File) if path_loader.is_none() => Loader::Js,
-                        Some(loader) => loader,
-                        None => Loader::Js,
+                    let default_loader = match parse.loader {
+                        // They differ when something requested the loader, such as an import's `with { type }`.
+                        Some(requested) if requested != path_loader.unwrap_or(Loader::File) => {
+                            requested
+                        }
+                        _ => path_loader.unwrap_or(Loader::Js),
                     };
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),

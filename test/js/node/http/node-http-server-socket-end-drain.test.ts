@@ -33,6 +33,23 @@ const closers = {
   },
 };
 
+// Counts the response bytes and finds where the head ends. The head is kept
+// until "\r\n\r\n" shows up, so a delimiter split over two reads is still found.
+function countResponse(c: net.Socket, onData?: (seen: { bytes: number; headLength: number }) => void) {
+  const seen = { bytes: 0, headLength: -1 };
+  let head = Buffer.alloc(0);
+  c.on("data", d => {
+    if (seen.headLength === -1) {
+      head = Buffer.concat([head, d]);
+      const end = head.indexOf("\r\n\r\n");
+      if (end !== -1) seen.headLength = end + 4;
+    }
+    seen.bytes += d.length;
+    onData?.(seen);
+  });
+  return seen;
+}
+
 // res.end(8 MiB) overflows the send buffer, so the FIN waits for the drain.
 // A request pipelined in the same read must not be answered: its dispatch
 // reset HTTP_CONNECTION_CLOSE, so both responses went out and the FIN came
@@ -64,12 +81,7 @@ test.each([
 
     const c = transports[transport].connect(port);
     await once(c, transports[transport].connected);
-    let bytes = 0;
-    let headLength = -1;
-    c.on("data", d => {
-      if (headLength === -1) headLength = d.indexOf("\r\n\r\n") + 4;
-      bytes += d.length;
-    });
+    const seen = countResponse(c);
     c.on("error", () => {});
     // Two pipelined requests in one write. Neither asks for Connection: close,
     // so the close has to come from the server.
@@ -77,8 +89,8 @@ test.each([
     await new Promise<void>(resolve => c.once("close", () => resolve()));
 
     // One response on the wire (its head plus the 8 MiB body), then the FIN.
-    expect(headLength).toBeGreaterThan(4);
-    expect(bytes).toBe(headLength + BIG.length);
+    expect(seen.headLength).toBeGreaterThan(4);
+    expect(seen.bytes).toBe(seen.headLength + BIG.length);
   },
 );
 
@@ -161,13 +173,9 @@ test("req.socket.end(): a request pipelined behind the rest of the body still ge
   c.write(BODY.subarray(0, BODY.length / 2));
   await handled.promise;
 
-  let bytes = 0;
-  let headLength = -1;
   const drained = Promise.withResolvers<void>();
-  c.on("data", d => {
-    if (headLength === -1) headLength = d.indexOf("\r\n\r\n") + 4;
-    bytes += d.length;
-    if (bytes >= headLength + CHUNKED_LENGTH) drained.resolve();
+  const seen = countResponse(c, ({ bytes, headLength }) => {
+    if (headLength !== -1 && bytes >= headLength + CHUNKED_LENGTH) drained.resolve();
   });
   await drained.promise;
   c.write(Buffer.concat([BODY.subarray(BODY.length / 2), Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n")]));
@@ -177,8 +185,8 @@ test("req.socket.end(): a request pipelined behind the rest of the body still ge
 
   // One response: the head, the chunks, and the terminating chunk when
   // res.end() still reaches the wire (Node.js drops it after socket.end()).
-  expect(headLength).toBeGreaterThan(4);
-  expect([0, 5]).toContain(bytes - headLength - CHUNKED_LENGTH);
+  expect(seen.headLength).toBeGreaterThan(4);
+  expect([0, 5]).toContain(seen.bytes - seen.headLength - CHUNKED_LENGTH);
 });
 
 // res.socket.end() half-closes the connection; the server must still release the

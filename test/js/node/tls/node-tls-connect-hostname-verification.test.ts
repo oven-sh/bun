@@ -35,7 +35,13 @@ describe("tls.connect IP name constraints", () => {
         });
         try {
           if (expectedError) {
-            await assert.rejects(once(socket, "secureConnect"), { message: expectedError });
+            // uSockets currently maps name-constraint verification errors to UNSPECIFIED.
+            const code = process.versions.bun
+              ? "UNSPECIFIED"
+              : expectedError === "permitted subtree violation"
+                ? "PERMITTED_VIOLATION"
+                : "EXCLUDED_VIOLATION";
+            await assert.rejects(once(socket, "secureConnect"), { message: expectedError, code });
           } else {
             await once(socket, "secureConnect");
             assert.strictEqual(socket.authorized, true);

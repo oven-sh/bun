@@ -8,10 +8,36 @@ use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, 
 use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
 
+/// Declarations staged for one of the rules generated next to the style rule
+/// being minified, split by importance like the `DeclarationBlock` they become.
+#[derive(Default)]
+pub struct StagedDeclarations {
+    declarations: Vec<css::Property>,
+    important_declarations: Vec<css::Property>,
+}
+
+impl StagedDeclarations {
+    fn push(&mut self, property: css::Property, important: bool) {
+        if important {
+            self.important_declarations.push(property);
+        } else {
+            self.declarations.push(property);
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.declarations.is_empty() && self.important_declarations.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.declarations.clear();
+        self.important_declarations.clear();
+    }
+}
+
 pub struct SupportsEntry {
     pub(crate) condition: css::SupportsCondition,
-    pub(crate) declarations: Vec<css::Property>,
-    pub(crate) important_declarations: Vec<css::Property>,
+    pub(crate) declarations: StagedDeclarations,
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
@@ -28,11 +54,13 @@ pub struct PropertyHandlerContext<'a> {
     // minified; bound to `'a` alongside the other borrowed inputs.
     pub(crate) arena: &'a Bump,
     pub(crate) targets: css::targets::Targets,
+    /// Whether the declarations currently being handled are `!important`;
+    /// staged declarations inherit it. Set by `DeclarationBlock::minify`.
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
-    pub(crate) ltr: Vec<css::Property>,
-    pub(crate) rtl: Vec<css::Property>,
-    pub(crate) dark: Vec<css::Property>,
+    pub(crate) ltr: StagedDeclarations,
+    pub(crate) rtl: StagedDeclarations,
+    pub(crate) dark: StagedDeclarations,
     pub(crate) context: DeclarationContext,
     pub(crate) unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
 }
@@ -48,9 +76,9 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: *targets,
             is_important: false,
             supports: Vec::new(),
-            ltr: Vec::new(),
-            rtl: Vec::new(),
-            dark: Vec::new(),
+            ltr: StagedDeclarations::default(),
+            rtl: StagedDeclarations::default(),
+            dark: StagedDeclarations::default(),
             context: DeclarationContext::None,
             unused_symbols,
         }
@@ -62,21 +90,21 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
-            ltr: Vec::new(),
-            rtl: Vec::new(),
-            dark: Vec::new(),
+            ltr: StagedDeclarations::default(),
+            rtl: StagedDeclarations::default(),
+            dark: StagedDeclarations::default(),
             context,
             unused_symbols: self.unused_symbols,
         }
     }
 
     pub(crate) fn add_dark_rule(&mut self, property: css::Property) {
-        self.dark.push(property);
+        self.dark.push(property, self.is_important);
     }
 
     pub(crate) fn add_logical_rule(&mut self, ltr: css::Property, rtl: css::Property) {
-        self.ltr.push(ltr);
-        self.rtl.push(rtl);
+        self.ltr.push(ltr, self.is_important);
+        self.rtl.push(rtl, self.is_important);
     }
 
     pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
@@ -116,6 +144,13 @@ impl<'a> PropertyHandlerContext<'a> {
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
+    fn clone_block(&self, staged: &StagedDeclarations) -> css::DeclarationBlock<'static> {
+        css::DeclarationBlock {
+            declarations: self.clone_decls(&staged.declarations),
+            important_declarations: self.clone_decls(&staged.important_declarations),
+        }
+    }
+
     pub(crate) fn get_supports_rules<T>(
         &self,
         style_rule: &css::StyleRule<T>,
@@ -133,10 +168,7 @@ impl<'a> PropertyHandlerContext<'a> {
                     v: vec![css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&entry.declarations),
-                            important_declarations: self.clone_decls(&entry.important_declarations),
-                        },
+                        declarations: self.clone_block(&entry.declarations),
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
                     })],
@@ -206,12 +238,7 @@ impl<'a> PropertyHandlerContext<'a> {
                     list.v.push(css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&self.dark),
-                            important_declarations: css::DeclarationList::new_in(
-                                self.bump_static(),
-                            ),
-                        },
+                        declarations: self.clone_block(&self.dark),
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
                     }));
@@ -225,11 +252,10 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    // Takes the Direction value and a borrow of the decls Vec directly.
     pub(crate) fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
-        decls: &[css::Property],
+        decls: &StagedDeclarations,
         sty: &css::StyleRule<T>,
         dest: &mut Vec<css::CssRule<T>>,
     ) {
@@ -243,10 +269,7 @@ impl<'a> PropertyHandlerContext<'a> {
         let rule = css::StyleRule {
             selectors,
             vendor_prefix: css::VendorPrefix::NONE,
-            declarations: css::DeclarationBlock {
-                declarations: self.clone_decls(decls),
-                important_declarations: css::DeclarationList::new_in(self.bump_static()),
-            },
+            declarations: self.clone_block(decls),
             rules: css::CssRuleList::default(),
             loc: sty.loc,
         };
@@ -286,23 +309,13 @@ impl<'a> PropertyHandlerContext<'a> {
         };
 
         if let Some(entry) = found {
-            if self.is_important {
-                entry.important_declarations.push(property);
-            } else {
-                entry.declarations.push(property);
-            }
+            entry.declarations.push(property, self.is_important);
         } else {
-            let mut important_declarations: Vec<css::Property> = Vec::new();
-            let mut declarations: Vec<css::Property> = Vec::new();
-            if self.is_important {
-                important_declarations.push(property);
-            } else {
-                declarations.push(property);
-            }
+            let mut declarations = StagedDeclarations::default();
+            declarations.push(property, self.is_important);
             self.supports.push(SupportsEntry {
                 condition,
                 declarations,
-                important_declarations,
             });
         }
     }

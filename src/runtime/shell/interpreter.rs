@@ -932,8 +932,7 @@ impl Interpreter {
         }
     }
 
-    /// A sequencing state stops instead of running its next command: Ctrl+C
-    /// cut the member short, or the script failed (`fail`).
+    /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
         self.failed() || self.node(id).base().is_some_and(|b| b.interrupted)
     }

@@ -559,48 +559,30 @@ fn message_with_type_and_level_(
     Ok(())
 }
 
-/// What [`for_each_limited`] did.
-pub(crate) struct LimitedForEach {
-    /// The number of elements passed to the callback.
-    pub(crate) visited: u32,
-    /// True when the iterable holds an element past the limit.
-    pub(crate) truncated: bool,
-}
+/// Steps the formatters give an iterable that has no element count of its own, such as a generator.
+const UNSIZED_ITERABLE_BUDGET: u32 = 1000;
 
-impl LimitedForEach {
-    /// Elements left out, going by the `size` property. `None` when `size` does not say.
-    fn hidden_of(&self, size: i32) -> Option<u32> {
-        u32::try_from(size)
-            .ok()?
-            .checked_sub(self.visited)
-            .filter(|hidden| *hidden > 0)
-    }
-}
-
-/// A bounded [`JSValue::for_each`] for formatters. `Bun__ConsoleObject__forEachLimited` has the rules.
+/// A bounded [`JSValue::for_each`] for formatters. True when elements were left. `Bun__ConsoleObject__forEachLimited` has the rules.
 pub(crate) fn for_each_limited(
     iterable: JSValue,
     global: &JSGlobalObject,
-    limit: u32,
+    budget: u32,
     ctx: *mut c_void,
     callback: jsc::ForEachCallback,
-) -> JsResult<LimitedForEach> {
+) -> JsResult<bool> {
     unsafe extern "C" {
-        // safe: C++ only writes `truncated`, and only forwards `ctx` to `callback`.
+        // safe: `ctx` is an opaque round-trip pointer that C++ only forwards to `callback`.
         safe fn Bun__ConsoleObject__forEachLimited(
             iterable: JSValue,
             global: &JSGlobalObject,
-            limit: u32,
-            truncated: &mut bool,
+            budget: u32,
             ctx: *mut c_void,
             callback: jsc::ForEachCallback,
-        ) -> u32;
+        ) -> bool;
     }
-    let mut truncated = false;
-    let visited = jsc::host_fn::from_js_host_call_generic(global, || {
-        Bun__ConsoleObject__forEachLimited(iterable, global, limit, &mut truncated, ctx, callback)
-    })?;
-    Ok(LimitedForEach { visited, truncated })
+    jsc::host_fn::from_js_host_call_generic(global, || {
+        Bun__ConsoleObject__forEachLimited(iterable, global, budget, ctx, callback)
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -689,9 +671,6 @@ struct CollectedRow {
 }
 
 const PADDING: u32 = 1;
-
-/// Row budget for an iterable with no element count. Chrome's `console.table` limit (V8 `InjectedScript::wrapTable`).
-const MAX_ROWS_FROM_ITERATOR: u32 = 1000;
 
 impl<'a> TablePrinter<'a> {
     pub fn init(
@@ -991,26 +970,16 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                // Only user code can make a WeakMap or an ArrayBuffer iterable, so they get the budget too.
-                let jstype = ctx.this.jstype;
-                let has_element_count = matches!(jstype, jsc::JSType::Map | jsc::JSType::Set)
-                    || (jstype.is_array_like() && jstype != jsc::JSType::ArrayBuffer);
-                let limit = if has_element_count {
-                    u32::try_from(tabular_data.get_length(global_object)?).unwrap_or(u32::MAX)
-                } else {
-                    MAX_ROWS_FROM_ITERATOR
-                };
-                let collected = for_each_limited(
+                rows_truncated = for_each_limited(
                     tabular_data,
                     global_object,
-                    limit,
+                    UNSIZED_ITERABLE_BUDGET,
                     (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
                 )?;
                 if let Some(err) = ctx.err {
                     return Err(err);
                 }
-                rows_truncated = collected.truncated;
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
                 let rows_iter = jsc::JSPropertyIterator::init(
@@ -2811,11 +2780,10 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Ends a truncated preview with `... N more items`, or `... more items` when `hidden` is `None`.
+        /// Ends a preview whose iterator had more to give than the walk allowed.
         fn print_more_entries<const C: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
-            hidden: Option<u32>,
             wrote_entry: bool,
         ) {
             if !self.single_line {
@@ -2824,20 +2792,12 @@ pub mod formatter {
                 let _ = self.print_comma::<C>(writer);
                 let _ = writer.write_all(b" ");
             }
-            let (dim, reset) = (pfmt!("<r><d>", C), pfmt!("<r>", C));
-            let _ = match hidden {
-                Some(1) => write!(writer, "{dim}... 1 more item{reset}"),
-                Some(n) => write!(writer, "{dim}... {n} more items{reset}"),
-                None => write!(writer, "{dim}... more items{reset}"),
-            };
+            let _ = writer.write_all(pfmt!("<r><d>... more items<r>", C).as_bytes());
             if !self.single_line {
                 let _ = writer.write_all(b"\n");
             }
         }
     }
-
-    /// Entries printed before `... N more items`. The default of node's `maxArrayLength`.
-    const MAX_ENTRIES_SHOWN: u32 = 100;
 
     // ───────────────────────────────────────────────────────────────────────
     // MapIterator / SetIterator / PropertyIterator (forEach callback contexts)
@@ -4418,7 +4378,7 @@ pub mod formatter {
                         }
                         continue;
                     }
-                    if nonempty_count >= MAX_ENTRIES_SHOWN {
+                    if nonempty_count >= 100 {
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;
@@ -4693,10 +4653,10 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
@@ -4704,10 +4664,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, shown.hidden_of(length), count > 0);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
-                    if count > 0 || shown.truncated {
+                    if count > 0 || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4716,18 +4676,18 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, shown.hidden_of(length), true);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }
@@ -4762,10 +4722,10 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
                     )?;
@@ -4773,8 +4733,8 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, None, count > 0);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                     // Only the MapIterator case writes a trailing space.
                     if count > 0 && label == "MapIterator" {
@@ -4786,10 +4746,10 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,
                     )?;
@@ -4800,8 +4760,8 @@ pub mod formatter {
                     if count > 0 {
                         let _ = writer_.write_all(b"\n");
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, None, count > 0);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                 }
             }
@@ -4855,10 +4815,10 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
@@ -4866,10 +4826,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, shown.hidden_of(length), !is_first);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, !is_first);
                     }
-                    if !is_first || shown.truncated {
+                    if !is_first || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4878,18 +4838,18 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    let shown = for_each_limited(
+                    let truncated = for_each_limited(
                         value,
                         global_this,
-                        MAX_ENTRIES_SHOWN,
+                        UNSIZED_ITERABLE_BUDGET,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if shown.truncated {
-                        self.print_more_entries::<C>(writer_, shown.hidden_of(length), true);
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }

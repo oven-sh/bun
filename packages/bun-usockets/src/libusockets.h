@@ -399,10 +399,26 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
+/* The one comparison every SNI name lookup uses (listen socket tree, HTTP/3
+ * matcher, uWS pending-name queue). Server names are DNS names, which are
+ * case-insensitive (RFC 4343); the fold is ASCII-only so the locale cannot
+ * change a match. Orders like memcmp over the folded bytes, shorter first on
+ * a shared prefix, so it also serves as a strict weak ordering. */
+static inline int us_sni_name_cmp(const char *a, size_t alen, const char *b, size_t blen) {
+    size_t n = alen < blen ? alen : blen;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ca = (unsigned char) a[i], cb = (unsigned char) b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+        if (ca != cb) return (int) ca - (int) cb;
+    }
+    return alen < blen ? -1 : alen > blen ? 1 : 0;
+}
+
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
  * (uWS stores a per-domain HttpRouter*). user may be NULL. Names are matched
- * label by label without regard to ASCII case; a `*` label matches any one
- * label. Adding a name that is already registered (in any case) fails. */
+ * label by label with us_sni_name_cmp; a `*` label matches any one label.
+ * Adding a name that is already registered (in any case) fails. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));

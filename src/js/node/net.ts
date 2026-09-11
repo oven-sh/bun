@@ -2075,7 +2075,8 @@ Socket.prototype.connect = function connect(...args) {
           } else {
             // wait to be connected
             this[kUpgradePending] = true;
-            connection.once("connect", () => {
+            const onConnect = () => {
+              connection.removeListener("close", onClose);
               // The TLS socket may have been destroyed before the underlying
               // socket connected (e.g. tls.connect({ socket }).destroy()); don't
               // start a handshake on a dead socket.
@@ -2125,7 +2126,14 @@ Socket.prototype.connect = function connect(...args) {
               }
               this[kUpgradePending] = false;
               this.emit(kUpgradeAttached);
-            });
+            };
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+            const onClose = () => {
+              connection.removeListener("connect", onConnect);
+              this.destroy();
+            };
+            connection.once("connect", onConnect);
+            connection.once("close", onClose);
           }
         }
       } catch (error) {

@@ -97,6 +97,47 @@ if (mode === "end" || mode === "destroySoon") {
   );
   console.log(JSON.stringify(reports));
   process.exit(0);
+} else if (mode === "closed-transport") {
+  // The same shapes over a net.Socket that closes before it connects. There is
+  // nothing to shut down: the TLS socket closes with its transport. Node also
+  // reports a refused connect as the TLS socket's 'error'. That report is not
+  // part of these shapes, so the log does not subscribe to it.
+  async function shutDown(method, transport) {
+    const log = [];
+    const peer = await stalledPeer();
+    // The local port of a live connection refuses connections: nothing listens
+    // on it, and no listen(0) can be handed it while the connection is open.
+    const holder = net.connect(peer.port, "127.0.0.1");
+    await once(holder, "connect");
+
+    const raw = net.connect(transport === "refused" ? holder.localPort : peer.port, "127.0.0.1");
+    raw.on("error", () => {});
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    client.on("error", () => {});
+    for (const event of ["finish", "close"]) client.on(event, () => log.push(event));
+    client[method]();
+    if (transport === "destroyed") raw.destroy();
+
+    // events.once() rejects on the 'error' that node emits first.
+    await new Promise(resolve => client.once("close", resolve));
+
+    const { writableFinished, readyState, destroyed } = client;
+    holder.destroy();
+    raw.destroy();
+    peer.close();
+    return { log, writableFinished, readyState, destroyed };
+  }
+
+  const reports = {};
+  await Promise.all(
+    ["end", "destroySoon"].flatMap(method =>
+      ["refused", "destroyed"].map(async transport => {
+        reports[`${method} ${transport}`] = await shutDown(method, transport);
+      }),
+    ),
+  );
+  console.log(JSON.stringify(reports));
+  process.exit(0);
 } else if (mode === "server-same-tick") {
   // new TLSSocket(socket, { isServer: true }) shut down in the tick that wraps
   // it. One report per method, each on a server and a connection of its own.

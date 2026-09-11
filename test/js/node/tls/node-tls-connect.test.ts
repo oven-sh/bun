@@ -2013,6 +2013,20 @@ describe.each([
       });
     });
 
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+    it.skipIf(!exe)(
+      "a tls.connect({ socket }) transport that closes before it connects closes the socket",
+      async () => {
+        const closed = { log: ["close"], writableFinished: false, readyState: "closed", destroyed: true };
+        expect(await run("closed-transport")).toEqual({
+          "end refused": closed,
+          "end destroyed": closed,
+          "destroySoon refused": closed,
+          "destroySoon destroyed": closed,
+        });
+      },
+    );
+
     it.skipIf(!exe)("a server-side TLSSocket end()s and destroySoon()s in the tick that wraps the socket", async () => {
       expect(await run("server-same-tick")).toEqual({
         end: { log: ["finish"], clientSawFin: true, writableFinished: true, destroyed: false },

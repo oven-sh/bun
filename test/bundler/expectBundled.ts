@@ -96,7 +96,7 @@ function errorOrWarnParser(isError = true) {
       let fileLine = "";
       if (fileLineI !== -1) {
         const fileLineEnd = text.indexOf("\n", fileLineI + 1);
-        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        fileLine = text.slice(fileLineI + " at ".length, fileLineEnd);
         i = fileLineEnd;
       }
       list.push([message, fileLine]);
@@ -1148,9 +1148,18 @@ function expectBundled(
         const allWarnings = warnParser(warningText)
           .map(([error, source]) => {
             if (!source) return;
-            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-            return { error, file, line, col };
+            const absolute = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/);
+            if (absolute) {
+              const [_str2, fullFilename, line, col] = absolute;
+              const file = fullFilename
+                .slice(id.length + path.basename(tempDirectory).length + 1)
+                .replaceAll("\\", "/");
+              return { error, file, line, col };
+            }
+            // CSS parser warnings only carry the file's basename, e.g.
+            // `at styles.module.css:1:6`; key them as if the file were at the root.
+            const bare = source.match(/^(.+):(\d+):(\d+)$/);
+            return bare ? { error, file: "/" + bare[1], line: bare[2], col: bare[3] } : { error, file: source };
           })
           .filter(Boolean);
         const expectedWarnings = bundleWarnings

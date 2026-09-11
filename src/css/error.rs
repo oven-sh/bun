@@ -211,10 +211,6 @@ pub enum PrinterErrorKind {
     },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
-    /// The CSS modules `composes` property cannot be used within nested rules.
-    invalid_composes_nesting,
-    /// The CSS modules `composes` property cannot be used with a simple class selector.
-    invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
@@ -237,12 +233,6 @@ impl fmt::Display for PrinterErrorKind {
                 bs(*url)
             ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
-            Self::invalid_composes_nesting => {
-                f.write_str("The 'composes' property cannot be used within nested rules")
-            }
-            Self::invalid_composes_selector => {
-                f.write_str("The 'composes' property can only be used with a simple class selector")
-            }
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }

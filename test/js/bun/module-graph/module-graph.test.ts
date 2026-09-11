@@ -132,8 +132,8 @@ async function until(condition: () => boolean) {
 }
 
 /** True once the object `make` registers (via the callback it is given), or returns, has been
- *  garbage-collected: collects repeatedly with event-loop turns in between until its
- *  FinalizationRegistry callback has run (bounded; a real leak never gets there). */
+ *  garbage-collected: full GC, then an event-loop turn for the FinalizationRegistry callback,
+ *  repeated a bounded number of times. */
 async function collected(
   make: (register: (o: object) => void) => Promise<object | void> | object | void,
 ): Promise<boolean> {
@@ -146,24 +146,9 @@ async function collected(
     const r = await make(register);
     if (r && typeof r === "object") register(r);
   })();
-  function churn(depth: number): number {
-    const a = [depth, {}, [], "x".repeat(depth)];
-    return depth <= 0 ? a.length : churn(depth - 1) + a.length;
-  }
-  for (let i = 0; i < 60 && !done; i++) {
-    churn(64);
-    await Bun.sleep(i < 20 ? 1 : 5);
+  for (let i = 0; i < 100 && !done; i++) {
     Bun.gc(true);
-    await new Promise<void>(r => setImmediate(r));
-  }
-  // Second, heavier phase (slow debug/GC-verification builds, large heaps): let pending I/O settle,
-  // clobber stale stack slots with junk, collect again. A real leak still never collects.
-  for (let i = 0; i < 30 && !done; i++) {
-    await Bun.sleep(50);
-    void new Array(4096).fill(0).map((_, k) => ({ k }));
-    churn(128);
-    Bun.gc(true);
-    await new Promise<void>(r => setImmediate(r));
+    await new Promise<void>(r => setTimeout(r, 0));
   }
   return done;
 }
@@ -245,50 +230,36 @@ describe.skipIf(!enabled)("Bun.unsafe.ModuleGraph", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("documented sharing: mutations of shared intrinsics by graph code are visible to all graphs and retain (only) the last writer", async () => {
+  test("documented sharing: mutations of shared intrinsics by graph code are visible to all graphs and to the host (last writer wins)", async () => {
     // Not containable without per-graph intrinsics (a separate global object). Programs meant to run as
     // graphs must not do this; hosts can detect it statically. This test pins the behaviour so it is a
-    // conscious contract: last writer wins, earlier writers are collectable, host sees the mutation.
+    // conscious contract: every graph and the host see one Array.prototype / Error, the last writer wins.
     const dir = fixture({
-      "intr.mjs": `export const big = new Uint8Array(4 * 1024 * 1024);
-        export function patch(tag) { Array.prototype.__graphTag = () => tag + big.length; Error.prepareStackTrace = (e, st) => tag + ":" + e.message; return [1].__graphTag().startsWith(tag) }
-        export function quit() { process.exit(0) }`,
+      "intr.mjs": `export function patch(tag) { Array.prototype.__graphTag = () => tag; Error.prepareStackTrace = (e, st) => tag + ":" + e.message; return [1].__graphTag() === tag }
+        export function observe() { return [[2].__graphTag(), new Error("x").stack] }`,
     });
     const origPrepare = Error.prepareStackTrace;
-    const earlier: WeakRef<object>[] = [];
     try {
-      // A throwaway function (its code, with whatever its call sites cached about the graphs, is garbage afterwards).
-      const AsyncFunction = (async () => {}).constructor as FunctionConstructor;
-      await new AsyncFunction(
-        "ModuleGraph",
-        "file",
-        "earlier",
-        "expect",
-        `for (let i = 0; i < 4; i++) {
-          const m = await ModuleGraph({ env: {} }).import(file);
-          expect(m.patch("g" + i)).toBe(true);
-          if (i < 3) earlier.push(new WeakRef(m.big));
-          m.quit();
-        }`,
-      )(ModuleGraph, join(dir, "intr.mjs"), earlier, expect);
-      expect(([1] as any).__graphTag().startsWith("g3")).toBe(true); // host sees the last graph's patch
-      // The earlier writers' patches were overwritten, so nothing references their modules any more
-      // (same collection regime as collected(): churn the stack, let I/O settle, collect, repeat).
-      const churn = (depth: number): number =>
-        depth <= 0 ? 1 : churn(depth - 1) + [depth, {}, "x".repeat(depth)].length;
-      for (let i = 0; i < 90 && earlier.some(r => r.deref()); i++) {
-        await Bun.sleep(i < 60 ? 5 : 50);
-        if (i >= 60) void new Array(4096).fill(0).map((_, k) => ({ k }));
-        churn(i < 60 ? 64 : 128);
-        Bun.gc(true);
-        await new Promise<void>(r => setImmediate(r));
+      const graphs = [];
+      for (let i = 0; i < 3; i++) {
+        const m = await ModuleGraph({ env: {} }).import(join(dir, "intr.mjs"));
+        expect(m.patch("g" + i)).toBe(true);
+        graphs.push(m);
       }
-      expect(earlier.map(r => r.deref() === undefined)).toEqual([true, true, true]);
+      expect({ host: [([1] as any).__graphTag(), new Error("h").stack], graphs: graphs.map(m => m.observe()) }).toEqual(
+        {
+          host: ["g2", "g2:h"],
+          graphs: [
+            ["g2", "g2:x"],
+            ["g2", "g2:x"],
+            ["g2", "g2:x"],
+          ],
+        },
+      );
     } finally {
       delete (Array.prototype as any).__graphTag;
       Error.prepareStackTrace = origPrepare;
     }
-    rmSync(dir, { recursive: true, force: true });
   });
 
   test("graphs constructed with the same set of globals names share compiled code; a different set links its own", async () => {

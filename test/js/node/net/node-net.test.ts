@@ -3154,6 +3154,71 @@ describe("net.Socket bytesRead", () => {
     }
   });
 
+  it("starts at 0 when connect() replaces a live connection", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "first-banner" : "xyz");
+    });
+    const s = new Socket();
+    s.resume();
+    try {
+      s.connect(port, "127.0.0.1");
+      const [firstChunk] = await once(s, "data");
+      const firstRead = s.bytesRead;
+      // The wrapper is reused for the new connection, the count is not.
+      s.connect(port, "127.0.0.1");
+      await once(s, "close");
+      expect({ firstChunk: String(firstChunk), firstRead, secondRead: s.bytesRead }).toEqual({
+        firstChunk: "first-banner",
+        firstRead: 12,
+        secondRead: 3,
+      });
+    } finally {
+      s.destroy();
+      server.close();
+    }
+  });
+
+  it("onread: connect() from the callback stops the rest of the old chunk", async () => {
+    let connections = 0;
+    const { server, port } = await listen(c => {
+      c.on("error", () => {});
+      c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz");
+    });
+    const calls: [string, number][] = [];
+    const done = Promise.withResolvers<void>();
+    let s: Socket | undefined;
+    try {
+      s = createConnection({
+        port,
+        host: "127.0.0.1",
+        onread: {
+          buffer: Buffer.alloc(4),
+          callback(n: number, buf: Buffer) {
+            calls.push([buf.toString("latin1", 0, n), s!.bytesRead]);
+            if (calls.length === 1) s!.connect(port, "127.0.0.1");
+            else done.resolve();
+          },
+        },
+      });
+      s.on("error", done.reject);
+      await done.promise;
+      await once(s, "close");
+      // BBBB and CCCC belong to the first connection and are not delivered after connect().
+      expect({ calls, bytesRead: s.bytesRead }).toEqual({
+        calls: [
+          ["AAAA", 4],
+          ["xyz", 3],
+        ],
+        bytesRead: 3,
+      });
+    } finally {
+      s?.destroy();
+      server.close();
+    }
+  });
+
   it("onread: a declined tail does not carry over to the next connection", async () => {
     let connections = 0;
     const { server, port } = await listen(c => c.end(++connections === 1 ? "AAAABBBBCCCC" : "xyz"));

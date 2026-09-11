@@ -663,6 +663,7 @@ function finishSocketEnd(self) {
 function dropOnreadTail(self) {
   if (self[kOnreadBuffer] === undefined) return;
   self[kOnreadTail] = undefined;
+  self[kOnreadSlicing] = 0;
   self[kOnreadPendingEnd] = false;
   self[kOnreadReadRequested] = false;
 }
@@ -1755,7 +1756,7 @@ function Socket(options?) {
             // synchronously the way node's bare call does.
             reportError(e);
           }
-          if (self.destroyed) return;
+          if (self.destroyed || self.connecting) return;
           if (ret === false || self.isPaused()) {
             self[kOnreadTail] = kOnreadEmptyTail;
             readStop(self, self._handle);
@@ -1786,7 +1787,8 @@ function Socket(options?) {
           // delivered, matching node's per-onStreamRead behavior.
           reportError(e);
         }
-        if (self.destroyed) return;
+        // A callback that called connect() started a new connection: the rest of this chunk is the old one's.
+        if (self.destroyed || self.connecting) return;
         if (ret === false || self.isPaused()) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;

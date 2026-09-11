@@ -76,6 +76,13 @@ Object.assign(globalThis, {
       type: "Navigation",
     });
   },
+  // Chrome's error page for `url` commits and loads. For a URL the runtime did
+  // not ask for, this is a load the page started itself (a link, `location.href
+  // = ...`) and that failed.
+  __fake_error_page(url: string) {
+    if (history[historyIndex]?.url !== url) pushEntry(url);
+    commitErrorPage(url);
+  },
   // The load event of the document that is live, the way one arrives for a
   // document the page itself navigated to. It names no frame and no loader.
   __fake_load_event() {
@@ -129,10 +136,15 @@ const fragmentOf = (url: string) => (url.includes("#") ? url.slice(url.indexOf("
 // server that accepts the connection and then says nothing looks. One with
 // "stall-on-return" loads when navigated to, but a history traversal back to
 // it starts and never commits. One with "bfcached" in it comes back whole
-// from the back-forward cache when a history traversal returns to it.
+// from the back-forward cache when a history traversal returns to it. One
+// with "unreachable" in it fails to load, the way a refused connection does:
+// Chrome commits its error page instead, at once, or with "unreachable-late"
+// only when __fake_error_page() says so.
 const neverLoads = (url: string) => url.includes("never-load");
 const stallsOnReturn = (url: string) => url.includes("stall-on-return");
 const bfcached = (url: string) => url.includes("bfcached");
+const failsToLoad = (url: string) => url.includes("unreachable");
+const errorPageLater = (url: string) => url.includes("unreachable-late");
 
 function pushEntry(url: string) {
   history.length = historyIndex + 1;
@@ -153,6 +165,15 @@ function commitDocument(url: string, type: "Navigation" | "BackForwardCacheResto
     const subframe = { id: "SUB", parentId: "F", loaderId: "S" + loads, url: "http://fake/subframe" };
     event("Page.frameNavigated", { frame: { ...subframe, mimeType: "text/html" }, type });
   }
+  event("Page.loadEventFired", { timestamp: loads });
+}
+
+// Chrome's error page standing in for a document that failed to load. It names
+// the URL it replaces, and it loads. Chromium 139 and older commit it under a
+// loader of its own, not the failed navigation's, and so does this.
+function commitErrorPage(unreachableUrl: string) {
+  const frame = { id: "F", loaderId: "E" + ++loads, url: "chrome-error://chromewebdata/", mimeType: "text/html" };
+  event("Page.frameNavigated", { frame: { ...frame, unreachableUrl }, type: "Navigation" });
   event("Page.loadEventFired", { timestamp: loads });
 }
 
@@ -190,11 +211,24 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       const current = history[historyIndex]?.url;
       const sameDocument = current !== undefined && documentOf(current) === documentOf(url) && fragmentOf(url) !== "";
       if (!sameDocument) loads++;
+      if (failsToLoad(url)) {
+        // The failure is known before anything commits, so the reply carries it.
+        reply({ frameId: "F", loaderId: "L" + loads, errorText: "net::ERR_CONNECTION_REFUSED" });
+        pushEntry(url);
+        return errorPageLater(url) ? undefined : commitErrorPage(url);
+      }
       // The reply names a loaderId only for a navigation that loads a document.
       reply(sameDocument ? { frameId: "F" } : { frameId: "F", loaderId: "L" + loads });
       if (neverLoads(url)) return;
       pushEntry(url);
       return sameDocument ? commitSameDocument(url) : commitDocument(url, "Navigation");
+    }
+    case "Page.reload": {
+      const url = history[historyIndex]?.url;
+      reply({});
+      if (url === undefined) return;
+      loads++;
+      return failsToLoad(url) ? commitErrorPage(url) : commitDocument(url, "Navigation");
     }
     case "Page.getNavigationHistory":
       return reply({ currentIndex: historyIndex, entries: history });

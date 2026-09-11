@@ -114,6 +114,12 @@ public:
     bool m_chromeNavigationCommitted = false;
     // Chrome: counts navigation commands, so a title reply settles only the navigation it was fetched for.
     uint32_t m_chromeNavigationSeq = 0;
+    // Chrome: the live main frame document is Chrome's error page for a load that failed.
+    bool m_chromeOnErrorPage = false;
+    // Chrome: navigate() reported a failure from Page.navigate's errorText. The next error page to commit is that failure's.
+    bool m_chromeErrorPageDue = false;
+    // Chrome: the URL whose error page committed. Reported as a failure once that page has loaded.
+    WTF::String m_chromeUnreportedFailure;
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

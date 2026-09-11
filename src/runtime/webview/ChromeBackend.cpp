@@ -654,6 +654,14 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+static void fireOnNavigationFailed(JSGlobalObject* g, JSWebView* view, JSValue errValue)
+{
+    if (JSObject* cb = view->m_onNavigationFailed.get()) {
+        Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+            JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+    }
+}
+
 // Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
 // onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
 // for PageTitle: that is the post-load title fetch, and its failure (for
@@ -665,12 +673,7 @@ static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, 
     bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
     if (navigationFailed) view->m_loading = false;
     settle(g, view, slot, false, errValue);
-    if (navigationFailed) {
-        if (JSObject* cb = view->m_onNavigationFailed.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
-        }
-    }
+    if (navigationFailed) fireOnNavigationFailed(g, view, errValue);
 }
 
 // Slots, not m_pending: a navigation that Chrome has already answered is
@@ -869,6 +872,8 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // net::ERR_* resolved before commit). Reject now.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty()) {
+            // Chrome commits its error page for this failure next. An aborted navigation (a download, a 204) shows none.
+            view->m_chromeErrorPageDue = !(err.size() == 16 && memcmp(err.data(), "net::ERR_ABORTED", 16) == 0);
             settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
             return;
         }
@@ -1161,16 +1166,26 @@ static void fireOnNavigated(JSGlobalObject* g, JSWebView* view, const WTF::Strin
     }
 }
 
-// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?}, type}: a document committed.
+// Page.frameNavigated {frame: {id, parentId?, url, urlFragment?, unreachableUrl?}, type}: a document committed.
 void Transport::onFrameNavigated(JSWebView* view, std::span<const char> params)
 {
     auto frame = jsonField(params, { "frame", 5 });
     if (!jsonField(frame, { "parentId", 8 }).empty()) return; // an <iframe>'s own navigation
     view->m_mainFrameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
-    if (commitIsNavigations(view)) {
+    // navigate() reported this failure from its reply already: its error page ends nothing and reports nothing.
+    auto unreachable = jsonString(jsonField(frame, { "unreachableUrl", 14 }));
+    bool reported = !unreachable.empty() && view->m_chromeErrorPageDue;
+    view->m_chromeErrorPageDue = false;
+    if (!reported && commitIsNavigations(view)) {
         view->m_chromeNavigationCommitted = true;
         view->m_chromeNavigationKind = ChromeNavigationKind::CrossDocument;
     }
+
+    // unreachableUrl: this is Chrome's error page for a load that failed. view.url keeps the last real page.
+    view->m_chromeOnErrorPage = !unreachable.empty();
+    // Reported once the error page has loaded and the tab takes commands again.
+    view->m_chromeUnreportedFailure = unreachable.empty() || reported ? WTF::String() : WTF::String::fromUTF8(unreachable);
+    if (view->m_chromeOnErrorPage) return;
 
     // frame.url omits the fragment; frame.urlFragment ("#x") carries it.
     auto url = jsonString(jsonField(frame, { "url", 3 }));
@@ -1207,7 +1222,23 @@ void Transport::onNavigatedWithinDocument(JSWebView* view, std::span<const char>
 // Page.loadEventFired (page-level: no frame, no loader): the live document loaded. Title fetch, then settle.
 void Transport::onLoadEventFired(JSWebView* view)
 {
+    auto* g = m_global;
     bool endsNavigation = view->m_pendingNavigate && view->m_chromeNavigationCommitted;
+
+    if (view->m_chromeOnErrorPage) {
+        // No title fetch: view.title keeps the last real page's, like view.url.
+        auto failedUrl = std::exchange(view->m_chromeUnreportedFailure, WTF::String());
+        if (failedUrl.isNull()) return;
+        JSValue err = createError(g, makeString("Navigation to "_s, failedUrl, " failed"_s));
+        if (endsNavigation) {
+            navigationConsumed(view);
+            settleFailure(g, view, PendingSlot::Navigate, Method::PageNavigate, err);
+        } else {
+            fireOnNavigationFailed(g, view, err);
+        }
+        return;
+    }
+
     // For a load that is not the view's navigation, the fetch only updates m_title.
     sendTitleFetch(view, endsNavigation);
     if (endsNavigation) navigationConsumed(view);

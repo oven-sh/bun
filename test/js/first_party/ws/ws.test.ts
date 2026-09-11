@@ -1074,6 +1074,76 @@ describe("ping/pong no-arg payload", () => {
   });
 });
 
+// npm ws sends `data || EMPTY_BUFFER`: a falsy payload (null, false, "") goes out as an
+// empty control frame, not as the string "null"/"false". A number is stringified before
+// that check, so 0 is sent as "0".
+describe("ping/pong falsy payload", () => {
+  // Sends one ping(data) and one pong(data) from `sender` and returns the payloads the
+  // other side received. The receiving side never pings, so no auto-pong gets mixed in.
+  async function payloadsReceivedFrom(sender: "client" | "server", data: unknown) {
+    const wss = new WebSocketServer({ port: 0 });
+    const { promise, resolve, reject } = Promise.withResolvers<{ ping: string; pong: string }>();
+    const received: { ping?: string; pong?: string } = {};
+    const record = (kind: "ping" | "pong") => (payload: Buffer) => {
+      received[kind] ??= payload.toString();
+      if (received.ping !== undefined && received.pong !== undefined) {
+        resolve({ ping: received.ping, pong: received.pong });
+      }
+    };
+    const sendBoth = (ws: WebSocket) => {
+      try {
+        ws.ping(data as never);
+        ws.pong(data as never);
+      } catch (e) {
+        reject(e);
+      }
+    };
+
+    if (sender === "client") {
+      wss.on("connection", serverWs => {
+        serverWs.on("ping", record("ping"));
+        serverWs.on("pong", record("pong"));
+      });
+    } else {
+      wss.on("connection", sendBoth);
+    }
+
+    const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+    client.on("error", reject);
+    if (sender === "client") {
+      client.on("open", () => sendBoth(client));
+    } else {
+      client.on("ping", record("ping"));
+      client.on("pong", record("pong"));
+    }
+
+    try {
+      return await promise;
+    } finally {
+      client.terminate();
+      wss.close();
+    }
+  }
+
+  const cases: [label: string, data: unknown, wire: string][] = [
+    ["null", null, ""],
+    ["undefined", undefined, ""],
+    ["false", false, ""],
+    ['""', "", ""],
+    ["0", 0, "0"],
+  ];
+
+  for (const [label, data, wire] of cases) {
+    it(`client ws.ping(${label}) / ws.pong(${label}) put ${JSON.stringify(wire)} on the wire`, async () => {
+      expect(await payloadsReceivedFrom("client", data)).toEqual({ ping: wire, pong: wire });
+    });
+
+    it(`server ws.ping(${label}) / ws.pong(${label}) put ${JSON.stringify(wire)} on the wire`, async () => {
+      expect(await payloadsReceivedFrom("server", data)).toEqual({ ping: wire, pong: wire });
+    });
+  }
+});
+
 describe("handleUpgrade without an Upgrade header", () => {
   it("responds with 400 Invalid Upgrade header instead of throwing", () => {
     const wss = new WebSocketServer({ noServer: true });
